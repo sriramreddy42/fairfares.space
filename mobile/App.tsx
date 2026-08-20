@@ -23,6 +23,7 @@ import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { encryptForDevices, getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
+import { UserAvatar } from "./src/components/UserAvatar";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
@@ -396,7 +397,15 @@ function FairFaresApp() {
         ]);
       }
       let permission = await Notifications.getPermissionsAsync();
-      if (permission.status !== "granted" && requestPermission) permission = await Notifications.requestPermissionsAsync();
+      if (permission.status !== "granted" && requestPermission) {
+        permission = await Notifications.requestPermissionsAsync({
+          ios: {
+            allowAlert: true,
+            allowBadge: true,
+            allowSound: true
+          }
+        });
+      }
       if (permission.status !== "granted") {
         if (requestPermission && !notificationPermissionPromptShownRef.current) {
           notificationPermissionPromptShownRef.current = true;
@@ -2093,6 +2102,7 @@ function FairFaresApp() {
         <BottomTabs
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}
+          user={data?.user || null}
           onChange={changeTab}
           hidden={staffPickupOpen || bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
         />
@@ -2447,11 +2457,7 @@ function FairFaresApp() {
           <View style={[styles.modalCard, styles.reviewPromptCard]}>
             <View style={styles.reviewPromptHeader}>
               <View style={styles.reviewPromptAvatar}>
-                {reviewPromptContext?.photoUrl ? (
-                  <Image source={{ uri: reviewPromptContext.photoUrl }} style={styles.reviewPromptAvatarImage} />
-                ) : (
-                  <Text style={styles.reviewPromptAvatarText}>{(reviewPromptContext?.name || "F").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</Text>
-                )}
+                <UserAvatar photoUrl={reviewPromptContext?.photoUrl} imageStyle={styles.reviewPromptAvatarImage} fallback={<Text style={styles.reviewPromptAvatarText}>{(reviewPromptContext?.name || "F").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</Text>} />
               </View>
               <View style={styles.reviewPromptHeaderCopy}>
                 <Text style={styles.reviewPromptEyebrow}>Quick check</Text>

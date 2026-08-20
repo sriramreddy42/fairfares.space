@@ -76,6 +76,91 @@ class PushNotificationTest(unittest.TestCase):
                 (self.user_id, token, enabled),
             )
 
+    def test_chitthi_direct_notification_has_stable_sender_layout(self):
+        self.assertEqual(
+            app.chitthi_notification_copy("Marisa", "Are you available?"),
+            ("Marisa", "Are you available?", ""),
+        )
+
+    def test_chitthi_group_notification_has_stable_group_layout(self):
+        self.assertEqual(
+            app.chitthi_notification_copy(
+                "Marisa",
+                "Are you available?",
+                "DU Housing Board",
+                is_group=True,
+            ),
+            ("Marisa", "Are you available?", "DU Housing Board"),
+        )
+
+    def test_chitthi_group_notification_keeps_message_text_unmodified(self):
+        self.assertEqual(
+            app.chitthi_notification_copy(
+                "Marisa",
+                "A message with Marisa: inside remains unchanged",
+                "DU Housing Board",
+                is_group=True,
+            ),
+            ("Marisa", "A message with Marisa: inside remains unchanged", "DU Housing Board"),
+        )
+
+    def test_chitthi_notification_has_deterministic_missing_data_fallbacks(self):
+        self.assertEqual(
+            app.chitthi_notification_copy("", "", "", is_group=True),
+            ("FairFares member", "New Chitthi letter", "Chitthi group"),
+        )
+
+    def test_chitthi_group_layout_survives_expo_transport(self):
+        token = "ExpoPushToken[group-layout-device]"
+        self.add_token(token)
+        title, body, subtitle = app.chitthi_notification_copy(
+            "Marisa", "Are you available?", "DU Housing Board", is_group=True,
+        )
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-group-layout"}]})
+        data = {
+            "type": "CHITTHI_MESSAGE",
+            "conversationId": "FFC-GROUP-1",
+            "senderName": "Marisa",
+            "conversationName": "DU Housing Board",
+            "senderAvatarUrl": "https://fairfare.space/sender.jpg",
+            "groupAvatarUrl": "https://fairfare.space/group.jpg",
+            "isGroup": True,
+            "subtitle": subtitle,
+        }
+
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], title, body, data)
+
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertEqual(message["subtitle"], "DU Housing Board")
+        self.assertEqual(message["body"], "Are you available?")
+        self.assertEqual(message["sound"], "default")
+        self.assertEqual(message["channelId"], "chitthi-messages-v2")
+        self.assertTrue(message["mutableContent"])
+        self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
+        self.assertEqual(message["data"]["groupAvatarUrl"], "https://fairfare.space/group.jpg")
+        self.assertTrue(message["data"]["isGroup"])
+
+    def test_every_chitthi_push_type_requests_message_sound(self):
+        token = "ExpoPushToken[chitthi-sound-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-sound"}]})
+
+        for notification_type in ("CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"):
+            with self.subTest(notification_type=notification_type):
+                with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+                    app.send_expo_push(
+                        [token],
+                        "Marisa",
+                        "Hello",
+                        {"type": notification_type, "conversationId": "FFC-SOUND-1"},
+                    )
+                message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+                self.assertEqual(message["sound"], "default")
+                self.assertEqual(message["channelId"], "chitthi-messages-v2")
+                self.assertTrue(message["mutableContent"])
+                self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
+
     def test_carpool_payload_uses_carpool_channel_and_disables_unregistered_token(self):
         good_token = "ExpoPushToken[good-device]"
         stale_token = "ExpoPushToken[stale-device]"

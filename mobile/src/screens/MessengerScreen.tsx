@@ -6,6 +6,7 @@ import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as Sharing from "expo-sharing";
+import { useAudioPlayer } from "expo-audio";
 import { BlurView } from "expo-blur";
 import { sha256 } from "@noble/hashes/sha256";
 import { utf8ToBytes } from "@noble/hashes/utils";
@@ -14,6 +15,7 @@ import { ActivityIndicator, Alert, Animated, AppState, FlatList, Image, Interact
 import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { UserAvatar } from "../components/UserAvatar";
 import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
 import {
@@ -128,6 +130,31 @@ type ThreadMessageItem = {
 const CHAT_MESSAGE_CACHE_LIMIT = 50;
 const WEB_CHAT_MESSAGE_CACHE_LIMIT = 20;
 const CHAT_MESSAGE_CACHE_MAX_BYTES = 750_000;
+// A short, low-volume two-tone cue generated specifically for Chitthi. Keeping
+// it embedded avoids a network request at the exact moment a send completes.
+const CHITTHI_SENT_SOUND_BASE64 = "UklGRvQCAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YdACAAAAAJQBZAS3BO0AHPsB9832Ffpx/x0GKA1tEfINRAA67XXgyeTg+owWeSaoIIUJwu8A4Zzi1O0N/GkKaBecHloZOgUC6nnX3doN9CgUoifwI/0NyvTM5fnk1u0x+uoGyhKDGjwYowjW8P/dDd1y8AENRyHOIYMQvflU6nnnL+7U+BQE0g6oFp4W6gqC9hnk3t8j7v4GQRshHxYS6v2L7grqz+7h980BcwsbE7AUQwwc+6rpFOPq7BMCrxUZHNoSWQFo8p/sp+9E9wAAnQjnD5gS3gy+/qTufOaU7Cv+ohDdGPASFwTj9Svvq/Dw9pj+QQYPDXQQ5gyFAf/y7enw7C37JwyRFXkSMwb5+KLxzvHY9oT9UASRClkOgQyQA7z2Se3U7f/4QwhQEpMRuweo+/vzCPPw9rb8ugJpCFgMzQv7BN/5ePAb74b39QQxD1oQwQjz/S/2T/Qv9yL8cgGRBnoK5wrhBXP8aPOi8Kb2NgJGDOgOVQnc/zj4nPWP9777bQADBccI4glcBoP+D/ZP8kX2AACZCVINigloARD65/YH+IP7oP+1A0IHzwiCBh0AaPgK9En2Rv4zB6wLbwmgArf7KviS+Gj7Af+iAusFvQdpBlIBcfrB9Z32+/wYBQUKFgmJAyv9YPkr+Wn7iP6/AcAEtAYgBi8CK/xn9yr3EvxJA2kIjAgsBGv+hvrN+X/7MP4IAb8DugW4BcICmv3y+OH3fPvEAeQG3weSBHn/lvtz+qj78/10AOUC1AQ7BRkDxP5b+rD4LfuGAHsFGgfEBFcAkPwa+977y/0AAC0CBQSzBEEDr/+d+435F/uK/zQESQbJBAgBcv2/+yD8tv2l/5QBTQMpBEMDYgC3/Gz6L/vI/hIDcwWrBJEBOf5f/Gr8sP1f/xcBqwKgAykD5gCp/UX7aPs7/hYCoQRxBPQB5/73/Ln8tv0r/7AAIAIeA/wCQgE=";
+const CHITTHI_SENT_SOUND_DATA_URI = `data:audio/wav;base64,${CHITTHI_SENT_SOUND_BASE64}`;
+let chitthiSentSoundPreparation: Promise<string> | null = null;
+
+function prepareChitthiSentSound() {
+  if (Platform.OS === "web" || !FileSystem.cacheDirectory) return Promise.resolve(CHITTHI_SENT_SOUND_DATA_URI);
+  if (chitthiSentSoundPreparation) return chitthiSentSoundPreparation;
+  const uri = `${FileSystem.cacheDirectory}chitthi-sent-v1.wav`;
+  chitthiSentSoundPreparation = FileSystem.getInfoAsync(uri)
+    .then(async (info) => {
+      if (!info.exists) {
+        await FileSystem.writeAsStringAsync(uri, CHITTHI_SENT_SOUND_BASE64, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+      }
+      return uri;
+    })
+    .catch((error) => {
+      chitthiSentSoundPreparation = null;
+      throw error;
+    });
+  return chitthiSentSoundPreparation;
+}
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
@@ -488,32 +515,13 @@ function InitialsAvatar({ photoUrl, label, imageStyle, textStyle }: {
   textStyle: React.ComponentProps<typeof Text>["style"];
 }) {
   const resolvedPhotoUrl = chatPhotoUrl(photoUrl);
-  const [failedPhotoUrl, setFailedPhotoUrl] = useState("");
-  const [photoRetry, setPhotoRetry] = useState(0);
-  useEffect(() => {
-    setFailedPhotoUrl("");
-    setPhotoRetry(0);
-  }, [resolvedPhotoUrl]);
-  if (resolvedPhotoUrl && failedPhotoUrl !== resolvedPhotoUrl) {
-    return (
-      <Image
-        key={`${resolvedPhotoUrl}:${photoRetry}`}
-        source={{ ...authenticatedAssetSource(resolvedPhotoUrl), cache: photoRetry ? "reload" : "default" }}
-        style={imageStyle}
-        onError={() => {
-          if (photoRetry === 0) {
-            setPhotoRetry(1);
-            return;
-          }
-          logDevelopmentPerformance("chat-avatar-load-failed", {
-            source: resolvedPhotoUrl.includes("/api/chat/notification-avatar") ? "compact-avatar" : resolvedPhotoUrl.startsWith("data:image/") ? "embedded" : "asset",
-          });
-          setFailedPhotoUrl(resolvedPhotoUrl);
-        }}
-      />
-    );
-  }
-  return <Text style={textStyle}>{initials(label)}</Text>;
+  return (
+    <UserAvatar
+      photoUrl={resolvedPhotoUrl}
+      imageStyle={imageStyle}
+      fallback={<Text style={textStyle}>{initials(label)}</Text>}
+    />
+  );
 }
 
 function relativeTime(value: string) {
@@ -599,7 +607,7 @@ function isEncryptedPlaceholder(value: string) {
 }
 
 function encryptedOverviewPreview(clearText: string) {
-  if (!clearText) return "New message";
+  if (!clearText) return "New letter";
   if (clearText.startsWith("FFFORWARD:")) {
     try {
       const forwarded = JSON.parse(clearText.slice(10)) as { text?: unknown };
@@ -616,9 +624,9 @@ function encryptedOverviewPreview(clearText: string) {
       if (rich.type === "EVENT") return `Event: ${String(rich.metadata?.title || "New event")}`;
       if (rich.type === "CONTACT") return `Contact: ${String(rich.metadata?.name || "Shared contact")}`;
       if (rich.type === "LOCATION") return "Shared a location";
-      return "New message";
+      return "New letter";
     } catch {
-      return "New message";
+      return "New letter";
     }
   }
   if (clearText.startsWith("{")) {
@@ -636,32 +644,50 @@ function encryptedOverviewPreview(clearText: string) {
 
 function safeConversationPreview(conversation: ChatConversation) {
   return isEncryptedPlaceholder(conversation.lastMessage)
-    ? "📨 New Letter"
+    ? "New letter"
     : encryptedOverviewPreview(conversation.lastMessage) || conversation.rideRoute || conversation.subject || "No messages yet.";
 }
 
-const ConversationListRow = React.memo(function ConversationListRow({ chat, onOpen }: {
+function conversationAvatarUrl(conversation: ChatConversation | null | undefined, currentUserId: number, currentUserPhotoUrl = "", currentUserName = "") {
+  const isCurrentUser = conversation?.otherUserId === currentUserId
+    || (!conversation?.otherUserId && !conversation?.communityId && conversation?.otherName.trim().toLocaleLowerCase() === currentUserName.trim().toLocaleLowerCase());
+  if (isCurrentUser) return currentUserPhotoUrl;
+  return conversation?.otherPhotoUrl || "";
+}
+
+const ConversationListRow = React.memo(function ConversationListRow({ chat, currentUserId, currentUserPhotoUrl, currentUserName, onOpen }: {
   chat: ChatConversation;
+  currentUserId: number;
+  currentUserPhotoUrl?: string;
+  currentUserName?: string;
   onOpen: (conversation: ChatConversation) => void;
 }) {
   const preview = safeConversationPreview(chat);
   const unread = chat.unread > 0;
+  const conversationKind = chat.communityId || chat.kind === "GROUP" ? "Group letters" : "Direct letters";
   return (
-    <TouchableOpacity style={[styles.chatRow, unread && styles.chatRowUnread]} onPress={() => onOpen(chat)}>
+    <TouchableOpacity
+      style={styles.chatRow}
+      onPress={() => onOpen(chat)}
+      accessibilityLabel={`${chat.otherName || chat.subject}. ${unread ? `${chat.unread} unread. ` : ""}${preview}`}
+    >
+      {unread ? <View style={styles.unreadAccent} /> : null}
       <View style={styles.avatarWrap}>
-        <View style={[styles.avatar, unread && styles.avatarUnread]}>
-          <InitialsAvatar photoUrl={chat.otherPhotoUrl} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
+        <View style={styles.avatar}>
+          <InitialsAvatar photoUrl={conversationAvatarUrl(chat, currentUserId, currentUserPhotoUrl, currentUserName)} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
         </View>
         {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
       </View>
       <View style={styles.chatCopy}>
-        <Text style={styles.chatKind}>{chat.communityId || chat.kind === "GROUP" ? "GROUP LETTER" : "DIRECT LETTER"}</Text>
-        <Text style={styles.chatName}>{chat.otherName || chat.subject}</Text>
-        <Text style={[styles.chatLast, preview.endsWith("New Letter") && styles.chatLastLetter, unread && styles.chatLastUnread]} numberOfLines={1}>{preview}</Text>
-      </View>
-      <View style={styles.chatMeta}>
-        <Text style={[styles.chatTime, unread && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
-        {unread ? <Text style={styles.unread}>{chat.unread}</Text> : null}
+        <View style={styles.chatTitleRow}>
+          <Text style={[styles.chatName, unread && styles.chatNameUnread]} numberOfLines={1}>{chat.otherName || chat.subject}</Text>
+          <Text style={[styles.chatTime, unread && styles.chatTimeUnread]}>{relativeTime(chat.lastMessageAt)}</Text>
+        </View>
+        <View style={styles.chatPreviewRow}>
+          <Text style={[styles.chatLast, unread && styles.chatLastUnread]} numberOfLines={1}>{preview}</Text>
+          {unread ? <Text style={styles.unread}>{chat.unread > 99 ? "99+" : chat.unread}</Text> : null}
+        </View>
+        <Text style={styles.chatKind}>{conversationKind}{chat.rideRoute ? ` · ${chat.rideRoute}` : ""}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -1209,6 +1235,9 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
 export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
+  const sentSoundPlayer = useAudioPlayer(null, { updateInterval: 1000 });
+  const sentSoundUriRef = useRef("");
+  const sentSoundLastPlayedAtRef = useRef(0);
   const chitthiFeatures = data?.features?.chitthi || { maxVideoSizeMb: 100, maxVideoSizeBytes: 100_000_000, enableMultipartUpload: true, cryptoThrottleMs: 0, rolloutCohort: "enabled" as const };
   // A stale development client may expose native encryption but not the newer
   // background multipart and resumable assembly methods. Do not advertise the
@@ -1329,6 +1358,39 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void prepareChitthiSentSound()
+      .then((uri) => {
+        if (cancelled) return;
+        sentSoundPlayer.replace({ uri });
+        sentSoundPlayer.volume = 0.28;
+        sentSoundUriRef.current = uri;
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [sentSoundPlayer]);
+
+  function playChitthiSentSound() {
+    // Protect against accidental double invocation at the reconciliation
+    // boundary while still allowing normal rapid consecutive messages.
+    const now = Date.now();
+    if (now - sentSoundLastPlayedAtRef.current < 80) return;
+    sentSoundLastPlayedAtRef.current = now;
+    void prepareChitthiSentSound()
+      .then(async (uri) => {
+        if (sentSoundUriRef.current !== uri) {
+          sentSoundPlayer.replace({ uri });
+          sentSoundUriRef.current = uri;
+        }
+        sentSoundPlayer.pause();
+        sentSoundPlayer.volume = 0.28;
+        await sentSoundPlayer.seekTo(0).catch(() => undefined);
+        sentSoundPlayer.play();
+      })
+      .catch(() => undefined);
+  }
+
   // Upload bubbles are local, ephemeral UI records (negative IDs). They must
   // never survive an account/chat transition or Fast Refresh after their
   // owning async operation has disappeared.
@@ -1353,7 +1415,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [groupDetailsEditing, setGroupDetailsEditing] = useState(false);
   const [groupDetailsSaving, setGroupDetailsSaving] = useState(false);
   const [groupDetailsDraft, setGroupDetailsDraft] = useState({ name: "", description: "", area: "" });
-  const [failedGroupPhotoUrl, setFailedGroupPhotoUrl] = useState("");
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
   const [identityRecoveryWarning, setIdentityRecoveryWarning] = useState("");
   const [encryptionReady, setEncryptionReady] = useState(false);
@@ -1433,9 +1494,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     [communities, activeConversation?.communityId]
   );
   const activeGroupPhotoUrl = chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl);
-  useEffect(() => {
-    setFailedGroupPhotoUrl("");
-  }, [activeGroupPhotoUrl]);
   useEffect(() => {
     setGroupDetailsEditing(false);
   }, [activeConversation?.communityId]);
@@ -3268,6 +3326,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               [acceptedMessage]
             ));
           }
+          if (index === attachments.length - 1) playChitthiSentSound();
           publishMediaProgress(optimisticAttachmentId, null);
           let senderLocalUri = "";
           if (Platform.OS !== "web") {
@@ -3436,6 +3495,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               ? withoutServerDuplicate.map((item) => item.localClientMessageId === clientMessageId ? sentMessage : item)
               : mergeThreadHistoryMessages(withoutServerDuplicate, [sentMessage]);
           });
+          playChitthiSentSound();
           scrollThreadToLatest(false);
         } catch (error) {
           ensureSendContext();
@@ -3672,7 +3732,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
-  async function openContactChat(person: { id: number; name: string }) {
+  async function openContactChat(person: { id: number; name: string }, privateReplyDraft = "") {
     setContactPickerOpen(false);
     setLoading(true);
     try {
@@ -3687,6 +3747,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages);
       updateMessagePagination(payload);
+      if (privateReplyDraft) {
+        setReplyingTo(null);
+        setEditingMessageId(null);
+        setMessageText(privateReplyDraft);
+      }
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Could not open chat", error instanceof Error ? error.message : "Try again shortly.");
@@ -3755,20 +3820,28 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             .forEach((value) => localNames.set(contactDiscoveryHash(value), label));
         }
       }
-      const hashes = Array.from(localNames.keys()).slice(0, 1000);
+      const hashes = Array.from(localNames.keys());
       if (!hashes.length) {
         setContactMatches([]);
         Alert.alert("No phone contacts found", "Add a phone number to a device contact and try again.");
         return;
       }
-      const found = await findChatPeopleByContactHashes(hashes);
-      setContactMatches(found.people.map((person) => ({ ...person, localName: localNames.get(person.phoneHash) || person.name })));
-      if (found.people.length) {
+      const peopleById = new Map<number, { id: number; name: string; photoUrl: string; phoneHash: string }>();
+      for (let offset = 0; offset < hashes.length; offset += 5000) {
+        const found = await findChatPeopleByContactHashes(hashes.slice(offset, offset + 5000));
+        found.people.forEach((person) => peopleById.set(person.id, person));
+      }
+      const people = Array.from(peopleById.values());
+      setContactMatches(people.map((person) => ({ ...person, localName: localNames.get(person.phoneHash) || person.name })));
+      if (people.length) {
         setContactPickerMode(mode);
         setAddPeopleCommunityId(communityId);
         setContactPickerOpen(true);
       }
-      else Alert.alert("No FairFares contacts yet", "None of your accessible contacts currently allow phone discovery on FairFares.");
+      else Alert.alert(
+        "No discoverable FairFares contacts",
+        "A saved contact appears only after that person enables Profile → Account details → Find me by exact phone number. Existing accounts may still have this privacy setting turned off."
+      );
     } catch (error) {
       Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");
     } finally {
@@ -4124,7 +4197,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
     if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
     setEncryptionReady(true);
-    const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi message";
+    const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi letter";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
     const message = { ...response.message, type, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } } as ChatMessage;
@@ -4150,6 +4223,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       } else {
         await sendEncryptedRichMessage(richComposer, metadata);
       }
+      playChitthiSentSound();
       setRichComposer("");
       await refreshMessenger();
     } catch (error) {
@@ -4692,6 +4766,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setForwardPickerOpen(true);
   }
 
+  async function replyToGroupMessagePrivately(message: ChatMessage) {
+    const senderId = Number(message.senderId || 0);
+    if (!activeConversation?.communityId || message.mine || !senderId || senderId === currentUserId) return;
+    const senderName = message.senderName?.trim() || "FairFares member";
+    const quotedMessage = (shareableMessageText({ ...message, senderName: "" }) || "Message")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 240);
+    setActionMessage(null);
+    await openContactChat(
+      { id: senderId, name: senderName },
+      `Private reply to ${senderName}: “${quotedMessage}”\n`
+    );
+  }
+
   function forwardMediaFromPreview() {
     const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId);
     if (!source) return;
@@ -4822,6 +4911,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setForwardPickerOpen(false);
       setSelectedMessageIds([]);
       setSelectedForwardConversationIds([]);
+      playChitthiSentSound();
       setAttachmentStatus(`${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} forwarded securely`);
       setTimeout(() => setAttachmentStatus(""), 1600);
       void refreshMessenger({ showLoader: false, showError: false });
@@ -4887,13 +4977,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <BackIcon />
           </TouchableOpacity>
           <TouchableOpacity style={styles.threadAvatar} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
-            {chatPhotoUrl(activeConversation?.otherPhotoUrl) && failedGroupPhotoUrl !== chatPhotoUrl(activeConversation?.otherPhotoUrl) ? (
-              <Image source={authenticatedAssetSource(chatPhotoUrl(activeConversation?.otherPhotoUrl))} style={styles.threadAvatarImage} onError={() => setFailedGroupPhotoUrl(chatPhotoUrl(activeConversation?.otherPhotoUrl))} />
-            ) : (
-              <Text style={styles.threadAvatarText}>
-                {initials(activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat")}
-              </Text>
-            )}
+            <InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl} label={activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat"} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} />
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </TouchableOpacity>
           <TouchableOpacity style={styles.threadHeaderCopy} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
@@ -4953,7 +5037,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <ScrollView style={styles.groupInfoScroll} contentContainerStyle={styles.groupInfoContent}>
               <View style={styles.groupInfoHero}>
                 <TouchableOpacity style={styles.groupInfoAvatar} onPress={() => void changeActiveGroupPhoto()} accessibilityLabel="Change group image">
-                  {activeGroupPhotoUrl && failedGroupPhotoUrl !== activeGroupPhotoUrl ? <Image source={{ uri: activeGroupPhotoUrl }} style={styles.groupInfoAvatarImage} onError={() => setFailedGroupPhotoUrl(activeGroupPhotoUrl)} /> : <Text style={styles.groupInfoAvatarText}>{initials(activeGroup?.name || activeConversation?.otherName || "Group")}</Text>}
+                  <InitialsAvatar photoUrl={activeGroupPhotoUrl} label={activeGroup?.name || activeConversation?.otherName || "Group"} imageStyle={styles.groupInfoAvatarImage} textStyle={styles.groupInfoAvatarText} />
                   <View style={styles.groupInfoEditBadge}><Text style={styles.groupInfoEditBadgeText}>✎</Text></View>
                 </TouchableOpacity>
                 <Text style={styles.groupInfoTitle}>{activeGroup?.name || activeConversation?.otherName || "Chitthi group"}</Text>
@@ -5007,7 +5091,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   const canManage = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
                   const roleLabel = member.role === "OWNER" ? "Owner" : member.role === "ADMIN" ? "Admin" : "Member";
                   return <TouchableOpacity key={member.id} style={styles.groupMemberRow} disabled={member.isCurrentUser} activeOpacity={0.65} onPress={() => void messageGroupMember(member)} onLongPress={canManage ? () => showGroupMemberActions(member) : undefined} accessibilityLabel={member.isCurrentUser ? `${member.name}, you, ${roleLabel}` : `Message ${member.name} privately. ${roleLabel}`}>
-                    <View style={styles.groupMemberAvatar}>{chatPhotoUrl(member.photoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(member.photoUrl))} style={styles.groupMemberAvatarImage} /> : <Text style={styles.groupMemberAvatarText}>{initials(member.name)}</Text>}</View>
+                    <View style={styles.groupMemberAvatar}><InitialsAvatar photoUrl={member.photoUrl} label={member.name} imageStyle={styles.groupMemberAvatarImage} textStyle={styles.groupMemberAvatarText} /></View>
                     <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? `You are a group ${roleLabel.toLowerCase()}` : "Tap to message privately"}</Text></View>
                     <Text style={[styles.groupMemberRole, member.role === "OWNER" ? styles.groupMemberRoleOwner : member.role === "ADMIN" ? styles.groupMemberRoleAdmin : styles.groupMemberRoleMember]}>{roleLabel}</Text>
                     {canManage ? <TouchableOpacity style={styles.groupMemberManageButton} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`Manage ${member.name}`}><Text style={styles.groupMemberManageIcon}>•••</Text></TouchableOpacity> : !member.isCurrentUser ? <Text style={styles.groupMemberChevron}>›</Text> : null}
@@ -5154,7 +5238,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
                 <View style={styles.smallAvatar}>
-                  {chatPhotoUrl(message.senderPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(message.senderPhotoUrl))} style={styles.smallAvatarImage} /> : <Text style={styles.smallAvatarText}>{initials(message.senderName || "F")}</Text>}
+                  <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
                 </View>
               ) : !message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.smallAvatarSpacer} /> : null}
               <TouchableOpacity
@@ -5337,6 +5421,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 </Pressable>
                 <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]}>
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
+                  {!actionMessage.mine && Boolean(activeConversation?.communityId) && Number(actionMessage.senderId || 0) > 0 ? <TouchableOpacity style={styles.messageActionRow} onPress={() => void replyToGroupMessagePrivately(actionMessage)} accessibilityRole="button" accessibilityLabel={`Reply privately to ${actionMessage.senderName || "member"}`}><Text style={styles.messageActionGlyph}>✉</Text><Text style={styles.messageActionLabel}>Reply privately</Text></TouchableOpacity> : null}
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => forwardActionMessage(actionMessage)}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
                   {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
@@ -5354,7 +5439,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View style={styles.mediaViewerHeader}>
               <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Back to conversation"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
               <View style={styles.mediaViewerPerson}>
-                <View style={styles.mediaViewerAvatar}>{chatPhotoUrl(activeConversation?.otherPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(activeConversation?.otherPhotoUrl))} style={styles.mediaViewerAvatarImage} /> : <Text style={styles.mediaViewerAvatarText}>{initials(activeConversation?.otherName || "F")}</Text>}</View>
+                <View style={styles.mediaViewerAvatar}><InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={activeConversation?.otherName || "F"} imageStyle={styles.mediaViewerAvatarImage} textStyle={styles.mediaViewerAvatarText} /></View>
                 <Text style={styles.mediaViewerName} numberOfLines={1}>{activeConversation?.otherName || "Chitthi"}</Text>
                 <Text style={styles.mediaViewerDate}>{attachmentPreview ? chatDayLabel(attachmentPreview.createdAt) : ""}</Text>
               </View>
@@ -5428,7 +5513,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {personConversations.filter((conversation) => conversation.id !== activeConversationId).map((conversation) => {
                   const selected = selectedForwardConversationIds.includes(conversation.id);
                   return <TouchableOpacity key={conversation.id} disabled={forwardingMessages} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
-                    <View style={styles.forwardPickerAvatar}>{chatPhotoUrl(conversation.otherPhotoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(conversation.otherPhotoUrl))} style={styles.forwardPickerAvatarImage} /> : <Text style={styles.forwardPickerAvatarText}>{initials(conversation.otherName || conversation.subject)}</Text>}</View>
+                    <View style={styles.forwardPickerAvatar}><InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject} imageStyle={styles.forwardPickerAvatarImage} textStyle={styles.forwardPickerAvatarText} /></View>
                     <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "Chitthi conversation"}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
                   </TouchableOpacity>;
@@ -5694,7 +5779,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {contactMatches.map((person) => (
                 <TouchableOpacity key={`contact-picker-${person.id}`} style={[styles.contactPickerRow, contactPickerMode !== "chat" && selectedGroupPeople.includes(person.id) && styles.contactPickerRowSelected]} onPress={() => contactPickerMode === "chat" ? void openContactChat(person) : toggleGroupPerson(person.id)}>
                   <View style={styles.avatar}>
-                    {chatPhotoUrl(person.photoUrl) ? <Image source={authenticatedAssetSource(chatPhotoUrl(person.photoUrl))} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(person.localName)}</Text>}
+                    <InitialsAvatar photoUrl={person.photoUrl} label={person.localName} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
                   </View>
                   <View style={styles.chatCopy}>
                     <Text style={styles.chatName}>{person.localName}</Text>
@@ -5805,7 +5890,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ) : null}
         </>}
-        renderItem={({ item: chat }) => <ConversationListRow chat={chat} onOpen={handleOpenConversation} />}
+        renderItem={({ item: chat }) => <ConversationListRow chat={chat} currentUserId={currentUserId} currentUserPhotoUrl={data?.user?.profilePhotoUrl} currentUserName={data?.user?.name} onOpen={handleOpenConversation} />}
         ListFooterComponent={<>
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
@@ -6487,27 +6572,27 @@ const styles = StyleSheet.create({
   listContent: { paddingBottom: 88 },
   loadMoreLetters: { alignSelf: "center", borderWidth: 1, borderColor: theme.colors.warning, borderRadius: theme.radius.pill, paddingHorizontal: 22, paddingVertical: 11, marginTop: 8, marginBottom: 12 },
   loadMoreLettersText: { color: theme.colors.warning, fontWeight: "800", fontSize: 14 },
-  chatRow: { minHeight: 78, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, paddingVertical: 11, marginBottom: 9, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.16)", borderRadius: 22, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
-  chatRowUnread: { minHeight: 86, borderColor: "rgba(87,184,91,0.70)", backgroundColor: "rgba(5,42,28,0.84)" },
+  chatRow: { minHeight: 80, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, paddingVertical: 12, marginBottom: 8, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.14)", borderRadius: 20, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2, overflow: "hidden" },
+  unreadAccent: { position: "absolute", left: 0, top: 15, bottom: 15, width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, backgroundColor: "#45C56A" },
   communityRow: { backgroundColor: "rgba(8,25,24,0.82)" },
   avatarWrap: { position: "relative" },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#123c27", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1.5, borderColor: "rgba(210,167,89,0.54)" },
-  avatarUnread: { borderColor: "rgba(86,190,100,0.88)" },
   avatarImage: { width: "100%", height: "100%" },
   inboxOnlineDot: { position: "absolute", width: 11, height: 11, borderRadius: 6, right: 0, bottom: 1, backgroundColor: "#3dbb59", borderWidth: 2, borderColor: "#051b13" },
   groupAvatar: { backgroundColor: "#123c27" },
   avatarText: { color: theme.colors.text, fontWeight: "700", fontSize: 16 },
-  chatCopy: { flex: 1, minWidth: 0 },
-  chatKind: { color: "#8f713f", fontSize: 7.25, lineHeight: 9, fontWeight: "700", letterSpacing: 0.75, marginBottom: 1 },
-  chatName: { color: "#f5f3eb", fontSize: 16, fontWeight: "600" },
+  chatCopy: { flex: 1, minWidth: 0, gap: 3 },
+  chatTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  chatPreviewRow: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 20 },
+  chatKind: { color: "#8E9D96", fontSize: 10, lineHeight: 13, fontWeight: "600", letterSpacing: 0.2 },
+  chatName: { flex: 1, color: "#F0F3F1", fontSize: 16, lineHeight: 20, fontWeight: "600" },
+  chatNameUnread: { color: "#FFFFFF", fontWeight: "800" },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "500" },
-  chatLast: { color: "#aaaead", marginTop: 4, fontSize: 13 },
-  chatLastLetter: { fontFamily: Platform.select({ ios: "Snell Roundhand", android: "cursive", default: undefined }), fontStyle: "italic", fontSize: 16, lineHeight: 20, letterSpacing: 0.2 },
-  chatLastUnread: { color: "#efbd68", fontWeight: "500" },
-  chatMeta: { alignItems: "flex-end", minWidth: 34, gap: 6 },
-  chatTime: { color: "#a9ada9", fontWeight: "500", fontSize: 12 },
-  chatTimeUnread: { color: "#4fc35e" },
-  unread: { minWidth: 24, height: 24, lineHeight: 24, textAlign: "center", backgroundColor: "#287d39", color: "#fff", borderRadius: 12, overflow: "hidden", paddingHorizontal: 6, fontWeight: "700", fontSize: 12 },
+  chatLast: { flex: 1, color: "#A8B0AC", fontSize: 13.5, lineHeight: 18 },
+  chatLastUnread: { color: "#E8F3EC", fontWeight: "700" },
+  chatTime: { color: "#8E9993", fontWeight: "500", fontSize: 11.5 },
+  chatTimeUnread: { color: "#73D68E", fontWeight: "700" },
+  unread: { minWidth: 22, height: 22, lineHeight: 22, textAlign: "center", backgroundColor: "#35A957", color: "#fff", borderRadius: 11, overflow: "hidden", paddingHorizontal: 6, fontWeight: "800", fontSize: 11 },
   memberCount: { color: theme.colors.muted, fontWeight: "600" },
   joinCommunityText: { color: "#65D889", fontWeight: "800" },
   rowAction: { paddingVertical: 8, paddingLeft: 8 },

@@ -26,6 +26,7 @@ import {
 } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
+import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
@@ -62,6 +63,8 @@ type ServiceTile = {
   label: string;
   icon?: ImageSourcePropType;
   emoji?: string;
+  profilePhotoUrl?: string;
+  profileName?: string;
   badge?: string;
   badgeTone?: "red" | "green";
   onPress?: () => void;
@@ -398,7 +401,13 @@ export function ServicesScreen({
     { label: "Invoices", icon: appAssets.serviceInvoice, badge: "Files", onPress: () => openRentalPanel("documents") },
     { label: "Rental Help", icon: appAssets.serviceSupport, onPress: () => openRentalPanel("support") },
     { label: "Activity", icon: appAssets.navActivity, onPress: onOpenActivity },
-    { label: "Account", icon: appAssets.profile, onPress: onOpenProfile }
+    {
+      label: "Account",
+      icon: appAssets.profile,
+      profilePhotoUrl: user?.profilePhotoUrl,
+      profileName: user?.name,
+      onPress: onOpenProfile,
+    }
   ];
 
   return (
@@ -846,7 +855,13 @@ function ServiceSection({ title, tiles, compact }: { title: string; tiles: Servi
                 <Text style={styles.tileBadgeText}>{tile.badge}</Text>
               </View>
             ) : null}
-            {tile.icon ? (
+            {tile.profilePhotoUrl ? (
+              <UserAvatar
+                photoUrl={tile.profilePhotoUrl}
+                style={[styles.serviceTileProfileAvatar, compact && styles.compactTileIcon]}
+                imageStyle={styles.serviceTileProfileAvatarImage}
+              />
+            ) : tile.icon ? (
               <Image source={tile.icon} style={[styles.serviceTileIcon, compact && styles.compactTileIcon]} resizeMode="contain" />
             ) : (
               <Text style={[styles.serviceTileEmoji, compact && styles.compactTileEmoji]}>{tile.emoji}</Text>
@@ -1021,6 +1036,19 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     marginBottom: 10
+  },
+  serviceTileProfileAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    marginBottom: 10,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(236,190,103,0.72)",
+  },
+  serviceTileProfileAvatarImage: {
+    width: "100%",
+    height: "100%",
   },
   compactTileIcon: {
     width: 36,

@@ -3268,6 +3268,19 @@ def normalize_phone(value: object) -> str:
     return re.sub(r"\D+", "", str(value or ""))
 
 
+def phone_discovery_variants(value: object) -> set[str]:
+    normalized = normalize_phone(value)
+    if len(normalized) < 8 or len(normalized) > 15:
+        return set()
+    # Address books often omit the country code. Hash only the full number and
+    # plausible 8-10 digit national suffixes so matching remains private while
+    # supporting countries whose national numbers are shorter than ten digits.
+    variants = {normalized}
+    for suffix_length in range(8, min(10, len(normalized)) + 1):
+        variants.add(normalized[-suffix_length:])
+    return variants
+
+
 def canonical_e164_phone(value: object, country_code: object = "") -> str:
     raw_phone = str(value or "").strip()
     phone_digits = normalize_phone(raw_phone)
@@ -11652,7 +11665,7 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict[str, object]]:
+def get_mobile_housing_testimonials(city: str = "", limit: int = 6, public_origin: str = "") -> list[dict[str, object]]:
     city_name = (city or "").split(",", 1)[0].strip()
     with db() as con:
         rows = con.execute(
@@ -11676,12 +11689,22 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6) -> list[dict
         ).fetchall()
     testimonials: list[dict[str, object]] = []
     for row in rows:
+        user_id = int(row_value(row, "user_id") or 0)
+        stored_photo = str(row_value(row, "profile_photo_url") or "").strip()
+        # Published testimonials are visible before login, so their avatars
+        # need a narrowly scoped, expiring URL. Other profile-photo payloads
+        # continue using the authenticated endpoint.
+        photo_url = (
+            chat_notification_avatar_url(public_origin, user_id)
+            if public_origin and user_id > 0 and stored_photo.startswith(f"r2://{R2_BUCKET_NAME}/")
+            else avatar_delivery_path(stored_photo, user_id)
+        )
         testimonials.append(
             {
                 "id": int(row_value(row, "id") or 0),
                 "name": str(row_value(row, "user_name") or "FairFares member"),
                 "city": str(row_value(row, "city") or "FairFares community")[:80],
-                "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "user_id") or 0)),
+                "photoUrl": photo_url,
                 "rating": int(row_value(row, "rating") or 5),
                 "message": str(row_value(row, "message") or "")[:300],
             }
@@ -15848,13 +15871,16 @@ def mobile_ride_payload(
     status = ride_effective_status(row)
     owner_user_id = int(row_value(row, "user_id") or 0)
     owner_name = row_value(row, "owner_name")
-    if not owner_name and owner_user_id:
+    owner_photo = row_value(row, "owner_photo")
+    if owner_user_id and (not owner_name or not owner_photo):
         try:
             with db() as con:
-                owner = con.execute("SELECT name FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone()
-            owner_name = row_value(owner, "name") if owner else ""
+                owner = con.execute("SELECT name, profile_photo_url FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone()
+            owner_name = owner_name or (row_value(owner, "name") if owner else "")
+            owner_photo = owner_photo or (row_value(owner, "profile_photo_url") if owner else "")
         except sqlite3.Error:
-            owner_name = ""
+            owner_name = owner_name or ""
+            owner_photo = owner_photo or ""
     return {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
@@ -15862,6 +15888,7 @@ def mobile_ride_payload(
         "role": row_value(row, "rider_role"),
         "ownerUserId": owner_user_id,
         "ownerName": owner_name,
+        "ownerPhotoUrl": avatar_delivery_path(owner_photo, owner_user_id),
         "title": row_value(row, "title"),
         "origin": row_value(row, "origin_label"),
         "originLat": float(row_value(row, "origin_lat") or 0) or None,
@@ -16039,7 +16066,7 @@ def mobile_ride_posts(
         clauses.append("(lower(ride_posts.city_label) LIKE lower(?) OR lower(ride_posts.origin_label) LIKE lower(?) OR lower(ride_posts.destination_label) LIKE lower(?))")
         values.extend([f"%{city_root}%", f"%{city_root}%", f"%{city_root}%"])
     sql = f"""
-        SELECT ride_posts.*, users.name AS owner_name
+        SELECT ride_posts.*, users.name AS owner_name, users.profile_photo_url AS owner_photo
         FROM ride_posts
         LEFT JOIN users ON users.id = ride_posts.user_id
         WHERE {' AND '.join(clauses)}
@@ -18278,9 +18305,9 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                participant.last_read_message_id,
                participant.muted_at,
                participant.blocked_at,
-               other_user.id AS other_user_id,
-               other_user.name AS other_name,
-               other_user.profile_photo_url AS other_photo_url,
+               COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
+               COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+               COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -18290,6 +18317,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
         LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
         LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
         LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+        LEFT JOIN users participant_user ON participant_user.id = participant.user_id
         LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
         WHERE conversations.id = ? AND participant.user_id = ?
         GROUP BY conversations.id
@@ -18318,9 +18346,9 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                participant.last_read_message_id,
                participant.muted_at,
                participant.blocked_at,
-               other_user.id AS other_user_id,
-               other_user.name AS other_name,
-               other_user.profile_photo_url AS other_photo_url,
+               COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
+               COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+               COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -18330,6 +18358,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
         LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
         LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
         LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+        LEFT JOIN users participant_user ON participant_user.id = participant.user_id
         LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
         WHERE conversations.public_id = ? AND participant.user_id = ?
           AND (
@@ -19046,6 +19075,23 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     return results
 
 
+def chitthi_notification_copy(sender_name: object, preview: object, conversation_name: object = "", is_group: bool = False) -> tuple[str, str, str]:
+    """Return the canonical title, body, and subtitle for every Chitthi push.
+
+    Direct: sender name + message body.
+    Group: sender name + group name + message body.
+
+    Keeping the sender, group, and message in separate system-notification
+    fields matches the native communication layout and avoids duplicated text.
+    """
+    sender = clean_text_value(sender_name, 120) or "FairFares member"
+    message = clean_text_value(preview, 240) or "New Chitthi letter"
+    group = clean_text_value(conversation_name, 120)
+    if is_group:
+        return sender, message, group or "Chitthi group"
+    return sender, message, ""
+
+
 def push_idempotency_key(data: dict[str, object], title: str, body: str) -> str:
     notification_type = str(data.get("type") or "GENERIC")
     stable_id = next((str(data.get(key) or "").strip() for key in (
@@ -19536,9 +19582,9 @@ def get_chat_conversations_for_user(
                    last_message.id AS last_message_id,
                    last_message.sender_id AS last_sender_id,
                    last_message.message_text AS last_message,
-                   other_user.id AS other_user_id,
-                   other_user.name AS other_name,
-                   other_user.profile_photo_url AS other_photo_url,
+                   COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
+                   COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+                   COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                    MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                    MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
             FROM chat_conversations conversations
@@ -19552,6 +19598,7 @@ def get_chat_conversations_for_user(
             )
             LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
             LEFT JOIN users other_user ON other_user.id = other_participant.user_id
+            LEFT JOIN users participant_user ON participant_user.id = participant.user_id
             LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             WHERE conversations.status = 'ACTIVE'
@@ -22947,10 +22994,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         supplied = payload.get("phoneHashes") if isinstance(payload, dict) else []
         hashes = {
             str(value).strip().lower() for value in supplied
-            if isinstance(value, str) and len(str(value).strip()) == 64
+            if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", str(value).strip())
         } if isinstance(supplied, list) else set()
-        if not hashes or len(hashes) > 1000:
-            self.send_json({"ok": False, "message": "Choose between 1 and 1,000 contact phone numbers."}, 400)
+        if not hashes or len(hashes) > 5000:
+            self.send_json({"ok": False, "message": "Choose between 1 and 5,000 contact phone numbers."}, 400)
             return
         with db() as con:
             candidates = con.execute(
@@ -22961,8 +23008,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchall()
         matches = []
         for candidate in candidates:
-            normalized = normalize_phone(row_value(candidate, "phone"))
-            variants = {normalized, normalized[-10:]} if len(normalized) >= 10 else set()
+            variants = phone_discovery_variants(row_value(candidate, "phone"))
             matching_hash = next(
                 (hashlib.sha256(value.encode("utf-8")).hexdigest() for value in variants
                  if hashlib.sha256(value.encode("utf-8")).hexdigest() in hashes),
@@ -23347,7 +23393,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             # Never expose the encrypted-at-rest database placeholder in a
             # system notification. A plaintext preview is intentionally not
             # available to the relay server for an E2EE message.
-            notification_preview = "New Chitthi message"
+            notification_preview = "New Chitthi letter"
         else:
             notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
@@ -23394,8 +23440,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             notification_sender_avatar_url = chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
             notification_group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
             sender_display_name = row_value(sender, "name") or "FairFares member"
-            push_title = conversation_name if is_group and conversation_name else sender_display_name or "New Chitthi message"
-            push_body = f"{sender_display_name}: {notification_preview}" if is_group and sender_display_name else notification_preview
+            push_title, push_body, push_subtitle = chitthi_notification_copy(
+                sender_display_name, notification_preview, conversation_name, is_group,
+            )
             common_data = {
                 "type": "CHITTHI_MESSAGE",
                 "conversationId": row_value(conversation, "public_id"),
@@ -23406,7 +23453,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "groupAvatarUrl": notification_group_avatar_url,
                 "conversationName": conversation_name,
                 "isGroup": is_group,
-                "subtitle": sender_display_name if is_group else conversation_name,
+                "subtitle": push_subtitle,
             }
             for token, encrypted_preview in push_jobs:
                 enqueue_mobile_pushes(
@@ -23853,6 +23900,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
+            community_id = int(row_value(conversation, "community_id") or 0)
+            if community_id:
+                # Encrypted group sends must use current community membership
+                # for envelope validation and notification recipient selection.
+                sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
             block_error = chat_conversation_block_error(con, conversation, int(user["id"]))
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
@@ -23948,12 +24000,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     community_id = int(row_value(conversation, "community_id") or 0)
                     sender_avatar_url = chat_notification_avatar_url(self.public_origin(), current_user_id)
                     group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
-                    # Match normal Chitthi notification conventions: direct
-                    # chats lead with the member; groups lead with the group and
-                    # identify the acting member in the body. Never include E2EE
-                    # message content in a server-generated reaction alert.
-                    notification_title = conversation_name if is_group else reactor_name
-                    notification_body = f"{reactor_name} reacted {emoji} to your message" if is_group else f"Reacted {emoji} to your message"
+                    # Match normal Chitthi notification conventions: the acting
+                    # member is the title, the group is the subtitle, and the
+                    # reaction is the body. Never include E2EE message content
+                    # in a server-generated reaction alert.
+                    notification_title, notification_body, notification_subtitle = chitthi_notification_copy(
+                        reactor_name,
+                        f"reacted {emoji} to your message" if is_group else f"Reacted {emoji} to your message",
+                        conversation_name,
+                        is_group,
+                    )
                     notification_data = {
                         "type": "CHITTHI_REACTION",
                         # Each actual add/change is a distinct notification.
@@ -23969,7 +24025,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "groupAvatarUrl": group_avatar_url,
                         "conversationName": conversation_name,
                         "isGroup": is_group,
-                        "subtitle": reactor_name if is_group else conversation_name,
+                        "subtitle": notification_subtitle,
                         "reaction": emoji,
                     }
         if notification_data:
@@ -23992,6 +24048,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (int(message["conversation_id"]),)).fetchone()
             sender = con.execute("SELECT * FROM users WHERE id = ?", (int(message["sender_id"]),)).fetchone()
             if conversation and sender:
+                community_id = int(row_value(conversation, "community_id") or 0)
+                if community_id:
+                    sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
                 con.commit()
                 self.notify_chat_recipients(con, conversation, sender, message)
         self.send_json({"ok": True, "messageId": int(message["id"])}, 201)
@@ -24018,6 +24077,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
+            community_id = int(row_value(conversation, "community_id") or 0)
+            if community_id:
+                sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
             block_error = chat_conversation_block_error(con, conversation, current_user_id)
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
@@ -32111,7 +32173,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 }, 409)
                 return
             con.execute(
-                "UPDATE users SET phone = ?, phone_verified_at = NULL, is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP) WHERE id = ?",
+                """UPDATE users
+                   SET phone = ?, phone_verified_at = NULL, chat_phone_discoverable = 1,
+                       is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+                   WHERE id = ?""",
                 (phone, user_id),
             )
             con.execute("UPDATE auth_phone_continuations SET phone = ?, used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (phone, token_hash))
@@ -32684,7 +32749,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
                 "hasSubmittedHousingExperience": has_submitted_housing_experience(user_id),
                 "hasSubmittedMobileReview": has_submitted_mobile_review(user_id),
-                "testimonials": get_mobile_housing_testimonials(city=city),
+                "testimonials": get_mobile_housing_testimonials(city=city, public_origin=self.public_origin()),
             }
         )
 

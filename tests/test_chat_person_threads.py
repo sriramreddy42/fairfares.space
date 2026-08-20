@@ -2,6 +2,7 @@ import os
 import tempfile
 import time
 import unittest
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -341,6 +342,52 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(first_inbox[0]["unread"], 2)
         self.assertEqual(second_inbox[0]["unread"], 1)
         self.assertEqual(unrelated_inbox[0]["unread"], 15)
+
+    def test_opening_one_thread_keeps_another_thread_unread(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "current-unread@example.com")
+            first_sender_id = self.insert_user(con, "First Sender", "first-sender@example.com")
+            second_sender_id = self.insert_user(con, "Second Sender", "second-sender@example.com")
+            first_conversation_id = self.insert_direct_conversation(
+                con, current_user_id, first_sender_id, 1, 0,
+            )
+            second_conversation_id = self.insert_direct_conversation(
+                con, current_user_id, second_sender_id, 2, 0,
+            )
+            con.executemany(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, ?)",
+                (
+                    (first_conversation_id, first_sender_id, "first unread letter"),
+                    (second_conversation_id, second_sender_id, "second unread letter one"),
+                    (second_conversation_id, second_sender_id, "second unread letter two"),
+                ),
+            )
+            current_user = con.execute("SELECT * FROM users WHERE id = ?", (current_user_id,)).fetchone()
+            first_public_id = str(con.execute(
+                "SELECT public_id FROM chat_conversations WHERE id = ?", (first_conversation_id,),
+            ).fetchone()["public_id"])
+            second_public_id = str(con.execute(
+                "SELECT public_id FROM chat_conversations WHERE id = ?", (second_conversation_id,),
+            ).fetchone()["public_id"])
+
+        before = {row["id"]: row["unread"] for row in app.get_chat_conversations_for_user(current_user_id)}
+        self.assertEqual(before[first_public_id], 1)
+        self.assertEqual(before[second_public_id], 2)
+
+        responses = []
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: current_user
+        handler.public_origin = lambda: "https://www.fairfare.space"
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+        handler.api_chat_messages(urllib.parse.urlparse(
+            f"/api/chat/messages?conversation_id={first_public_id}"
+        ))
+        self.assertEqual(responses[-1][1], 200)
+
+        after = {row["id"]: row["unread"] for row in app.get_chat_conversations_for_user(current_user_id)}
+        self.assertEqual(after[first_public_id], 0)
+        self.assertEqual(after[second_public_id], 2)
+        self.assertEqual(sum(after.values()), 2)
 
     def test_housing_and_carpool_cards_bind_to_the_correct_profile(self):
         with app.db() as con:

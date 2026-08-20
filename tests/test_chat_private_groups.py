@@ -62,6 +62,50 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNotNone(group)
         return group
 
+    def test_self_conversation_keeps_current_profile_avatar_identity(self):
+        stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/owner-current.png"
+        with app.db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (stored_photo, self.owner))
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES (?, 'DIRECT', ?)",
+                ("self-avatar-thread", "Owner"),
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                (conversation_id, self.owner),
+            )
+
+        conversation = next(item for item in app.get_chat_conversations_for_user(self.owner) if item["id"] == "self-avatar-thread")
+        self.assertEqual(conversation["otherUserId"], self.owner)
+        self.assertEqual(conversation["otherName"], "Owner")
+        self.assertEqual(conversation["otherPhotoUrl"], stored_photo)
+
+    def test_group_participant_sync_restores_notification_recipients(self):
+        group = self.create_group()
+        with app.db() as con:
+            community = con.execute("SELECT * FROM chat_communities WHERE public_id = ?", (group["id"],)).fetchone()
+            con.execute(
+                "INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
+                (int(community["id"]), self.member),
+            )
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+            conversation_id = int(conversation["id"])
+            con.execute(
+                "DELETE FROM chat_participants WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, self.member),
+            )
+
+            app.sync_chat_conversation_members_from_community(con, conversation_id, int(community["id"]))
+            recipients = {
+                int(row["user_id"])
+                for row in con.execute("SELECT user_id FROM chat_participants WHERE conversation_id = ?", (conversation_id,))
+            }
+
+        self.assertEqual(recipients, {self.owner, self.member})
+
     def test_private_group_is_hidden_and_raw_join_is_rejected(self):
         group = self.create_group()
         self.assertEqual(group["visibility"], "PRIVATE")

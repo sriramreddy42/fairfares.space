@@ -44,21 +44,29 @@ final class NotificationService: UNNotificationServiceExtension {
         let conversationId = stringValue(payload["conversationId"])
         let conversationName = stringValue(payload["conversationName"])
         let isGroup = boolValue(payload["isGroup"])
-        let avatarUrl = URL(string: stringValue(payload["senderAvatarUrl"]))
-            ?? URL(string: stringValue(payload["groupAvatarUrl"]))
-
-        if isGroup && !conversationName.isEmpty {
-            content.title = conversationName
-            content.subtitle = senderName
-        }
+        // Direct chats display the sender. Group chats display the group image,
+        // matching the native communication-notification hierarchy.
+        let avatarUrl = URL(string: stringValue(
+            payload[isGroup ? "groupAvatarUrl" : "senderAvatarUrl"]
+        ))
+        let avatarFallbackName = isGroup
+            ? (conversationName.isEmpty ? "Chitthi group" : conversationName)
+            : senderName
 
         var resolvedBody = content.body
         if let preview = decryptPreview(payload), !preview.isEmpty {
             resolvedBody = preview
         } else if isEncryptedPlaceholder(content.body) {
-            resolvedBody = "New Chitthi message"
+            resolvedBody = "New Chitthi letter"
         }
-        content.body = notificationBody(resolvedBody, senderName: senderName, isGroup: isGroup)
+        applyCanonicalStructure(
+            to: content,
+            body: resolvedBody,
+            senderName: senderName,
+            conversationId: conversationId,
+            conversationName: conversationName,
+            isGroup: isGroup
+        )
 
         loadAvatar(from: avatarUrl) { [weak self] avatarData in
             guard let self else { return }
@@ -69,6 +77,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 conversationId: conversationId,
                 conversationName: conversationName,
                 isGroup: isGroup,
+                avatarFallbackName: avatarFallbackName,
                 avatarData: avatarData
             )
         }
@@ -87,16 +96,26 @@ final class NotificationService: UNNotificationServiceExtension {
         conversationId: String,
         conversationName: String,
         isGroup: Bool,
+        avatarFallbackName: String,
         avatarData: Data?
     ) {
+        // Preserve these before asking Intents to enrich the content. iOS is
+        // free to rearrange title/subtitle/body in `updating(from:)`; restoring
+        // the canonical values afterwards keeps the completed and timeout
+        // delivery paths visually identical.
+        let canonicalTitle = content.title
+        let canonicalSubtitle = content.subtitle
+        let canonicalBody = content.body
+        let canonicalThreadIdentifier = content.threadIdentifier
+        let canonicalTargetContentIdentifier = content.targetContentIdentifier
         let senderHandle = INPersonHandle(value: senderId, type: .unknown)
-        let normalizedAvatarData = avatarData ?? initialsAvatarData(for: senderName)
-        let senderImage = normalizedAvatarData.map(INImage.init(imageData:))
+        let normalizedAvatarData = avatarData ?? initialsAvatarData(for: avatarFallbackName)
+        let communicationImage = normalizedAvatarData.map(INImage.init(imageData:))
         let sender = INPerson(
             personHandle: senderHandle,
             nameComponents: nil,
             displayName: senderName,
-            image: senderImage,
+            image: isGroup ? nil : communicationImage,
             contactIdentifier: nil,
             customIdentifier: senderId,
             isMe: false,
@@ -115,15 +134,47 @@ final class NotificationService: UNNotificationServiceExtension {
             sender: sender,
             attachments: nil
         )
+        if isGroup, let communicationImage {
+            intent.setImage(communicationImage, forParameterNamed: \.speakableGroupName)
+        }
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .incoming
         interaction.donate { [weak self] _ in
             guard let self else { return }
             do {
-                self.deliver(try content.updating(from: intent))
+                let updated = try content.updating(from: intent)
+                guard let normalized = updated.mutableCopy() as? UNMutableNotificationContent else {
+                    self.deliver(content)
+                    return
+                }
+                normalized.title = canonicalTitle
+                normalized.subtitle = canonicalSubtitle
+                normalized.body = canonicalBody
+                normalized.threadIdentifier = canonicalThreadIdentifier
+                normalized.targetContentIdentifier = canonicalTargetContentIdentifier
+                self.deliver(normalized)
             } catch {
                 self.deliver(content)
             }
+        }
+    }
+
+    private func applyCanonicalStructure(
+        to content: UNMutableNotificationContent,
+        body: String,
+        senderName: String,
+        conversationId: String,
+        conversationName: String,
+        isGroup: Bool
+    ) {
+        content.title = senderName
+        content.subtitle = isGroup
+            ? (conversationName.isEmpty ? "Chitthi group" : conversationName)
+            : ""
+        content.body = body
+        if !conversationId.isEmpty {
+            content.threadIdentifier = conversationId
+            content.targetContentIdentifier = conversationId
         }
     }
 
@@ -204,13 +255,6 @@ final class NotificationService: UNNotificationServiceExtension {
             || normalized.contains("new chitthi message")
             || normalized.contains("chitthi message")
             || normalized == "encrypted message"
-    }
-
-    private func notificationBody(_ value: String, senderName: String, isGroup: Bool) -> String {
-        guard isGroup, !senderName.isEmpty else { return value }
-        if value.hasPrefix("\(senderName):") { return value }
-        if value.hasPrefix("\(senderName) ") { return value }
-        return "\(senderName): \(value)"
     }
 
     private func decryptPreview(_ payload: [AnyHashable: Any]) -> String? {

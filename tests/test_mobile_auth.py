@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from unittest import mock
@@ -63,6 +64,48 @@ class MobileAuthTest(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def post_form(server, path, payload):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            data=urllib.parse.urlencode(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read().decode("utf-8")
+
+    def test_published_housing_testimonial_avatar_is_signed_for_guests(self):
+        stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/public-testimonial.png"
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, profile_photo_url) VALUES (?, ?, ?, 1, ?)",
+                ("Public Reviewer", "reviewer@example.com", "unused", stored_photo),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, ?, 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
+                (user_id, "Denver, CO", "A genuinely useful public housing review."),
+            )
+
+        origin = "https://fairfares.example"
+        testimonial = app.get_mobile_housing_testimonials("Denver, CO", public_origin=origin)[0]
+        parsed = urllib.parse.urlparse(testimonial["photoUrl"])
+        query = urllib.parse.parse_qs(parsed.query)
+
+        self.assertEqual(f"{parsed.scheme}://{parsed.netloc}", origin)
+        self.assertEqual(parsed.path, "/api/chat/notification-avatar")
+        self.assertEqual(query["user"], [str(user_id)])
+        self.assertTrue(query.get("expires"))
+        self.assertTrue(query.get("signature"))
+        self.assertNotIn("public-testimonial.png", testimonial["photoUrl"])
+
+        expires_at = int(query["expires"][0])
+        self.assertEqual(
+            query["signature"][0],
+            app.chat_notification_avatar_signature(user_id, expires_at),
+        )
 
     def test_mobile_signup_activation_and_login_complete_end_to_end(self):
         server, thread = self.start_server()
@@ -283,6 +326,7 @@ class MobileAuthTest(unittest.TestCase):
             self.assertTrue(completed["token"])
             self.assertEqual(completed["user"]["phone"], "+19375550198")
             self.assertFalse(completed["user"]["phoneVerified"])
+            self.assertTrue(completed["user"]["chatPhoneDiscoverable"])
 
             with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
                 repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
@@ -292,6 +336,82 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(repeat_status, 200)
             self.assertTrue(repeat["token"])
             self.assertFalse(repeat.get("phoneRequired", False))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_social_account_can_recover_password_and_keep_social_identity(self):
+        server, thread = self.start_server()
+        try:
+            claims = {
+                "sub": "google-recovery-member",
+                "email": "social-recovery@example.com",
+                "email_verified": True,
+                "name": "Social Recovery Member",
+            }
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                status, social = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "verified-google-token",
+                    "consentAccepted": True,
+                })
+            self.assertEqual(status, 200)
+            self.assertTrue(social["phoneRequired"])
+
+            with app.db() as con:
+                user = con.execute(
+                    "SELECT * FROM users WHERE email = ?",
+                    ("social-recovery@example.com",),
+                ).fetchone()
+                identity = con.execute(
+                    "SELECT * FROM auth_identities WHERE user_id = ?",
+                    (int(user["id"]),),
+                ).fetchone()
+            self.assertIsNotNone(user)
+            self.assertEqual(identity["provider"], "google")
+            self.assertEqual(identity["provider_subject"], "google-recovery-member")
+            self.assertIn(int(user["id"]), [int(row["id"]) for row in app.get_admin_users()])
+
+            reset_links = []
+            with mock.patch.object(
+                app,
+                "send_password_reset_email",
+                side_effect=lambda _email, _name, link: (reset_links.append(link) or (Path(self.temp_dir.name) / "reset.txt", "sent through test provider")),
+            ):
+                forgot_status, forgot_page = self.post_form(server, "/forgot-password", {
+                    "email": " social-recovery@example.com ",
+                })
+            self.assertEqual(forgot_status, 200)
+            self.assertTrue(reset_links)
+            self.assertIn("social-recovery@example.com", forgot_page)
+            token = urllib.parse.parse_qs(urllib.parse.urlparse(reset_links[0]).query)["token"][0]
+
+            reset_status, reset_page = self.post_form(server, "/reset-password", {
+                "token": token,
+                "password": "RecoveredSocialPassword123!",
+            })
+            self.assertEqual(reset_status, 200)
+            self.assertIn("Password reset successful", reset_page)
+
+            login_status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "social-recovery@example.com",
+                "password": "RecoveredSocialPassword123!",
+            })
+            self.assertEqual(login_status, 200)
+            self.assertTrue(login["token"])
+
+            with app.db() as con:
+                verification = con.execute(
+                    "SELECT used_at FROM email_verifications WHERE token = ? AND purpose = 'PASSWORD_RESET'",
+                    (token,),
+                ).fetchone()
+                preserved_identity = con.execute(
+                    "SELECT provider_subject FROM auth_identities WHERE user_id = ? AND provider = 'google'",
+                    (int(user["id"]),),
+                ).fetchone()
+            self.assertTrue(verification["used_at"])
+            self.assertEqual(preserved_identity["provider_subject"], "google-recovery-member")
         finally:
             server.shutdown()
             server.server_close()

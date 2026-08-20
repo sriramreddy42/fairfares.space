@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { absoluteAssetUrl, createSupportTicket, getAuthenticatedImagePreviewUri, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, setChatPhoneDiscoverability, updateMobileProfile } from "../api/client";
+import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
@@ -69,7 +70,6 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
-  const [profilePhotoPreviewUri, setProfilePhotoPreviewUri] = useState("");
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -91,12 +91,15 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string; profilePhoto?: string };
+        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
-        setProfilePhoto(draft.profilePhoto ?? user.profilePhotoUrl ?? "");
+        // The server photo is authoritative. Persisting a photo data URL or an
+        // old versioned URL here could overwrite the current avatar after a
+        // relaunch even though every other screen had already refreshed.
+        setProfilePhoto(user.profilePhotoUrl ?? "");
         setProfileDirty(true);
       } catch {
         void AsyncStorage.removeItem(profileDraftKey(user.id));
@@ -108,10 +111,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth, profilePhoto }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [dateOfBirth, email, name, phone, profileDirty, profilePhoto, user?.id]);
+  }, [dateOfBirth, email, name, phone, profileDirty, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +137,6 @@ export function ProfileScreen({
     };
   }, [user?.id]);
 
-  const photoUri = useMemo(() => profilePhoto ? absoluteAssetUrl(profilePhoto) : "", [profilePhoto]);
   const displayName = user?.name || "FairFares Guest";
   const sensitiveChanged = Boolean(user && (email.trim().toLowerCase() !== user.email.toLowerCase() || phone.trim() !== (user.phone || "")));
   const canSaveProfile = Boolean(user && profileDirty && name.trim() && email.trim() && (!sensitiveChanged || currentPassword.trim()) && !saving);
@@ -196,18 +198,6 @@ export function ProfileScreen({
     { title: "Privacy Policy", copy: "Data use and protection", icon: appAssets.serviceEye, onPress: () => void Linking.openURL("https://www.fairfare.space/privacy") },
     { title: "Delete account", copy: "Request account and data deletion", glyph: "⌫", requiresUser: true, danger: true, onPress: requestAccountDeletion }
   ];
-
-  useEffect(() => {
-    let cancelled = false;
-    setProfilePhotoPreviewUri("");
-    if (!profilePhoto) return () => { cancelled = true; };
-    void getAuthenticatedImagePreviewUri(profilePhoto).then((uri) => {
-      if (!cancelled) setProfilePhotoPreviewUri(uri);
-    }).catch(() => {
-      if (!cancelled) setProfilePhotoPreviewUri(photoUri);
-    });
-    return () => { cancelled = true; };
-  }, [photoUri, profilePhoto]);
 
   function requestAccountDeletion() {
     if (!user) {
@@ -340,11 +330,12 @@ export function ProfileScreen({
           </View>
         </View>
         <TouchableOpacity style={styles.avatar} onPress={choosePhoto}>
-          {profilePhotoPreviewUri ? (
-            <Image source={{ uri: profilePhotoPreviewUri }} style={styles.avatarImage} />
-          ) : (
-            <Text style={styles.avatarText}>{firstInitial(displayName)}</Text>
-          )}
+          <UserAvatar
+            photoUrl={profilePhoto}
+            style={styles.avatarImage}
+            imageStyle={styles.avatarImage}
+            fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>}
+          />
         </TouchableOpacity>
       </View>
 
@@ -398,7 +389,7 @@ export function ProfileScreen({
             <View style={styles.privacyRow}>
               <View style={styles.privacyCopy}>
                 <Text style={styles.label}>Find me by exact phone number</Text>
-                <Text style={styles.cardCopy}>Off by default. Your number is never displayed in Chitthi results.</Text>
+                <Text style={styles.cardCopy}>Control whether contacts who already have your exact number can find you. Your number is never displayed.</Text>
               </View>
               <Switch value={phoneDiscoverable} onValueChange={(value) => void changePhoneDiscovery(value)} />
             </View>

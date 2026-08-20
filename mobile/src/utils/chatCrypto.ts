@@ -146,10 +146,15 @@ export function contactDiscoveryHash(phone: string) {
 
 export function contactDiscoveryVariants(phone: string) {
   const normalized = phone.replace(/\D/g, "");
-  if (normalized.length < 10 || normalized.length > 15) return [];
+  if (normalized.length < 8 || normalized.length > 15) return [];
   // Contact books and FairFares profiles do not always store country codes in
-  // the same form. Include the national-number suffix without assuming +1.
-  return Array.from(new Set([normalized, normalized.slice(-10)]));
+  // the same form. Include plausible 8-10 digit national suffixes without
+  // assuming a particular country.
+  const variants = new Set([normalized]);
+  for (let length = 8; length <= Math.min(10, normalized.length); length += 1) {
+    variants.add(normalized.slice(-length));
+  }
+  return Array.from(variants);
 }
 
 export async function getOrCreateDeviceIdentity(userId: number): Promise<DeviceIdentity> {

@@ -201,6 +201,7 @@ export type RidePost = {
   role: "RIDER" | "DRIVER";
   ownerUserId?: number;
   ownerName?: string;
+  ownerPhotoUrl?: string;
   title: string;
   origin: string;
   originLat?: number | null;

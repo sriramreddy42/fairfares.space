@@ -273,6 +273,23 @@ class ChatRealtimeTest(unittest.TestCase):
                 national_payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual([person["name"] for person in national_payload["people"]], ["Recipient"])
             self.assertEqual(national_payload["people"][0]["phoneHash"], national_hash)
+
+            with app.db() as con:
+                con.execute(
+                    "UPDATE users SET phone = '+65 8123 4567' WHERE id = ?",
+                    (self.recipient_id,),
+                )
+            short_national_hash = hashlib.sha256(b"81234567").hexdigest()
+            short_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [short_national_hash]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(short_request, timeout=3) as response:
+                short_payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual([person["name"] for person in short_payload["people"]], ["Recipient"])
+            self.assertEqual(short_payload["people"][0]["phoneHash"], short_national_hash)
         finally:
             server.shutdown()
             server.server_close()
