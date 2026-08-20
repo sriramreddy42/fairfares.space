@@ -54,7 +54,6 @@ export function ProfileScreen({
   const [phone, setPhone] = useState(user?.phone || "");
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
-  const [profilePhotoDirty, setProfilePhotoDirty] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [profileDirty, setProfileDirty] = useState(false);
@@ -80,7 +79,6 @@ export function ProfileScreen({
     setPhone(user?.phone || "");
     setDateOfBirth(user?.dateOfBirth || "");
     setProfilePhoto(user?.profilePhotoUrl || "");
-    setProfilePhotoDirty(false);
     setCurrentPassword("");
     setProfileDirty(false);
   }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.profilePhotoUrl]);
@@ -233,15 +231,26 @@ export function ProfileScreen({
       onLogin();
       return;
     }
+    const previousPhoto = profilePhoto;
     try {
       const picked = await pickCompressedImages(1, 720, 0.7);
       if (picked[0]) {
+        // Show the selected image immediately, then replace the local data URL
+        // with the authoritative versioned server URL. Requiring a second Save
+        // tap left the Account header updated while the bottom tab, Chitthi,
+        // and testimonials correctly continued showing the older saved photo.
         setProfilePhoto(picked[0]);
-        setProfilePhotoDirty(true);
-        setProfileDirty(true);
+        setSaving(true);
+        const payload = await updateMobileProfile({ profilePhoto: picked[0] });
+        setProfilePhoto(payload.user?.profilePhotoUrl || "");
+        onProfileUpdated(payload.user);
+        Alert.alert("Profile photo updated", "Your new photo is now used across FairFares.");
       }
     } catch (error) {
-      Alert.alert("Photo not added", error instanceof Error ? error.message : "Could not add profile photo.");
+      setProfilePhoto(previousPhoto);
+      Alert.alert("Photo not saved", error instanceof Error ? error.message : "Could not save your profile photo.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -259,7 +268,6 @@ export function ProfileScreen({
         phone,
         dateOfBirth,
         currentPassword,
-        ...(profilePhotoDirty ? { profilePhoto } : {}),
       });
       draftUserIdRef.current = payload.user?.id ?? user.id;
       setName(payload.user?.name || "");
@@ -267,7 +275,6 @@ export function ProfileScreen({
       setPhone(payload.user?.phone || "");
       setDateOfBirth(payload.user?.dateOfBirth || "");
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
-      setProfilePhotoDirty(false);
       onProfileUpdated(payload.user);
       setProfileDirty(false);
       void AsyncStorage.removeItem(profileDraftKey(user.id));
@@ -327,7 +334,7 @@ export function ProfileScreen({
             <View style={styles.badge}><Text style={styles.badgeText}>{user?.phone ? "Phone on file" : "Add phone"}</Text></View>
           </View>
         </View>
-        <TouchableOpacity style={styles.avatar} onPress={choosePhoto}>
+        <TouchableOpacity style={styles.avatar} onPress={choosePhoto} disabled={saving}>
           <UserAvatar
             photoUrl={profilePhoto}
             style={styles.avatarImage}
@@ -377,8 +384,8 @@ export function ProfileScreen({
             </>
             ) : null}
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto}>
-                <Text style={styles.secondaryButtonText}>Upload photo</Text>
+              <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto} disabled={saving}>
+                <Text style={styles.secondaryButtonText}>{saving ? "Saving photo…" : "Upload photo"}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
                 <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
