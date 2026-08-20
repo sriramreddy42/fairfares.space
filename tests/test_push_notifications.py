@@ -69,11 +69,11 @@ class PushNotificationTest(unittest.TestCase):
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
 
-    def add_token(self, token, enabled=1):
+    def add_token(self, token, enabled=1, notification_schema=0):
         with app.db() as con:
             con.execute(
-                "INSERT INTO mobile_push_tokens (user_id, token, platform, enabled) VALUES (?, ?, 'android', ?)",
-                (self.user_id, token, enabled),
+                "INSERT INTO mobile_push_tokens (user_id, token, platform, notification_schema, enabled) VALUES (?, ?, 'android', ?, ?)",
+                (self.user_id, token, notification_schema, enabled),
             )
 
     def test_chitthi_direct_notification_has_stable_sender_layout(self):
@@ -341,10 +341,10 @@ class PushNotificationTest(unittest.TestCase):
             "conversationName": "DU Housing Board",
             "isGroup": True,
             "subtitle": "DU Housing Board",
+            "nativeGroupEnrichment": True,
         }
 
-        with patch.object(app, "CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED", True), \
-             patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Marisa", "DU Housing Board\nHello", data)
 
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
@@ -446,6 +446,30 @@ class PushNotificationTest(unittest.TestCase):
         mock_send.assert_called_once()
         self.assertEqual(mock_send.call_args.args[0], [enabled_token])
         self.assertEqual(mock_send.call_args.args[3]["type"], "CARPOOL_REQUEST")
+
+    def test_group_native_enrichment_is_enabled_only_for_capable_device(self):
+        legacy_token = "ExpoPushToken[group-legacy-device]"
+        current_token = "ExpoPushToken[group-schema-three-device]"
+        self.add_token(legacy_token, notification_schema=0)
+        self.add_token(current_token, notification_schema=3)
+        payload = {
+            "type": "CHITTHI_MESSAGE",
+            "messageId": 901,
+            "conversationId": "FFC-GROUP-901",
+            "conversationName": "DU Housing Board",
+            "isGroup": True,
+        }
+
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Marisa", "Hello group", payload)
+
+        with app.db() as con:
+            rows = con.execute("SELECT token, data_json FROM mobile_push_outbox ORDER BY token").fetchall()
+        enrichment = {
+            row["token"]: json.loads(row["data_json"])["nativeGroupEnrichment"]
+            for row in rows
+        }
+        self.assertEqual(enrichment, {legacy_token: False, current_token: True})
 
     def test_legacy_fchat_payload_stays_on_chitthi_message_channel(self):
         token = "ExponentPushToken[chitthi-device]"

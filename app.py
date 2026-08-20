@@ -206,10 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-group-plain-layout-v5"
-CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED = str(
-    os.environ.get("FAIRFARES_CHITTHI_GROUP_NATIVE_ENRICHMENT", "0")
-).strip().lower() in {"1", "true", "yes", "on"}
+BACKEND_RELEASE = "chitthi-group-device-schema-v6"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -6535,6 +6532,7 @@ def init_db() -> None:
                 token TEXT NOT NULL UNIQUE,
                 platform TEXT NOT NULL DEFAULT '',
                 device_label TEXT NOT NULL DEFAULT '',
+                notification_schema INTEGER NOT NULL DEFAULT 0,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -7523,6 +7521,7 @@ def init_db() -> None:
         ensure_column(con, "chat_attachment_uploads", "multipart_part_size", "multipart_part_size INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "chat_attachment_uploads", "multipart_completed_at", "multipart_completed_at TEXT")
         ensure_column(con, "mobile_push_tokens", "device_id", "device_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "mobile_push_tokens", "notification_schema", "notification_schema INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "chat_communities", "kind", "kind TEXT NOT NULL DEFAULT 'COMMUNITY'")
         ensure_column(con, "chat_communities", "name", "name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_communities", "description", "description TEXT NOT NULL DEFAULT ''")
@@ -19023,7 +19022,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     )
     allow_native_enrichment = (
         is_chitthi_notification
-        and (not is_group_notification or CHITTHI_GROUP_NATIVE_ENRICHMENT_ENABLED)
+        and (not is_group_notification or bool(notification_data.get("nativeGroupEnrichment")))
     )
     image_url = str(notification_data.get("imageUrl") or "").strip()
     subtitle = str(notification_data.get("subtitle") or "").strip()
@@ -19462,7 +19461,7 @@ def send_mobile_push_for_users(
         category = mobile_push_category(data)
         rows = con.execute(
             f"""
-            SELECT tokens.user_id, tokens.token,
+            SELECT tokens.user_id, tokens.token, tokens.notification_schema,
                    preferences.user_id AS preference_user_id,
                    preferences.chitthi_enabled, preferences.carpool_enabled,
                    preferences.rentals_enabled, preferences.housing_enabled,
@@ -19476,12 +19475,16 @@ def send_mobile_push_for_users(
         ).fetchall()
     preference_column = f"{category}_enabled"
     rows = [row for row in rows if category == "mandatory" or not row_value(row, "preference_user_id") or bool(int(row_value(row, preference_column) or 0))]
-    enqueue_mobile_pushes(
-        [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or "")) for row in rows],
-        title,
-        body,
-        data,
-    )
+    for row in rows:
+        token_data = dict(data or {})
+        if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
+            token_data["nativeGroupEnrichment"] = int(row_value(row, "notification_schema") or 0) >= 3
+        enqueue_mobile_pushes(
+            [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or ""))],
+            title,
+            body,
+            token_data,
+        )
 
 
 def start_mobile_push_scheduler() -> None:
@@ -23623,7 +23626,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (recipient_id,),
                 ).fetchone()["unread_count"] or 0)
                 token_rows = con.execute(
-                    "SELECT token, device_id FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
+                    "SELECT token, device_id, notification_schema FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
                     (recipient_id,),
                 ).fetchall()
                 for token_row in token_rows:
@@ -23638,6 +23641,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",
                         "previewNonce": str(row_value(envelope, "preview_nonce") or "") if envelope else "",
                         "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
+                        "nativeGroupEnrichment": int(row_value(token_row, "notification_schema") or 0) >= 3,
                         "badge": unread_badge,
                     }))
         if push_jobs:
@@ -32708,6 +32712,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         platform = clean_text_value(payload.get("platform"), 30).lower()
         device_label = clean_text_value(payload.get("deviceLabel") or payload.get("device_label"), 120)
         device_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(payload.get("deviceId") or payload.get("device_id"), 100))
+        notification_schema = max(0, min(int(float_from_value(payload.get("notificationSchema") or payload.get("notification_schema")) or 0), 10))
         enabled = str(payload.get("enabled", "1")).strip().lower() not in {"0", "false", "no", "off"}
         if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
             self.send_json({"ok": False, "error": "A valid Expo push token is required."}, 400)
@@ -32717,7 +32722,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             with db() as con:
                 existing = con.execute(
                     """
-                    SELECT tokens.user_id, tokens.platform, tokens.device_label, tokens.device_id, tokens.enabled,
+                    SELECT tokens.user_id, tokens.platform, tokens.device_label, tokens.device_id,
+                           tokens.notification_schema, tokens.enabled,
                            preferences.chitthi_enabled, preferences.carpool_enabled, preferences.rentals_enabled,
                            preferences.housing_enabled, preferences.support_enabled, preferences.marketing_enabled
                     FROM mobile_push_tokens tokens
@@ -32732,24 +32738,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     and str(row_value(existing, "platform") or "") == platform
                     and str(row_value(existing, "device_label") or "") == device_label
                     and str(row_value(existing, "device_id") or "") == device_id
+                    and int(row_value(existing, "notification_schema") or 0) == notification_schema
                     and bool(int(row_value(existing, "enabled") or 0)) == enabled
                     and (not enabled or all(bool(int(row_value(existing, f"{category}_enabled") or 0)) for category in ("chitthi", "carpool", "rentals", "housing", "support", "marketing")))
                 )
                 if not already_current:
                     con.execute(
                         """
-                        INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, device_id, enabled)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, device_id, notification_schema, enabled)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(token) DO UPDATE SET
                             user_id = excluded.user_id,
                             platform = excluded.platform,
                             device_label = excluded.device_label,
                             device_id = excluded.device_id,
+                            notification_schema = excluded.notification_schema,
                             enabled = excluded.enabled,
                             updated_at = CURRENT_TIMESTAMP,
                             last_seen_at = CURRENT_TIMESTAMP
                         """,
-                        (current_user_id, token, platform, device_label, device_id, 1 if enabled else 0),
+                        (current_user_id, token, platform, device_label, device_id, notification_schema, 1 if enabled else 0),
                     )
                     if enabled:
                         con.execute(

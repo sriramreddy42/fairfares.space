@@ -357,7 +357,7 @@ function FairFaresApp() {
   const listingHasPropertyDetails = listingIsHavePlace || listingRoommateHasPlace;
   const listingLocationInput = listingHasPropertyDetails ? listingForm.streetAddress : listingForm.area;
   async function enableMobileNotifications(requestPermission = true) {
-    if (Platform.OS === "web" || !Device.isDevice) {
+    if (Platform.OS === "web") {
       return false;
     }
     if (pushRegistrationRunningRef.current) return false;
@@ -419,6 +419,9 @@ function FairFaresApp() {
         }
         return false;
       }
+      // Simulators can exercise local APNs payloads and the Notification
+      // Service Extension, but cannot obtain a real Expo/APNs device token.
+      if (!Device.isDevice) return true;
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });

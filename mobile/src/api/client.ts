@@ -951,11 +951,11 @@ export async function getChatConversationsPage(cursor = "", offset = 0) {
   }
 }
 
-export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "") {
+export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "", notificationSchema = 3) {
   return request<{ ok: boolean; enabled: boolean }>("/api/mobile/push-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, platform, deviceLabel, enabled, deviceId })
+    body: JSON.stringify({ token, platform, deviceLabel, enabled, deviceId, notificationSchema })
   }, { silentNetworkFailure: true, attempts: 1 });
 }
 
