@@ -397,12 +397,9 @@ class PushNotificationTest(unittest.TestCase):
                 self.assertEqual(message["sound"], "default")
                 self.assertEqual(message["channelId"], "chitthi-messages-v2")
                 self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
-                if notification_type == "CHITTHI_REACTION":
-                    self.assertNotIn("mutableContent", message)
-                else:
-                    self.assertTrue(message["mutableContent"])
+                self.assertTrue(message["mutableContent"])
 
-    def test_direct_reaction_bypasses_native_message_rewrite(self):
+    def test_direct_reaction_uses_native_enrichment_for_profile_picture(self):
         token = "ExpoPushToken[direct-reaction-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-direct-reaction"}]})
 
@@ -421,7 +418,7 @@ class PushNotificationTest(unittest.TestCase):
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
         self.assertEqual(message["body"], "Reacted 🎉 to your message")
         self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
-        self.assertNotIn("mutableContent", message)
+        self.assertTrue(message["mutableContent"])
 
     def test_carpool_payload_uses_carpool_channel_and_disables_unregistered_token(self):
         good_token = "ExpoPushToken[good-device]"
@@ -495,7 +492,7 @@ class PushNotificationTest(unittest.TestCase):
         }
         self.assertEqual(enrichment, {legacy_token: False, current_token: True})
 
-    def test_group_reaction_keeps_plain_notification_on_capable_device(self):
+    def test_group_reaction_uses_native_enrichment_on_capable_device(self):
         token = "ExpoPushToken[group-reaction-schema-three-device]"
         self.add_token(token, notification_schema=3)
         payload = {
@@ -518,7 +515,7 @@ class PushNotificationTest(unittest.TestCase):
                 (token,),
             ).fetchone()
         self.assertEqual(row["body"], "reacted ❤️ to your message")
-        self.assertFalse(json.loads(row["data_json"])["nativeGroupEnrichment"])
+        self.assertTrue(json.loads(row["data_json"])["nativeGroupEnrichment"])
 
     def test_legacy_fchat_payload_stays_on_chitthi_message_channel(self):
         token = "ExponentPushToken[chitthi-device]"
