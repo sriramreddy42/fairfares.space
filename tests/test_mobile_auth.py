@@ -528,6 +528,73 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_consecutive_photo_replacements_invalidate_cache_and_personal_details_persist(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Replace Member", "replace@example.com", "+13035550120", app.hash_password("ReplacePassword123!")),
+            )
+        first_png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        second_png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nH0AAAAASUVORK5CYII=")
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "replace@example.com",
+                "password": "ReplacePassword123!",
+            })
+
+            def update_profile(payload):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                    data=json.dumps(payload).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            first = update_profile({"profilePhoto": f"data:image/png;base64,{base64.b64encode(first_png).decode('ascii')}"})
+            first_url = first["user"]["profilePhotoUrl"]
+            with app.db() as con:
+                first_reference = str(con.execute("SELECT profile_photo_url FROM users WHERE email = 'replace@example.com'").fetchone()[0])
+
+            second = update_profile({"profilePhoto": f"data:image/png;base64,{base64.b64encode(second_png).decode('ascii')}"})
+            second_url = second["user"]["profilePhotoUrl"]
+            self.assertNotEqual(first_url, second_url)
+            with app.db() as con:
+                persisted = con.execute("SELECT * FROM users WHERE email = 'replace@example.com'").fetchone()
+            self.assertNotEqual(first_reference, persisted["profile_photo_url"])
+            if first_reference.startswith("local://uploads/"):
+                first_path = Path(self.temp_dir.name) / "uploads" / first_reference.removeprefix("local://uploads/")
+                self.assertFalse(first_path.exists())
+
+            with self.assertRaises(urllib.error.HTTPError) as password_required:
+                update_profile({"name": "Replace Member Updated", "phone": "+13035550121"})
+            self.assertEqual(password_required.exception.code, 403)
+            details = update_profile({
+                "name": "Replace Member Updated",
+                "phone": "+13035550121",
+                "dateOfBirth": "1992-04-15",
+                "currentPassword": "ReplacePassword123!",
+            })
+            self.assertEqual(details["user"]["name"], "Replace Member Updated")
+            self.assertEqual(details["user"]["phone"], "+13035550121")
+            self.assertEqual(details["user"]["dateOfBirth"], "1992-04-15")
+            self.assertEqual(details["user"]["profilePhotoUrl"], second_url)
+
+            _fresh_status, fresh = self.post_json(server, "/api/mobile/login", {
+                "identifier": "replace@example.com",
+                "password": "ReplacePassword123!",
+            })
+            self.assertEqual(fresh["user"]["name"], "Replace Member Updated")
+            self.assertEqual(fresh["user"]["phone"], "+13035550121")
+            self.assertEqual(fresh["user"]["dateOfBirth"], "1992-04-15")
+            self.assertEqual(fresh["user"]["profilePhotoUrl"], second_url)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_preserves_guest_profile_and_rejects_member_phone_reuse(self):
         with app.db() as con:
             con.execute(
