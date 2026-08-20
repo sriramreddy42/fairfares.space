@@ -55,7 +55,11 @@ export function ProfileScreen({
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [savingMode, setSavingMode] = useState<"photo" | "details" | "">("");
+  const profileMutationRunningRef = useRef(false);
+  const currentProfileUserIdRef = useRef(Number(user?.id || 0));
+  currentProfileUserIdRef.current = Number(user?.id || 0);
+  const saving = Boolean(savingMode);
   const [profileDirty, setProfileDirty] = useState(false);
   const draftUserIdRef = useRef<number | null>(null);
   const [rideActivity, setRideActivity] = useState<RidePost[]>([]);
@@ -136,7 +140,10 @@ export function ProfileScreen({
   }, [user?.id]);
 
   const displayName = user?.name || "FairFares Guest";
-  const sensitiveChanged = Boolean(user && (email.trim().toLowerCase() !== user.email.toLowerCase() || phone.trim() !== (user.phone || "")));
+  const sensitiveChanged = Boolean(user && (
+    email.trim().toLowerCase() !== user.email.toLowerCase()
+    || phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "")
+  ));
   const canSaveProfile = Boolean(user && profileDirty && name.trim() && email.trim() && (!sensitiveChanged || currentPassword.trim()) && !saving);
   const accountHistoryItems = useMemo<AccountHistoryItem[]>(() => {
     if (historySection === "housing") return housingActivity.map((post) => ({
@@ -231,26 +238,34 @@ export function ProfileScreen({
       onLogin();
       return;
     }
+    if (profileMutationRunningRef.current) return;
+    profileMutationRunningRef.current = true;
+    setSavingMode("photo");
+    const operationUserId = Number(user.id || 0);
     const previousPhoto = profilePhoto;
+    let selectedPhoto = "";
     try {
       const picked = await pickCompressedImages(1, 720, 0.7);
-      if (picked[0]) {
+      selectedPhoto = picked[0] || "";
+      if (selectedPhoto && currentProfileUserIdRef.current === operationUserId) {
         // Show the selected image immediately, then replace the local data URL
         // with the authoritative versioned server URL. Requiring a second Save
         // tap left the Account header updated while the bottom tab, Chitthi,
         // and testimonials correctly continued showing the older saved photo.
-        setProfilePhoto(picked[0]);
-        setSaving(true);
-        const payload = await updateMobileProfile({ profilePhoto: picked[0] });
+        setProfilePhoto(selectedPhoto);
+        const payload = await updateMobileProfile({ profilePhoto: selectedPhoto });
+        if (currentProfileUserIdRef.current !== operationUserId || Number(payload.user?.id || 0) !== operationUserId) return;
         setProfilePhoto(payload.user?.profilePhotoUrl || "");
         onProfileUpdated(payload.user);
         Alert.alert("Profile photo updated", "Your new photo is now used across FairFares.");
       }
     } catch (error) {
-      setProfilePhoto(previousPhoto);
+      if (currentProfileUserIdRef.current !== operationUserId) return;
+      setProfilePhoto((current) => !selectedPhoto || current === selectedPhoto ? previousPhoto : current);
       Alert.alert("Photo not saved", error instanceof Error ? error.message : "Could not save your profile photo.");
     } finally {
-      setSaving(false);
+      profileMutationRunningRef.current = false;
+      setSavingMode("");
     }
   }
 
@@ -259,7 +274,10 @@ export function ProfileScreen({
       onLogin();
       return;
     }
-    setSaving(true);
+    if (profileMutationRunningRef.current) return;
+    profileMutationRunningRef.current = true;
+    setSavingMode("details");
+    const operationUserId = Number(user.id || 0);
     try {
       const phoneChanged = phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "");
       const payload = await updateMobileProfile({
@@ -269,6 +287,7 @@ export function ProfileScreen({
         dateOfBirth,
         currentPassword,
       });
+      if (currentProfileUserIdRef.current !== operationUserId || Number(payload.user?.id || 0) !== operationUserId) return;
       draftUserIdRef.current = payload.user?.id ?? user.id;
       setName(payload.user?.name || "");
       setEmail(payload.user?.email || "");
@@ -289,9 +308,11 @@ export function ProfileScreen({
         Alert.alert("Profile updated", payload.message || "Your FairFares profile was saved.");
       }
     } catch (error) {
+      if (currentProfileUserIdRef.current !== operationUserId) return;
       Alert.alert("Profile not saved", error instanceof Error ? error.message : "Could not save your profile.");
     } finally {
-      setSaving(false);
+      profileMutationRunningRef.current = false;
+      setSavingMode("");
     }
   }
 
@@ -385,10 +406,10 @@ export function ProfileScreen({
             ) : null}
             <View style={styles.actionRow}>
               <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto} disabled={saving}>
-                <Text style={styles.secondaryButtonText}>{saving ? "Saving photo…" : "Upload photo"}</Text>
+                <Text style={styles.secondaryButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
-                <Text style={styles.primaryButtonText}>{saving ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
+                <Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
               </TouchableOpacity>
             </View>
           </> : null}
