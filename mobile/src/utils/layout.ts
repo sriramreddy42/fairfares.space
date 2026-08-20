@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Fixed bottom navigation bar dimensions (see BottomTabs.tsx).
 export const BOTTOM_NAV_HEIGHT = 76;
@@ -26,6 +27,7 @@ export type ResponsiveLayout = {
 
 export function useResponsiveLayout(): ResponsiveLayout {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isTablet = width >= TABLET_BREAKPOINT;
 
   return useMemo(() => {
@@ -46,5 +48,5 @@ export function useResponsiveLayout(): ResponsiveLayout {
       navBottomInset,
       navWidth: isTablet ? TABLET_NAV_MAX_WIDTH : undefined,
     };
-  }, [width, isTablet]);
+  }, [width, isTablet, insets.bottom]);
 }
