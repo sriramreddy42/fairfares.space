@@ -206,6 +206,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
+BACKEND_RELEASE = "chitthi-group-fallback-v3"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -21802,6 +21803,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "status": "healthy",
             "database": "available",
             "service": "fairfares-api",
+            "release": BACKEND_RELEASE,
             "time": datetime.now(UTC).isoformat(),
         })
 
