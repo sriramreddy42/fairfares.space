@@ -74,6 +74,9 @@ final class NotificationService: UNNotificationServiceExtension {
             resolvedBody = "New Chitthi letter"
             logger.notice("Preview unavailable; using encrypted-message fallback")
         }
+        if isGroup {
+            resolvedBody = removingGroupFallbackPrefix(from: resolvedBody, conversationName: conversationName)
+        }
         applyCanonicalStructure(
             to: content,
             body: resolvedBody,
@@ -93,6 +96,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 conversationId: conversationId,
                 conversationName: conversationName,
                 isGroup: isGroup,
+                recipients: communicationRecipients(from: payload),
                 avatarFallbackName: avatarFallbackName,
                 avatarData: avatarData
             )
@@ -113,6 +117,7 @@ final class NotificationService: UNNotificationServiceExtension {
         conversationId: String,
         conversationName: String,
         isGroup: Bool,
+        recipients: [INPerson],
         avatarFallbackName: String,
         avatarData: Data?
     ) {
@@ -142,7 +147,7 @@ final class NotificationService: UNNotificationServiceExtension {
             ? INSpeakableString(spokenPhrase: conversationName)
             : nil
         let intent = INSendMessageIntent(
-            recipients: nil,
+            recipients: isGroup && !recipients.isEmpty ? recipients : nil,
             outgoingMessageType: .outgoingMessageText,
             content: content.body,
             speakableGroupName: groupName,
@@ -194,6 +199,39 @@ final class NotificationService: UNNotificationServiceExtension {
         if !conversationId.isEmpty {
             content.threadIdentifier = conversationId
             content.targetContentIdentifier = conversationId
+        }
+    }
+
+    private func removingGroupFallbackPrefix(from body: String, conversationName: String) -> String {
+        guard !conversationName.isEmpty else { return body }
+        let prefix = "\(conversationName)\n"
+        return body.hasPrefix(prefix) ? String(body.dropFirst(prefix.count)) : body
+    }
+
+    private func communicationRecipients(from payload: [AnyHashable: Any]) -> [INPerson] {
+        guard let values = payload["communicationRecipients"] as? [Any] else { return [] }
+        return values.prefix(8).compactMap { value in
+            let item: [AnyHashable: Any]
+            if let dictionary = value as? [AnyHashable: Any] {
+                item = dictionary
+            } else if let dictionary = value as? [String: Any] {
+                item = Dictionary(uniqueKeysWithValues: dictionary.map { (AnyHashable($0.key), $0.value) })
+            } else {
+                return nil
+            }
+            let identifier = stringValue(item["id"])
+            let name = stringValue(item["name"])
+            guard !identifier.isEmpty, !name.isEmpty else { return nil }
+            return INPerson(
+                personHandle: INPersonHandle(value: identifier, type: .unknown),
+                nameComponents: nil,
+                displayName: name,
+                image: nil,
+                contactIdentifier: nil,
+                customIdentifier: identifier,
+                isMe: false,
+                suggestionType: .none
+            )
         }
     }
 

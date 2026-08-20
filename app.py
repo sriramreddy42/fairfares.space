@@ -19101,7 +19101,13 @@ def chitthi_notification_copy(sender_name: object, preview: object, conversation
     message = clean_text_value(preview, 240) or "New Chitthi letter"
     group = clean_text_value(conversation_name, 120)
     if is_group:
-        return sender, message, group or "Chitthi group"
+        group = group or "Chitthi group"
+        # The Notification Service Extension normally promotes this into
+        # Apple's communication layout and removes this transport fallback.
+        # If iOS skips or terminates the extension, the original APNs alert
+        # must still identify the group instead of looking like a direct chat.
+        fallback_prefix = f"{group}\n"
+        return sender, message if message.startswith(fallback_prefix) else f"{fallback_prefix}{message}", group
     return sender, message, ""
 
 
@@ -23574,6 +23580,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
             is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
+            communication_participants = [
+                {
+                    "id": int(row_value(participant, "id") or 0),
+                    "name": clean_text_value(row_value(participant, "name"), 120) or "FairFares member",
+                }
+                for participant in con.execute(
+                    """SELECT users.id, users.name
+                       FROM chat_participants participants
+                       JOIN users ON users.id = participants.user_id
+                       WHERE participants.conversation_id = ? AND users.id != ?
+                       ORDER BY users.id LIMIT 12""",
+                    (int(row_value(conversation, "id") or 0), sender_id),
+                ).fetchall()
+            ] if is_group else []
             notification_sender_avatar_url = chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
             notification_group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
             sender_display_name = row_value(sender, "name") or "FairFares member"
@@ -23593,11 +23613,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "subtitle": push_subtitle,
             }
             for token, encrypted_preview in push_jobs:
+                recipient_user_id = int(encrypted_preview.get("recipientUserId") or 0)
                 enqueue_mobile_pushes(
-                    [(int(encrypted_preview.get("recipientUserId") or 0), token)],
+                    [(recipient_user_id, token)],
                     push_title,
                     push_body,
-                    {**common_data, **encrypted_preview},
+                    {
+                        **common_data,
+                        **encrypted_preview,
+                        **({
+                            "communicationRecipients": [
+                                participant
+                                for participant in communication_participants
+                                if int(participant.get("id") or 0) != recipient_user_id
+                            ][:8],
+                        } if is_group else {}),
+                    },
                 )
 
     def api_create_chat_conversation(self) -> None:
