@@ -2019,6 +2019,22 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [activeConversationId]);
 
   useEffect(() => {
+    if (!currentUserId || !data?.user) return;
+    const currentName = data.user.name || "You";
+    const currentPhotoUrl = data.user.profilePhotoUrl || "";
+    // Messages and group-member rows are intentionally cached for fast thread
+    // entry. Patch the signed-in user's already-mounted projections as soon as
+    // Profile returns its authoritative payload instead of waiting for the
+    // next conversation fetch or app restart.
+    setMessages((current) => current.map((message) => Number(message.senderId) === currentUserId
+      ? { ...message, senderName: currentName, senderPhotoUrl: currentPhotoUrl }
+      : message));
+    setGroupMembers((current) => current.map((member) => Number(member.id) === currentUserId
+      ? { ...member, name: currentName, photoUrl: currentPhotoUrl }
+      : member));
+  }, [currentUserId, data?.user?.name, data?.user?.profilePhotoUrl]);
+
+  useEffect(() => {
     if (!inThread || threadLoading || openingThreadToLatestRef.current || Date.now() < openingThreadQuietUntilRef.current || loadingOlderMessagesRef.current || messagesUserDraggingRef.current || userTouchedThreadRef.current) return;
     const lastMessage = visibleMessages[visibleMessages.length - 1];
     const messageKey = `${activeConversationId}:${lastMessage?.id || "empty"}:${visibleMessages.length}`;

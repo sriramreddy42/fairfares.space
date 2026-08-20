@@ -557,6 +557,7 @@ export type BootstrapPayload = {
   hasSubmittedMobileReview: boolean;
   testimonials: Array<{
     id: number;
+    userId?: number;
     name: string;
     city: string;
     photoUrl?: string;

@@ -11699,6 +11699,7 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6, public_origi
         testimonials.append(
             {
                 "id": int(row_value(row, "id") or 0),
+                "userId": user_id,
                 "name": str(row_value(row, "user_name") or "FairFares member"),
                 "city": str(row_value(row, "city") or "FairFares community")[:80],
                 "photoUrl": photo_url,

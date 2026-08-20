@@ -94,6 +94,7 @@ class MobileAuthTest(unittest.TestCase):
 
         origin = "https://fairfares.example"
         testimonial = app.get_mobile_housing_testimonials("Denver, CO", public_origin=origin)[0]
+        self.assertEqual(testimonial["userId"], user_id)
         parsed = urllib.parse.urlparse(testimonial["photoUrl"])
         query = urllib.parse.parse_qs(parsed.query)
 
@@ -458,6 +459,22 @@ class MobileAuthTest(unittest.TestCase):
                 "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
                 ("Persistent Member", "persistent@example.com", "+13035550112", app.hash_password("PersistentPassword123!")),
             )
+            member_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Profile Observer", "profile-observer@example.com", "+13035550113", app.hash_password("ObserverPassword123!")),
+            )
+            observer_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('PROFILE-SYNC', 'DIRECT', 'Profile sync')")
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                ((conversation_id, member_id), (conversation_id, observer_id)),
+            )
+            con.execute(
+                "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, 'Denver, CO', 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
+                (member_id, "Profile changes should appear consistently on this testimonial."),
+            )
         # A valid 1x1 PNG keeps this test on the same upload path as the app
         # without introducing a fixture file.
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
@@ -471,7 +488,7 @@ class MobileAuthTest(unittest.TestCase):
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
                 data=json.dumps({
-                    "name": "Persistent Member",
+                    "name": "Persistent Member Updated",
                     "email": "persistent@example.com",
                     "phone": "+13035550112",
                     "profilePhoto": data_url,
@@ -482,6 +499,7 @@ class MobileAuthTest(unittest.TestCase):
             with urllib.request.urlopen(request, timeout=5) as response:
                 saved = json.loads(response.read().decode("utf-8"))
             self.assertEqual(saved["user"]["email"], "persistent@example.com")
+            self.assertEqual(saved["user"]["name"], "Persistent Member Updated")
             self.assertTrue(saved["user"]["profilePhotoUrl"])
             with app.db() as con:
                 persisted = con.execute(
@@ -496,7 +514,15 @@ class MobileAuthTest(unittest.TestCase):
                 "password": "PersistentPassword123!",
             })
             self.assertEqual(repeat_login["user"]["email"], "persistent@example.com")
+            self.assertEqual(repeat_login["user"]["name"], "Persistent Member Updated")
             self.assertTrue(repeat_login["user"]["profilePhotoUrl"])
+            testimonial = app.get_mobile_housing_testimonials("Denver, CO")[0]
+            self.assertEqual(testimonial["userId"], member_id)
+            self.assertEqual(testimonial["name"], "Persistent Member Updated")
+            self.assertEqual(testimonial["photoUrl"], repeat_login["user"]["profilePhotoUrl"])
+            observer_chat = app.get_chat_conversations_for_user(observer_id)[0]
+            self.assertEqual(observer_chat["otherName"], "Persistent Member Updated")
+            self.assertEqual(observer_chat["otherPhotoUrl"], persisted["profile_photo_url"])
         finally:
             server.shutdown()
             server.server_close()

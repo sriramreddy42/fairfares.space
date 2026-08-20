@@ -1837,7 +1837,30 @@ function FairFaresApp() {
   }
 
   function updateLocalUser(user: BootstrapPayload["user"]) {
-    setData((current) => (current ? { ...current, user } : current));
+    if (!user) return;
+    const userId = Number(user.id || 0);
+    const profilePhotoUrl = user.profilePhotoUrl || "";
+    setData((current) => current ? {
+      ...current,
+      user,
+      housing: current.housing.map((post) => Number(post.posterUserId || 0) === userId
+        ? { ...post, posterName: user.name, photoUrl: profilePhotoUrl }
+        : post),
+      testimonials: current.testimonials.map((testimonial) => Number(testimonial.userId || 0) === userId
+        ? { ...testimonial, name: user.name, photoUrl: profilePhotoUrl }
+        : testimonial),
+      chat: {
+        ...current.chat,
+        conversations: current.chat.conversations.map((conversation) => Number(conversation.otherUserId || 0) === userId
+          ? { ...conversation, otherName: user.name, otherPhotoUrl: profilePhotoUrl }
+          : conversation),
+      },
+    } : current);
+    // Replace any projections not already present in the local bootstrap
+    // payload (including newly published testimonials and paginated chats)
+    // with one authoritative post-save refresh. Starting a new generation
+    // also prevents an older in-flight bootstrap from restoring stale fields.
+    void load(false);
   }
 
   function changeTab(tab: TabKey) {
