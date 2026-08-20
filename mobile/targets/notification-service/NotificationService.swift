@@ -1,11 +1,13 @@
 import CryptoKit
 import Intents
+import OSLog
 import Security
 import UIKit
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
 
+    private let logger = Logger(subsystem: "com.fairfares.mobile.fchat-notification-service", category: "notification")
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttemptContent: UNMutableNotificationContent?
     private var hasDelivered = false
@@ -29,6 +31,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         let notificationType = stringValue(payload["type"])
         guard notificationType == "CHITTHI_MESSAGE" || notificationType == "FCHAT_MESSAGE" || notificationType == "CHITTHI_REACTION" else {
+            logger.notice("Bypassing non-Chitthi notification type=\(notificationType, privacy: .public)")
             deliver(content)
             return
         }
@@ -50,6 +53,9 @@ final class NotificationService: UNNotificationServiceExtension {
         let isGroup = boolValue(payload["isGroup"])
             || !conversationName.isEmpty
             || !groupAvatarValue.isEmpty
+        logger.notice(
+            "Resolved Chitthi payload type=\(notificationType, privacy: .public) conversation=\(conversationId, privacy: .private(mask: .hash)) isGroup=\(isGroup, privacy: .public) hasGroupName=\(!conversationName.isEmpty, privacy: .public) hasGroupAvatar=\(!groupAvatarValue.isEmpty, privacy: .public)"
+        )
         // Direct chats display the sender. Group chats display the group image,
         // matching the native communication-notification hierarchy.
         let avatarUrl = URL(string: isGroup
@@ -63,8 +69,10 @@ final class NotificationService: UNNotificationServiceExtension {
         var resolvedBody = content.body
         if let preview = decryptPreview(payload), !preview.isEmpty {
             resolvedBody = preview
+            logger.notice("Decrypted notification preview successfully")
         } else if isEncryptedPlaceholder(content.body) {
             resolvedBody = "New Chitthi letter"
+            logger.notice("Preview unavailable; using encrypted-message fallback")
         }
         applyCanonicalStructure(
             to: content,
@@ -77,6 +85,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
         loadAvatar(from: avatarUrl) { [weak self] avatarData in
             guard let self else { return }
+            self.logger.notice("Avatar resolution completed hasImage=\(avatarData != nil, privacy: .public)")
             self.deliverCommunicationNotification(
                 content: content,
                 senderName: senderName,
@@ -91,6 +100,7 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     override func serviceExtensionTimeWillExpire() {
+        logger.error("Notification service time limit reached; delivering canonical fallback")
         if let content = bestAttemptContent {
             deliver(content)
         }
@@ -159,8 +169,10 @@ final class NotificationService: UNNotificationServiceExtension {
                 normalized.body = canonicalBody
                 normalized.threadIdentifier = canonicalThreadIdentifier
                 normalized.targetContentIdentifier = canonicalTargetContentIdentifier
+                self.logger.notice("Communication notification rendering completed")
                 self.deliver(normalized)
             } catch {
+                self.logger.error("Communication rendering failed: \(String(describing: error), privacy: .public)")
                 self.deliver(content)
             }
         }
@@ -359,10 +371,10 @@ final class NotificationService: UNNotificationServiceExtension {
         // root, under `data`, `body`, or a provider-owned wrapper depending on
         // the delivery path and SDK version. Expo Notifications unwraps this
         // for JavaScript, but the native service extension receives raw APNs.
-        return findNotificationData(in: userInfo, depth: 0) ?? userInfo
+        return findNotificationData(in: userInfo, depth: 0, path: "root") ?? userInfo
     }
 
-    private func findNotificationData(in value: Any, depth: Int) -> [AnyHashable: Any]? {
+    private func findNotificationData(in value: Any, depth: Int, path: String) -> [AnyHashable: Any]? {
         guard depth < 5 else { return nil }
         if let payload = value as? [AnyHashable: Any] {
             // Expo/APNs can copy a small routing subset (type and
@@ -373,28 +385,30 @@ final class NotificationService: UNNotificationServiceExtension {
             // though navigation still reaches the correct conversation.
             for key in ["data", "body", "payload", "custom", "notification"] {
                 if let nested = payload[key],
-                   let found = findNotificationData(in: nested, depth: depth + 1) {
+                   let found = findNotificationData(in: nested, depth: depth + 1, path: "\(path).\(key)") {
                     return found
                 }
             }
             for nested in payload.values {
-                if let found = findNotificationData(in: nested, depth: depth + 1) {
+                if let found = findNotificationData(in: nested, depth: depth + 1, path: "\(path).value") {
                     return found
                 }
             }
             if !stringValue(payload["type"]).isEmpty {
+                logger.notice("Selected notification payload layer=\(path, privacy: .public) depth=\(depth, privacy: .public)")
                 return payload
             }
         } else if let payload = value as? [String: Any] {
             return findNotificationData(
                 in: Dictionary(uniqueKeysWithValues: payload.map { (AnyHashable($0.key), $0.value) }),
-                depth: depth
+                depth: depth,
+                path: path
             )
         } else if let encoded = value as? String,
                   encoded.count <= 8_192,
                   let data = encoded.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) {
-            return findNotificationData(in: object, depth: depth + 1)
+            return findNotificationData(in: object, depth: depth + 1, path: "\(path).json")
         }
         return nil
     }
