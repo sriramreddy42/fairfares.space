@@ -5998,6 +5998,7 @@ def init_db() -> None:
                 student_id TEXT,
                 student_verified INTEGER NOT NULL DEFAULT 0,
                 promo_email_opt_in INTEGER NOT NULL DEFAULT 0,
+                promo_push_opt_in INTEGER NOT NULL DEFAULT 0,
                 text_opt_in INTEGER NOT NULL DEFAULT 0,
                 marketing_token TEXT,
                 marketing_unsubscribed_at TEXT,
@@ -7210,6 +7211,7 @@ def init_db() -> None:
         ensure_column(con, "users", "student_id", "student_id TEXT")
         ensure_column(con, "users", "student_verified", "student_verified INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "promo_email_opt_in", "promo_email_opt_in INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "promo_push_opt_in", "promo_push_opt_in INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "text_opt_in", "text_opt_in INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "marketing_token", "marketing_token TEXT")
         ensure_column(con, "users", "marketing_unsubscribed_at", "marketing_unsubscribed_at TEXT")
@@ -15306,7 +15308,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
         "phoneVerified": bool(row_value(user, "phone_verified_at")),
         "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
-        "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_email_opt_in") or 0)),
+        "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_push_opt_in") or 0)),
         "profilePhotoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0)),
     }
 
@@ -19550,8 +19552,7 @@ def queue_promotional_campaign(campaign: dict[str, str], campaign_key: str) -> d
             FROM users
             JOIN mobile_push_tokens ON mobile_push_tokens.user_id = users.id AND mobile_push_tokens.enabled = 1
             WHERE users.is_verified = 1
-              AND users.promo_email_opt_in = 1
-              AND users.marketing_unsubscribed_at IS NULL
+              AND users.promo_push_opt_in = 1
               AND NOT EXISTS (
                 SELECT 1 FROM mobile_promo_push_sends sends
                 WHERE sends.campaign_key = ? AND sends.user_id = users.id
@@ -19583,13 +19584,16 @@ def queue_promotional_campaign(campaign: dict[str, str], campaign_key: str) -> d
 
 
 def run_promotional_push_automation(now: datetime | None = None) -> dict[str, object]:
-    """Send at most one useful promotional push per opted-in user each week."""
+    """Send useful promotional pushes on alternating weekdays to opted-in users."""
     now = now or datetime.now()
     festival_campaign = festival_campaign_for_day(now.date())
     if festival_campaign:
         return queue_promotional_campaign(festival_campaign, f"festival-{festival_campaign['slug']}-{now.year}")
     week_number = int(now.strftime("%V"))
-    rotation = week_number % 3
+    scheduled_slots = {0: 0, 2: 1, 4: 2}  # Monday, Wednesday, Friday.
+    slot = scheduled_slots.get(now.weekday())
+    if slot is None:
+        return {"sent": 0, "campaign": "", "status": "not scheduled today"}
     with db() as con:
         cheapest_car = con.execute(
             """
@@ -19601,33 +19605,81 @@ def run_promotional_push_automation(now: datetime | None = None) -> dict[str, ob
             LIMIT 1
             """
         ).fetchone()
+        available_room_count = int(con.execute(
+            """
+            SELECT COUNT(*)
+            FROM accommodation_posts
+            WHERE post_mode = 'HAVE_PLACE'
+              AND visibility_status = 'ACTIVE'
+              AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime(?))
+            """,
+            (now.isoformat(sep=" ", timespec="seconds"),),
+        ).fetchone()[0])
+        available_ride_count = int(con.execute(
+            """
+            SELECT COUNT(*)
+            FROM ride_posts
+            WHERE ride_type = 'CARPOOL_OFFER'
+              AND status = 'ACTIVE'
+              AND seats > 0
+              AND (
+                    COALESCE(
+                        NULLIF(substr(pickup_date, 1, 10), ''),
+                        NULLIF(substr(end_date, 1, 10), ''),
+                        NULLIF(substr(start_date, 1, 10), '')
+                    ) IS NULL
+                    OR date(COALESCE(
+                        NULLIF(substr(pickup_date, 1, 10), ''),
+                        NULLIF(substr(end_date, 1, 10), ''),
+                        NULLIF(substr(start_date, 1, 10), '')
+                    )) >= date(?)
+              )
+            """,
+            (now.date().isoformat(),),
+        ).fetchone()[0])
     if cheapest_car:
-        cheapest_name = str(row_value(cheapest_car, "name") or "rental car")
         cheapest_price = float(row_value(cheapest_car, "daily_price") or 0)
-        rental_title = f"🔥 Cheapest rental: {cheapest_name} from ${cheapest_price:.2f}/day"
-        rental_body = "🚙 A low rate picked for you—compare your dates and grab it while this car is available."
+        rental_title = f"🚗 Need 4 wheels? We found one from ${cheapest_price:.2f}/day 👀"
+        rental_body = "Verrry cheap... Compare your dates and grab it while this car is available."
     else:
-        rental_title = "🔥 Your lowest rental deals are ready"
-        rental_body = "🚙 Compare daily and weekly prices and grab the best available car for your dates."
+        rental_title = "🚗 Need 4 wheels? We found affordable rentals 👀"
+        rental_body = "Verrry cheap... Compare daily and weekly prices for your dates."
+    housing_title = (
+        f"🏡 {available_room_count} rooms are available 👀"
+        if available_room_count >= 3
+        else "🏡 Got an extra room? Someone's looking 👀"
+    )
+    housing_body = (
+        "Explore active housing listings and find a place that fits."
+        if available_room_count >= 3
+        else "Create a housing listing and connect with nearby renters."
+    )
+    carpool_title = (
+        f"🚗 {available_ride_count} rides are available"
+        if available_ride_count >= 3
+        else "⛽ Gas isn't cheap. Split the ride! 🚗"
+    )
+    carpool_body = (
+        "Explore active carpool routes and find one going your way."
+        if available_ride_count >= 3
+        else "List your route, match with riders going your way, and share the travel cost."
+    )
     campaigns = {
         0: {
-            "weekday": 4,
             "slug": "carpool",
-            "title": "🚗 FairFares Carpool: your route could pay for itself",
-            "body": "🛣️ List your carpool route, match with riders going your way, and split the travel cost.",
+            "title": carpool_title,
+            "body": carpool_body,
             "target": "carpool",
             "image_path": "/static/img/notifications/carpool-state-move.jpg",
         },
         1: {
-            "weekday": 6,
             "slug": "housing",
-            "title": "🏡 FairFares Housing: list your extra room",
-            "body": "✨ Create a housing listing, meet nearby renters, and turn unused space into monthly savings.",
+            "title": housing_title,
+            "body": housing_body,
             "target": "housing",
             "image_path": "/static/img/notifications/housing-share-rent.jpg",
         },
         2: {
-            "weekday": 3,
             "slug": "denver-rentals",
             "title": rental_title,
             "body": rental_body,
@@ -19635,10 +19687,14 @@ def run_promotional_push_automation(now: datetime | None = None) -> dict[str, ob
             "image_path": "/static/img/notifications/denver-rental-deals.jpg",
         },
     }
-    campaign = campaigns[rotation]
-    if now.weekday() != campaign["weekday"]:
-        return {"sent": 0, "campaign": campaign["slug"], "status": "not scheduled today"}
-    campaign_key = f"{now:%G}-W{week_number:02d}-{campaign['slug']}"
+    # During launch, favor the categories with the broadest inventory. Over a
+    # two-week window rentals run three times, housing twice, and carpool once.
+    weighted_rotation = (
+        (2, 1, 2),  # Even ISO weeks: rentals, housing, rentals.
+        (1, 0, 2),  # Odd ISO weeks: housing, carpool, rentals.
+    )
+    campaign = campaigns[weighted_rotation[week_number % 2][slot]]
+    campaign_key = f"{now:%G}-W{week_number:02d}-{now:%a}-{campaign['slug']}"
     return queue_promotional_campaign(campaign, campaign_key)
 
 
@@ -32762,7 +32818,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     and str(row_value(existing, "device_id") or "") == device_id
                     and int(row_value(existing, "notification_schema") or 0) == notification_schema
                     and bool(int(row_value(existing, "enabled") or 0)) == enabled
-                    and (not enabled or all(bool(int(row_value(existing, f"{category}_enabled") or 0)) for category in ("chitthi", "carpool", "rentals", "housing", "support", "marketing")))
+                    and (not enabled or all(bool(int(row_value(existing, f"{category}_enabled") or 0)) for category in ("chitthi", "carpool", "rentals", "housing", "support")))
                 )
                 if not already_current:
                     con.execute(
@@ -32786,14 +32842,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """
                             INSERT INTO mobile_notification_preferences
                             (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
-                            VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
+                            VALUES (?, 1, 1, 1, 1, 1, 0, CURRENT_TIMESTAMP)
                             ON CONFLICT(user_id) DO UPDATE SET
                                 chitthi_enabled = 1,
                                 carpool_enabled = 1,
                                 rentals_enabled = 1,
                                 housing_enabled = 1,
                                 support_enabled = 1,
-                                marketing_enabled = 1,
                                 updated_at = CURRENT_TIMESTAMP
                             """,
                             (current_user_id,),
@@ -32837,6 +32892,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (current_user_id, values["chitthi"], values["carpool"], values["rentals"], values["housing"], values["support"], values["marketing"]),
+            )
+            con.execute(
+                "UPDATE users SET promo_push_opt_in = ? WHERE id = ?",
+                (values["marketing"], current_user_id),
             )
             row = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (current_user_id,)).fetchone()
         self.send_json({"ok": True, "preferences": notification_preferences_payload(row)})
@@ -34552,7 +34611,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 detour_copy = f"Total detour: {detour_minutes} min · {detour_miles:g} mi added."
                 send_mobile_push_for_users(
                     [driver_user_id],
-                    "New carpool request",
+                    "🚗 A new ride matches your route",
                     f"{requester_name}: {route_label}. {detour_copy}"[:240],
                     {"type": "CARPOOL_REQUEST", "rideId": public_id, "target": "requests"},
                 )

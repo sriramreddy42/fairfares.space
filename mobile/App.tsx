@@ -13,7 +13,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
+import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getMobileNotificationPreferences, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -81,6 +81,7 @@ const CRITICAL_BRAND_IMAGE_SOURCES = [
 const REVIEW_PROMPT_DELAY_MS = 180_000;
 const REVIEW_PROMPT_READY_GRACE_MS = 5 * 60_000;
 const reviewPromptStorageKey = (userId: number | string) => `fairfares.mobile.review-prompt.v1.${userId}`;
+const promotionalPromptStorageKey = (userId: number | string) => `fairfares.mobile.promotional-prompt.v1.${userId}`;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -345,6 +346,7 @@ function FairFaresApp() {
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
   const notificationPermissionPromptShownRef = useRef(false);
+  const promotionalPromptRunningRef = useRef(false);
   const listingIntent: ListingIntent = listingForm.roommateIntent
     ? "need_roommates"
     : listingForm.postMode === "HAVE_PLACE"
@@ -435,6 +437,46 @@ function FairFaresApp() {
       return false;
     } finally {
       pushRegistrationRunningRef.current = false;
+    }
+  }
+
+  async function offerPromotionalNotifications() {
+    const userId = Number(data?.user?.id || 0);
+    if (Platform.OS === "web" || !userId || data?.user?.promotionalNotificationsEnabled || promotionalPromptRunningRef.current) return;
+    promotionalPromptRunningRef.current = true;
+    try {
+      const storageKey = promotionalPromptStorageKey(userId);
+      const handled = await AsyncStorage.getItem(storageKey).catch(() => null);
+      if (handled) return;
+      Alert.alert(
+        "Get FairFares opportunities",
+        "Rental, housing, and carpool updates.",
+        [
+          {
+            text: "Not now",
+            style: "cancel",
+            onPress: () => void AsyncStorage.setItem(storageKey, "dismissed")
+          },
+          {
+            text: "Turn On",
+            onPress: () => void (async () => {
+              try {
+                const current = await getMobileNotificationPreferences();
+                await updateMobileNotificationPreferences({ ...current.preferences, marketing: true });
+                await AsyncStorage.setItem(storageKey, "enabled");
+                setData((value) => value?.user ? {
+                  ...value,
+                  user: { ...value.user, promotionalNotificationsEnabled: true }
+                } : value);
+              } catch (error) {
+                Alert.alert("FairFares opportunities", error instanceof Error ? error.message : "Unable to enable opportunities right now.");
+              }
+            })()
+          }
+        ]
+      );
+    } finally {
+      promotionalPromptRunningRef.current = false;
     }
   }
 
@@ -530,7 +572,9 @@ function FairFaresApp() {
   }, [data?.housing, cars]);
 
   useEffect(() => {
-    if (data?.user) void enableMobileNotifications(true);
+    if (data?.user) void (async () => {
+      if (await enableMobileNotifications(true)) await offerPromotionalNotifications();
+    })();
   }, [data?.user?.id]);
 
   useEffect(() => {

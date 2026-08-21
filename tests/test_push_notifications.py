@@ -711,16 +711,16 @@ class PushNotificationTest(unittest.TestCase):
             app.automated_booking_email("pickup_24h", booking, "https://fairfare.space", "Reminder", "Pickup", "Body")
         duplicate_push.assert_not_called()
 
-    def test_promotional_push_rotates_weekly_and_requires_opt_in(self):
+    def test_promotional_push_runs_three_alternating_days_and_requires_opt_in(self):
         self.add_token("ExpoPushToken[promo-device]")
-        scheduled = datetime(2026, 8, 6, 11, 0)  # Thursday, ISO week 32: Denver rentals rotation.
+        scheduled = datetime(2026, 8, 3, 11, 0)  # Monday, ISO week 32: Denver rentals rotation.
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             result = app.run_promotional_push_automation(scheduled)
         self.assertEqual(result["sent"], 0)
         send_push.assert_not_called()
 
         with app.db() as con:
-            con.execute("UPDATE users SET promo_email_opt_in = 1 WHERE id = ?", (self.user_id,))
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             result = app.run_promotional_push_automation(scheduled)
             duplicate = app.run_promotional_push_automation(scheduled)
@@ -729,17 +729,98 @@ class PushNotificationTest(unittest.TestCase):
         send_push.assert_called_once()
         self.assertEqual(send_push.call_args.args[3]["type"], "FAIRFARES_PROMO")
         self.assertEqual(send_push.call_args.args[3]["target"], "rentals")
-        self.assertTrue(send_push.call_args.args[1].startswith("🔥"))
-        self.assertTrue(send_push.call_args.args[2].startswith("🚙"))
+        self.assertEqual(send_push.call_args.args[1], "🚗 Need 4 wheels? We found affordable rentals 👀")
+        self.assertTrue(send_push.call_args.args[2].startswith("Verrry cheap"))
         self.assertEqual(
             send_push.call_args.args[3]["imageUrl"],
             f"{app.schema_origin()}/static/img/notifications/denver-rental-deals.jpg",
         )
 
+    def test_promotional_push_uses_monday_wednesday_friday_schedule(self):
+        self.add_token("ExpoPushToken[promo-schedule-device]")
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            monday = app.run_promotional_push_automation(datetime(2026, 8, 3, 11, 0))
+            tuesday = app.run_promotional_push_automation(datetime(2026, 8, 4, 11, 0))
+            wednesday = app.run_promotional_push_automation(datetime(2026, 8, 5, 11, 0))
+            friday = app.run_promotional_push_automation(datetime(2026, 8, 7, 11, 0))
+
+        self.assertEqual([monday["sent"], tuesday["sent"], wednesday["sent"], friday["sent"]], [1, 0, 1, 1])
+        self.assertEqual(send_push.call_count, 3)
+        self.assertEqual(
+            [call.args[3]["target"] for call in send_push.call_args_list],
+            ["rentals", "housing", "rentals"],
+        )
+
+    def test_housing_promotion_uses_real_active_inventory_count(self):
+        self.add_token("ExpoPushToken[housing-opportunity-device]")
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+            con.executemany(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, title, visibility_status, created_at)
+                VALUES (?, ?, 'HAVE_PLACE', ?, 'ACTIVE', ?)
+                """,
+                [
+                    (f"ROOM-{index}", self.user_id, f"Room {index}", "2026-08-04 10:00:00")
+                    for index in range(1, 4)
+                ],
+            )
+            expected_count = int(con.execute(
+                """
+                SELECT COUNT(*) FROM accommodation_posts
+                WHERE post_mode = 'HAVE_PLACE'
+                  AND visibility_status = 'ACTIVE'
+                  AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('2026-08-05 11:00:00'))
+                """
+            ).fetchone()[0])
+
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            result = app.run_promotional_push_automation(datetime(2026, 8, 5, 11, 0))
+
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(send_push.call_args.args[1], f"🏡 {expected_count} rooms are available 👀")
+        self.assertEqual(send_push.call_args.args[3]["target"], "housing")
+
+    def test_carpool_promotion_uses_real_active_offer_count(self):
+        self.add_token("ExpoPushToken[carpool-opportunity-device]")
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+            con.executemany(
+                """
+                INSERT INTO ride_posts
+                (public_id, user_id, ride_type, title, seats, status, pickup_date)
+                VALUES (?, ?, 'CARPOOL_OFFER', ?, 2, 'ACTIVE', '2026-08-20')
+                """,
+                [
+                    (f"RIDE-{index}", self.user_id, f"Ride {index}")
+                    for index in range(1, 4)
+                ],
+            )
+            expected_count = int(con.execute(
+                """
+                SELECT COUNT(*) FROM ride_posts
+                WHERE ride_type = 'CARPOOL_OFFER'
+                  AND status = 'ACTIVE'
+                  AND seats > 0
+                  AND date(pickup_date) >= date('2026-08-12')
+                """
+            ).fetchone()[0])
+
+        with patch.object(app, "send_mobile_push_for_users") as send_push:
+            result = app.run_promotional_push_automation(datetime(2026, 8, 12, 11, 0))
+
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(send_push.call_args.args[1], f"🚗 {expected_count} rides are available")
+        self.assertEqual(send_push.call_args.args[3]["target"], "carpool")
+
     def test_festival_push_uses_poster_and_sends_only_once(self):
         self.add_token("ExpoPushToken[festival-device]")
         with app.db() as con:
-            con.execute("UPDATE users SET promo_email_opt_in = 1 WHERE id = ?", (self.user_id,))
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
         scheduled = datetime(2026, 11, 8, 10, 0)
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             result = app.run_promotional_push_automation(scheduled)
