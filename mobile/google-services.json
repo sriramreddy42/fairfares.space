@@ -14,7 +14,15 @@
       },
       "oauth_client": [
         {
-          "client_id": "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com",
+          "client_id": "41774403974-cl5760k73380elrfjpl53l0ar00og3tg.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.fairfares.mobile",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "41774403974-asj11531ip4gakvt75ijvr8n58ies1kj.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
@@ -27,7 +35,7 @@
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com",
+              "client_id": "41774403974-asj11531ip4gakvt75ijvr8n58ies1kj.apps.googleusercontent.com",
               "client_type": 3
             },
             {
