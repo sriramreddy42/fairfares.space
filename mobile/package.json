@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "main": "expo/AppEntry",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-notifications"
+        ]
+      }
+    }
+  },
   "scripts": {
     "start": "expo start",
     "start:go": "expo start --go",
