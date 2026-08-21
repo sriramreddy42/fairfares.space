@@ -14727,7 +14727,6 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
     params: dict[str, str] = {
         "input": input_text,
         "key": api_key,
-        "components": "country:us",
     }
     geometry = geocode.get("geometry") if isinstance(geocode, dict) else {}
     location = geometry.get("location") if isinstance(geometry, dict) else {}
@@ -14773,7 +14772,7 @@ def keep_mobile_accommodation_suggestion(label: str) -> bool:
 
 
 def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
-    """Return verified U.S. city/state autocomplete labels from Places and cache."""
+    """Return verified worldwide city labels from Places and the location cache."""
     query = normalize_accommodation_place_label(query)
     if len(query) < 2:
         return []
@@ -14783,7 +14782,7 @@ def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
 
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     if api_key:
-        params = urllib.parse.urlencode({"input": query, "types": "(cities)", "components": "country:us", "key": api_key})
+        params = urllib.parse.urlencode({"input": query, "types": "(cities)", "key": api_key})
         try:
             payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{params}")
         except Exception:
@@ -14793,7 +14792,7 @@ def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
                 if not isinstance(prediction, dict):
                     continue
                 label = clean_google_place_prediction(str(prediction.get("description") or ""))
-                if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,49},\s*[A-Za-z]{2}", label):
+                if len(label) < 2:
                     continue
                 key = label.lower()
                 if key not in seen:
@@ -14806,19 +14805,23 @@ def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
         with db() as con:
             cached = con.execute(
                 """
-                SELECT DISTINCT area.city, area.state
+                SELECT DISTINCT area.city, area.state, metro.country
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE LOWER(area.city) LIKE LOWER(?)
-                  AND UPPER(COALESCE(metro.country, 'US')) IN ('US', 'USA')
-                  AND LENGTH(TRIM(area.state)) = 2
                 ORDER BY CASE WHEN LOWER(area.city) = LOWER(?) THEN 0 ELSE 1 END, area.city
                 LIMIT ?
                 """,
                 (f"{query.split(',', 1)[0].strip()}%", query.split(",", 1)[0].strip(), limit),
             ).fetchall()
         for row in cached:
-            label = f"{str(row['city']).strip()}, {str(row['state']).strip().upper()}"
+            city = str(row["city"] or "").strip()
+            state = str(row["state"] or "").strip()
+            country = str(row["country"] or "").strip().upper()
+            parts = [city, state]
+            if country and country not in {"US", "USA"}:
+                parts.append(country)
+            label = ", ".join(part for part in parts if part)
             if label.lower() not in seen:
                 seen.add(label.lower())
                 suggestions.append(label)
@@ -15493,11 +15496,55 @@ def ride_place_icon_source(label: str) -> str:
     return "place"
 
 
+def google_ride_popular_places(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
+    """Return real popular destinations for any Google-supported city."""
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    city = normalize_accommodation_place_label(city)
+    if not api_key or not city:
+        return []
+    params = {
+        "query": f"popular destinations in {city}",
+        "key": api_key,
+    }
+    if lat and lng:
+        params.update({"location": f"{lat},{lng}", "radius": "50000"})
+    try:
+        payload = google_api_get(
+            f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+        )
+    except Exception:
+        return []
+    if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+        return []
+    places: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for place in payload.get("results") or []:
+        if not isinstance(place, dict):
+            continue
+        name = normalize_accommodation_place_label(str(place.get("name") or ""))
+        address = normalize_accommodation_place_label(str(place.get("formatted_address") or ""))
+        label = dedupe_repeated_location_label(", ".join(value for value in (name, address) if value))
+        if not label or label.lower() in seen:
+            continue
+        geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
+        location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+        seen.add(label.lower())
+        places.append({
+            "label": label,
+            "lat": float(location.get("lat") or 0),
+            "lng": float(location.get("lng") or 0),
+        })
+        if len(places) >= max(1, min(int(limit or 8), 12)):
+            break
+    return places
+
+
 def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
     labels: list[tuple[str, str]] = []
+    popular_points: dict[str, dict[str, object]] = {}
 
     def add_label(label: str, source: str) -> None:
         clean = dedupe_repeated_location_label(normalize_accommodation_place_label(label))
@@ -15516,6 +15563,17 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     if google_query:
         for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias):
             add_label(label, "google")
+    else:
+        for place in google_ride_popular_places(
+            city,
+            float(city_point.get("lat") or 0),
+            float(city_point.get("lng") or 0),
+            limit=limit,
+        ):
+            label = str(place.get("label") or "")
+            add_label(label, "google-popular")
+            if label:
+                popular_points[label.lower()] = place
 
     fallback_places = [
         "Denver International Airport (DEN), 8500 Pena Blvd, Denver, CO",
@@ -15527,7 +15585,8 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         "Tracks, 3500 Walnut St, Denver, CO",
         "Larimer Lounge, 2721 Larimer St, Denver, CO",
     ]
-    for label in fallback_places:
+    use_denver_fallbacks = not city or "denver" in city.lower()
+    for label in (fallback_places if use_denver_fallbacks else []):
         normalized_label = re.sub(r"[^a-z0-9]+", " ", label.lower())
         if not normalized_query:
             add_label(label, "recent")
@@ -15538,12 +15597,14 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
 
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
-        try:
-            point = ride_point(label, city, allow_refresh=False)
-        except sqlite3.OperationalError as exc:
-            if "locked" not in str(exc).lower():
-                raise
-            point = {"label": label, "lat": 0, "lng": 0}
+        point = popular_points.get(label.lower())
+        if point is None:
+            try:
+                point = ride_point(label, city, allow_refresh=False)
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                point = {"label": label, "lat": 0, "lng": 0}
         lat = float(point.get("lat") or 0)
         lng = float(point.get("lng") or 0)
         city_lat = float(city_point.get("lat") or 0)
@@ -18947,8 +19008,20 @@ def chat_notification_avatar_signature(user_id: int, expires_at: int) -> str:
     return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
 
 
-def chat_notification_avatar_url(origin: str, user_id: int, lifetime_seconds: int = 15 * 60) -> str:
-    expires_at = int(time.time()) + max(60, min(int(lifetime_seconds or 0), 60 * 60))
+NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+
+
+def chat_notification_avatar_url(
+    origin: str,
+    user_id: int,
+    lifetime_seconds: int = NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS,
+) -> str:
+    # FCM may retain a notification while a phone is offline. Keep the signed
+    # image URL usable for delayed delivery while still making it temporary.
+    expires_at = int(time.time()) + max(
+        60,
+        min(int(lifetime_seconds or 0), NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS),
+    )
     signature = chat_notification_avatar_signature(user_id, expires_at)
     query = urllib.parse.urlencode({"user": int(user_id), "expires": expires_at, "signature": signature})
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
@@ -18959,8 +19032,15 @@ def chat_notification_group_avatar_signature(community_id: int, expires_at: int)
     return hmac.new(application_secret().encode("utf-8"), value, hashlib.sha256).hexdigest()
 
 
-def chat_notification_group_avatar_url(origin: str, community_id: int, lifetime_seconds: int = 15 * 60) -> str:
-    expires_at = int(time.time()) + max(60, min(int(lifetime_seconds or 0), 60 * 60))
+def chat_notification_group_avatar_url(
+    origin: str,
+    community_id: int,
+    lifetime_seconds: int = NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS,
+) -> str:
+    expires_at = int(time.time()) + max(
+        60,
+        min(int(lifetime_seconds or 0), NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS),
+    )
     signature = chat_notification_group_avatar_signature(community_id, expires_at)
     query = urllib.parse.urlencode({"community": int(community_id), "expires": expires_at, "signature": signature})
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
@@ -19017,6 +19097,8 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
         return {}
     results: dict[str, dict[str, str]] = {}
     notification_data = data or {}
+    target_platform = str(notification_data.get("targetPlatform") or "").strip().lower()
+    delivered_data = {key: value for key, value in notification_data.items() if key != "targetPlatform"}
     notification_type = str(notification_data.get("type") or "")
     is_chitthi_notification = notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "CHITTHI_REACTION"}
     is_group_notification = bool(notification_data.get("isGroup")) or bool(
@@ -19027,8 +19109,27 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
         and (not is_group_notification or bool(notification_data.get("nativeGroupEnrichment")))
     )
     image_url = str(notification_data.get("imageUrl") or "").strip()
+    # Expo maps richContent.image to Android's expanded notification image and
+    # to the iOS notification-service extension. Chat payloads already carry
+    # the correct identity image; expose it to Android instead of leaving the
+    # URL buried in custom data where the system notification cannot use it.
+    if is_chitthi_notification:
+        image_url = str(
+            notification_data.get("groupAvatarUrl" if is_group_notification else "senderAvatarUrl") or ""
+        ).strip()
     subtitle = str(notification_data.get("subtitle") or "").strip()
-    rich_notification = notification_type == "FAIRFARES_PROMO" and image_url.startswith("https://")
+    rendered_body = body
+    # Expo's `subtitle` transport field is iOS-only. Preserve the same semantic
+    # hierarchy on Android by putting the group name on its own body line:
+    # title=person, first line=group, second line=message/reaction. iOS keeps
+    # title=person, subtitle=group, body=message and is not duplicated.
+    if target_platform == "android" and is_group_notification:
+        group_name = str(notification_data.get("conversationName") or subtitle).strip()
+        if group_name and not rendered_body.startswith(f"{group_name}\n"):
+            rendered_body = f"{group_name}\n{rendered_body}"
+    rich_notification = (
+        notification_type == "FAIRFARES_PROMO" or is_chitthi_notification
+    ) and image_url.startswith("https://")
     channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
     try:
         badge_count = max(0, int(notification_data.get("badge") or 0))
@@ -19041,14 +19142,14 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
                 "to": token,
                 "sound": "default",
                 "title": title[:120],
-                "body": body[:240],
+                "body": rendered_body[:240],
                 **({"subtitle": subtitle[:120]} if subtitle else {}),
-                "data": notification_data,
+                "data": delivered_data,
                 "channelId": channel_id,
                 **({"badge": badge_count} if badge_count else {}),
                 **({"categoryId": "CHITTHI_MESSAGE"} if is_chitthi_notification else {}),
-                **({"mutableContent": True} if allow_native_enrichment else {}),
-                **({"mutableContent": True, "richContent": {"image": image_url}} if rich_notification else {}),
+                **({"mutableContent": True} if allow_native_enrichment or notification_type == "FAIRFARES_PROMO" else {}),
+                **({"richContent": {"image": image_url}} if rich_notification else {}),
             }
             for token in token_batch
         ]
@@ -19202,6 +19303,7 @@ def refresh_queued_chitthi_notification(
 
     conversation_public_id = clean_text_value(data.get("conversationId"), 80)
     conversation = None
+    community_id = 0
     if conversation_public_id:
         with db() as con:
             conversation = con.execute(
@@ -19218,7 +19320,7 @@ def refresh_queued_chitthi_notification(
                 (conversation_public_id,),
             ).fetchone()
             if conversation is not None:
-                is_group, conversation_name, _community_id = chat_notification_conversation_context(con, conversation)
+                is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
             else:
                 is_group = bool(data.get("isGroup"))
                 conversation_name = clean_text_value(data.get("conversationName"), 120) if is_group else ""
@@ -19230,8 +19332,13 @@ def refresh_queued_chitthi_notification(
     refreshed["isGroup"] = is_group
     refreshed["conversationName"] = conversation_name if is_group else ""
     refreshed["subtitle"] = conversation_name if is_group else ""
-    if not is_group:
+    if is_group and community_id and not str(refreshed.get("groupAvatarUrl") or "").startswith("https://"):
+        refreshed["groupAvatarUrl"] = chat_notification_group_avatar_url(schema_origin(), community_id)
+    elif not is_group:
         refreshed["groupAvatarUrl"] = ""
+    sender_id = int(float_from_value(refreshed.get("senderId")) or 0)
+    if sender_id and not str(refreshed.get("senderAvatarUrl") or "").startswith("https://"):
+        refreshed["senderAvatarUrl"] = chat_notification_avatar_url(schema_origin(), sender_id)
     refreshed["notificationSchema"] = 2
     canonical_title, canonical_body, _subtitle = chitthi_notification_copy(
         refreshed.get("senderName") or title,
@@ -19463,7 +19570,7 @@ def send_mobile_push_for_users(
         category = mobile_push_category(data)
         rows = con.execute(
             f"""
-            SELECT tokens.user_id, tokens.token, tokens.notification_schema,
+            SELECT tokens.user_id, tokens.token, tokens.platform, tokens.notification_schema,
                    preferences.user_id AS preference_user_id,
                    preferences.chitthi_enabled, preferences.carpool_enabled,
                    preferences.rentals_enabled, preferences.housing_enabled,
@@ -19479,6 +19586,7 @@ def send_mobile_push_for_users(
     rows = [row for row in rows if category == "mandatory" or not row_value(row, "preference_user_id") or bool(int(row_value(row, preference_column) or 0))]
     for row in rows:
         token_data = dict(data or {})
+        token_data["targetPlatform"] = str(row_value(row, "platform") or "").strip().lower()
         if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
             # Reaction enrichment has been supported since the first native
             # reaction build. Do not let a stale per-token schema suppress the
@@ -23688,7 +23796,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (recipient_id,),
                 ).fetchone()["unread_count"] or 0)
                 token_rows = con.execute(
-                    "SELECT token, device_id, notification_schema FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
+                    "SELECT token, platform, device_id, notification_schema FROM mobile_push_tokens WHERE user_id = ? AND enabled = 1 ORDER BY datetime(last_seen_at) DESC LIMIT 5",
                     (recipient_id,),
                 ).fetchall()
                 for token_row in token_rows:
@@ -23698,6 +23806,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         (int(row_value(message, "id") or 0), recipient_id, device_id),
                     ).fetchone() if device_id else None
                     push_jobs.append((str(row_value(token_row, "token") or ""), {
+                        "targetPlatform": str(row_value(token_row, "platform") or "").strip().lower(),
                         "recipientUserId": recipient_id,
                         "recipientDeviceId": device_id,
                         "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",
@@ -24883,7 +24992,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             expected
             and signature
             and expires_at >= now
-            and expires_at <= now + 60 * 60
+            and expires_at <= now + NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS
             and hmac.compare_digest(signature, expected)
         )
         authenticated_user = self.current_user()
@@ -32424,20 +32533,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         self.send_json({"ok": False, "error": "Share your email with the identity provider to create the account."}, 400)
                         return
                     existing = find_user_by_email(con, email)
-                    if (not existing or int(row_value(existing, "guest_account") or 0)) and not consented:
-                        self.send_json({"ok": False, "error": "Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account."}, 400)
-                        return
                     if existing:
                         user_id = int(existing["id"])
                         if int(row_value(existing, "guest_account") or 0):
                             con.execute(
                                 "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ? WHERE id = ?",
-                                (display_name, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
+                                (display_name, consented_at, TERMS_VERSION if consented else None, PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None, user_id),
                             )
                     else:
                         con.execute(
                             "INSERT INTO users (name, email, password_hash, is_verified, verified_at, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
-                            (display_name, email, hash_password(secrets.token_urlsafe(48)), consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
+                            (display_name, email, hash_password(secrets.token_urlsafe(48)), consented_at, TERMS_VERSION if consented else None, PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None),
                         )
                         user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                     con.execute(
@@ -32475,8 +32581,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_social_phone_complete(self) -> None:
         payload = self.read_json_body()
+        consented, consented_at = consent_values(payload)
         continuation = str(payload.get("continuationToken") or "").strip()
         phone = canonical_e164_phone(payload.get("phone"), payload.get("countryCode"))
+        if not consented:
+            self.send_json({"ok": False, "error": "Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy to continue."}, 400)
+            return
         if not continuation or not phone:
             self.send_json({"ok": False, "error": "Choose a country code and enter a valid mobile number."}, 400)
             return
@@ -32503,9 +32613,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """UPDATE users
                    SET phone = ?, phone_verified_at = NULL, chat_phone_discoverable = 1,
-                       is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+                       is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                       consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ?
                    WHERE id = ?""",
-                (phone, user_id),
+                (phone, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
             )
             con.execute("UPDATE auth_phone_continuations SET phone = ?, used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (phone, token_hash))
             cleanup_expired_sessions(con)

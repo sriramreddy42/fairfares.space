@@ -159,6 +159,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(data["isGroup"])
         self.assertEqual(data["conversationName"], "DU Housing Board")
         self.assertEqual(data["subtitle"], "DU Housing Board")
+        self.assertIn(f"community={community_id}", data["groupAvatarUrl"])
         self.assertEqual(data["notificationSchema"], 2)
 
     def test_legacy_multi_member_conversation_is_never_notified_as_direct(self):
@@ -299,6 +300,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["data"]["conversationName"], "")
         self.assertEqual(message["data"]["groupAvatarUrl"], "")
         self.assertTrue(message["mutableContent"])
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/sender.jpg"})
 
     def test_chitthi_group_layout_survives_expo_transport(self):
         token = "ExpoPushToken[group-layout-device]"
@@ -331,6 +333,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
         self.assertEqual(message["data"]["groupAvatarUrl"], "https://fairfare.space/group.jpg")
         self.assertTrue(message["data"]["isGroup"])
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
 
     def test_group_native_enrichment_can_be_enabled_after_fixed_build_rollout(self):
         token = "ExpoPushToken[group-native-v2-device]"
@@ -379,6 +382,50 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["data"]["type"], "CHITTHI_REACTION")
         self.assertTrue(message["data"]["isGroup"])
         self.assertNotIn("mutableContent", message)
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
+
+    def test_android_group_message_renders_person_group_and_message(self):
+        token = "ExpoPushToken[android-group-message]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-android-group"}]})
+        data = {
+            "type": "CHITTHI_MESSAGE",
+            "conversationId": "FFC-ANDROID-GROUP",
+            "senderName": "Marisa",
+            "senderAvatarUrl": "https://fairfare.space/sender.jpg",
+            "groupAvatarUrl": "https://fairfare.space/group.jpg",
+            "conversationName": "DU Housing Board",
+            "isGroup": True,
+            "subtitle": "DU Housing Board",
+            "targetPlatform": "android",
+        }
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], "Marisa", "Are you available?", data)
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertEqual(message["body"], "DU Housing Board\nAre you available?")
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
+        self.assertNotIn("targetPlatform", message["data"])
+
+    def test_android_group_reaction_renders_person_group_and_reaction(self):
+        token = "ExpoPushToken[android-group-reaction]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-android-reaction"}]})
+        data = {
+            "type": "CHITTHI_REACTION",
+            "conversationId": "FFC-ANDROID-GROUP",
+            "senderName": "Marisa",
+            "groupAvatarUrl": "https://fairfare.space/group.jpg",
+            "conversationName": "DU Housing Board",
+            "isGroup": True,
+            "subtitle": "DU Housing Board",
+            "reaction": "👍",
+            "targetPlatform": "android",
+        }
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], "Marisa", "reacted 👍 to your message", data)
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertEqual(message["body"], "DU Housing Board\nreacted 👍 to your message")
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
 
     def test_every_chitthi_push_type_requests_message_sound(self):
         token = "ExpoPushToken[chitthi-sound-device]"
@@ -627,7 +674,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(row["status"], "DELIVERED")
         self.assertTrue(row["delivered_at"])
 
-    def test_chitthi_avatar_urls_are_short_lived_and_tamper_evident(self):
+    def test_chitthi_avatar_urls_cover_delayed_delivery_and_are_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
             url = app.chat_notification_avatar_url("https://www.fairfare.space", self.user_id)
         parsed = app.urllib.parse.urlparse(url)
@@ -636,11 +683,11 @@ class PushNotificationTest(unittest.TestCase):
         signature = query["signature"][0]
         self.assertEqual(parsed.path, "/api/chat/notification-avatar")
         self.assertEqual(int(query["user"][0]), self.user_id)
-        self.assertEqual(expires_at, 2_000_000_900)
+        self.assertEqual(expires_at, 2_000_000_000 + app.NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS)
         self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id, expires_at)))
         self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_avatar_signature(self.user_id + 1, expires_at)))
 
-    def test_chitthi_group_avatar_urls_are_short_lived_and_tamper_evident(self):
+    def test_chitthi_group_avatar_urls_cover_delayed_delivery_and_are_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):
             url = app.chat_notification_group_avatar_url("https://www.fairfare.space", 42)
         parsed = app.urllib.parse.urlparse(url)
@@ -648,6 +695,7 @@ class PushNotificationTest(unittest.TestCase):
         expires_at = int(query["expires"][0])
         signature = query["signature"][0]
         self.assertEqual(int(query["community"][0]), 42)
+        self.assertEqual(expires_at, 2_000_000_000 + app.NOTIFICATION_AVATAR_URL_LIFETIME_SECONDS)
         self.assertTrue(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(42, expires_at)))
         self.assertFalse(app.hmac.compare_digest(signature, app.chat_notification_group_avatar_signature(43, expires_at)))
 

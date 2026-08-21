@@ -48,6 +48,7 @@
     },
     "android": {
       "package": "com.fairfares.mobile",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 13,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
@@ -125,6 +126,12 @@
         }
       ],
       "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.41774403974-u83lgq8j6edpthtrjnn5f2de5o2vaovo"
+        }
+      ],
       [
         "expo-image-picker",
         {

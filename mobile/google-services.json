@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "41774403974",
+    "project_id": "fairfares-production-500715",
+    "storage_bucket": "fairfares-production-500715.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:41774403974:android:7a1a708ea3a15d3595dc07",
+        "android_client_info": {
+          "package_name": "com.fairfares.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAS5OIJAE8GGZ7h3pPLoo3SPCN7lTpaT-c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "41774403974-u83lgq8j6edpthtrjnn5f2de5o2vaovo.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.fairfares.mobile",
+                "app_store_id": "6797162820"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

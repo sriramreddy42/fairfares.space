@@ -5071,7 +5071,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   if (inThread) {
     return (
-      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid]}>
+      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}

@@ -619,6 +619,7 @@ export function HousingScreen({
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
   const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
+  const [ridePopularPlaces, setRidePopularPlaces] = useState<RidePlaceSuggestion[]>([]);
   const [currentRideLocation, setCurrentRideLocation] = useState<CurrentRideLocation | null>(null);
   const [currentRideLocationBusy, setCurrentRideLocationBusy] = useState(false);
   const [currentRideLocationError, setCurrentRideLocationError] = useState("");
@@ -1043,6 +1044,21 @@ export function HousingScreen({
     return () => clearTimeout(timer);
   }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
 
+  useEffect(() => {
+    const selectedCity = currentRideLocation?.label || rideForm.city || data?.location.city || "Denver, CO";
+    let cancelled = false;
+    getRidePlaceSuggestions(selectedCity, "", true)
+      .then((places) => {
+        if (!cancelled) setRidePopularPlaces(places.slice(0, 8));
+      })
+      .catch(() => {
+        if (!cancelled) setRidePopularPlaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRideLocation?.label, data?.location.city, rideForm.city]);
+
   function updateScrollVisibility(y: number) {
     const nextSearchIsScrolled = y > 8;
     setSearchIsScrolled((current) => current === nextSearchIsScrolled ? current : nextSearchIsScrolled);
@@ -1103,6 +1119,7 @@ export function HousingScreen({
     selectedRideSuggestionRef.current = location.label;
     setRideForm((current) => ({
       ...current,
+      city: location.label,
       origin: location.label,
       originLat: location.coords.latitude,
       originLng: location.coords.longitude
@@ -2914,7 +2931,7 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const rideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = [
+    const fallbackRideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = [
       {
         place: { label: "Denver, CO", main: "Denver, CO", secondary: "", distanceMiles: null, lat: 39.7392, lng: -104.9903, source: "featured" },
         image: appAssets.cities.denver
@@ -2932,6 +2949,9 @@ export function HousingScreen({
         image: appAssets.cities.miami
       }
     ];
+    const rideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = ridePopularPlaces.length
+      ? ridePopularPlaces.map((place) => ({ place, image: appAssets.carpoolPoster }))
+      : fallbackRideHomeCities;
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (

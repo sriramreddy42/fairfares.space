@@ -124,6 +124,63 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(suggestions[0], "St. Petersburg, FL")
         self.assertIn("St. Louis, MO", suggestions)
 
+    def test_city_and_carpool_autocomplete_are_not_restricted_to_us(self):
+        google_payload = {
+            "status": "OK",
+            "predictions": [
+                {
+                    "description": "Bengaluru, Karnataka, India",
+                    "types": ["locality", "political"],
+                }
+            ],
+        }
+        requested_urls = []
+
+        def google_response(url):
+            requested_urls.append(url)
+            return google_payload
+
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "google_api_get", side_effect=google_response
+        ), patch.object(app, "google_accommodation_geocode", return_value=None):
+            cities = app.accommodation_city_suggestions("Beng", limit=8)
+            rides = app.google_accommodation_place_suggestions(
+                "Bengaluru, Karnataka, India", "Kempegowda International Airport", limit=8
+            )
+
+        self.assertEqual(cities, ["Bengaluru, Karnataka, India"])
+        self.assertEqual(rides, ["Bengaluru, Karnataka, India"])
+        self.assertTrue(requested_urls)
+        self.assertTrue(all("country%3Aus" not in url and "country:us" not in url for url in requested_urls))
+
+    def test_carpool_popular_places_follow_selected_country(self):
+        google_payload = {
+            "status": "OK",
+            "results": [
+                {
+                    "name": "Kempegowda International Airport",
+                    "formatted_address": "Bengaluru, Karnataka, India",
+                    "geometry": {"location": {"lat": 13.1986, "lng": 77.7066}},
+                },
+                {
+                    "name": "Bengaluru City Railway Station",
+                    "formatted_address": "Bengaluru, Karnataka, India",
+                    "geometry": {"location": {"lat": 12.9788, "lng": 77.5727}},
+                },
+            ],
+        }
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "google_api_get", return_value=google_payload
+        ) as google_call:
+            places = app.google_ride_popular_places("Bengaluru, Karnataka, India", 12.9716, 77.5946)
+
+        self.assertEqual(len(places), 2)
+        self.assertTrue(all("India" in str(place["label"]) for place in places))
+        self.assertEqual(places[0]["lat"], 13.1986)
+        requested_url = google_call.call_args.args[0]
+        self.assertIn("Bengaluru", requested_url)
+        self.assertNotIn("country%3Aus", requested_url)
+
     @patch.object(
         app,
         "accommodation_location_point",

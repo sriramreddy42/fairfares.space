@@ -7,6 +7,7 @@ import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -54,7 +55,7 @@ const NOTIFICATION_CHANNELS = {
 } as const;
 const GOOGLE_AUTH_CONFIGURED = Platform.select({
   ios: !GOOGLE_IOS_CLIENT_ID.includes("not-configured"),
-  android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured"),
+  android: !GOOGLE_ANDROID_CLIENT_ID.includes("not-configured") && !GOOGLE_WEB_CLIENT_ID.includes("not-configured"),
   default: !GOOGLE_WEB_CLIENT_ID.includes("not-configured"),
 }) ?? false;
 
@@ -255,6 +256,7 @@ function FairFaresApp() {
   const [signupCallingCode, setSignupCallingCode] = useState("+1");
   const [signupCountryOpen, setSignupCountryOpen] = useState(false);
   const [signupConsentAccepted, setSignupConsentAccepted] = useState(false);
+  const [socialConsentAccepted, setSocialConsentAccepted] = useState(false);
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
@@ -281,6 +283,14 @@ function FairFaresApp() {
   const [rentalEditBookingId, setRentalEditBookingId] = useState("");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
   const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== "android" || IS_EXPO_GO || !GOOGLE_AUTH_CONFIGURED) return;
+    GoogleSignin.configure({
+      webClientId: GOOGLE_WEB_CLIENT_ID,
+      offlineAccess: false
+    });
+  }, []);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -1637,6 +1647,7 @@ function FairFaresApp() {
     setLoading(false);
     setData((current) => current ? { ...current, user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
     setSocialContinuation("");
+    setSocialConsentAccepted(false);
     setSocialRecoveryEmailHint("");
     setShowSocialRecoveryEmail(false);
     setLoginOpen(false);
@@ -1651,6 +1662,9 @@ function FairFaresApp() {
 
   function acceptSocialAuth(payload: MobileSocialAuthPayload) {
     if (payload.phoneRequired && payload.continuationToken) {
+      // Social signup consent is collected only beside the required phone
+      // number. Never inherit a checkbox previously used by manual signup.
+      setSocialConsentAccepted(false);
       setSocialContinuation(payload.continuationToken);
       setSocialRecoveryEmailHint("");
       setShowSocialRecoveryEmail(false);
@@ -1670,7 +1684,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage(`Signing in with ${provider === "google" ? "Google" : "Apple"}...`);
     try {
-      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name, signupConsentAccepted));
+      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name, false));
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Social sign-in failed. Please try again.");
     } finally {
@@ -1679,10 +1693,6 @@ function FairFaresApp() {
   }
 
   async function startGoogleSignIn() {
-    if (authMode === "signup" && !signupConsentAccepted) {
-      setAuthMessage("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account.");
-      return;
-    }
     if (IS_EXPO_GO && Platform.OS !== "web") {
       setAuthMessage("Google sign-in cannot run inside Expo Go. Install the FairFares development build, start Metro with npm run start:dev, and try again there.");
       return;
@@ -1692,6 +1702,21 @@ function FairFaresApp() {
       return;
     }
     setAuthMessage("");
+    if (Platform.OS === "android") {
+      try {
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+        const response = await GoogleSignin.signIn();
+        if (!isSuccessResponse(response)) return;
+        if (!response.data.idToken) {
+          setAuthMessage("Google did not return a secure identity token. Please try again.");
+          return;
+        }
+        await finishSocialProvider("google", response.data.idToken, response.data.user.name || "");
+      } catch (error) {
+        setAuthMessage(error instanceof Error ? error.message : "Google sign-in failed. Please try again.");
+      }
+      return;
+    }
     await promptGoogleSignIn();
   }
 
@@ -1707,10 +1732,6 @@ function FairFaresApp() {
 
   async function startAppleSignIn() {
     if (authBusy) return;
-    if (authMode === "signup" && !signupConsentAccepted) {
-      setAuthMessage("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy before creating an account.");
-      return;
-    }
     setAuthMessage("");
     try {
       const credential = await withAuthTimeout(
@@ -1734,6 +1755,10 @@ function FairFaresApp() {
 
   async function saveSocialPhone() {
     if (authBusy || !socialContinuation) return;
+    if (!socialConsentAccepted) {
+      setAuthMessage("Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy to continue.");
+      return;
+    }
     const nationalPhone = signupPhone.replace(/\D/g, "").replace(/^0+/, "");
     const e164Phone = `${signupCallingCode}${nationalPhone}`;
     if (!/^\+[1-9]\d{7,14}$/.test(e164Phone)) {
@@ -1743,7 +1768,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Saving phone number...");
     try {
-      const payload = await completeSocialPhone(socialContinuation, nationalPhone, signupCallingCode);
+      const payload = await completeSocialPhone(socialContinuation, nationalPhone, signupCallingCode, socialConsentAccepted);
       completeSocialLogin(payload.user);
     } catch (error) {
       const recovery = (error as Error & { fairFaresPayload?: { recoveryEmailHint?: string } })?.fairFaresPayload;
@@ -2382,13 +2407,20 @@ function FairFaresApp() {
         statusBarTranslucent
         onRequestClose={() => {
           setSocialContinuation("");
+          setSocialConsentAccepted(false);
           setSocialRecoveryEmailHint("");
           setShowSocialRecoveryEmail(false);
           setAuthMessage("");
         }}
       >
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View style={styles.socialPhoneCard}>
+          <ScrollView
+            style={styles.authModalScroll}
+            contentContainerStyle={styles.socialPhoneCard}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>Add your mobile number</Text>
             <Text style={styles.modalCopy}>Google or Apple verified your identity. Add a mobile number for booking updates and account contact. No verification code will be sent.</Text>
             <View style={styles.signupPhoneRow}>
@@ -2411,6 +2443,20 @@ function FairFaresApp() {
                 accessibilityLabel="Mobile number without country code"
                 style={[styles.input, styles.signupPhoneInput]}
               />
+            </View>
+            <View style={styles.signupConsentRow}>
+              <TouchableOpacity
+                style={[styles.signupConsentBox, socialConsentAccepted && styles.signupConsentBoxChecked]}
+                onPress={() => setSocialConsentAccepted((accepted) => !accepted)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: socialConsentAccepted }}
+                accessibilityLabel="Agree to Terms of Service and Community Guidelines and acknowledge Privacy Policy"
+              >
+                <Text style={styles.signupConsentCheck}>{socialConsentAccepted ? "✓" : ""}</Text>
+              </TouchableOpacity>
+              <Text style={styles.signupConsentText}>
+                I agree to the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/terms")}>Terms of Service</Text> and <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/community-guidelines")}>Community Guidelines</Text> and acknowledge the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/privacy")}>Privacy Policy</Text>.
+              </Text>
             </View>
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
             {socialRecoveryEmailHint ? (
@@ -2435,6 +2481,7 @@ function FairFaresApp() {
               style={styles.secondaryButton}
               onPress={() => {
                 setSocialContinuation("");
+                setSocialConsentAccepted(false);
                 setSocialRecoveryEmailHint("");
                 setShowSocialRecoveryEmail(false);
                 setAuthMessage("");
@@ -2443,7 +2490,7 @@ function FairFaresApp() {
             >
               <Text style={styles.secondaryButtonText}>Cancel and return to login</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={signupCountryOpen} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={() => setSignupCountryOpen(false)}>

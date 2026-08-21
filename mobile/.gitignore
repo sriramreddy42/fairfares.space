@@ -4,6 +4,8 @@
 .env.*.local
 node_modules/
 /ios/
+/android/
+/modules/*/android/build/
 
 # Android release signing credentials (never commit)
 /credentials.json

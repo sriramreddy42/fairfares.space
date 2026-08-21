@@ -83,8 +83,8 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
               onPress={() => onChange(item.key)}
               style={styles.touchTarget}
             >
-              <View style={[styles.itemContent, isSelected && styles.selectedItem]}>
-                <View style={[styles.iconFrame, item.key === "messenger" && styles.chitthiIconFrame]}>
+              <View style={styles.itemContent}>
+                <View style={[styles.iconFrame, isSelected && styles.selectedItem]}>
                   {item.key === "profile" && user?.profilePhotoUrl ? (
                     <UserAvatar
                       photoUrl={user.profilePhotoUrl}
@@ -182,12 +182,12 @@ const styles = StyleSheet.create({
   itemContent: {
     width: 54,
     height: 56,
-    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
   },
   selectedItem: {
+    borderRadius: 20,
     backgroundColor: "#111715",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(236,190,103,0.72)",
@@ -198,13 +198,10 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   iconFrame: {
-    width: 38,
-    height: 27,
+    width: 40,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
-  },
-  chitthiIconFrame: {
-    height: 33,
   },
   icon: {
     opacity: 1,

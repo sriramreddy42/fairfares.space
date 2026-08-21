@@ -2213,11 +2213,11 @@ export async function mobileSocialLogin(provider: "google" | "apple", identityTo
   return payload;
 }
 
-export async function completeSocialPhone(continuationToken: string, phone: string, countryCode: string) {
+export async function completeSocialPhone(continuationToken: string, phone: string, countryCode: string, consentAccepted: boolean) {
   const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>("/api/mobile/auth/phone/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ continuationToken, phone, countryCode })
+    body: JSON.stringify({ continuationToken, phone, countryCode, consentAccepted })
   });
   await setAuthToken(payload.token);
   return payload;

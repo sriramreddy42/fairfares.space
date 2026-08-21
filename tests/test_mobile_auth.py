@@ -651,23 +651,37 @@ class MobileAuthTest(unittest.TestCase):
                 status, social = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "verified-google-token",
-                    "consentAccepted": True,
                 })
             self.assertEqual(status, 200)
             self.assertTrue(social["phoneRequired"])
             self.assertFalse(social.get("token"))
             continuation = social["continuationToken"]
 
+            with self.assertRaises(urllib.error.HTTPError) as missing_consent:
+                self.post_json(server, "/api/mobile/auth/phone/complete", {
+                    "continuationToken": continuation,
+                    "countryCode": "+1",
+                    "phone": "937-555-0198",
+                })
+            self.assertEqual(missing_consent.exception.code, 400)
+
             complete_status, completed = self.post_json(server, "/api/mobile/auth/phone/complete", {
                 "continuationToken": continuation,
                 "countryCode": "+1",
                 "phone": "937-555-0198",
+                "consentAccepted": True,
             })
             self.assertEqual(complete_status, 200)
             self.assertTrue(completed["token"])
             self.assertEqual(completed["user"]["phone"], "+19375550198")
             self.assertFalse(completed["user"]["phoneVerified"])
             self.assertTrue(completed["user"]["chatPhoneDiscoverable"])
+            with app.db() as con:
+                consented_user = con.execute("SELECT * FROM users WHERE email = ?", ("social@example.com",)).fetchone()
+            self.assertTrue(consented_user["consented_at"])
+            self.assertEqual(consented_user["terms_version"], app.TERMS_VERSION)
+            self.assertEqual(consented_user["privacy_version"], app.PRIVACY_VERSION)
+            self.assertEqual(consented_user["community_guidelines_version"], app.COMMUNITY_GUIDELINES_VERSION)
 
             with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
                 repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
@@ -781,6 +795,7 @@ class MobileAuthTest(unittest.TestCase):
                     "continuationToken": social["continuationToken"],
                     "countryCode": "+1",
                     "phone": "937-555-0197",
+                    "consentAccepted": True,
                 })
             self.assertEqual(duplicate_phone.exception.code, 409)
             payload = json.loads(duplicate_phone.exception.read().decode("utf-8"))
