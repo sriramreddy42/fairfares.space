@@ -591,6 +591,33 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertIn("FFH-US-ONLY", denver_ids)
         self.assertNotIn("FFH-IN-ONLY", denver_ids)
 
+    def test_housing_country_isolation_supports_countries_without_hardcoded_hints(self):
+        with app.db() as con:
+            china_metro = app.upsert_accommodation_metro(con, "Shanghai", country="CN", center_city="Shanghai")
+            app.upsert_accommodation_local_area(con, china_metro, "Shanghai, China", city="Shanghai")
+            turkey_metro = app.upsert_accommodation_metro(con, "Istanbul", country="TR", center_city="Istanbul")
+            app.upsert_accommodation_local_area(con, turkey_metro, "Istanbul, Turkey", city="Istanbul")
+        self.insert_filter_post("FFH-CN-ONLY", city="Shanghai", rent_min=6000)
+        self.insert_filter_post("FFH-TR-ONLY", city="Istanbul", rent_min=20000)
+        with app.db() as con:
+            con.execute("UPDATE accommodation_posts SET country = 'CN' WHERE public_id = 'FFH-CN-ONLY'")
+            con.execute("UPDATE accommodation_posts SET country = 'TR' WHERE public_id = 'FFH-TR-ONLY'")
+        china_ids = {item["id"] for item in app.mobile_housing_posts(city="Shanghai, China", limit=30)}
+        turkey_ids = {item["id"] for item in app.mobile_housing_posts(city="Istanbul, Turkey", limit=30)}
+        self.assertIn("FFH-CN-ONLY", china_ids)
+        self.assertNotIn("FFH-TR-ONLY", china_ids)
+        self.assertIn("FFH-TR-ONLY", turkey_ids)
+        self.assertNotIn("FFH-CN-ONLY", turkey_ids)
+
+    def test_unresolved_housing_country_fails_closed(self):
+        self.insert_filter_post("FFH-STRUCTURED-US", city="Denver", rent_min=900)
+        with app.db() as con:
+            con.execute("UPDATE accommodation_posts SET country = 'US' WHERE public_id = 'FFH-STRUCTURED-US'")
+        with patch.object(app, "cached_accommodation_country_for_place", return_value=""), patch.object(
+            app, "google_accommodation_geocode", return_value=None
+        ):
+            self.assertEqual(app.mobile_housing_posts(city="Unknown place", limit=30), [])
+
     def test_city_only_ride_fallback_never_injects_denver_landmarks(self):
         with patch.object(app, "google_ride_popular_cities", return_value=[]), patch.object(
             app, "ride_point", return_value={"label": "Mumbai, India", "lat": 19.076, "lng": 72.8777}

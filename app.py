@@ -14711,6 +14711,28 @@ def cached_accommodation_country_for_place(place: str) -> str:
         return ""
 
 
+def resolve_accommodation_country(place: str, *, allow_refresh: bool = True) -> str:
+    """Resolve an ISO country code without guessing a default country."""
+    place = normalize_accommodation_place_label(place)
+    if not place:
+        return ""
+    cached = cached_accommodation_country_for_place(place)
+    if cached:
+        return cached
+    geocode = google_accommodation_geocode(place) if allow_refresh else None
+    if not geocode:
+        return ""
+    for component in geocode.get("address_components") or []:
+        if isinstance(component, dict) and "country" in (component.get("types") or []):
+            country = str(component.get("short_name") or "").strip().upper()
+            if re.fullmatch(r"[A-Z]{2}", country):
+                # Persist the geocode so subsequent searches use the same
+                # structured country instead of repeating a network lookup.
+                refresh_accommodation_location_cache(place, force=True)
+                return country
+    return ""
+
+
 def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     query = (query or "").strip()
@@ -16858,10 +16880,21 @@ def mobile_housing_posts(
         "COALESCE(source_label, '') != 'SAMPLE_DATA'",
     ]
     values: list[object] = []
-    requested_country = cached_accommodation_country_for_place(area or city)
-    if requested_country:
+    requested_country = resolve_accommodation_country(area) or resolve_accommodation_country(city)
+    try:
+        with db() as con:
+            structured_country_rows_exist = bool(con.execute(
+                "SELECT 1 FROM accommodation_posts WHERE TRIM(country) <> '' LIMIT 1"
+            ).fetchone())
+    except sqlite3.Error:
+        structured_country_rows_exist = True
+    if requested_country and structured_country_rows_exist:
         clauses.append("country = ?")
         values.append(requested_country)
+    elif not requested_country and structured_country_rows_exist and (area or city) and not post_public_id:
+        # Never broaden an unresolved international search into a worldwide
+        # feed. An empty result is safer than leaking listings across countries.
+        return []
     post_public_id = clean_text_value(post_public_id, 80)
     if post_public_id:
         clauses.append("public_id = ?")
@@ -17410,6 +17443,9 @@ def accommodation_country_code(location: object) -> str:
     cached_country = cached_accommodation_country_for_place(clean_location)
     if cached_country:
         return cached_country
+    resolved_country = resolve_accommodation_country(clean_location)
+    if resolved_country:
+        return resolved_country
     normalized_tokens = set(re.findall(r"[a-z0-9]+", normalized))
     for country, hints in LOCATION_COUNTRY_HINTS.items():
         for hint in hints:
@@ -23803,9 +23839,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
-        post_country = accommodation_country_code(
+        post_country = resolve_accommodation_country(
             ", ".join(value for value in ((form.get("city") or "").strip(), str(location_point.get("label") or "")) if value)
         )
+        if not post_country:
+            self.redirect("/accommodations?error=location")
+            return
         city_area_value = (form.get("city_area_zip") or "").strip()
         if mode == "HAVE_PLACE":
             city_bits = [
@@ -35512,7 +35551,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         resolved_location_label = dedupe_repeated_location_label(str(location_point.get("label") or ""))
-        post_country = accommodation_country_code(", ".join(value for value in (city, resolved_location_label) if value))
+        post_country = resolve_accommodation_country(", ".join(value for value in (city, resolved_location_label) if value))
+        if not post_country:
+            self.send_json({"ok": False, "error": "Choose a valid city and country before publishing this listing."}, 400)
+            return
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)
