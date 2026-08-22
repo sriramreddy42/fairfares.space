@@ -30,6 +30,7 @@ export const appAssets = {
   rentalCarouselPriceMatch: require("../assets/rental-carousel-price-match.jpg") as ImageSourcePropType,
   exportsImportsPromo: require("../assets/exports-imports-coming-soon-mobile.jpg") as ImageSourcePropType,
   rentalPromo: require("../assets/rental-car-promo-mobile.jpg") as ImageSourcePropType,
+  housingSearchPoster: require("../assets/housing-search-by-location.png") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip-mobile.png") as ImageSourcePropType,
   rideEarnLoading: require("../assets/list-your-ride-earn-loading.png") as ImageSourcePropType,

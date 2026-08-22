@@ -43,6 +43,14 @@ except ImportError:  # Local development can continue with filesystem storage.
     BotoConfig = None
 
 try:
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+except ImportError:  # Share pages retain their original image while dependencies install.
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    ImageOps = None
+
+try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -15310,7 +15318,6 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
         "phoneVerified": bool(row_value(user, "phone_verified_at")),
-        "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
         "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_push_opt_in") or 0)),
         "profilePhotoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0)),
     }
@@ -16068,6 +16075,7 @@ def mobile_ride_posts(
     destination_lat: float = 0,
     destination_lng: float = 0,
     offset: int = 0,
+    ride_public_id: str = "",
 ) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
@@ -16113,6 +16121,10 @@ def mobile_ride_posts(
             destination_point = {**destination_point, **supplied_destination}
     clauses = ["ride_posts.status = 'ACTIVE'"]
     values: list[object] = []
+    ride_public_id = clean_text_value(ride_public_id, 80)
+    if ride_public_id:
+        clauses.append("ride_posts.public_id = ?")
+        values.append(ride_public_id)
     route_search = bool(origin and destination)
     if ride_type:
         clauses.append("ride_posts.ride_type = ?")
@@ -16125,7 +16137,7 @@ def mobile_ride_posts(
     # A rider may join and leave anywhere along a longer route. Restricting a
     # two-ended search to the offer's city label would discard valid midway
     # matches before route deviation can be calculated.
-    if city and not route_search:
+    if city and not route_search and not ride_public_id:
         city_root = city.split(",", 1)[0].strip()
         clauses.append("(lower(ride_posts.city_label) LIKE lower(?) OR lower(ride_posts.origin_label) LIKE lower(?) OR lower(ride_posts.destination_label) LIKE lower(?))")
         values.extend([f"%{city_root}%", f"%{city_root}%", f"%{city_root}%"])
@@ -16652,6 +16664,7 @@ def mobile_housing_posts(
     center_lat: float = 0,
     center_lng: float = 0,
     offset: int = 0,
+    post_public_id: str = "",
 ) -> list[dict[str, object]]:
     expire_accommodation_posts(force=False)
     clauses = [
@@ -16660,6 +16673,10 @@ def mobile_housing_posts(
         "COALESCE(source_label, '') != 'SAMPLE_DATA'",
     ]
     values: list[object] = []
+    post_public_id = clean_text_value(post_public_id, 80)
+    if post_public_id:
+        clauses.append("public_id = ?")
+        values.append(post_public_id)
     if need == "need_place":
         clauses.append("post_mode = 'HAVE_PLACE'")
     elif need == "have_place":
@@ -16702,7 +16719,7 @@ def mobile_housing_posts(
             center_lng + longitude_delta,
         ])
     search_term_groups: list[list[str]] = []
-    raw_search_terms = () if (area or "").strip() else (city,)
+    raw_search_terms = () if post_public_id or (area or "").strip() else (city,)
     for raw_term in raw_search_terms:
         term = (raw_term or "").strip()
         if not term:
@@ -20290,6 +20307,174 @@ def public_upload_url(value: str) -> str:
     return optimized_static_image_url(value)
 
 
+def absolute_public_url(value: str, fallback: str = "/static/img/appicon.png") -> str:
+    value = public_upload_url(value)
+    if not value or value.startswith("data:") or value.startswith("local:"):
+        value = fallback
+    if value.startswith("//"):
+        return f"https:{value}"
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    return f"{schema_origin()}/{value.lstrip('/')}"
+
+
+def app_only_open_script(deep_link: str) -> str:
+    if not deep_link:
+        return ""
+    ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+    android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+    return f"""<script>(function(){{var app={json.dumps(deep_link)},ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;var fallback=setTimeout(function(){{if(!document.hidden)location.replace(store)}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.replace(app)}})()</script>"""
+
+
+def share_card_image_bytes(value: str, max_bytes: int = 6_000_000) -> bytes:
+    raw_value = (value or "").strip()
+    if raw_value.startswith("r2://"):
+        try:
+            stored = r2_upload_parts(raw_value, max_bytes=max_bytes)
+            return stored[2] if stored else b""
+        except Exception:
+            return b""
+    if raw_value.startswith("local://uploads/"):
+        try:
+            stored = local_upload_parts(raw_value)
+            return stored[2][:max_bytes] if stored else b""
+        except (OSError, ValueError):
+            return b""
+    value = public_upload_url(raw_value)
+    if not value:
+        return b""
+    if value.startswith("data:image/") and ";base64," in value:
+        try:
+            return base64.b64decode(value.split(",", 1)[1], validate=True)[:max_bytes]
+        except (ValueError, TypeError):
+            return b""
+    if value.startswith("/"):
+        candidate = (BASE_DIR / value.lstrip("/")).resolve()
+        if BASE_DIR.resolve() not in candidate.parents or not candidate.is_file():
+            return b""
+        return candidate.read_bytes()[:max_bytes]
+    if value.startswith("https://"):
+        safe_remote_url = safe_chat_preview_url(value)
+        if not safe_remote_url:
+            return b""
+        try:
+            request = urllib.request.Request(safe_remote_url, headers={"User-Agent": "FairFares-ShareCard/1.0"})
+            with urllib.request.urlopen(request, timeout=6) as response:
+                return response.read(max_bytes + 1)[:max_bytes]
+        except (OSError, urllib.error.URLError, ValueError):
+            return b""
+    return b""
+
+
+def share_card_font(size: int, bold: bool = False):
+    if ImageFont is None:
+        return None
+    candidates = (
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    )
+    for path in candidates:
+        if Path(path).is_file():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
+
+
+def share_card_fit_text(draw, value: str, font, max_width: int) -> str:
+    """Keep user-supplied titles on one readable line inside a share card."""
+    text = " ".join(str(value or "").split())
+    if not text or draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        return text
+    suffix = "…"
+    low, high = 0, len(text)
+    while low < high:
+        midpoint = (low + high + 1) // 2
+        candidate = text[:midpoint].rstrip() + suffix
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            low = midpoint
+        else:
+            high = midpoint - 1
+    return text[:low].rstrip() + suffix
+
+
+def branded_share_card(
+    primary_image: str,
+    title: str,
+    subtitle: str,
+    *,
+    kind: str = "",
+    details: tuple[str, ...] = (),
+    chitthi: bool = False,
+) -> bytes:
+    if Image is None or ImageDraw is None or ImageOps is None:
+        return b""
+    canvas = Image.new("RGB", (1200, 630), "#071b18")
+    primary_bytes = share_card_image_bytes(primary_image)
+    try:
+        primary = Image.open(io.BytesIO(primary_bytes)).convert("RGB") if primary_bytes else Image.new("RGB", (650, 630), "#152f29")
+        primary = ImageOps.fit(primary, (650, 630), method=Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        primary = Image.new("RGB", (650, 630), "#152f29")
+    canvas.paste(primary, (0, 0))
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle((0, 0, 650, 630), fill=(2, 14, 12, 28))
+    draw.rectangle((650, 0, 1200, 630), fill=(7, 27, 24, 255))
+    draw.line((650, 0, 650, 630), fill=(71, 218, 161, 210), width=4)
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
+
+    logo_bytes = share_card_image_bytes("/static/img/fairfares-glow-logo.png")
+    try:
+        logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+        logo.thumbnail((275, 82), Image.Resampling.LANCZOS)
+        canvas.alpha_composite(logo, (1200 - logo.width - 28, 22))
+    except (OSError, ValueError):
+        pass
+
+    if chitthi:
+        wordmark_bytes = share_card_image_bytes("/static/img/chitthi-letters-gold.png")
+        mascot_bytes = share_card_image_bytes("/static/img/chitthi-mascot.png")
+        try:
+            wordmark = Image.open(io.BytesIO(wordmark_bytes)).convert("RGBA")
+            wordmark.thumbnail((290, 100), Image.Resampling.LANCZOS)
+            canvas.alpha_composite(wordmark, (28, 22))
+        except (OSError, ValueError):
+            pass
+        try:
+            mascot = Image.open(io.BytesIO(mascot_bytes)).convert("RGBA")
+            mascot.thumbnail((105, 150), Image.Resampling.LANCZOS)
+            canvas.alpha_composite(mascot, (1070, 455))
+        except (OSError, ValueError):
+            pass
+
+    draw = ImageDraw.Draw(canvas)
+    safe_title = clean_text_value(title, 105) or "FairFares"
+    safe_subtitle = clean_text_value(subtitle, 150)
+    eyebrow_font = share_card_font(22, True)
+    title_font = share_card_font(39, True)
+    subtitle_font = share_card_font(23)
+    detail_font = share_card_font(22, True)
+    cta_font = share_card_font(21, True)
+    text_width = 490
+    safe_title = share_card_fit_text(draw, safe_title, title_font, text_width)
+    safe_subtitle = share_card_fit_text(draw, safe_subtitle, subtitle_font, text_width)
+    eyebrow = "CHITTHI GROUP" if chitthi else "FAIRFARES CARPOOL" if kind == "carpool" else "FAIRFARES HOUSING"
+    draw.text((686, 116), eyebrow, font=eyebrow_font, fill="#50dfa8")
+    draw.text((686, 164), safe_title, font=title_font, fill="#ffffff")
+    draw.text((686, 228), safe_subtitle, font=subtitle_font, fill="#c3d3cf")
+    y = 290
+    for detail in details[:4]:
+        safe_detail = share_card_fit_text(draw, clean_text_value(detail, 90), detail_font, 455)
+        if safe_detail:
+            draw.ellipse((688, y + 8, 700, y + 20), fill="#50dfa8")
+            draw.text((718, y), safe_detail, font=detail_font, fill="#ffffff")
+            y += 48
+    draw.rounded_rectangle((686, 532, 1155, 590), radius=28, fill="#50dfa8")
+    draw.text((720, 548), "Open this card in FairFares  →", font=cta_font, fill="#06241c")
+    output = io.BytesIO()
+    canvas.convert("RGB").save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
 def optimized_static_image_url(url: str) -> str:
     if not url.startswith("/static/img/"):
         return url
@@ -21768,6 +21953,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/chitthi/invite", "/chitthi/group", "/fchat/invite", "/fchat/group"}:
             self.chitthi_invite_landing(parsed)
             return
+        if parsed.path == "/api/share-card":
+            self.share_card_image(parsed)
+            return
         if parsed.path == "/api/health":
             self.api_health()
             return
@@ -22099,7 +22287,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/e2ee/attachments/forward": self.api_forward_encrypted_chat_attachment,
             "/api/chat/e2ee/attachments/download-url": self.api_encrypted_chat_attachment_download_url,
             "/api/chat/e2ee/backup": self.api_save_chat_e2ee_backup,
-            "/api/chat/phone-discoverability": self.api_chat_phone_discoverability,
             "/api/chat/people/by-contacts": self.api_chat_people_by_contacts,
             "/api/chat/messages": self.api_send_chat_message,
             "/api/chat/attachments": self.api_send_chat_attachment,
@@ -22442,20 +22629,117 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             payload = {
                 "applinks": {
                     "apps": [],
-                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}]}],
+                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}, {"/": "/accommodations"}, {"/": "/carpool"}]}],
                 }
             }
         else:
-            fingerprint = os.environ.get("GOOGLE_PLAY_APP_SHA256", "").strip()
+            fingerprints: list[str] = []
+            for configured in (
+                os.environ.get("GOOGLE_PLAY_APP_SHA256", ""),
+                os.environ.get("ANDROID_APP_SHA256", ""),
+                os.environ.get("FIREBASE_ANDROID_SHA256", ""),
+                "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C",
+            ):
+                for fingerprint in re.split(r"[,\s]+", configured.strip()):
+                    normalized = fingerprint.strip().upper()
+                    if normalized and normalized not in fingerprints:
+                        fingerprints.append(normalized)
             payload = [{
                 "relation": ["delegate_permission/common.handle_all_urls"],
                 "target": {
                     "namespace": "android_app",
                     "package_name": "com.fairfares.mobile",
-                    "sha256_cert_fingerprints": [fingerprint] if fingerprint else [],
+                    "sha256_cert_fingerprints": fingerprints,
                 },
             }]
         self.send_text(json.dumps(payload), "application/json; charset=utf-8")
+
+    def share_card_image(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        kind = clean_text_value((params.get("kind") or [""])[0], 20).lower()
+        public_id = clean_text_value((params.get("id") or [""])[0], 80)
+        token = clean_text_value((params.get("token") or [""])[0], 180)
+        primary_image = ""
+        title = "FairFares"
+        subtitle = "Open directly in the FairFares app"
+        details: tuple[str, ...] = ()
+        chitthi = kind == "group"
+        with db() as con:
+            if kind == "housing" and public_id:
+                row = con.execute(
+                    """SELECT accommodation_posts.*,
+                              (SELECT image_url FROM accommodation_post_images images WHERE images.post_id = accommodation_posts.id ORDER BY sort_order, id LIMIT 1) AS preview_image_url
+                       FROM accommodation_posts
+                       WHERE public_id = ? AND visibility_status = 'ACTIVE'
+                         AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+                       LIMIT 1""",
+                    (public_id,),
+                ).fetchone()
+                if row:
+                    primary_image = row_value(row, "preview_image_url") or "/static/img/notifications/housing-share-rent.jpg"
+                    title = row_value(row, "title") or "Housing listing"
+                    subtitle = row_value(row, "city_area_zip") or row_value(row, "city") or "Housing near you"
+                    details = tuple(str(item) for item in (
+                        format_accommodation_rent(row),
+                        option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), row_value(row, "category")),
+                        option_label((("shared", "Shared Bath"), ("private", "Private Bath"), ("private_shared", "Private/Shared Bath")), row_value(row, "bathroom_type"), row_value(row, "bathroom_type")),
+                        f"Available {row_value(row, 'move_in_date')}" if row_value(row, "move_in_date") else "Contact the poster in Chitthi",
+                    ) if item)
+            elif kind == "carpool" and public_id:
+                row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? AND status = 'ACTIVE' LIMIT 1", (public_id,)).fetchone()
+                if row:
+                    primary_image = "/static/img/notifications/carpool-state-move.jpg"
+                    title = f"{row_value(row, 'origin_label') or 'Pickup'} → {row_value(row, 'destination_label') or 'Destination'}"
+                    seats = int(row_value(row, "seats") or 1)
+                    subtitle = row_value(row, "city_label") or "Shared route, shared cost"
+                    contribution = float(row_value(row, "contribution_per_seat") or 0)
+                    details = tuple(str(item) for item in (
+                        row_value(row, "pickup_date"),
+                        row_value(row, "pickup_time"),
+                        f"{seats} seat{'s' if seats != 1 else ''} available",
+                        f"${contribution:g} per seat" if contribution else "Coordinate securely in Chitthi",
+                    ) if item)
+            elif kind == "group":
+                row = None
+                if token and len(token) >= 24:
+                    row = con.execute(
+                        """SELECT communities.*, invites.revoked_at, invites.expires_at,
+                                  (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+                           FROM chat_group_invites invites JOIN chat_communities communities ON communities.id = invites.community_id
+                           WHERE invites.token_hash = ? LIMIT 1""",
+                        (chat_group_invite_hash(token),),
+                    ).fetchone()
+                    expiry = parse_sql_datetime(row_value(row, "expires_at")) if row else None
+                    if not row or row_value(row, "revoked_at") or not expiry or expiry <= datetime.utcnow():
+                        row = None
+                elif public_id:
+                    row = con.execute(
+                        """SELECT communities.*,
+                                  (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+                           FROM chat_communities communities WHERE public_id = ? AND visibility = 'PUBLIC' LIMIT 1""",
+                        (public_id,),
+                    ).fetchone()
+                if row:
+                    primary_image = row_value(row, "photo_url")
+                    title = f"Join {row_value(row, 'name') or 'this group'} on Chitthi"
+                    count = int(row_value(row, "member_count") or 0)
+                    subtitle = row_value(row, "area_label") or "Chitthi by FairFares"
+                    details = (
+                        f"{count} member{'s' if count != 1 else ''}",
+                        clean_text_value(row_value(row, "description"), 80) or "A secure FairFares community",
+                        "Open the exact group in Chitthi",
+                    )
+        image_data = branded_share_card(primary_image, title, subtitle, kind=kind, details=details, chitthi=chitthi)
+        if not image_data:
+            fallback = "/static/img/chitthi-mascot.png" if chitthi else "/static/img/appicon.png"
+            self.redirect(fallback)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Cache-Control", "private, max-age=300" if token else "public, max-age=3600")
+        self.send_header("Content-Length", str(len(image_data)))
+        self.end_headers()
+        self.wfile.write(image_data)
 
     def chitthi_invite_landing(self, parsed: urllib.parse.ParseResult) -> None:
         token = (urllib.parse.parse_qs(parsed.query).get("group_invite", [""])[0] or "").strip()
@@ -22463,13 +22747,66 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not token and not community_id:
             self.send_text("This FairFares group invitation is invalid.", status=400)
             return
+        group = None
+        with db() as con:
+            if token and len(token) >= 24:
+                invite = con.execute(
+                    """SELECT communities.*, invites.revoked_at, invites.expires_at,
+                              (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+                       FROM chat_group_invites invites
+                       JOIN chat_communities communities ON communities.id = invites.community_id
+                       WHERE invites.token_hash = ? LIMIT 1""",
+                    (chat_group_invite_hash(token),),
+                ).fetchone()
+                invite_expiry = parse_sql_datetime(row_value(invite, "expires_at")) if invite else None
+                if invite and not row_value(invite, "revoked_at") and invite_expiry and invite_expiry > datetime.utcnow():
+                    group = invite
+            elif community_id:
+                group = con.execute(
+                    """SELECT communities.*,
+                              (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+                       FROM chat_communities communities
+                       WHERE communities.public_id = ? AND communities.visibility = 'PUBLIC'
+                       LIMIT 1""",
+                    (community_id,),
+                ).fetchone()
         deep_link = f"fairfares://group?group_invite={urllib.parse.quote(token)}" if token else f"fairfares://group?community_id={urllib.parse.quote(community_id)}"
         safe_deep_link = html.escape(deep_link, quote=True)
         app_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
         safe_app_store_url = html.escape(app_store_url, quote=True)
-        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Open Chitthi group</title></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><h1>Open this group in FairFares</h1><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open FairFares app</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install FairFares from the App Store</a></main><script>(function(){{var fallback=setTimeout(function(){{if(!document.hidden)location.replace({json.dumps(app_store_url)})}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.href={json.dumps(deep_link)}}})()</script></body></html>"""
-        self.send_text(body, "text/html; charset=utf-8")
+        group_name = str(row_value(group, "name") or "Chitthi group")
+        group_description = str(row_value(group, "description") or row_value(group, "area_label") or "Connect securely in Chitthi, FairFares messaging.")
+        member_count = int(row_value(group, "member_count") or 0)
+        member_text = f"{member_count} member{'s' if member_count != 1 else ''}" if member_count else "FairFares community"
+        share_title = f"Join {group_name} on Chitthi | FairFares"
+        share_description = f"Chitthi group on FairFares · {group_description} · {member_text}"
+        share_card_query = f"kind=group&token={urllib.parse.quote(token)}" if token else f"kind=group&id={urllib.parse.quote(community_id)}"
+        share_image = f"{schema_origin()}/api/share-card?{share_card_query}"
+        share_url = f"{schema_origin()}{parsed.path}?{parsed.query}"
+        escaped_image = html.escape(share_image, quote=True)
+        # Use the official high-contrast lockup here as well as inside the generated
+        # preview card so the landing page and social preview have identical branding.
+        fairfares_logo = absolute_public_url("/static/img/fairfares-glow-logo.png")
+        chitthi_wordmark = absolute_public_url("/static/img/chitthi-letters-gold.png")
+        chitthi_mascot = absolute_public_url("/static/img/chitthi-mascot.png")
+        raw_group_photo = str(row_value(group, "photo_url") or "") if group else ""
+        if raw_group_photo.startswith(f"r2://{R2_BUCKET_NAME}/"):
+            group_photo = chat_notification_group_avatar_url(schema_origin(), int(row_value(group, "id") or 0))
+        else:
+            group_photo = absolute_public_url(raw_group_photo) if raw_group_photo else ""
+        group_photo_html = (
+            f'<img src="{html.escape(group_photo, quote=True)}" alt="{html.escape(group_name, quote=True)} group" '
+            'style="width:104px;height:104px;border-radius:52px;object-fit:cover">'
+            if group_photo
+            else ""
+        )
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"robots\" content=\"noindex,nofollow\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{escaped_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_image}\"><meta property=\"og:image:type\" content=\"image/png\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(group_name + ' Chitthi group preview', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_image}\"></head>
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install FairFares</a></main>{app_only_open_script(deep_link)}</body></html>"""
+        self.send_text(
+            body,
+            "text/html; charset=utf-8",
+            cache_control="private, no-store" if token else "public, max-age=300",
+        )
 
     def healthz(self) -> None:
         body = b"ok"
@@ -22485,11 +22822,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         content_type: str = "text/plain; charset=utf-8",
         status: int = 200,
         head_only: bool = False,
+        cache_control: str = "public, max-age=3600",
     ) -> None:
         body = body_text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if head_only:
@@ -22857,12 +23195,51 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         search_city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        shared_ride_id = clean_text_value((params.get("rideId", params.get("ride_id", [""]))[0] or ""), 80)
+        shared_ride = None
+        if shared_ride_id:
+            with db() as con:
+                shared_ride = con.execute(
+                    """
+                    SELECT ride_posts.*, users.name AS owner_name
+                    FROM ride_posts
+                    LEFT JOIN users ON users.id = ride_posts.user_id
+                    WHERE ride_posts.public_id = ? AND ride_posts.status = 'ACTIVE'
+                    LIMIT 1
+                    """,
+                    (shared_ride_id,),
+                ).fetchone()
+        if shared_ride:
+            route = f"{row_value(shared_ride, 'origin_label') or 'Pickup area'} → {row_value(shared_ride, 'destination_label') or 'Destination'}"
+            seat_count = int(row_value(shared_ride, "seats") or 1)
+            ride_facts = [
+                row_value(shared_ride, "pickup_date"),
+                row_value(shared_ride, "pickup_time"),
+                f"{seat_count} seat{'s' if seat_count != 1 else ''}",
+            ]
+            share_title = f"Carpool: {route} | FairFares"
+            share_description = f"{' · '.join(str(item) for item in ride_facts if item)}. View this carpool listing and connect securely on FairFares."
+            share_url = f"{schema_origin()}/carpool?rideId={urllib.parse.quote(shared_ride_id)}"
+        else:
+            route = ""
+            share_title = "FairFares Carpool | Find or Share a Ride"
+            share_description = "Find nearby riders, request a ride, or share open seats with the FairFares community."
+            share_url = f"{schema_origin()}/carpool"
         self.send_html(
             render_template(
                 "carpool.html",
                 is_authenticated="true" if user else "false",
                 current_user_id=int(row_value(user, "id") or 0) if user else 0,
                 search_city=escape(search_city),
+                share_title=escape(share_title),
+                share_description=escape(share_description),
+                share_url=escape(share_url),
+                share_image=escape(f"{schema_origin()}/api/share-card?kind=carpool&id={urllib.parse.quote(shared_ride_id)}" if shared_ride else absolute_public_url("/static/img/notifications/carpool-state-move.jpg")),
+                share_image_alt=escape(f"FairFares carpool route {route}" if shared_ride else "Find and share carpool rides on FairFares"),
+                share_image_type="image/png" if shared_ride else "image/jpeg",
+                share_image_width="1200",
+                share_image_height="630" if shared_ride else "800",
+                app_open_script=app_only_open_script(f"fairfares://carpool?rideId={urllib.parse.quote(shared_ride_id)}" if shared_ride else ""),
                 auth_link='<a class="carpool-account" href="/dashboard">Dashboard</a>' if user else '<a class="carpool-account" href="/login?next=/carpool">Sign in</a>',
             )
         )
@@ -22932,9 +23309,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             clauses.append("(gender_preference = ? OR gender_preference IN ('open', 'no_preference'))")
             values.append(search_gender)
         if search_ad_id:
-            ad_pattern = f"%{search_ad_id}%"
-            clauses.append("(public_id LIKE ? OR title LIKE ? OR description LIKE ?)")
-            values.extend([ad_pattern, ad_pattern, ad_pattern])
+            clauses.append("public_id = ?")
+            values.append(search_ad_id)
         if search_city:
             city_pattern = f"%{search_city.split(',', 1)[0].strip()}%"
             clauses.append("(city LIKE ? OR city_area_zip LIKE ? OR primary_neighborhood LIKE ? OR area_or_apartment LIKE ?)")
@@ -22979,6 +23355,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             posts = [row for row in posts if str(row_value(row, "public_id")) in allowed_post_ids]
             map_payload = accommodation_post_map_payload(posts, search_focus, search_metro)
         map_payload_json = json.dumps(map_payload).replace("</", "<\\/")
+        shared_post = next((post for post in posts if str(row_value(post, "public_id") or "") == search_ad_id), None) if search_ad_id else None
+        if shared_post:
+            shared_payload = mobile_housing_post_payload(shared_post)
+            share_title = f"{shared_payload.get('title') or 'Housing listing'} | FairFares"
+            share_facts = [
+                shared_payload.get("rent"),
+                shared_payload.get("categoryLabel"),
+                shared_payload.get("bathroomType"),
+                shared_payload.get("moveIn"),
+                shared_payload.get("genderPreference"),
+            ]
+            share_description = f"{shared_payload.get('area') or shared_payload.get('location') or 'Housing available'} · {' · '.join(str(item) for item in share_facts if item)}. View details and contact the poster on FairFares."
+            share_url = f"{schema_origin()}/accommodations?ad_id={urllib.parse.quote(str(shared_payload.get('id') or search_ad_id))}"
+            share_image = f"{schema_origin()}/api/share-card?kind=housing&id={urllib.parse.quote(str(shared_payload.get('id') or search_ad_id))}"
+            share_image_alt = f"{shared_payload.get('title') or 'Housing listing'} on FairFares"
+        else:
+            share_title = "FairFares Housing | Rooms, Shared Rent, and Short Stays"
+            share_description = "Post or find rooms, shared rent, short stays, apartments, and roommate leads near you."
+            share_url = f"{schema_origin()}/accommodations"
+            share_image = absolute_public_url("/static/img/notifications/housing-share-rent.jpg")
+            share_image_alt = "Find rooms and shared housing on FairFares"
         chat_unread_count = 0
         if user:
             chat_unread_count = sum(
@@ -23034,6 +23431,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             map_payload_json=map_payload_json,
             maps_loader=explorer_maps_loader(),
             asset_version=ASSET_VERSION,
+            share_title=escape(share_title),
+            share_description=escape(share_description),
+            share_url=escape(share_url),
+            share_image=escape(share_image),
+            share_image_alt=escape(share_image_alt),
+            share_image_type="image/png" if shared_post else "image/jpeg",
+            share_image_width="1200",
+            share_image_height="630" if shared_post else "600",
+            app_open_script=app_only_open_script(f"fairfares://housing?postId={urllib.parse.quote(str(shared_payload.get('id') or search_ad_id))}" if shared_post else ""),
         )
         self.send_html(body)
 
@@ -23362,7 +23768,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchall()
             match = next((row for row in matches if normalize_phone(row_value(row, "phone")) == phone), None)
         if not match:
-            self.send_json({"ok": False, "message": "No discoverable FairFares member matched that exact number."}, 404)
+            self.send_json({"ok": False, "message": "No FairFares member matched that exact number."}, 404)
             return
         self.send_json({"ok": True, "person": {"id": int(match["id"]), "name": row_value(match, "name") or "FairFares member"}})
 
@@ -24704,20 +25110,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             row = con.execute("SELECT encrypted_payload, updated_at FROM chat_key_backups WHERE user_id = ?", (int(user["id"]),)).fetchone()
         self.send_json({"ok": True, "encryptedPayload": row_value(row, "encrypted_payload") if row else "", "updatedAt": row_value(row, "updated_at") if row else ""})
-
-    def api_chat_phone_discoverability(self) -> None:
-        user = self.current_user()
-        if not user:
-            self.send_json({"ok": False, "login_required": True, "message": "Sign in to change chat privacy."}, 401)
-            return
-        form = self.read_form()
-        enabled = str(form.get("enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
-        if enabled and (not normalize_phone(row_value(user, "phone")) or not int(row_value(user, "is_verified") or 0)):
-            self.send_json({"ok": False, "message": "Add a phone number and verify your FairFares account first."}, 400)
-            return
-        with db() as con:
-            con.execute("UPDATE users SET chat_phone_discoverable = ? WHERE id = ?", (1 if enabled else 0, int(user["id"])))
-        self.send_json({"ok": True, "enabled": enabled})
 
     def api_send_chat_message(self) -> None:
         user = self.current_user()
@@ -32800,7 +33192,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         name, email, _validated_phone, validation_error = validate_account_fields(
             payload.get("name"), payload.get("email") or payload.get("identifier"), phone or submitted_phone, password
         )
-        phone_discoverable = str(payload.get("phoneDiscoverable", "true")).strip().lower() not in {"0", "false", "no", "off"}
         if validation_error or (country_code and not phone):
             self.send_json(
                 {
@@ -32829,13 +33220,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                                guest_account = 0, chat_phone_discoverable = ?, consented_at = ?,
                                terms_version = ?, privacy_version = ?, community_guidelines_version = ?
                            WHERE id = ?""",
-                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, int(guest["id"])),
+                        (name, email, stored_phone, hash_password(password), 1, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, int(guest["id"])),
                     )
                     user_id = int(guest["id"])
                 else:
                     con.execute(
                         "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
-                        (name, email, stored_phone, hash_password(password), 1 if phone_discoverable else 0, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
+                        (name, email, stored_phone, hash_password(password), 1, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                     )
                     user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -33410,6 +33801,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         radius = (params.get("radius", params.get("radiusMiles", params.get("radius_miles", [""])))[0] or "").strip()
         center_lat = float_from_value(params.get("lat", params.get("latitude", ["0"]))[0])
         center_lng = float_from_value(params.get("lng", params.get("longitude", ["0"]))[0])
+        post_public_id = clean_text_value((params.get("postId", params.get("post_id", [""]))[0] or ""), 80)
         try:
             limit = max(1, min(int(params.get("limit", ["30"])[0] or 30), 50))
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
@@ -33417,7 +33809,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             limit, offset = 30, 0
         search_radius = float_from_value(radius)
         posts, cache_status = cached_mobile_search(
-            ("housing", city, area, need, category, gender, budget, search_radius, limit, center_lat, center_lng, offset),
+            ("housing", city, area, need, category, gender, budget, search_radius, limit, center_lat, center_lng, offset, post_public_id),
             lambda: mobile_housing_posts(
                 city=city,
                 area=area,
@@ -33430,6 +33822,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 center_lat=center_lat,
                 center_lng=center_lng,
                 offset=offset,
+                post_public_id=post_public_id,
             ),
         )
         self.send_json(
@@ -33474,6 +33867,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         destination_lat = float_from_value(params.get("destinationLat", params.get("destination_lat", ["0"]))[0])
         destination_lng = float_from_value(params.get("destinationLng", params.get("destination_lng", ["0"]))[0])
         pickup_date = clean_text_value((params.get("pickup_date", params.get("pickupDate", [""]))[0] or ""), 30)
+        ride_public_id = clean_text_value((params.get("rideId", params.get("ride_id", [""]))[0] or ""), 80)
         raw_ride_type = params.get("type", params.get("rideType", [""]))[0] if params.get("type") or params.get("rideType") else ""
         ride_type = normalize_ride_type(raw_ride_type) if raw_ride_type else ""
         try:
@@ -33482,7 +33876,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             limit, offset = 30, 0
         rides, cache_status = cached_mobile_search(
-            ("rides", city, ride_type, origin, destination, pickup_date, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset),
+            ("rides", city, ride_type, origin, destination, pickup_date, limit, origin_lat, origin_lng, destination_lat, destination_lng, offset, ride_public_id),
             lambda: mobile_ride_posts(
                 city=city,
                 ride_type=ride_type,
@@ -33495,6 +33889,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 destination_lat=destination_lat,
                 destination_lng=destination_lng,
                 offset=offset,
+                ride_public_id=ride_public_id,
             ),
         )
         self.send_json(

@@ -75,6 +75,7 @@ import type { ChatLinkPreview } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
+import { shareChitthiGroup } from "../utils/listingShare";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
 import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
@@ -4041,14 +4042,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ? (await createChatGroupInvite(community.id)).inviteUrl
         : community.joinUrl;
       if (!inviteUrl) throw new Error("An invitation link could not be created.");
-      const message = `Join ${community.name} on FairFares: ${inviteUrl}`;
       Alert.alert(
         `Invite to ${community.name}`,
         community.visibility === "PRIVATE" ? "This secure invitation link expires in 7 days." : "Anyone with this link can open the group.",
         [
           { text: "Cancel", style: "cancel" },
           { text: "Copy link", onPress: () => void Clipboard.setStringAsync(inviteUrl).then(() => Alert.alert("Link copied", "The group invitation is ready to paste.")) },
-          { text: "Share", onPress: () => void Share.share({ message }) }
+          { text: "Share", onPress: () => void shareChitthiGroup(community, inviteUrl) }
         ]
       );
     } catch (error) {

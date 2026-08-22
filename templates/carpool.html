@@ -3,11 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FairFares Carpool | Find or Share a Ride</title>
-  <meta name="description" content="Find nearby riders, request a ride, or share open seats with the FairFares community.">
-  <link rel="canonical" href="https://www.fairfare.space/carpool">
+  <title>$share_title</title>
+  <meta name="description" content="$share_description">
+  <link rel="canonical" href="$share_url">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FairFares">
+  <meta property="og:logo" content="https://www.fairfare.space/static/img/fairfares-glow-logo.png">
+  <meta property="og:title" content="$share_title">
+  <meta property="og:description" content="$share_description">
+  <meta property="og:url" content="$share_url">
+  <meta property="og:image" content="$share_image">
+  <meta property="og:image:secure_url" content="$share_image">
+  <meta property="og:image:type" content="$share_image_type">
+  <meta property="og:image:width" content="$share_image_width">
+  <meta property="og:image:height" content="$share_image_height">
+  <meta property="og:image:alt" content="$share_image_alt">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="$share_title">
+  <meta name="twitter:description" content="$share_description">
+  <meta name="twitter:image" content="$share_image">
   $stylesheet_links
   <script defer src="/static/js/app.js?v=54"></script>
+  $app_open_script
 </head>
 <body class="carpool-page" data-authenticated="$is_authenticated" data-user-id="$current_user_id">
   <header class="ff-site-header carpool-nav">
@@ -156,6 +173,8 @@
     async function load() {
       results.innerHTML = '<p>Finding carpools…</p>';
       const query = new URLSearchParams(new FormData(search)); query.set('limit', '30');
+      const sharedRideId = new URLSearchParams(window.location.search).get('rideId');
+      if (sharedRideId) query.set('rideId', sharedRideId);
       try {
         const response = await fetch(`/api/mobile/rides?${query}`, {headers:{Accept:'application/json'}});
         const payload = await response.json();

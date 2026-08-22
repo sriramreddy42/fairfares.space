@@ -19,6 +19,8 @@
     "export:web": "expo export --platform web && node scripts/sanitize-web-export.cjs",
     "sanitize:web": "node scripts/sanitize-web-export.cjs",
     "android": "expo run:android",
+    "android:sync": "expo prebuild --platform android --no-install",
+    "android:build:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "web:clear": "expo start --web --clear",

@@ -15,6 +15,7 @@ import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { activeFestivalCampaign } from "../utils/festivals";
+import { shareCarpoolListing } from "../utils/listingShare";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -35,6 +36,7 @@ type Props = {
   onNeedSelect: (need: string) => void;
   onAreaSelect: (area: string) => void;
   onOpenSearch: () => void;
+  hasExactLocationSearch?: boolean;
   onCategorySelect: (category: string) => void;
   onGenderSelect: (gender: string) => void;
   onBudgetSelect: (budget: string) => void;
@@ -49,6 +51,10 @@ type Props = {
   rideOwnerOpenTarget?: "workspace" | "requests" | "listings";
   rideOwnerEditId?: string;
   onRideOwnerClosed?: () => void;
+  linkedHousingPost?: HousingPost | null;
+  linkedCarpoolRide?: RidePost | null;
+  onLinkedHousingPostOpened?: () => void;
+  onLinkedCarpoolRideOpened?: () => void;
 };
 
 type CurrentRideLocation = {
@@ -560,7 +566,12 @@ export function HousingScreen({
   rideOwnerOpenToken = 0,
   rideOwnerOpenTarget = "workspace",
   rideOwnerEditId = "",
-  onRideOwnerClosed
+  onRideOwnerClosed,
+  linkedHousingPost,
+  linkedCarpoolRide,
+  onLinkedHousingPostOpened,
+  onLinkedCarpoolRideOpened,
+  hasExactLocationSearch = false
 }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
   const [festivalCampaign, setFestivalCampaign] = useState(() => activeFestivalCampaign());
@@ -638,6 +649,11 @@ export function HousingScreen({
   const housingCardWidth = compactHousingHome
     ? Math.max(230, Math.min(275, (viewportWidth - 30) / 1.42))
     : 328;
+  const housingPosterWidth = Math.max(
+    housingCardWidth,
+    (typeof layout.contentMaxWidth === "number" ? layout.contentMaxWidth : viewportWidth) - 28
+  );
+  const housingCardHeight = compactHousingHome ? 506 : 620;
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -648,6 +664,35 @@ export function HousingScreen({
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
+
+  useEffect(() => {
+    if (!linkedHousingPost) return;
+    setMode("housing");
+    setDetailPost(linkedHousingPost);
+    onLinkedHousingPostOpened?.();
+  }, [linkedHousingPost, onLinkedHousingPostOpened]);
+
+  useEffect(() => {
+    if (!linkedCarpoolRide) return;
+    setMode("ride");
+    setRideRows([linkedCarpoolRide]);
+    setRideForm((current) => ({
+      ...current,
+      city: linkedCarpoolRide.city || current.city,
+      origin: linkedCarpoolRide.origin,
+      originLat: linkedCarpoolRide.originLat ?? null,
+      originLng: linkedCarpoolRide.originLng ?? null,
+      destination: linkedCarpoolRide.destination,
+      destinationLat: linkedCarpoolRide.destinationLat ?? null,
+      destinationLng: linkedCarpoolRide.destinationLng ?? null,
+      rideType: "CARPOOL_REQUEST"
+    }));
+    setSelectedRideChoice(`offer:${linkedCarpoolRide.id}`);
+    setRidePlannerStage("choices");
+    setRidePlannerOpen(true);
+    onBottomTabsHiddenChange?.(true);
+    onLinkedCarpoolRideOpened?.();
+  }, [linkedCarpoolRide, onBottomTabsHiddenChange, onLinkedCarpoolRideOpened]);
 
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const cityExperienceLocation = data?.location.city || "Denver, CO";
@@ -743,6 +788,22 @@ export function HousingScreen({
       return compareOptionalNumber(a.distanceMiles, b.distanceMiles);
     });
   }, [posts, selectedSort]);
+  const renderHousingPostCard = (post: HousingPost) => (
+    <HousingCard
+      key={post.id}
+      post={post}
+      onMessage={onMessage}
+      onOpen={setDetailPost}
+      distanceLabel={distanceReference}
+      width={housingCardWidth}
+      height={housingCardHeight}
+      compact={compactHousingHome}
+      messageSent={sentPostIds.includes(post.id)}
+      onSendMessage={onSendPostMessage}
+      onSeeConversation={onOpenPostConversation}
+      ownListing={Boolean(data?.user?.id && Number(post.posterUserId) === Number(data.user.id))}
+    />
+  );
   const localities = useMemo(() => {
     const city = data?.location.city || "Denver, CO";
     const groups = new Map<string, { name: string; total: number; count: number; offered: number; needed: number; preset: boolean }>();
@@ -1887,6 +1948,11 @@ export function HousingScreen({
                         <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
                           <Text style={styles.rideOwnerChatText}>{sentRideIds.includes(ride.id) ? "✓ Sent" : "Message"}</Text>
                         </TouchableOpacity>
+                        {!isIncoming ? (
+                          <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => void shareCarpoolListing(ride)} accessibilityRole="button" accessibilityLabel={`Share carpool from ${ride.origin} to ${ride.destination}`}>
+                            <Text style={styles.rideOwnerChatText}>↗ Share</Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
                     </View>
                   );
@@ -2808,6 +2874,9 @@ export function HousingScreen({
                             <TouchableOpacity style={styles.rideChoiceSmallButton} onPress={openRideGoogleMaps}>
                               <Text style={styles.rideChoiceSmallButtonText}>View route</Text>
                             </TouchableOpacity>
+                            <TouchableOpacity style={styles.rideChoiceSmallButton} onPress={() => void shareCarpoolListing(offer)} accessibilityRole="button" accessibilityLabel={`Share carpool from ${offer.origin} to ${offer.destination}`}>
+                              <Text style={styles.rideChoiceSmallButtonText}>↗ Share</Text>
+                            </TouchableOpacity>
                             <TouchableOpacity style={[styles.rideChoiceSmallButton, styles.rideChoiceChatButton]} onPress={() => onRideMessage(offer)}>
                               <Image source={appAssets.chittiMascot} style={styles.rideChoiceChatIcon} resizeMode="contain" />
                               <Text style={styles.rideChoiceSmallButtonText}>{sentRideIds.includes(offer.id) ? "✓ Sent" : "Chitthi"}</Text>
@@ -2917,6 +2986,11 @@ export function HousingScreen({
               <Text style={styles.rideListingSuccessFact}>{ride?.seats || 1} seat{Number(ride?.seats || 1) === 1 ? "" : "s"}</Text>
             </View>
             <Text style={styles.rideListingSuccessCopy}>Matching rider requests will appear in your driver workspace. You can coordinate with accepted riders in Chitthi.</Text>
+            {ride ? (
+              <TouchableOpacity style={styles.rideListingSuccessShare} onPress={() => void shareCarpoolListing(ride)} accessibilityRole="button" accessibilityLabel="Share carpool listing">
+                <Text style={styles.rideListingSuccessShareText}>↗ Share listing</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={styles.rideListingSuccessPrimary} onPress={viewSuccessfulRideListing}>
               <Text style={styles.rideListingSuccessPrimaryText}>View my listing</Text>
             </TouchableOpacity>
@@ -3537,7 +3611,20 @@ export function HousingScreen({
       </View> : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.housingCardRow} snapToInterval={housingCardWidth + 10} decelerationRate="fast">
         {sortedPosts.length ? (
-          sortedPosts.map((post) => <HousingCard key={post.id} post={post} onMessage={onMessage} onOpen={setDetailPost} distanceLabel={distanceReference} width={housingCardWidth} compact={compactHousingHome} messageSent={sentPostIds.includes(post.id)} onSendMessage={onSendPostMessage} onSeeConversation={onOpenPostConversation} ownListing={Boolean(data?.user?.id && Number(post.posterUserId) === Number(data.user.id))} />)
+          <>
+            {sortedPosts.slice(0, 4).map(renderHousingPostCard)}
+            {sortedPosts.length >= 4 && !hasExactLocationSearch ? (
+              <TouchableOpacity
+                activeOpacity={0.88}
+                style={[styles.exactLocationCard, { width: housingPosterWidth, height: housingCardHeight }]}
+                onPress={onOpenSearch}
+                accessibilityRole="button"
+                accessibilityLabel="Search housing listings for an exact location"
+              >
+                <Image source={appAssets.housingSearchPoster} style={styles.exactLocationPoster} resizeMode="cover" />
+              </TouchableOpacity>
+            ) : null}
+          </>
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
@@ -4209,7 +4296,9 @@ const styles = StyleSheet.create({
   homeStoryDotActive: { width: 18, backgroundColor: "#37d59a" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
-  housingCardRow: { gap: 10, paddingRight: 2 },
+  housingCardRow: { gap: 10, paddingRight: 2, alignItems: "flex-start" },
+  exactLocationCard: { borderRadius: theme.radius.lg, backgroundColor: "#0b241d", overflow: "hidden" },
+  exactLocationPoster: { width: "100%", height: "100%" },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyText: { color: theme.colors.muted, marginTop: 8 },
@@ -5057,6 +5146,8 @@ const styles = StyleSheet.create({
   rideListingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
   rideListingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
   rideListingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
+  rideListingSuccessShare: { width: "100%", minHeight: 50, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  rideListingSuccessShareText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   rideListingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
   rideListingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   rideListingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },

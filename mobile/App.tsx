@@ -14,7 +14,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getMobileNotificationPreferences, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
+import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getMobileNotificationPreferences, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -26,6 +26,7 @@ import { encryptForDevices, getOrCreateDeviceIdentity } from "./src/utils/chatCr
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 import { UserAvatar } from "./src/components/UserAvatar";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
+import { shareHousingListing } from "./src/utils/listingShare";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -166,6 +167,7 @@ const signupCallingCodes = [
 ] as const;
 
 const PENDING_RENTAL_CHECKOUT_KEY = "fairfares.mobile.pendingRentalCheckout";
+const HOUSING_LOCATION_SEARCHED_KEY = "fairfares.mobile.housingLocationSearched";
 const RENTAL_CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
 
 type PendingRentalCheckout = {
@@ -276,6 +278,8 @@ function FairFaresApp() {
   const [sentCardRideIds, setSentCardRideIds] = useState<string[]>([]);
   const [sentCardOwnerUserId, setSentCardOwnerUserId] = useState(0);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
+  const [linkedHousingPost, setLinkedHousingPost] = useState<HousingPost | null>(null);
+  const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
@@ -300,6 +304,8 @@ function FairFaresApp() {
   const [city, setCity] = useState("Denver, CO");
   const [area, setArea] = useState("");
   const [housingSearchCoordinates, setHousingSearchCoordinates] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+  const [hasSearchedHousingLocation, setHasSearchedHousingLocation] = useState(false);
+  const [housingSearchHistoryLoaded, setHousingSearchHistoryLoaded] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
@@ -311,6 +317,20 @@ function FairFaresApp() {
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(HOUSING_LOCATION_SEARCHED_KEY)
+      .then((value) => {
+        if (active) setHasSearchedHousingLocation(value === "1");
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setHousingSearchHistoryLoaded(true);
+      });
+    return () => { active = false; };
+  }, []);
+
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
@@ -840,6 +860,40 @@ function FairFaresApp() {
       if (!url) return;
       try {
         const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./i, "");
+        const opensHousing = (host === "fairfare.space" && parsed.pathname === "/accommodations") || (parsed.protocol === "fairfares:" && host === "housing");
+        if (opensHousing) {
+          const postId = parsed.searchParams.get("ad_id") || parsed.searchParams.get("postId") || "";
+          setSelectedNeed("need_place");
+          setActiveTab("housing");
+          if (postId) {
+            void getHousingListing(postId).then((post) => {
+              if (!post) {
+                Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
+                return;
+              }
+              setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+              setLinkedHousingPost(post);
+            }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+          }
+          return;
+        }
+        const opensCarpool = (host === "fairfare.space" && parsed.pathname === "/carpool") || (parsed.protocol === "fairfares:" && host === "carpool");
+        if (opensCarpool) {
+          const rideId = parsed.searchParams.get("rideId") || parsed.searchParams.get("ride_id") || "";
+          setSelectedNeed("ride_need");
+          setActiveTab("housing");
+          if (rideId) {
+            void getRideListing(rideId).then((ride) => {
+              if (!ride) {
+                Alert.alert("Ride unavailable", "This carpool listing has expired or is no longer available.");
+                return;
+              }
+              setLinkedCarpoolRide(ride);
+            }).catch(() => Alert.alert("Ride unavailable", "This carpool listing is no longer available."));
+          }
+          return;
+        }
         const invitePathMatch = parsed.pathname.match(/\/(?:chitthi|fchat)\/invite\/([^/]+)/i);
         const groupCommunity = parsed.searchParams.get("community_id") || "";
         const groupInvite = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token") || (invitePathMatch?.[1] ? decodeURIComponent(invitePathMatch[1]) : "") || (groupCommunity ? `community:${groupCommunity}` : "");
@@ -1177,6 +1231,8 @@ function FairFaresApp() {
     try {
       const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, nextCoordinates);
       setVisiblePosts(posts);
+      setHasSearchedHousingLocation(true);
+      void AsyncStorage.setItem(HOUSING_LOCATION_SEARCHED_KEY, "1").catch(() => undefined);
       setData((current) =>
         current
           ? {
@@ -1224,6 +1280,8 @@ function FairFaresApp() {
     try {
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
       setVisiblePosts(posts);
+      setHasSearchedHousingLocation(true);
+      void AsyncStorage.setItem(HOUSING_LOCATION_SEARCHED_KEY, "1").catch(() => undefined);
       setActiveTab("housing");
       setHousingWelcomeFocusKey((value) => value + 1);
       setData((current) =>
@@ -1851,7 +1909,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, true, signupCallingCode, signupConsentAccepted);
+      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupCallingCode, signupConsentAccepted);
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
@@ -2084,6 +2142,7 @@ function FairFaresApp() {
           setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
+        hasExactLocationSearch={!housingSearchHistoryLoaded || hasSearchedHousingLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -2097,6 +2156,10 @@ function FairFaresApp() {
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
+        linkedHousingPost={linkedHousingPost}
+        linkedCarpoolRide={linkedCarpoolRide}
+        onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
+        onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
           setRideOwnerOpenToken(0);
@@ -2130,6 +2193,7 @@ function FairFaresApp() {
           setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
+        hasExactLocationSearch={!housingSearchHistoryLoaded || hasSearchedHousingLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -2143,6 +2207,10 @@ function FairFaresApp() {
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
+        linkedHousingPost={linkedHousingPost}
+        linkedCarpoolRide={linkedCarpoolRide}
+        onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
+        onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
           setRideOwnerOpenToken(0);
@@ -2336,8 +2404,7 @@ function FairFaresApp() {
                     style={[styles.input, styles.signupPhoneInput]}
                   />
                 </View>
-                <Text style={styles.authHint}>Saved securely as {signupCallingCode} followed by your mobile number so Chitthi can match contacts across countries.</Text>
-                <Text style={styles.authHint}>People who already saved your exact number can find you in Chitthi after activation. Your phone number is never displayed.</Text>
+                <Text style={styles.authHint}>Saved securely with your country code. Your phone number is never displayed.</Text>
               </>
             ) : null}
             <TextInput
@@ -2635,6 +2702,14 @@ function FairFaresApp() {
             <Text style={styles.listingSuccessCopy}>
               Your post is visible to matching FairFares members. Replies will arrive in Chitthi, and you can edit the current post from Activity.
             </Text>
+            <TouchableOpacity
+              style={styles.listingSuccessShare}
+              onPress={() => housingListingSuccess && void shareHousingListing(housingListingSuccess)}
+              accessibilityRole="button"
+              accessibilityLabel="Share housing listing"
+            >
+              <Text style={styles.listingSuccessShareText}>↗ Share listing</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.listingSuccessPrimary}
               onPress={() => {
@@ -3019,6 +3094,8 @@ const styles = StyleSheet.create({
   listingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
   listingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
   listingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
+  listingSuccessShare: { width: "100%", minHeight: 50, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
+  listingSuccessShareText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   listingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
   listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   listingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },

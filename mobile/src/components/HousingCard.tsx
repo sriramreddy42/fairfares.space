@@ -5,6 +5,7 @@ import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { HousingPost } from "../types";
+import { shareHousingListing } from "../utils/listingShare";
 
 type Props = {
   post: HousingPost;
@@ -12,6 +13,7 @@ type Props = {
   onOpen?: (post: HousingPost) => void;
   distanceLabel?: string;
   width?: number;
+  height?: number;
   compact?: boolean;
   messageSent?: boolean;
   onSendMessage?: (post: HousingPost, message: string) => Promise<void>;
@@ -19,7 +21,7 @@ type Props = {
   ownListing?: boolean;
 };
 
-export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
+export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, height, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
   const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
   const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
@@ -35,7 +37,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, com
       ? "Details first"
       : "Coming soon";
   return (
-    <TouchableOpacity style={[styles.card, width ? { width, marginRight: 0 } : null]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
+    <TouchableOpacity style={[styles.card, width ? { width, marginRight: 0 } : null, height ? { height } : null]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
       <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
         {imageUrl ? (
           <Image source={{ uri: imageUrl }} style={styles.image} />
@@ -75,6 +77,20 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, com
           <Text numberOfLines={2} style={[styles.rent, compact && styles.rentCompact]}>{post.rent || "Rent open"}</Text>
           <Text style={styles.expiry}>{post.expiryLabel}</Text>
         </View>
+        {!post.sample ? (
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={(event) => {
+              event.stopPropagation();
+              void shareHousingListing(post);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Share ${post.title}`}
+          >
+            <Text style={styles.shareGlyph}>↗</Text>
+            <Text style={styles.shareText}>Share</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       {!post.sample ? (
         <View style={styles.inlineMessageCard}>
@@ -131,7 +147,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.line,
     overflow: "hidden",
-    marginRight: theme.spacing.md
+    marginRight: theme.spacing.md,
+    alignSelf: "flex-start"
   },
   imageWrap: {
     height: 148,
@@ -183,6 +200,7 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   body: {
+    flex: 1,
     padding: theme.spacing.md,
     gap: 8
   },
@@ -251,6 +269,9 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginTop: 3
   },
+  shareButton: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12 },
+  shareGlyph: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  shareText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   respond: {
     borderWidth: 1,
     borderColor: theme.colors.blue,

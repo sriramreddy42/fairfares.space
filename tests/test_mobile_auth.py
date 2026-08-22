@@ -187,7 +187,6 @@ class MobileAuthTest(unittest.TestCase):
                     "phone": "(937) 555-0199",
                     "countryCode": "+1",
                     "password": "CorrectHorse123!",
-                    "phoneDiscoverable": False,
                     "consentAccepted": True,
                 })
             self.assertEqual(status, 201)
@@ -201,7 +200,7 @@ class MobileAuthTest(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(user["name"], "Mobile Member")
             self.assertEqual(user["phone"], "+19375550199")
-            self.assertEqual(int(user["chat_phone_discoverable"]), 0)
+            self.assertEqual(int(user["chat_phone_discoverable"]), 1)
             self.assertTrue(user["consented_at"])
             self.assertEqual(user["terms_version"], app.TERMS_VERSION)
             self.assertEqual(user["privacy_version"], app.PRIVACY_VERSION)
@@ -675,7 +674,7 @@ class MobileAuthTest(unittest.TestCase):
             self.assertTrue(completed["token"])
             self.assertEqual(completed["user"]["phone"], "+19375550198")
             self.assertFalse(completed["user"]["phoneVerified"])
-            self.assertTrue(completed["user"]["chatPhoneDiscoverable"])
+            self.assertNotIn("chatPhoneDiscoverable", completed["user"])
             with app.db() as con:
                 consented_user = con.execute("SELECT * FROM users WHERE email = ?", ("social@example.com",)).fetchone()
             self.assertTrue(consented_user["consented_at"])

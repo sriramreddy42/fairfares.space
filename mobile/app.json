@@ -4,7 +4,7 @@
     "slug": "fairfares-mobile",
     "newArchEnabled": true,
     "scheme": "fairfares",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "icon": "./assets/app-icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -16,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "23",
+      "buildNumber": "29",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -49,7 +49,7 @@
     "android": {
       "package": "com.fairfares.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 13,
+      "versionCode": 15,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -89,6 +89,26 @@
               "scheme": "https",
               "host": "www.fairfare.space",
               "pathPrefix": "/fchat/"
+            },
+            {
+              "scheme": "https",
+              "host": "fairfare.space",
+              "pathPrefix": "/accommodations"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fairfare.space",
+              "pathPrefix": "/accommodations"
+            },
+            {
+              "scheme": "https",
+              "host": "fairfare.space",
+              "pathPrefix": "/carpool"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fairfare.space",
+              "pathPrefix": "/carpool"
             }
           ],
           "category": [
@@ -143,7 +163,7 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Allow FairFares to privately find contacts who chose to be discoverable and let you select a contact to share in Chitthi. Your address book is not uploaded."
+          "contactsPermission": "Allow FairFares to privately find your contacts who use Chitthi and let you select a contact to share. Your address book is not uploaded."
         }
       ],
       "@bacons/apple-targets",

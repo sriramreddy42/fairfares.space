@@ -488,6 +488,11 @@ export async function getHousing(
   return payload.posts;
 }
 
+export async function getHousingListing(postId: string) {
+  const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?postId=${encodeURIComponent(postId)}&limit=1`);
+  return payload.posts[0] || null;
+}
+
 type RideSearchCoordinates = {
   originLat?: number | null;
   originLng?: number | null;
@@ -510,6 +515,11 @@ export async function getRides(city: string, origin = "", destination = "", ride
   addFiniteParam(params, "destinationLng", coordinates.destinationLng);
   const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?${params.toString()}`);
   return payload.rides || [];
+}
+
+export async function getRideListing(rideId: string) {
+  const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?rideId=${encodeURIComponent(rideId)}&limit=1`);
+  return payload.rides[0] || null;
 }
 
 export async function getRideActivity() {
@@ -2174,14 +2184,6 @@ export async function openIssuesAndSuggestionsChat() {
   });
 }
 
-export async function setChatPhoneDiscoverability(enabled: boolean) {
-  return request<{ ok: boolean; enabled: boolean }>("/api/chat/phone-discoverability", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ enabled: enabled ? "1" : "0" })
-  });
-}
-
 export async function mobileLogin(identifier: string, password: string) {
   const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>(
     "/api/mobile/login",
@@ -2223,13 +2225,13 @@ export async function completeSocialPhone(continuationToken: string, phone: stri
   return payload;
 }
 
-export async function mobileSignup(name: string, email: string, phone: string, password: string, phoneDiscoverable = true, countryCode = "", consentAccepted = false) {
+export async function mobileSignup(name: string, email: string, phone: string, password: string, countryCode = "", consentAccepted = false) {
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, phone, countryCode, password, phoneDiscoverable, consentAccepted })
+      body: JSON.stringify({ name, email, phone, countryCode, password, consentAccepted })
     }
   );
   if (payload.token) {
