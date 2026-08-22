@@ -584,6 +584,35 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(autocomplete_urls)
         self.assertTrue(all("components=country%3Aus" in url for url in autocomplete_urls))
 
+    def test_popular_ride_cities_prefer_population_ranked_dynamic_source(self):
+        origin = {
+            "address_components": [
+                {"long_name": "United States", "short_name": "US", "types": ["country"]}
+            ]
+        }
+        new_york = {
+            "status": "OK",
+            "results": [{
+                "name": "New York", "formatted_address": "New York, NY, USA", "types": ["locality"],
+                "geometry": {"location": {"lat": 40.7128, "lng": -74.006}},
+                "photos": [{"photo_reference": "new-york-photo"}],
+            }],
+        }
+
+        def google_response(url):
+            if "countriesnow.space" in url:
+                return {"error": False, "data": [{"city": "New York (NY)"}]}
+            if "New+York+city" in url:
+                return new_york
+            return {"status": "ZERO_RESULTS", "results": []}
+
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
+            app, "google_accommodation_geocode", return_value=origin
+        ), patch.object(app, "google_api_get", side_effect=google_response) as google_call:
+            results = app.google_ride_popular_cities("Denver, CO")
+        self.assertIn("New York, NY, USA", [item["label"] for item in results])
+        self.assertFalse(any("/autocomplete/" in call.args[0] for call in google_call.call_args_list))
+
     def test_housing_rent_uses_location_country_currency(self):
         india = {"city_area_zip": "Mumbai, Maharashtra, India", "rent_min": 18000, "rent_max": 24000, "rent_period": "MONTH"}
         us = {"city_area_zip": "Denver, CO", "rent_min": 900, "rent_max": 1200, "rent_period": "MONTH"}

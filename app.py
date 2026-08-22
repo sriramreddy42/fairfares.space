@@ -8572,6 +8572,7 @@ def get_active_post_return_fee_rules() -> list[sqlite3.Row] | list[dict[str, obj
                 return rules
     except sqlite3.Error:
         pass
+
     return [
         {"label": label, "rule_type": rule_type, "value": value, "description": description, "sort_order": sort_order}
         for label, rule_type, value, description, sort_order in POST_RETURN_FEE_RULES
@@ -15663,6 +15664,32 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
     except sqlite3.Error:
         pass
 
+    # CountriesNow exposes population-ranked cities for countries worldwide.
+    # It supplies ranking only; Google below still validates locality type,
+    # country membership, coordinates, and the displayed photo.
+    population_candidates: list[str] = []
+    population_url = "https://countriesnow.space/api/v0.1/countries/population/cities/filter/q?" + urllib.parse.urlencode({
+        "country": country_scope,
+        "limit": 16,
+        "order": "dsc",
+        "orderBy": "populationCounts",
+    })
+    try:
+        population_payload = google_api_get(population_url)
+    except Exception:
+        population_payload = {}
+    if population_payload.get("error") is False:
+        for row in population_payload.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            candidate = re.sub(r"\s*\([^)]*\)\s*$", "", str(row.get("city") or "")).strip()
+            if candidate.isupper():
+                candidate = candidate.title()
+            candidate = normalize_accommodation_place_label(candidate)
+            if candidate and candidate.lower() not in {value.lower() for value in population_candidates}:
+                population_candidates.append(candidate)
+    candidates.extend(population_candidates)
+
     search_queries = (f"popular cities in {country_scope}",)
     live_places: list[dict[str, object]] = []
     for search_query in search_queries:
@@ -15675,14 +15702,13 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
         if payload.get("status") == "OK":
             live_places.extend(item for item in (payload.get("results") or []) if isinstance(item, dict))
 
-    # Text Search often interprets "major cities" as attractions or returns no
-    # locality records. Country-filtered autocomplete is the reliable dynamic
-    # source. Spread prefixes across the alphabet so results are not limited to
-    # one initial, while avoiding any maintained country/city lookup table.
+    # If population data is temporarily unavailable, country-filtered Google
+    # autocomplete remains a dynamic fallback. Spread prefixes across the
+    # alphabet so fallback results are not limited to one initial.
     autocomplete_candidates: list[str] = []
     prefix_seed = sum(ord(char) for char in origin_country_code) % 26
     prefixes = [chr(97 + ((prefix_seed + step) % 26)) for step in (0, 6, 12, 18)]
-    for prefix in prefixes:
+    for prefix in (() if population_candidates else prefixes):
         params = {
             "input": prefix,
             "types": "(cities)",
@@ -15733,7 +15759,7 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
             except Exception:
                 continue
             places = payload.get("results") if payload.get("status") == "OK" else []
-        place = next(
+        exact_place = next(
             (
                 item for item in (places or [])
                 if isinstance(item, dict)
@@ -15742,6 +15768,16 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
             ),
             None,
         )
+        place = exact_place
+        if not place and candidate in population_candidates:
+            place = next(
+                (
+                    item for item in (places or [])
+                    if isinstance(item, dict)
+                    and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
+                ),
+                None,
+            )
         if not place:
             continue
         name = normalize_accommodation_place_label(str(place.get("name") or ""))
