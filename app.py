@@ -6118,6 +6118,7 @@ def init_db() -> None:
                 description TEXT NOT NULL DEFAULT '',
                 street_address TEXT NOT NULL DEFAULT '',
                 city TEXT NOT NULL DEFAULT '',
+                country TEXT NOT NULL DEFAULT '',
                 zip_code TEXT NOT NULL DEFAULT '',
                 primary_neighborhood TEXT NOT NULL DEFAULT '',
                 apartment_name TEXT NOT NULL DEFAULT '',
@@ -7425,7 +7426,29 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "roommate_intent", "roommate_intent INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "street_address", "street_address TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "city", "city TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "accommodation_posts", "country", "country TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "zip_code", "zip_code TEXT NOT NULL DEFAULT ''")
+        con.execute(
+            """
+            UPDATE accommodation_posts
+            SET country = coalesce((
+                SELECT upper(metro.country)
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE lower(area.city) = lower(accommodation_posts.city)
+                   OR lower(area.name) = lower(accommodation_posts.city_area_zip)
+                LIMIT 1
+            ), '')
+            WHERE country = ''
+            """
+        )
+        con.execute(
+            """
+            UPDATE accommodation_posts SET country = 'IN'
+            WHERE country = '' AND lower(' ' || city || ' ' || city_area_zip || ' ') GLOB
+                  '* india *'
+            """
+        )
         ensure_column(con, "accommodation_posts", "primary_neighborhood", "primary_neighborhood TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "apartment_name", "apartment_name TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "accommodates", "accommodates INTEGER NOT NULL DEFAULT 0")
@@ -14666,6 +14689,28 @@ def cached_accommodation_metro_for_place(place: str) -> str:
         return ""
 
 
+def cached_accommodation_country_for_place(place: str) -> str:
+    place = normalize_accommodation_place_label(place)
+    if not place:
+        return ""
+    city = place.split(",", 1)[0].strip()
+    try:
+        with db() as con:
+            row = con.execute(
+                """
+                SELECT upper(metro.country) AS country
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE lower(area.name) = lower(?) OR lower(area.city) = lower(?) OR area.zip_code = ?
+                LIMIT 1
+                """,
+                (place, city, place),
+            ).fetchone()
+        return str(row_value(row, "country") or "").upper()
+    except sqlite3.Error:
+        return ""
+
+
 def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     query = (query or "").strip()
@@ -15349,6 +15394,12 @@ def accommodation_post_image_urls(post_id: int, preview_image: str = "", limit: 
 def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
     images = accommodation_post_image_urls(int(row_value(row, "id") or 0), row_value(row, "preview_image_url"), limit=4)
     preview_image = images[0] if images else ""
+    listing_location = row_value(row, "city_area_zip") or row_value(row, "city") or row_value(row, "area_or_apartment")
+    stored_country = str(row_value(row, "country") or "").strip().upper()
+    currency_code, currency_symbol = accommodation_currency(listing_location)
+    if stored_country:
+        currency_code = stored_country
+        currency_symbol = COUNTRY_CURRENCY_SYMBOLS.get(stored_country, f"{stored_country} ")
     return {
         "id": row_value(row, "public_id"),
         "title": row_value(row, "title"),
@@ -15358,11 +15409,14 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "category": row_value(row, "category"),
         "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
         "location": row_value(row, "city_area_zip") or row_value(row, "city") or "Location open",
+        "country": stored_country or currency_code,
         "area": row_value(row, "area_or_apartment") or row_value(row, "primary_neighborhood"),
         "workLocation": row_value(row, "work_school_location"),
         "moveIn": row_value(row, "move_in_date"),
         "rent": format_accommodation_rent(row),
         "rentValue": float(row_value(row, "rent_min") or row_value(row, "rent_max") or 0),
+        "currencyCode": currency_code,
+        "currencySymbol": currency_symbol,
         "radiusMiles": int(float(row_value(row, "radius_miles") or 0)),
         "distanceMiles": round(float(row_value(row, "distance_miles") or 0), 1) if row_value(row, "distance_miles") not in {"", None} else None,
         "lat": float(row_value(row, "lat") or 0),
@@ -15546,7 +15600,108 @@ def google_ride_popular_places(city: str, lat: float = 0, lng: float = 0, limit:
     return places
 
 
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[dict[str, object]]:
+POPULAR_CITIES_BY_COUNTRY: dict[str, tuple[str, ...]] = {
+    "US": ("New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "Denver", "Miami", "Austin"),
+    "IN": ("Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow"),
+    "GB": ("London", "Manchester", "Birmingham", "Glasgow", "Liverpool", "Edinburgh", "Bristol"),
+    "CA": ("Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa", "Edmonton"),
+    "AU": ("Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Canberra"),
+    "AE": ("Dubai", "Abu Dhabi", "Sharjah", "Ajman"),
+    "SG": ("Singapore",),
+    "JP": ("Tokyo", "Osaka", "Kyoto", "Yokohama", "Nagoya", "Sapporo"),
+    "DE": ("Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne"),
+    "FR": ("Paris", "Marseille", "Lyon", "Toulouse", "Nice"),
+}
+
+
+def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
+    """Return country-scoped cities with city photos—never attractions or neighborhoods."""
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    city = normalize_accommodation_place_label(city)
+    if not api_key or not city:
+        return []
+    origin_geocode = google_accommodation_geocode(city)
+    origin_components = origin_geocode.get("address_components") if isinstance(origin_geocode, dict) else []
+    origin_country = ""
+    origin_country_code = ""
+    for component in origin_components or []:
+        if not isinstance(component, dict) or "country" not in (component.get("types") or []):
+            continue
+        origin_country = normalize_accommodation_place_label(str(component.get("long_name") or ""))
+        origin_country_code = str(component.get("short_name") or "").strip().upper()
+        break
+    country_scope = origin_country or origin_country_code
+    cities: list[dict[str, object]] = []
+    seen: set[str] = set()
+    city_root = city.split(",", 1)[0].strip().lower()
+    city_types = {"locality", "postal_town"}
+    candidates = list(POPULAR_CITIES_BY_COUNTRY.get(origin_country_code, ()))
+    if not candidates:
+        candidates = [city.split(",", 1)[0].strip()]
+    # Rotate the list around the current city so every country remains useful
+    # without ever substituting a neighborhood or tourist attraction.
+    candidates = [candidate for candidate in candidates if candidate.lower() != city_root] + [
+        candidate for candidate in candidates if candidate.lower() == city_root
+    ]
+    for candidate in candidates:
+        params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
+        try:
+            payload = google_api_get(
+                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+            )
+        except Exception:
+            continue
+        places = payload.get("results") if payload.get("status") == "OK" else []
+        place = next(
+            (
+                item for item in (places or [])
+                if isinstance(item, dict)
+                and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
+                and normalize_accommodation_place_label(str(item.get("name") or "")).lower() == candidate.lower()
+            ),
+            None,
+        )
+        if not place:
+            continue
+        name = normalize_accommodation_place_label(str(place.get("name") or ""))
+        address = normalize_accommodation_place_label(str(place.get("formatted_address") or ""))
+        normalized_address = re.sub(r"[^a-z0-9]+", " ", address.lower()).strip()
+        normalized_country = re.sub(r"[^a-z0-9]+", " ", origin_country.lower()).strip()
+        address_tokens = {part.strip().upper() for part in address.split(",") if part.strip()}
+        country_token_aliases = {
+            origin_country_code,
+            *({"USA", "UNITED STATES"} if origin_country_code == "US" else set()),
+            *({"UK", "UNITED KINGDOM"} if origin_country_code == "GB" else set()),
+            *({"UAE", "UNITED ARAB EMIRATES"} if origin_country_code == "AE" else set()),
+        } - {""}
+        if country_scope and not (
+            (normalized_country and re.search(rf"(?:^| ){re.escape(normalized_country)}(?: |$)", normalized_address))
+            or bool(country_token_aliases.intersection(address_tokens))
+        ):
+            continue
+        if not name or name.lower() in seen:
+            continue
+        address_parts = [part.strip() for part in address.split(",") if part.strip()]
+        suffix = ", ".join(address_parts[-2:]) if len(address_parts) >= 2 else address
+        label = dedupe_repeated_location_label(", ".join(value for value in (name, suffix) if value))
+        geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
+        location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+        photos = place.get("photos") if isinstance(place.get("photos"), list) else []
+        first_photo = photos[0] if photos and isinstance(photos[0], dict) else {}
+        photo_reference = str(first_photo.get("photo_reference") or "").strip()
+        seen.add(name.lower())
+        cities.append({
+            "label": label or name,
+            "lat": float(location.get("lat") or 0),
+            "lng": float(location.get("lng") or 0),
+            "imageUrl": explorer_photo_url(photo_reference),
+        })
+        if len(cities) >= max(1, min(int(limit or 8), 8)):
+            break
+    return cities
+
+
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city or "Denver, CO")
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
@@ -15571,7 +15726,8 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias):
             add_label(label, "google")
     else:
-        for place in google_ride_popular_places(
+        popular_loader = google_ride_popular_cities if cities_only else google_ride_popular_places
+        for place in popular_loader(
             city,
             float(city_point.get("lat") or 0),
             float(city_point.get("lng") or 0),
@@ -15593,7 +15749,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         "Larimer Lounge, 2721 Larimer St, Denver, CO",
     ]
     use_denver_fallbacks = not city or "denver" in city.lower()
-    for label in (fallback_places if use_denver_fallbacks else []):
+    for label in (fallback_places if use_denver_fallbacks and not cities_only else []):
         normalized_label = re.sub(r"[^a-z0-9]+", " ", label.lower())
         if not normalized_query:
             add_label(label, "recent")
@@ -15628,6 +15784,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 "lng": lng,
                 "source": source,
                 "icon": ride_place_icon_source(label),
+                "imageUrl": str(point.get("imageUrl") or ""),
             }
         )
         if len(suggestions) >= max(1, min(int(limit or 10), 20)):
@@ -16673,6 +16830,10 @@ def mobile_housing_posts(
         "COALESCE(source_label, '') != 'SAMPLE_DATA'",
     ]
     values: list[object] = []
+    requested_country = cached_accommodation_country_for_place(area or city)
+    if requested_country:
+        clauses.append("country = ?")
+        values.append(requested_country)
     post_public_id = clean_text_value(post_public_id, 80)
     if post_public_id:
         clauses.append("public_id = ?")
@@ -16937,6 +17098,7 @@ def mobile_sample_housing_posts(
         else SAMPLE_HOUSING_OWNER_NAME
     )
     selected_location = " ".join((area or city or "your selected location").split())[:120]
+    currency_code, currency_symbol = accommodation_currency(selected_location)
     mode = "NEED_PLACE" if need in {"have_place", "need_roommates"} else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
     selected_budget = int(float_from_value(budget) or 0)
@@ -16965,11 +17127,14 @@ def mobile_sample_housing_posts(
                 "category": sample_category,
                 "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, sample_category, "Housing"),
                 "location": selected_location,
+                "country": currency_code,
                 "area": f"Near {selected_location}",
                 "workLocation": selected_location,
                 "moveIn": (move_in_base + timedelta(days=index * 3)).isoformat(),
-                "rent": f"${rent_value:,} / monthly",
+                "rent": f"{currency_symbol}{rent_value:,} / monthly",
                 "rentValue": rent_value,
+                "currencyCode": currency_code,
+                "currencySymbol": currency_symbol,
                 "radiusMiles": 10,
                 "distanceMiles": round(0.3 + ((index + 1) * max_distance / 11), 1),
                 "lat": float(center_lat or 0) + lat_offset if center_lat else 0,
@@ -17186,16 +17351,66 @@ def checked_from_form(form: dict[str, str], key: str) -> int:
     return 1 if (form.get(key) or "").strip().lower() in {"1", "on", "true", "yes"} else 0
 
 
+COUNTRY_CURRENCY_SYMBOLS = {
+    "US": "$", "CA": "CA$", "GB": "£", "IN": "₹", "AU": "A$", "NZ": "NZ$",
+    "AE": "AED ", "SG": "S$", "JP": "¥", "CN": "¥", "KR": "₩", "MX": "MX$",
+    "BR": "R$", "ZA": "R", "CH": "CHF ", "SE": "kr ", "NO": "kr ", "DK": "kr ",
+    "PL": "zł ", "CZ": "Kč ", "TR": "₺", "SA": "SAR ", "QA": "QAR ",
+    "DE": "€", "FR": "€", "ES": "€", "IT": "€", "IE": "€", "NL": "€",
+    "BE": "€", "PT": "€", "AT": "€", "FI": "€", "GR": "€",
+}
+
+LOCATION_COUNTRY_HINTS = {
+    "IN": ("india", "mumbai", "delhi", "bengaluru", "bangalore", "hyderabad", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "gurugram", "gurgaon", "noida"),
+    "GB": ("united kingdom", "uk", "london", "manchester", "birmingham", "glasgow", "edinburgh", "liverpool"),
+    "CA": ("canada", "toronto", "vancouver", "montreal", "calgary", "ottawa", "edmonton"),
+    "AU": ("australia", "sydney", "melbourne", "brisbane", "perth", "adelaide"),
+    "AE": ("united arab emirates", "uae", "dubai", "abu dhabi"),
+    "SG": ("singapore",), "JP": ("japan", "tokyo", "osaka", "kyoto"),
+    "DE": ("germany", "berlin", "munich", "hamburg"), "FR": ("france", "paris", "lyon", "marseille"),
+    "ES": ("spain", "madrid", "barcelona", "valencia"), "IT": ("italy", "rome", "milan", "naples"),
+    "NZ": ("new zealand", "auckland", "wellington"), "MX": ("mexico", "mexico city", "guadalajara"),
+    "BR": ("brazil", "sao paulo", "são paulo", "rio de janeiro"), "ZA": ("south africa", "johannesburg", "cape town"),
+}
+
+
+def accommodation_country_code(location: object) -> str:
+    clean_location = normalize_accommodation_place_label(str(location or ""))
+    normalized = f" {clean_location.lower()} "
+    if not clean_location:
+        return "US"
+    cached_country = cached_accommodation_country_for_place(clean_location)
+    if cached_country:
+        return cached_country
+    normalized_tokens = set(re.findall(r"[a-z0-9]+", normalized))
+    for country, hints in LOCATION_COUNTRY_HINTS.items():
+        for hint in hints:
+            hint_tokens = set(re.findall(r"[a-z0-9]+", hint.lower()))
+            if hint_tokens and hint_tokens.issubset(normalized_tokens):
+                return country
+    return "US"
+
+
+def accommodation_currency(location: object) -> tuple[str, str]:
+    country = accommodation_country_code(location)
+    return country, COUNTRY_CURRENCY_SYMBOLS.get(country, f"{country} ")
+
+
 def format_accommodation_rent(row: sqlite3.Row | dict[str, object]) -> str:
     rent_min = float(row_value(row, "rent_min") or 0)
     rent_max = float(row_value(row, "rent_max") or 0)
     period = option_label(ACCOMMODATION_RENT_PERIODS, row_value(row, "rent_period"), "monthly").lower()
+    location = row_value(row, "city_area_zip") or row_value(row, "city") or row_value(row, "area_or_apartment")
+    country = str(row_value(row, "country") or "").strip().upper()
+    symbol = COUNTRY_CURRENCY_SYMBOLS.get(country) if country else ""
+    if not symbol:
+        country, symbol = accommodation_currency(location)
     if rent_min and rent_max and rent_min != rent_max:
-        return f"${rent_min:,.0f}-${rent_max:,.0f} / {period}"
+        return f"{symbol}{rent_min:,.0f}-{symbol}{rent_max:,.0f} / {period}"
     if rent_max:
-        return f"Up to ${rent_max:,.0f} / {period}"
+        return f"Up to {symbol}{rent_max:,.0f} / {period}"
     if rent_min:
-        return f"From ${rent_min:,.0f} / {period}"
+        return f"From {symbol}{rent_min:,.0f} / {period}"
     return "Rent open"
 
 
@@ -23549,10 +23764,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         roommate_intent = 1 if (form.get("roommate_intent") or "").strip() == "1" else 0
         title = accommodation_title_from_form(form, mode, category_label, bool(roommate_intent))
         user_id = int(row_value(user, "id") or 0) if user else None
-        location_query = accommodation_form_location_query(form)
+        location_query = ", ".join(
+            value for value in (
+                (form.get("street_address") or form.get("primary_neighborhood") or form.get("apartment_name") or form.get("area_or_apartment") or form.get("work_school_location") or "").strip(),
+                (form.get("city") or form.get("city_area_zip") or "").strip(),
+                (form.get("zip_code") or "").strip(),
+            ) if value
+        ) or accommodation_form_location_query(form)
+        refresh_accommodation_location_cache((form.get("city") or form.get("city_area_zip") or location_query).strip())
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
+        post_country = accommodation_country_code(
+            ", ".join(value for value in ((form.get("city") or "").strip(), str(location_point.get("label") or "")) if value)
+        )
         city_area_value = (form.get("city_area_zip") or "").strip()
         if mode == "HAVE_PLACE":
             city_bits = [
@@ -23574,7 +23799,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description,
-                 street_address, city, zip_code, primary_neighborhood, apartment_name,
+                 street_address, city, country, zip_code, primary_neighborhood, apartment_name,
                  city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
                  accommodates, roommate_count, roommate_intent, about_you, bathroom_type, gender_preference,
@@ -23584,7 +23809,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'USER_POST', ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -23595,6 +23820,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     description,
                     (form.get("street_address") or "").strip(),
                     (form.get("city") or "").strip(),
+                    post_country,
                     (form.get("zip_code") or "").strip(),
                     (form.get("primary_neighborhood") or "").strip(),
                     (form.get("apartment_name") or "").strip(),
@@ -25946,7 +26172,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult) -> None:
         api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         ref = (urllib.parse.parse_qs(parsed.query).get("ref") or [""])[0].strip()
-        if not api_key or not ref:
+        if not api_key or not ref or len(ref) > 2048 or not re.fullmatch(r"[A-Za-z0-9._~-]+", ref):
             self.send_json({"ok": False, "message": "Place photo is not available."}, 404)
             return
         query = urllib.parse.urlencode({"maxwidth": "900", "photo_reference": ref, "key": api_key})
@@ -25954,8 +26180,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
             with urllib.request.urlopen(request, timeout=8) as response:
-                body = response.read()
-                content_type = response.headers.get("Content-Type") or "image/jpeg"
+                body = response.read(5_000_001)
+                content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if len(body) > 5_000_000 or content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                raise ValueError("Unexpected place photo response")
         except Exception:
             self.send_json({"ok": False, "message": "Unable to load place photo."}, 502)
             return
@@ -33721,12 +33949,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             limit = 10
         use_city_bias = str(params.get("cityBias", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
+        cities_only = str(params.get("citiesOnly", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
         self.send_json(
             {
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias),
+                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only),
                 "placesEnabled": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
             }
         )
@@ -35243,11 +35472,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         public_id = accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
-        location_query = street_address or primary_neighborhood or apartment_name or area or work_school_location or city or zip_code
+        location_query = ", ".join(
+            value for value in (
+                street_address or primary_neighborhood or apartment_name or area or work_school_location,
+                city,
+                zip_code,
+            ) if value
+        )
+        refresh_accommodation_location_cache(city or location_query)
         location_point = accommodation_location_point(location_query)
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         resolved_location_label = dedupe_repeated_location_label(str(location_point.get("label") or ""))
+        post_country = accommodation_country_code(", ".join(value for value in (city, resolved_location_label) if value))
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)
@@ -35263,7 +35500,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description,
-                 street_address, city, zip_code, primary_neighborhood, apartment_name,
+                 street_address, city, country, zip_code, primary_neighborhood, apartment_name,
                  city_area_zip, area_or_apartment, work_school_location, radius_miles, lat, lng,
                  move_in_date, rent_min, rent_max, rent_period, bedroom_count, bathroom_count,
                  accommodates, roommate_count, roommate_intent, about_you, bathroom_type, gender_preference,
@@ -35273,7 +35510,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  private_bath, furnished, parking, utilities_included,
                  contact_name, contact_phone, contact_email, visibility_status, source_label,
                  expires_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '',
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '',
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'MOBILE_POST', ?, ?, ?)
                 """,
                 (
@@ -35285,6 +35522,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     description,
                     street_address,
                     city,
+                    post_country,
                     zip_code,
                     primary_neighborhood,
                     apartment_name,

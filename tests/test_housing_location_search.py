@@ -42,17 +42,18 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def insert_post(self, public_id, title, city, area, lat, lng):
+        country = app.accommodation_country_code(city)
         with app.db() as con:
             con.execute(
                 """
                 INSERT INTO accommodation_posts
-                (public_id, user_id, post_mode, category, title, description, city, city_area_zip,
+                (public_id, user_id, post_mode, category, title, description, city, country, city_area_zip,
                  area_or_apartment, lat, lng, rent_min, contact_name, contact_phone, contact_email,
                  visibility_status)
-                VALUES (?, ?, 'HAVE_PLACE', 'ROOM', ?, 'Test room', ?, ?, ?, ?, ?, 900,
+                VALUES (?, ?, 'HAVE_PLACE', 'ROOM', ?, 'Test room', ?, ?, ?, ?, ?, ?, 900,
                         'Poster', '3035550100', 'poster@example.com', 'ACTIVE')
                 """,
-                (public_id, self.user_id, title, city, f"{city}, 45420", area, lat, lng),
+                (public_id, self.user_id, title, city, country, f"{city}, 45420", area, lat, lng),
             )
 
     def insert_filter_post(
@@ -70,17 +71,18 @@ class HousingLocationSearchTest(unittest.TestCase):
         status="ACTIVE",
         expires_at="2099-12-31 23:59:59",
     ):
+        country = app.accommodation_country_code(city)
         with app.db() as con:
             con.execute(
                 """
                 INSERT INTO accommodation_posts
-                (public_id, user_id, post_mode, category, title, description, city, city_area_zip,
+                (public_id, user_id, post_mode, category, title, description, city, country, city_area_zip,
                  area_or_apartment, lat, lng, rent_min, rent_max, gender_preference,
                  roommate_intent, contact_name, contact_phone, contact_email, visibility_status, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Central', 39.7392, -104.9903, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Central', 39.7392, -104.9903, ?, ?, ?, ?,
                         'Poster', '3035550100', 'poster@example.com', ?, ?)
                 """,
-                (public_id, self.user_id, mode, category, public_id, description, city, city, rent_min, rent_max, gender, roommate_intent, status, expires_at),
+                (public_id, self.user_id, mode, category, public_id, description, city, country, city, rent_min, rent_max, gender, roommate_intent, status, expires_at),
             )
 
     def test_plain_miami_does_not_resolve_to_miamisburg(self):
@@ -519,6 +521,82 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertIn("No image found", mobile_without_image)
         self.assertIn("housing-mobile-card-image-empty", mobile_without_image)
         self.assertNotIn("trivago.com", mobile_without_image)
+
+    def test_popular_ride_cities_stay_inside_selected_country(self):
+        origin = {
+            "address_components": [
+                {"long_name": "India", "short_name": "IN", "types": ["country"]}
+            ]
+        }
+        places = {
+            "status": "OK",
+            "results": [
+                {"name": "Pune", "formatted_address": "Pune, Maharashtra, India", "types": ["locality"], "geometry": {"location": {"lat": 18.5204, "lng": 73.8567}}, "photos": [{"photo_reference": "pune-photo-ref"}]},
+                {"name": "Dubai", "formatted_address": "Dubai, United Arab Emirates", "types": ["locality"], "geometry": {"location": {"lat": 25.2048, "lng": 55.2708}}},
+                {"name": "Gateway of India", "formatted_address": "Mumbai, India", "types": ["tourist_attraction"], "geometry": {"location": {"lat": 18.9219, "lng": 72.8347}}},
+            ],
+        }
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
+            app, "google_accommodation_geocode", return_value=origin
+        ), patch.object(app, "google_api_get", return_value=places):
+            results = app.google_ride_popular_cities("Mumbai, India")
+        self.assertEqual([item["label"] for item in results], ["Pune, Maharashtra, India"])
+        self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=pune-photo-ref")
+
+    def test_housing_rent_uses_location_country_currency(self):
+        india = {"city_area_zip": "Mumbai, Maharashtra, India", "rent_min": 18000, "rent_max": 24000, "rent_period": "MONTH"}
+        us = {"city_area_zip": "Denver, CO", "rent_min": 900, "rent_max": 1200, "rent_period": "MONTH"}
+        self.assertEqual(app.format_accommodation_rent(india), "₹18,000-₹24,000 / monthly")
+        self.assertEqual(app.format_accommodation_rent(us), "$900-$1,200 / monthly")
+
+    def test_india_sample_housing_uses_rupees(self):
+        result = app.mobile_sample_housing_posts(city="Bengaluru, India", limit=1)[0]
+        self.assertTrue(str(result["rent"]).startswith("₹"))
+        self.assertEqual(result["currencyCode"], "IN")
+
+    def test_listing_country_is_structured_and_drives_payload_currency(self):
+        with app.db() as con:
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(accommodation_posts)").fetchall()}
+        self.assertIn("country", columns)
+        self.insert_filter_post("FFH-IN-COUNTRY", city="Mumbai, India", rent_min=18000)
+        with app.db() as con:
+            con.execute("UPDATE accommodation_posts SET country = 'IN' WHERE public_id = 'FFH-IN-COUNTRY'")
+            row = con.execute(
+                """
+                SELECT accommodation_posts.*, users.name AS owner_name, '' AS preview_image_url
+                FROM accommodation_posts LEFT JOIN users ON users.id = accommodation_posts.user_id
+                WHERE public_id = 'FFH-IN-COUNTRY'
+                """
+            ).fetchone()
+        payload = app.mobile_housing_post_payload(row)
+        self.assertEqual(payload["country"], "IN")
+        self.assertEqual(payload["currencySymbol"], "₹")
+        self.assertIn("₹18,000", str(payload["rent"]))
+
+    def test_housing_feed_is_isolated_by_stored_country(self):
+        with app.db() as con:
+            india_metro = app.upsert_accommodation_metro(con, "Kamareddy", country="IN", state="Telangana", center_city="Kamareddy")
+            app.upsert_accommodation_local_area(con, india_metro, "Kamareddy, Telangana, India", city="Kamareddy", state="Telangana")
+            us_metro = app.upsert_accommodation_metro(con, "Denver Metro Area", country="US", state="CO", center_city="Denver")
+            app.upsert_accommodation_local_area(con, us_metro, "Denver, CO", city="Denver", state="CO")
+        self.insert_filter_post("FFH-IN-ONLY", city="Kamareddy", rent_min=18000)
+        self.insert_filter_post("FFH-US-ONLY", city="Denver", rent_min=900)
+        with app.db() as con:
+            con.execute("UPDATE accommodation_posts SET country = 'IN' WHERE public_id = 'FFH-IN-ONLY'")
+            con.execute("UPDATE accommodation_posts SET country = 'US' WHERE public_id = 'FFH-US-ONLY'")
+        india_ids = {item["id"] for item in app.mobile_housing_posts(city="Kamareddy", limit=30)}
+        denver_ids = {item["id"] for item in app.mobile_housing_posts(city="Denver", limit=30)}
+        self.assertIn("FFH-IN-ONLY", india_ids)
+        self.assertNotIn("FFH-US-ONLY", india_ids)
+        self.assertIn("FFH-US-ONLY", denver_ids)
+        self.assertNotIn("FFH-IN-ONLY", denver_ids)
+
+    def test_city_only_ride_fallback_never_injects_denver_landmarks(self):
+        with patch.object(app, "google_ride_popular_cities", return_value=[]), patch.object(
+            app, "ride_point", return_value={"label": "Mumbai, India", "lat": 19.076, "lng": 72.8777}
+        ):
+            results = app.ride_place_suggestions("Mumbai, India", "", cities_only=True)
+        self.assertEqual(results, [])
 
 
 if __name__ == "__main__":

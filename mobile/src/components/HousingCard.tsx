@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     height: 148,
     backgroundColor: theme.colors.panel2
   },
-  imageWrapCompact: { height: 116 },
+  imageWrapCompact: { height: 130 },
   image: {
     width: "100%",
     height: "100%"
@@ -252,9 +252,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between"
   },
-  footerCompact: { padding: 11, gap: 6 },
+  footerCompact: { minHeight: 72, padding: 11, gap: 6 },
   priceBlock: {
-    flex: 1
+    flex: 1,
+    minHeight: 47,
+    justifyContent: "center"
   },
   rent: {
     color: theme.colors.green,
@@ -288,7 +290,7 @@ const styles = StyleSheet.create({
   respondTextSent: { color: theme.colors.green },
   respondDisabled: { borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
   respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" },
-  inlineMessageCard: { borderTopWidth: 1, borderTopColor: "rgba(117,217,173,0.38)", paddingHorizontal: 10, paddingTop: 9, paddingBottom: 10, gap: 7, backgroundColor: "rgba(18,42,33,0.7)", overflow: "hidden" },
+  inlineMessageCard: { minHeight: 94, borderTopWidth: 1, borderTopColor: "rgba(117,217,173,0.38)", paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, gap: 10, justifyContent: "center", backgroundColor: "rgba(18,42,33,0.7)", overflow: "hidden" },
   inlineMessageGlassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1, backgroundColor: "rgba(255,255,255,0.3)" },
   inlineMessageGlassGlow: { position: "absolute", width: 110, height: 110, borderRadius: 55, top: -72, right: -24, backgroundColor: "rgba(55,213,154,0.12)" },
   inlineMessageHeading: { flexDirection: "row", alignItems: "center", gap: 7 },

@@ -22,6 +22,8 @@ type Props = {
   onOpenServices?: (bookingId?: string) => void;
   onOpenMessenger?: () => void;
   onOpenStaffPickup?: () => void;
+  openProfileDetails?: boolean;
+  onProfileDetailsOpened?: () => void;
 };
 
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
@@ -45,7 +47,9 @@ export function ProfileScreen({
   onOpenRide,
   onOpenServices,
   onOpenMessenger,
-  onOpenStaffPickup
+  onOpenStaffPickup,
+  openProfileDetails = false,
+  onProfileDetailsOpened
 }: Props) {
   const user = data?.user;
   const layout = useResponsiveLayout();
@@ -73,6 +77,12 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
+
+  useEffect(() => {
+    if (!openProfileDetails || !user) return;
+    setProfileDetailsOpen(true);
+    onProfileDetailsOpened?.();
+  }, [onProfileDetailsOpened, openProfileDetails, user]);
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;

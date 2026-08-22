@@ -7,12 +7,15 @@ export type HousingPost = {
   category: string;
   categoryLabel: string;
   location: string;
+  country?: string;
   area: string;
   photoUrl?: string;
   workLocation: string;
   moveIn: string;
   rent: string;
   rentValue: number;
+  currencyCode?: string;
+  currencySymbol?: string;
   radiusMiles: number;
   distanceMiles: number | null;
   lat: number;

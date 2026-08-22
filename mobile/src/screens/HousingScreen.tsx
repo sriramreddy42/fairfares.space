@@ -94,6 +94,24 @@ const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
 
+const popularCitySets: Array<{ matches: string[]; cities: Array<[string, number, number]> }> = [
+  { matches: ["india", "mumbai", "delhi", "bengaluru", "bangalore", "hyderabad", "chennai", "pune", "kolkata"], cities: [["Mumbai, India", 19.076, 72.8777], ["Delhi, India", 28.6139, 77.209], ["Bengaluru, India", 12.9716, 77.5946], ["Hyderabad, India", 17.385, 78.4867]] },
+  { matches: ["united kingdom", " uk", "london", "manchester", "birmingham", "edinburgh"], cities: [["London, United Kingdom", 51.5072, -0.1276], ["Manchester, United Kingdom", 53.4808, -2.2426], ["Birmingham, United Kingdom", 52.4862, -1.8904], ["Edinburgh, United Kingdom", 55.9533, -3.1883]] },
+  { matches: ["canada", "toronto", "vancouver", "montreal", "calgary"], cities: [["Toronto, Canada", 43.6532, -79.3832], ["Vancouver, Canada", 49.2827, -123.1207], ["Montreal, Canada", 45.5019, -73.5674], ["Calgary, Canada", 51.0447, -114.0719]] },
+  { matches: ["australia", "sydney", "melbourne", "brisbane", "perth"], cities: [["Sydney, Australia", -33.8688, 151.2093], ["Melbourne, Australia", -37.8136, 144.9631], ["Brisbane, Australia", -27.4698, 153.0251], ["Perth, Australia", -31.9523, 115.8613]] },
+  { matches: ["united arab emirates", " uae", "dubai", "abu dhabi"], cities: [["Dubai, United Arab Emirates", 25.2048, 55.2708], ["Abu Dhabi, United Arab Emirates", 24.4539, 54.3773], ["Sharjah, United Arab Emirates", 25.3463, 55.4209], ["Ajman, United Arab Emirates", 25.4052, 55.5136]] },
+  { matches: ["singapore"], cities: [["Singapore", 1.3521, 103.8198]] },
+  { matches: ["united states", " usa", "denver", "los angeles", "austin", "miami"], cities: [["Denver, CO", 39.7392, -104.9903], ["Los Angeles, CA", 34.0522, -118.2437], ["Austin, TX", 30.2672, -97.7431], ["Miami, FL", 25.7617, -80.1918]] }
+];
+
+function popularCityFallbacks(location: string): RidePlaceSuggestion[] {
+  const normalized = ` ${location.trim().toLowerCase()}`;
+  const matched = popularCitySets.find((set) => set.matches.some((term) => normalized.includes(term)))
+    || (/,[ ]*[a-z]{2}(?:[ ,]|$)/i.test(location) ? popularCitySets[popularCitySets.length - 1] : undefined);
+  const rows = matched?.cities || [[location.trim() || "Your city", 0, 0] as [string, number, number]];
+  return rows.map(([label, lat, lng]) => ({ label, main: label.split(",")[0], secondary: label.split(",").slice(1).join(",").trim(), distanceMiles: null, lat, lng, source: "country-fallback" }));
+}
+
 function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
   const { width: viewportWidth } = useWindowDimensions();
   const slideWidth = Math.max(280, viewportWidth - 28);
@@ -653,7 +671,7 @@ export function HousingScreen({
     housingCardWidth,
     (typeof layout.contentMaxWidth === "number" ? layout.contentMaxWidth : viewportWidth) - 28
   );
-  const housingCardHeight = compactHousingHome ? 506 : 620;
+  const housingCardHeight = compactHousingHome ? 520 : 638;
   const scrollRef = useRef<ScrollView | null>(null);
   const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
@@ -1108,7 +1126,7 @@ export function HousingScreen({
   useEffect(() => {
     const selectedCity = currentRideLocation?.label || rideForm.city || data?.location.city || "Denver, CO";
     let cancelled = false;
-    getRidePlaceSuggestions(selectedCity, "", true)
+    getRidePlaceSuggestions(selectedCity, "", true, true)
       .then((places) => {
         if (!cancelled) setRidePopularPlaces(places.slice(0, 8));
       })
@@ -3005,26 +3023,11 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const fallbackRideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = [
-      {
-        place: { label: "Denver, CO", main: "Denver, CO", secondary: "", distanceMiles: null, lat: 39.7392, lng: -104.9903, source: "featured" },
-        image: appAssets.cities.denver
-      },
-      {
-        place: { label: "Los Angeles, CA", main: "Los Angeles, CA", secondary: "", distanceMiles: null, lat: 34.0522, lng: -118.2437, source: "featured" },
-        image: appAssets.cities.losAngeles
-      },
-      {
-        place: { label: "Austin, TX", main: "Austin, TX", secondary: "", distanceMiles: null, lat: 30.2672, lng: -97.7431, source: "featured" },
-        image: appAssets.cities.austin
-      },
-      {
-        place: { label: "Miami, FL", main: "Miami, FL", secondary: "", distanceMiles: null, lat: 25.7617, lng: -80.1918, source: "featured" },
-        image: appAssets.cities.miami
-      }
-    ];
-    const rideHomeCities: Array<{ place: RidePlaceSuggestion; image: ImageSourcePropType }> = ridePopularPlaces.length
-      ? ridePopularPlaces.map((place) => ({ place, image: appAssets.carpoolPoster }))
+    const fallbackRideHomeCities = popularCityFallbacks(
+      currentRideLocation?.label || rideForm.city || data?.location.city || "Denver, CO"
+    );
+    const rideHomeCities = ridePopularPlaces.length
+      ? ridePopularPlaces
       : fallbackRideHomeCities;
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
@@ -3084,9 +3087,13 @@ export function HousingScreen({
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePopularList}>
-            {rideHomeCities.map(({ place, image }) => (
-              <TouchableOpacity key={place.label} style={styles.ridePopularCard} activeOpacity={0.84} onPress={() => openRidePlannerWithSuggestion(place)}>
-                <Image source={image} style={styles.ridePopularImage} resizeMode="cover" />
+            {rideHomeCities.map((place, index) => (
+              <TouchableOpacity key={place.label} style={[styles.ridePopularCard, styles.ridePopularCityTile, { backgroundColor: ["#123c31", "#1d3048", "#3b2f22", "#2d2945"][index % 4] }]} activeOpacity={0.84} onPress={() => openRidePlannerWithSuggestion(place)}>
+                {place.imageUrl ? (
+                  <Image source={{ uri: absoluteAssetUrl(place.imageUrl) }} style={styles.ridePopularImage} resizeMode="cover" />
+                ) : (
+                  <Text style={styles.ridePopularCityIcon}>🏙️</Text>
+                )}
                 <View style={styles.ridePopularShade} />
                 <Text style={styles.ridePopularCity} numberOfLines={1}>{place.main}</Text>
               </TouchableOpacity>
@@ -3612,8 +3619,8 @@ export function HousingScreen({
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.housingCardRow} snapToInterval={housingCardWidth + 10} decelerationRate="fast">
         {sortedPosts.length ? (
           <>
-            {sortedPosts.slice(0, 4).map(renderHousingPostCard)}
-            {sortedPosts.length >= 4 && !hasExactLocationSearch ? (
+            {(hasExactLocationSearch ? sortedPosts : sortedPosts.slice(0, 3)).map(renderHousingPostCard)}
+            {sortedPosts.length >= 3 && !hasExactLocationSearch ? (
               <TouchableOpacity
                 activeOpacity={0.88}
                 style={[styles.exactLocationCard, { width: housingPosterWidth, height: housingCardHeight }]}
@@ -4296,7 +4303,7 @@ const styles = StyleSheet.create({
   homeStoryDotActive: { width: 18, backgroundColor: "#37d59a" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
-  housingCardRow: { gap: 10, paddingRight: 2, alignItems: "flex-start" },
+  housingCardRow: { gap: 10, paddingRight: 2, paddingBottom: 8, alignItems: "flex-start" },
   exactLocationCard: { borderRadius: theme.radius.lg, backgroundColor: "#0b241d", overflow: "hidden" },
   exactLocationPoster: { width: "100%", height: "100%" },
   emptyCard: { width: 286, minHeight: 170, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, justifyContent: "center" },
@@ -4573,7 +4580,9 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: theme.colors.panel2
   },
-  ridePopularImage: { position: "absolute", left: 0, top: 0, width: "100%", height: "100%" },
+  ridePopularCityTile: { justifyContent: "center", alignItems: "center" },
+  ridePopularImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
+  ridePopularCityIcon: { fontSize: 38, lineHeight: 46, marginBottom: 8 },
   ridePopularShade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 36, backgroundColor: "rgba(0,0,0,0.48)" },
   ridePopularCity: { position: "absolute", left: 12, right: 8, bottom: 9, color: "#fff", fontSize: 14, fontWeight: "900" },
   rideHero: {

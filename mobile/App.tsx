@@ -60,15 +60,6 @@ const GOOGLE_AUTH_CONFIGURED = Platform.select({
   default: !GOOGLE_WEB_CLIENT_ID.includes("not-configured"),
 }) ?? false;
 
-const STATIC_IMAGE_SOURCES = [
-  ...Object.entries(appAssets)
-    .filter(([key]) => key !== "festivals" && key !== "cities")
-    .map(([, source]) => source),
-  ...Object.values(appAssets.cities),
-  ...Object.values(appAssets.festivals),
-  require("./assets/launch-cityscape-v2.jpg"),
-  require("./assets/launch-car-mobile.png")
-];
 const CRITICAL_BRAND_IMAGE_SOURCES = [
   appAssets.logo,
   appAssets.chittiMascot,
@@ -167,7 +158,6 @@ const signupCallingCodes = [
 ] as const;
 
 const PENDING_RENTAL_CHECKOUT_KEY = "fairfares.mobile.pendingRentalCheckout";
-const HOUSING_LOCATION_SEARCHED_KEY = "fairfares.mobile.housingLocationSearched";
 const RENTAL_CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
 
 type PendingRentalCheckout = {
@@ -305,7 +295,6 @@ function FairFaresApp() {
   const [area, setArea] = useState("");
   const [housingSearchCoordinates, setHousingSearchCoordinates] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [hasSearchedHousingLocation, setHasSearchedHousingLocation] = useState(false);
-  const [housingSearchHistoryLoaded, setHousingSearchHistoryLoaded] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("Denver, CO");
   const [searchArea, setSearchArea] = useState("");
@@ -318,18 +307,8 @@ function FairFaresApp() {
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    void AsyncStorage.getItem(HOUSING_LOCATION_SEARCHED_KEY)
-      .then((value) => {
-        if (active) setHasSearchedHousingLocation(value === "1");
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setHousingSearchHistoryLoaded(true);
-      });
-    return () => { active = false; };
-  }, []);
+  // This is intentionally session-only. A fresh app process always starts
+  // with the short discovery carousel and its fourth-card search prompt.
 
   const [cars, setCars] = useState<Car[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
@@ -361,6 +340,9 @@ function FairFaresApp() {
   const [reviewPromptText, setReviewPromptText] = useState("");
   const [reviewPromptBusy, setReviewPromptBusy] = useState(false);
   const [reviewPromptContext, setReviewPromptContext] = useState<{ name: string; photoUrl: string; listingTitle: string } | null>(null);
+  const [profileCompletionOpen, setProfileCompletionOpen] = useState(false);
+  const [profileCompletionEditRequested, setProfileCompletionEditRequested] = useState(false);
+  const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
   const launchStartedAt = useRef(Date.now());
@@ -577,17 +559,6 @@ function FairFaresApp() {
   }, []);
 
   useEffect(() => {
-    if (typeof Image.resolveAssetSource !== "function") return;
-    const task = InteractionManager.runAfterInteractions(() => {
-      const metroAssetUris = STATIC_IMAGE_SOURCES
-        .map((source) => Image.resolveAssetSource(source)?.uri || "")
-        .filter(Boolean);
-      void Promise.allSettled([...new Set(metroAssetUris)].map((uri) => Image.prefetch(uri)));
-    });
-    return () => task.cancel();
-  }, []);
-
-  useEffect(() => {
     const firstVisibleImages = [
       ...(data?.housing || []).slice(0, 12).flatMap((post) => post.images?.length ? post.images.slice(0, 2) : post.imageUrl ? [post.imageUrl] : []),
       ...cars.slice(0, 12).map((car) => car.image_url)
@@ -626,6 +597,38 @@ function FairFaresApp() {
     }, 60_000);
     return () => clearInterval(retry);
   }, [data?.user?.id]);
+
+  useEffect(() => {
+    const user = data?.user;
+    const userId = Number(user?.id || 0);
+    const profileIncomplete = Boolean(userId && (
+      !user?.profilePhotoUrl?.trim()
+      || !user?.name?.trim()
+      || !user?.email?.trim()
+      || !user?.phone?.trim()
+    ));
+    if (!profileIncomplete) {
+      setProfileCompletionOpen(false);
+      return;
+    }
+    if (
+      profileCompletionPromptedUserRef.current === userId
+      || loading
+      || launchVisible
+      || loginOpen
+      || searchOpen
+      || listingOpen
+      || paymentUrl
+      || paymentStatus
+      || reviewPromptOpen
+      || bottomTabsHidden
+    ) return;
+    const timer = setTimeout(() => {
+      profileCompletionPromptedUserRef.current = userId;
+      setProfileCompletionOpen(true);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [bottomTabsHidden, data?.user, launchVisible, listingOpen, loading, loginOpen, paymentStatus, paymentUrl, reviewPromptOpen, searchOpen]);
 
   useEffect(() => {
     if (Platform.OS === "web" || !data?.user) return;
@@ -1232,7 +1235,6 @@ function FairFaresApp() {
       const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, nextCoordinates);
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
-      void AsyncStorage.setItem(HOUSING_LOCATION_SEARCHED_KEY, "1").catch(() => undefined);
       setData((current) =>
         current
           ? {
@@ -1281,7 +1283,6 @@ function FairFaresApp() {
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
-      void AsyncStorage.setItem(HOUSING_LOCATION_SEARCHED_KEY, "1").catch(() => undefined);
       setActiveTab("housing");
       setHousingWelcomeFocusKey((value) => value + 1);
       setData((current) =>
@@ -2064,6 +2065,8 @@ function FairFaresApp() {
     ) : activeTab === "profile" ? (
       <ProfileScreen
         data={data}
+        openProfileDetails={profileCompletionEditRequested}
+        onProfileDetailsOpened={() => setProfileCompletionEditRequested(false)}
         onLogin={() => setLoginOpen(true)}
         onLogout={logoutProfile}
         onProfileUpdated={updateLocalUser}
@@ -2142,7 +2145,7 @@ function FairFaresApp() {
           setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
-        hasExactLocationSearch={!housingSearchHistoryLoaded || hasSearchedHousingLocation}
+        hasExactLocationSearch={hasSearchedHousingLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -2193,7 +2196,7 @@ function FairFaresApp() {
           setSearchNeed(selectedNeed || "need_place");
           setSearchOpen(true);
         }}
-        hasExactLocationSearch={!housingSearchHistoryLoaded || hasSearchedHousingLocation}
+        hasExactLocationSearch={hasSearchedHousingLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -2625,6 +2628,34 @@ function FairFaresApp() {
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentStatus(null)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={profileCompletionOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setProfileCompletionOpen(false)}>
+        <View style={styles.profileCompletionBackdrop}>
+          <View style={styles.profileCompletionCard} accessibilityRole="alert">
+            <View style={styles.profileCompletionAvatar}>
+              <UserAvatar
+                photoUrl={data?.user?.profilePhotoUrl}
+                imageStyle={styles.profileCompletionAvatarImage}
+                fallback={<Text style={styles.profileCompletionAvatarText}>{(data?.user?.name || "F").trim().charAt(0).toUpperCase()}</Text>}
+              />
+            </View>
+            <Text style={styles.profileCompletionEyebrow}>Your FairFares profile</Text>
+            <Text style={styles.profileCompletionTitle}>Complete your profile</Text>
+            <Text style={styles.profileCompletionCopy}>Add the missing details so members can recognize and trust who they are connecting with.</Text>
+            <View style={styles.profileCompletionMissingRow}>
+              {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Profile photo</Text> : null}
+              {!data?.user?.name?.trim() ? <Text style={styles.profileCompletionChip}>Full name</Text> : null}
+              {!data?.user?.email?.trim() ? <Text style={styles.profileCompletionChip}>Email</Text> : null}
+              {!data?.user?.phone?.trim() ? <Text style={styles.profileCompletionChip}>Phone number</Text> : null}
+            </View>
+            <TouchableOpacity style={styles.profileCompletionPrimary} onPress={() => { setProfileCompletionOpen(false); setProfileCompletionEditRequested(true); setActiveTab("profile"); }}>
+              <Text style={styles.profileCompletionPrimaryText}>Complete profile</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.profileCompletionLater} onPress={() => setProfileCompletionOpen(false)}>
+              <Text style={styles.profileCompletionLaterText}>Not now</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3100,6 +3131,20 @@ const styles = StyleSheet.create({
   listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   listingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
   listingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
+  profileCompletionBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.82)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
+  profileCompletionCard: { width: "100%", maxWidth: 410, borderRadius: 28, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: theme.colors.panel, paddingHorizontal: 22, paddingVertical: 24, alignItems: "center", gap: 11 },
+  profileCompletionAvatar: { width: 72, height: 72, borderRadius: 36, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123c27", borderWidth: 2, borderColor: theme.colors.green },
+  profileCompletionAvatarImage: { width: "100%", height: "100%" },
+  profileCompletionAvatarText: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
+  profileCompletionEyebrow: { color: theme.colors.green, fontSize: 11, lineHeight: 15, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2, marginTop: 3 },
+  profileCompletionTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
+  profileCompletionCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
+  profileCompletionMissingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7, marginVertical: 4 },
+  profileCompletionChip: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 10, paddingVertical: 6 },
+  profileCompletionPrimary: { width: "100%", minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
+  profileCompletionPrimaryText: { color: "#0c1a10", fontSize: 16, fontWeight: "900" },
+  profileCompletionLater: { minHeight: 42, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
+  profileCompletionLaterText: { color: theme.colors.soft, fontSize: 14, fontWeight: "800" },
   reviewPromptCard: { width: "100%", maxWidth: 410, alignSelf: "center", padding: 20, gap: 16, borderRadius: 28 },
   reviewPromptHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   reviewPromptAvatar: { width: 56, height: 56, borderRadius: 28, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123C27", borderWidth: 1.5, borderColor: "rgba(86,190,100,0.72)" },
