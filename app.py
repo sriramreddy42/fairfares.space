@@ -192,9 +192,13 @@ _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
 _MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
 _MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
+_POPULAR_CITY_CACHE: dict[str, tuple[float, list[dict[str, object]]]] = {}
+_POPULAR_CITY_CACHE_LOCK = threading.Lock()
+_POPULAR_CITY_KEY_LOCKS: dict[str, threading.Lock] = {}
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
 MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 5)
+POPULAR_CITY_CACHE_SECONDS = positive_int_env("FAIRFARES_POPULAR_CITY_CACHE_SECONDS", 6 * 60 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -15624,6 +15628,33 @@ def google_ride_popular_places(city: str, lat: float = 0, lng: float = 0, limit:
 
 
 def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
+    """Return a cached current-location city rail with stale fallback."""
+    city = normalize_accommodation_place_label(city)
+    result_limit = max(1, min(int(limit or 8), 8))
+    if not city:
+        return []
+    cache_key = city.casefold()
+    now = time.monotonic()
+    with _POPULAR_CITY_CACHE_LOCK:
+        cached = _POPULAR_CITY_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1][:result_limit]
+        key_lock = _POPULAR_CITY_KEY_LOCKS.setdefault(cache_key, threading.Lock())
+    with key_lock:
+        with _POPULAR_CITY_CACHE_LOCK:
+            cached = _POPULAR_CITY_CACHE.get(cache_key)
+            if cached and cached[0] > time.monotonic():
+                return cached[1][:result_limit]
+            stale = cached[1] if cached else []
+        fresh = _google_ride_popular_cities_uncached(city, lat, lng, limit=8)
+        if not fresh:
+            return stale[:result_limit]
+        with _POPULAR_CITY_CACHE_LOCK:
+            _POPULAR_CITY_CACHE[cache_key] = (time.monotonic() + POPULAR_CITY_CACHE_SECONDS, fresh)
+        return fresh[:result_limit]
+
+
+def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
     """Return country-scoped cities with city photos—never attractions or neighborhoods."""
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     city = normalize_accommodation_place_label(city)
@@ -15644,23 +15675,22 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
     seen: set[str] = set()
     city_root = city.split(",", 1)[0].strip().lower()
     city_types = {"locality", "postal_town"}
-    # Rank real cities from current listing activity, then augment them with
-    # Google's live city results. Nothing in this list is country hard-coded.
-    candidates: list[str] = []
+    # Listing activity is a secondary signal after population ranking.
+    activity_candidates: list[str] = []
     try:
         with db() as con:
             rows = con.execute(
                 """
                 SELECT city, COUNT(*) AS listing_count
                 FROM accommodation_posts
-                WHERE UPPER(country) = ? AND TRIM(city) <> '' AND status = 'ACTIVE'
+                WHERE UPPER(country) = ? AND TRIM(city) <> '' AND visibility_status = 'ACTIVE'
                 GROUP BY LOWER(TRIM(city))
                 ORDER BY listing_count DESC, MAX(created_at) DESC
                 LIMIT 12
                 """,
                 (origin_country_code,),
             ).fetchall()
-        candidates.extend(normalize_accommodation_place_label(str(row["city"] or "")).split(",", 1)[0] for row in rows)
+        activity_candidates.extend(normalize_accommodation_place_label(str(row["city"] or "")).split(",", 1)[0] for row in rows)
     except sqlite3.Error:
         pass
 
@@ -15675,7 +15705,7 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
         "orderBy": "populationCounts",
     })
     try:
-        population_payload = google_api_get(population_url)
+        population_payload = google_api_get(population_url, timeout=3)
     except Exception:
         population_payload = {}
     if population_payload.get("error") is False:
@@ -15688,77 +15718,23 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
             candidate = normalize_accommodation_place_label(candidate)
             if candidate and candidate.lower() not in {value.lower() for value in population_candidates}:
                 population_candidates.append(candidate)
-    candidates.extend(population_candidates)
-
-    search_queries = (f"popular cities in {country_scope}",)
-    live_places: list[dict[str, object]] = []
-    for search_query in search_queries:
-        try:
-            payload = google_api_get(
-                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode({'query': search_query, 'key': api_key})}"
-            )
-        except Exception:
-            continue
-        if payload.get("status") == "OK":
-            live_places.extend(item for item in (payload.get("results") or []) if isinstance(item, dict))
-
-    # If population data is temporarily unavailable, country-filtered Google
-    # autocomplete remains a dynamic fallback. Spread prefixes across the
-    # alphabet so fallback results are not limited to one initial.
-    autocomplete_candidates: list[str] = []
-    prefix_seed = sum(ord(char) for char in origin_country_code) % 26
-    prefixes = [chr(97 + ((prefix_seed + step) % 26)) for step in (0, 6, 12, 18)]
-    for prefix in (() if population_candidates else prefixes):
-        params = {
-            "input": prefix,
-            "types": "(cities)",
-            "components": f"country:{origin_country_code.lower()}",
-            "key": api_key,
-        }
-        try:
-            payload = google_api_get(
-                f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}"
-            )
-        except Exception:
-            continue
-        if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
-            continue
-        for prediction in payload.get("predictions") or []:
-            if not isinstance(prediction, dict):
-                continue
-            formatting = prediction.get("structured_formatting") if isinstance(prediction.get("structured_formatting"), dict) else {}
-            candidate = normalize_accommodation_place_label(str(formatting.get("main_text") or ""))
-            if candidate and candidate.lower() not in {value.lower() for value in autocomplete_candidates}:
-                autocomplete_candidates.append(candidate)
-            if len(autocomplete_candidates) >= 16:
-                break
-        if len(autocomplete_candidates) >= 16:
-            break
-    candidates.extend(
-        normalize_accommodation_place_label(str(place.get("name") or ""))
-        for place in live_places
-        if {str(value) for value in (place.get("types") or [])}.intersection(city_types)
-    )
-    candidates.extend(autocomplete_candidates)
+    candidates = population_candidates + activity_candidates
     candidates.append(city.split(",", 1)[0].strip())
     candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
-    for candidate in candidates:
-        matching_live_place = next(
-            (place for place in live_places if normalize_accommodation_place_label(str(place.get("name") or "")).lower() == candidate.lower()),
-            None,
-        )
-        if matching_live_place:
-            places = [matching_live_place]
-        else:
-            params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
-            try:
-                payload = google_api_get(
-                    f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
-                )
-            except Exception:
-                continue
-            places = payload.get("results") if payload.get("status") == "OK" else []
+    candidate_deadline = time.monotonic() + 8
+    for candidate in candidates[:12]:
+        if time.monotonic() >= candidate_deadline:
+            break
+        params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
+        try:
+            payload = google_api_get(
+                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}",
+                timeout=max(1, min(3, int(candidate_deadline - time.monotonic()) or 1)),
+            )
+        except Exception:
+            continue
+        places = payload.get("results") if payload.get("status") == "OK" else []
         exact_place = next(
             (
                 item for item in (places or [])

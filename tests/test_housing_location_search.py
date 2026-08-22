@@ -17,6 +17,9 @@ class HousingLocationSearchTest(unittest.TestCase):
         os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
         app.refresh_storage_paths()
         app.init_db()
+        with app._POPULAR_CITY_CACHE_LOCK:
+            app._POPULAR_CITY_CACHE.clear()
+            app._POPULAR_CITY_KEY_LOCKS.clear()
         with app.db() as con:
             con.execute(
                 "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
@@ -145,7 +148,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         }
         requested_urls = []
 
-        def google_response(url):
+        def google_response(url, *args, **kwargs):
             requested_urls.append(url)
             return google_payload
 
@@ -536,14 +539,19 @@ class HousingLocationSearchTest(unittest.TestCase):
                 {"name": "Gateway of India", "formatted_address": "Mumbai, India", "types": ["tourist_attraction"], "geometry": {"location": {"lat": 18.9219, "lng": 72.8347}}},
             ],
         }
+        def google_response(url, *args, **kwargs):
+            if "countriesnow.space" in url:
+                return {"error": False, "data": [{"city": "Pune"}, {"city": "Dubai"}]}
+            return places
+
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
             app, "google_accommodation_geocode", return_value=origin
-        ), patch.object(app, "google_api_get", return_value=places):
+        ), patch.object(app, "google_api_get", side_effect=google_response):
             results = app.google_ride_popular_cities("Mumbai, India")
         self.assertEqual([item["label"] for item in results], ["Pune, Maharashtra, India"])
         self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=pune-photo-ref")
 
-    def test_popular_ride_cities_use_country_filtered_autocomplete(self):
+    def test_popular_ride_cities_cache_country_result(self):
         origin = {
             "address_components": [
                 {"long_name": "United States", "short_name": "US", "types": ["country"]}
@@ -566,9 +574,9 @@ class HousingLocationSearchTest(unittest.TestCase):
             }],
         }
 
-        def google_response(url):
-            if "/autocomplete/" in url:
-                return {"status": "OK", "predictions": [{"structured_formatting": {"main_text": "Seattle"}}]}
+        def google_response(url, *args, **kwargs):
+            if "countriesnow.space" in url:
+                return {"error": False, "data": [{"city": "Seattle"}]}
             if "Seattle+city" in url:
                 return seattle
             if "Denver+city" in url:
@@ -579,10 +587,11 @@ class HousingLocationSearchTest(unittest.TestCase):
             app, "google_accommodation_geocode", return_value=origin
         ), patch.object(app, "google_api_get", side_effect=google_response) as google_call:
             results = app.google_ride_popular_cities("Denver, CO")
+            first_call_count = google_call.call_count
+            cached_results = app.google_ride_popular_cities("Denver, CO")
         self.assertIn("Seattle, WA, USA", [item["label"] for item in results])
-        autocomplete_urls = [call.args[0] for call in google_call.call_args_list if "/autocomplete/" in call.args[0]]
-        self.assertTrue(autocomplete_urls)
-        self.assertTrue(all("components=country%3Aus" in url for url in autocomplete_urls))
+        self.assertEqual(results, cached_results)
+        self.assertEqual(google_call.call_count, first_call_count)
 
     def test_popular_ride_cities_prefer_population_ranked_dynamic_source(self):
         origin = {
@@ -599,7 +608,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             }],
         }
 
-        def google_response(url):
+        def google_response(url, *args, **kwargs):
             if "countriesnow.space" in url:
                 return {"error": False, "data": [{"city": "New York (NY)"}]}
             if "New+York+city" in url:

@@ -1124,6 +1124,26 @@ export function HousingScreen({
     };
   }, [currentRideLocation?.label, discoveryLocation]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function hydratePermittedCurrentLocation() {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (permission.status !== Location.PermissionStatus.GRANTED || cancelled) return;
+      const position = await Location.getLastKnownPositionAsync()
+        || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (cancelled || !position) return;
+      const label = await reverseGeocodeRideLocation(position.coords.latitude, position.coords.longitude);
+      if (!cancelled && label) {
+        setCurrentRideLocation({
+          label,
+          coords: { latitude: position.coords.latitude, longitude: position.coords.longitude }
+        });
+      }
+    }
+    void hydratePermittedCurrentLocation().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
   function updateScrollVisibility(y: number) {
     const nextSearchIsScrolled = y > 8;
     setSearchIsScrolled((current) => current === nextSearchIsScrolled ? current : nextSearchIsScrolled);
