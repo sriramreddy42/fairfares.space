@@ -33250,6 +33250,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_social_auth(self) -> None:
         payload = self.read_json_body()
         consented, consented_at = consent_values(payload)
+        consent_ui_presented = payload.get("consentUiPresented") is True
+        legacy_consent_grace = LEGACY_SOCIAL_CONSENT_GRACE_ENABLED and not consent_ui_presented
         action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-social")
         retry_after = auth_action_retry_after(action_key)
         if retry_after:
@@ -33329,6 +33331,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
                     refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
                     self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(refreshed)})
+                    return
+                # Installed clients predating the social consent/phone modal can
+                # deadlock iOS while replacing the login modal. During the
+                # temporary compatibility window, keep consent explicitly
+                # pending and issue a session without entering that modal path.
+                if legacy_consent_grace:
+                    cleanup_expired_sessions(con)
+                    session_token = secrets.token_urlsafe(32)
+                    con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
+                    refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                    self.send_json({
+                        "ok": True,
+                        "token": session_token,
+                        "user": mobile_user_payload(refreshed),
+                        "consentPending": not has_current_consent,
+                        "phonePending": not bool(canonical_e164_phone(row_value(refreshed, "phone"))),
+                    })
                     return
                 continuation = secrets.token_urlsafe(32)
                 expires_at = (datetime.now(UTC) + timedelta(minutes=SOCIAL_AUTH_CONTINUATION_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")

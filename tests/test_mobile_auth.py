@@ -650,6 +650,7 @@ class MobileAuthTest(unittest.TestCase):
                 status, social = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "verified-google-token",
+                    "consentUiPresented": True,
                 })
             self.assertEqual(status, 200)
             self.assertTrue(social["phoneRequired"])
@@ -711,32 +712,27 @@ class MobileAuthTest(unittest.TestCase):
                     "identityToken": "verified-google-token",
                 })
             self.assertEqual(status, 200)
-            self.assertTrue(social["phoneRequired"])
-
-            complete_status, completed = self.post_json(server, "/api/mobile/auth/phone/complete", {
-                "continuationToken": social["continuationToken"],
-                "countryCode": "+1",
-                "phone": "937-555-0177",
-            })
-            self.assertEqual(complete_status, 200)
-            self.assertTrue(completed["token"])
-            self.assertTrue(completed["consentPending"])
+            self.assertTrue(social["token"])
+            self.assertTrue(social["consentPending"])
+            self.assertTrue(social["phonePending"])
+            self.assertFalse(social.get("phoneRequired", False))
 
             with app.db() as con:
                 pending_user = con.execute(
                     "SELECT * FROM users WHERE email = ?", ("legacy-social@example.com",)
                 ).fetchone()
-            self.assertEqual(pending_user["phone"], "+19375550177")
+            self.assertIsNone(pending_user["phone"])
             self.assertIsNone(pending_user["consented_at"])
             self.assertIsNone(pending_user["terms_version"])
             self.assertIsNone(pending_user["privacy_version"])
             self.assertIsNone(pending_user["community_guidelines_version"])
 
-            # Pending consent must be requested again on the next social login.
+            # A fixed client identifies its consent UI and must complete it.
             with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
                 repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "verified-google-token",
+                    "consentUiPresented": True,
                 })
             self.assertEqual(repeat_status, 200)
             self.assertTrue(repeat["phoneRequired"])
@@ -760,6 +756,7 @@ class MobileAuthTest(unittest.TestCase):
                     "provider": "google",
                     "identityToken": "verified-google-token",
                     "consentAccepted": True,
+                    "consentUiPresented": True,
                 })
             self.assertEqual(status, 200)
             self.assertTrue(social["phoneRequired"])
@@ -839,6 +836,7 @@ class MobileAuthTest(unittest.TestCase):
                     "provider": "google",
                     "identityToken": "another-google-token",
                     "consentAccepted": True,
+                    "consentUiPresented": True,
                 })
             with self.assertRaises(urllib.error.HTTPError) as duplicate_phone:
                 self.post_json(server, "/api/mobile/auth/phone/complete", {

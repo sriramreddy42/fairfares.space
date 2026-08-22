@@ -2211,7 +2211,7 @@ export async function mobileSocialLogin(provider: "google" | "apple", identityTo
   const payload = await request<MobileSocialAuthPayload>("/api/mobile/auth/oauth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, identityToken, name, consentAccepted })
+    body: JSON.stringify({ provider, identityToken, name, consentAccepted, consentUiPresented: true })
   });
   if (payload.token) await setAuthToken(payload.token);
   return payload;
