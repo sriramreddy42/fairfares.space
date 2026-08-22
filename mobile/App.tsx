@@ -292,6 +292,7 @@ function FairFaresApp() {
   const [selectedBudget, setSelectedBudget] = useState("");
   const [selectedSort, setSelectedSort] = useState<"distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc">("distanceAsc");
   const [city, setCity] = useState("Denver, CO");
+  const [discoveryLocation, setDiscoveryLocation] = useState("");
   const [area, setArea] = useState("");
   const [housingSearchCoordinates, setHousingSearchCoordinates] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [hasSearchedHousingLocation, setHasSearchedHousingLocation] = useState(false);
@@ -514,6 +515,7 @@ function FairFaresApp() {
       const payload = await getBootstrap(city);
       if (bootstrapGenerationRef.current !== generation) return;
       setData(payload);
+      setDiscoveryLocation((current) => current || payload.location.city || city);
       setVisiblePosts(payload.housing);
       const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
       if (bootstrapGenerationRef.current !== generation) return;
@@ -2146,6 +2148,7 @@ function FairFaresApp() {
           setSearchOpen(true);
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
+        discoveryLocation={discoveryLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -2197,6 +2200,7 @@ function FairFaresApp() {
           setSearchOpen(true);
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
+        discoveryLocation={discoveryLocation}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}

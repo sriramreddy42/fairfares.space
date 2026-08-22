@@ -55,6 +55,7 @@ type Props = {
   linkedCarpoolRide?: RidePost | null;
   onLinkedHousingPostOpened?: () => void;
   onLinkedCarpoolRideOpened?: () => void;
+  discoveryLocation?: string;
 };
 
 type CurrentRideLocation = {
@@ -93,24 +94,6 @@ const QUICK_LINK_TYPE_MS = 85;
 const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
-
-const popularCitySets: Array<{ matches: string[]; cities: Array<[string, number, number]> }> = [
-  { matches: ["india", "mumbai", "delhi", "bengaluru", "bangalore", "hyderabad", "chennai", "pune", "kolkata"], cities: [["Mumbai, India", 19.076, 72.8777], ["Delhi, India", 28.6139, 77.209], ["Bengaluru, India", 12.9716, 77.5946], ["Hyderabad, India", 17.385, 78.4867]] },
-  { matches: ["united kingdom", " uk", "london", "manchester", "birmingham", "edinburgh"], cities: [["London, United Kingdom", 51.5072, -0.1276], ["Manchester, United Kingdom", 53.4808, -2.2426], ["Birmingham, United Kingdom", 52.4862, -1.8904], ["Edinburgh, United Kingdom", 55.9533, -3.1883]] },
-  { matches: ["canada", "toronto", "vancouver", "montreal", "calgary"], cities: [["Toronto, Canada", 43.6532, -79.3832], ["Vancouver, Canada", 49.2827, -123.1207], ["Montreal, Canada", 45.5019, -73.5674], ["Calgary, Canada", 51.0447, -114.0719]] },
-  { matches: ["australia", "sydney", "melbourne", "brisbane", "perth"], cities: [["Sydney, Australia", -33.8688, 151.2093], ["Melbourne, Australia", -37.8136, 144.9631], ["Brisbane, Australia", -27.4698, 153.0251], ["Perth, Australia", -31.9523, 115.8613]] },
-  { matches: ["united arab emirates", " uae", "dubai", "abu dhabi"], cities: [["Dubai, United Arab Emirates", 25.2048, 55.2708], ["Abu Dhabi, United Arab Emirates", 24.4539, 54.3773], ["Sharjah, United Arab Emirates", 25.3463, 55.4209], ["Ajman, United Arab Emirates", 25.4052, 55.5136]] },
-  { matches: ["singapore"], cities: [["Singapore", 1.3521, 103.8198]] },
-  { matches: ["united states", " usa", "denver", "los angeles", "austin", "miami"], cities: [["Denver, CO", 39.7392, -104.9903], ["Los Angeles, CA", 34.0522, -118.2437], ["Austin, TX", 30.2672, -97.7431], ["Miami, FL", 25.7617, -80.1918]] }
-];
-
-function popularCityFallbacks(location: string): RidePlaceSuggestion[] {
-  const normalized = ` ${location.trim().toLowerCase()}`;
-  const matched = popularCitySets.find((set) => set.matches.some((term) => normalized.includes(term)))
-    || (/,[ ]*[a-z]{2}(?:[ ,]|$)/i.test(location) ? popularCitySets[popularCitySets.length - 1] : undefined);
-  const rows = matched?.cities || [[location.trim() || "Your city", 0, 0] as [string, number, number]];
-  return rows.map(([label, lat, lng]) => ({ label, main: label.split(",")[0], secondary: label.split(",").slice(1).join(",").trim(), distanceMiles: null, lat, lng, source: "country-fallback" }));
-}
 
 function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
   const { width: viewportWidth } = useWindowDimensions();
@@ -589,6 +572,7 @@ export function HousingScreen({
   linkedCarpoolRide,
   onLinkedHousingPostOpened,
   onLinkedCarpoolRideOpened,
+  discoveryLocation = "",
   hasExactLocationSearch = false
 }: Props) {
   const safeAreaInsets = useSafeAreaInsets();
@@ -1124,7 +1108,9 @@ export function HousingScreen({
   }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
 
   useEffect(() => {
-    const selectedCity = currentRideLocation?.label || rideForm.city || data?.location.city || "Denver, CO";
+    // Popular cities belong to the user's current country. Housing and ride
+    // searches must never retarget this discovery rail.
+    const selectedCity = currentRideLocation?.label || discoveryLocation || "Denver, CO";
     let cancelled = false;
     getRidePlaceSuggestions(selectedCity, "", true, true)
       .then((places) => {
@@ -1136,7 +1122,7 @@ export function HousingScreen({
     return () => {
       cancelled = true;
     };
-  }, [currentRideLocation?.label, data?.location.city, rideForm.city]);
+  }, [currentRideLocation?.label, discoveryLocation]);
 
   function updateScrollVisibility(y: number) {
     const nextSearchIsScrolled = y > 8;
@@ -3023,12 +3009,7 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const fallbackRideHomeCities = popularCityFallbacks(
-      currentRideLocation?.label || rideForm.city || data?.location.city || "Denver, CO"
-    );
-    const rideHomeCities = ridePopularPlaces.length
-      ? ridePopularPlaces
-      : fallbackRideHomeCities;
+    const rideHomeCities = ridePopularPlaces;
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (

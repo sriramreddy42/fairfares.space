@@ -15600,20 +15600,6 @@ def google_ride_popular_places(city: str, lat: float = 0, lng: float = 0, limit:
     return places
 
 
-POPULAR_CITIES_BY_COUNTRY: dict[str, tuple[str, ...]] = {
-    "US": ("New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "Denver", "Miami", "Austin"),
-    "IN": ("Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow"),
-    "GB": ("London", "Manchester", "Birmingham", "Glasgow", "Liverpool", "Edinburgh", "Bristol"),
-    "CA": ("Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa", "Edmonton"),
-    "AU": ("Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Canberra"),
-    "AE": ("Dubai", "Abu Dhabi", "Sharjah", "Ajman"),
-    "SG": ("Singapore",),
-    "JP": ("Tokyo", "Osaka", "Kyoto", "Yokohama", "Nagoya", "Sapporo"),
-    "DE": ("Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne"),
-    "FR": ("Paris", "Marseille", "Lyon", "Toulouse", "Nice"),
-}
-
-
 def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
     """Return country-scoped cities with city photos—never attractions or neighborhoods."""
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
@@ -15635,23 +15621,65 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
     seen: set[str] = set()
     city_root = city.split(",", 1)[0].strip().lower()
     city_types = {"locality", "postal_town"}
-    candidates = list(POPULAR_CITIES_BY_COUNTRY.get(origin_country_code, ()))
-    if not candidates:
-        candidates = [city.split(",", 1)[0].strip()]
-    # Rotate the list around the current city so every country remains useful
-    # without ever substituting a neighborhood or tourist attraction.
-    candidates = [candidate for candidate in candidates if candidate.lower() != city_root] + [
-        candidate for candidate in candidates if candidate.lower() == city_root
-    ]
-    for candidate in candidates:
-        params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
+    # Rank real cities from current listing activity, then augment them with
+    # Google's live city results. Nothing in this list is country hard-coded.
+    candidates: list[str] = []
+    try:
+        with db() as con:
+            rows = con.execute(
+                """
+                SELECT city, COUNT(*) AS listing_count
+                FROM accommodation_posts
+                WHERE UPPER(country) = ? AND TRIM(city) <> '' AND status = 'ACTIVE'
+                GROUP BY LOWER(TRIM(city))
+                ORDER BY listing_count DESC, MAX(created_at) DESC
+                LIMIT 12
+                """,
+                (origin_country_code,),
+            ).fetchall()
+        candidates.extend(normalize_accommodation_place_label(str(row["city"] or "")).split(",", 1)[0] for row in rows)
+    except sqlite3.Error:
+        pass
+
+    search_queries = (
+        f"major cities in {country_scope}",
+        f"largest cities in {country_scope}",
+        f"popular cities in {country_scope}",
+    )
+    live_places: list[dict[str, object]] = []
+    for search_query in search_queries:
         try:
             payload = google_api_get(
-                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode({'query': search_query, 'key': api_key})}"
             )
         except Exception:
             continue
-        places = payload.get("results") if payload.get("status") == "OK" else []
+        if payload.get("status") == "OK":
+            live_places.extend(item for item in (payload.get("results") or []) if isinstance(item, dict))
+    candidates.extend(
+        normalize_accommodation_place_label(str(place.get("name") or ""))
+        for place in live_places
+        if {str(value) for value in (place.get("types") or [])}.intersection(city_types)
+    )
+    candidates.append(city.split(",", 1)[0].strip())
+    candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+    for candidate in candidates:
+        matching_live_place = next(
+            (place for place in live_places if normalize_accommodation_place_label(str(place.get("name") or "")).lower() == candidate.lower()),
+            None,
+        )
+        if matching_live_place:
+            places = [matching_live_place]
+        else:
+            params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
+            try:
+                payload = google_api_get(
+                    f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+                )
+            except Exception:
+                continue
+            places = payload.get("results") if payload.get("status") == "OK" else []
         place = next(
             (
                 item for item in (places or [])
