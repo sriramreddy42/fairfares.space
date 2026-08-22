@@ -164,6 +164,10 @@ AUTH_ACTION_RATE_LIMIT_ATTEMPTS = positive_int_env("FAIRFARES_AUTH_ACTION_ATTEMP
 AUTH_ACTION_RATE_LIMIT_WINDOW_SECONDS = positive_int_env("FAIRFARES_AUTH_ACTION_WINDOW_SECONDS", 15 * 60)
 MAX_PASSWORD_LENGTH = 256
 SOCIAL_AUTH_CONTINUATION_MINUTES = positive_int_env("FAIRFARES_SOCIAL_AUTH_CONTINUATION_MINUTES", 10)
+# Temporary compatibility for installed builds that predate the social-consent
+# checkbox. These users are admitted with consent pending, never recorded as
+# accepted. Set to 0 after the fixed mobile build has been adopted.
+LEGACY_SOCIAL_CONSENT_GRACE_ENABLED = os.environ.get("FAIRFARES_LEGACY_SOCIAL_CONSENT_GRACE", "1").strip() == "1"
 PHONE_OTP_COOLDOWN_SECONDS = positive_int_env("FAIRFARES_PHONE_OTP_COOLDOWN_SECONDS", 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
@@ -33313,7 +33317,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = ? AND provider_subject = ?",
                         (email, provider, subject),
                     )
-                if canonical_e164_phone(row_value(user, "phone")):
+                has_current_consent = bool(
+                    row_value(user, "consented_at")
+                    and row_value(user, "terms_version") == TERMS_VERSION
+                    and row_value(user, "privacy_version") == PRIVACY_VERSION
+                    and row_value(user, "community_guidelines_version") == COMMUNITY_GUIDELINES_VERSION
+                )
+                if canonical_e164_phone(row_value(user, "phone")) and has_current_consent:
                     cleanup_expired_sessions(con)
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
@@ -33338,9 +33348,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_social_phone_complete(self) -> None:
         payload = self.read_json_body()
         consented, consented_at = consent_values(payload)
+        consent_ui_presented = payload.get("consentUiPresented") is True
+        legacy_consent_grace = LEGACY_SOCIAL_CONSENT_GRACE_ENABLED and not consent_ui_presented
         continuation = str(payload.get("continuationToken") or "").strip()
         phone = canonical_e164_phone(payload.get("phone"), payload.get("countryCode"))
-        if not consented:
+        if not consented and not legacy_consent_grace:
             self.send_json({"ok": False, "error": "Agree to the Terms, Community Guidelines, and acknowledge the Privacy Policy to continue."}, 400)
             return
         if not continuation or not phone:
@@ -33366,20 +33378,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "recoveryEmailHint": masked_email_hint(row_value(owner_user, "email")),
                 }, 409)
                 return
-            con.execute(
-                """UPDATE users
-                   SET phone = ?, phone_verified_at = NULL, chat_phone_discoverable = 1,
-                       is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
-                       consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ?
-                   WHERE id = ?""",
-                (phone, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
-            )
+            if consented:
+                con.execute(
+                    """UPDATE users
+                       SET phone = ?, phone_verified_at = NULL, chat_phone_discoverable = 1,
+                           is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP),
+                           consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ?
+                       WHERE id = ?""",
+                    (phone, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
+                )
+            else:
+                con.execute(
+                    """UPDATE users
+                       SET phone = ?, phone_verified_at = NULL, chat_phone_discoverable = 1,
+                           is_verified = 1, verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+                       WHERE id = ?""",
+                    (phone, user_id),
+                )
             con.execute("UPDATE auth_phone_continuations SET phone = ?, used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (phone, token_hash))
             cleanup_expired_sessions(con)
             session_token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
             user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(user)})
+        self.send_json({
+            "ok": True,
+            "token": session_token,
+            "user": mobile_user_payload(user),
+            "consentPending": not consented,
+        })
 
     def api_mobile_social_phone_send(self) -> None:
         payload = self.read_json_body()

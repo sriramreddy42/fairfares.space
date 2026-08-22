@@ -253,6 +253,9 @@ function FairFaresApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [socialContinuation, setSocialContinuation] = useState("");
+  const pendingSocialContinuationRef = useRef("");
+  const socialModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledGoogleResponseRef = useRef("");
   const [socialRecoveryEmailHint, setSocialRecoveryEmailHint] = useState("");
   const [showSocialRecoveryEmail, setShowSocialRecoveryEmail] = useState(false);
   const [, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest({
@@ -693,8 +696,15 @@ function FairFaresApp() {
       setAuthMessage("Google did not return a secure identity token. Please try again.");
       return;
     }
+    const responseKey = identityToken.slice(-48);
+    if (handledGoogleResponseRef.current === responseKey) return;
+    handledGoogleResponseRef.current = responseKey;
     void finishSocialProvider("google", identityToken);
   }, [googleResponse]);
+
+  useEffect(() => () => {
+    if (socialModalTimerRef.current) clearTimeout(socialModalTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const userId = data?.user?.id;
@@ -1704,6 +1714,9 @@ function FairFaresApp() {
 
   function completeSocialLogin(user: BootstrapPayload["user"]) {
     if (!user) return;
+    if (socialModalTimerRef.current) clearTimeout(socialModalTimerRef.current);
+    socialModalTimerRef.current = null;
+    pendingSocialContinuationRef.current = "";
     bootstrapGenerationRef.current += 1;
     setLoading(false);
     setData((current) => current ? { ...current, user, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
@@ -1726,11 +1739,22 @@ function FairFaresApp() {
       // Social signup consent is collected only beside the required phone
       // number. Never inherit a checkbox previously used by manual signup.
       setSocialConsentAccepted(false);
-      setSocialContinuation(payload.continuationToken);
+      pendingSocialContinuationRef.current = payload.continuationToken;
+      setSocialContinuation("");
       setSocialRecoveryEmailHint("");
       setShowSocialRecoveryEmail(false);
       setLoginOpen(false);
       setAuthMessage("");
+      if (socialModalTimerRef.current) clearTimeout(socialModalTimerRef.current);
+      // iOS must finish dismissing the provider/login modal before another
+      // native Modal is presented, otherwise the UI can retain a frozen
+      // invisible backdrop. Android benefits from the same deterministic handoff.
+      socialModalTimerRef.current = setTimeout(() => {
+        const continuation = pendingSocialContinuationRef.current;
+        pendingSocialContinuationRef.current = "";
+        if (continuation) setSocialContinuation(continuation);
+        socialModalTimerRef.current = null;
+      }, Platform.OS === "ios" ? 450 : 120);
       return;
     }
     if (payload.token && payload.user) {
@@ -1745,8 +1769,13 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage(`Signing in with ${provider === "google" ? "Google" : "Apple"}...`);
     try {
-      acceptSocialAuth(await mobileSocialLogin(provider, identityToken, name, false));
+      acceptSocialAuth(await withAuthTimeout(
+        mobileSocialLogin(provider, identityToken, name, false),
+        35000,
+        `${provider === "google" ? "Google" : "Apple"} sign-in took too long. Please try again.`
+      ));
     } catch (error) {
+      if (provider === "google") handledGoogleResponseRef.current = "";
       setAuthMessage(error instanceof Error ? error.message : "Social sign-in failed. Please try again.");
     } finally {
       setAuthBusy(false);
@@ -2480,6 +2509,9 @@ function FairFaresApp() {
         presentationStyle="overFullScreen"
         statusBarTranslucent
         onRequestClose={() => {
+          if (socialModalTimerRef.current) clearTimeout(socialModalTimerRef.current);
+          socialModalTimerRef.current = null;
+          pendingSocialContinuationRef.current = "";
           setSocialContinuation("");
           setSocialConsentAccepted(false);
           setSocialRecoveryEmailHint("");
@@ -2554,6 +2586,9 @@ function FairFaresApp() {
             <TouchableOpacity
               style={styles.secondaryButton}
               onPress={() => {
+                if (socialModalTimerRef.current) clearTimeout(socialModalTimerRef.current);
+                socialModalTimerRef.current = null;
+                pendingSocialContinuationRef.current = "";
                 setSocialContinuation("");
                 setSocialConsentAccepted(false);
                 setSocialRecoveryEmailHint("");

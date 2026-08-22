@@ -661,6 +661,7 @@ class MobileAuthTest(unittest.TestCase):
                     "continuationToken": continuation,
                     "countryCode": "+1",
                     "phone": "937-555-0198",
+                    "consentUiPresented": True,
                 })
             self.assertEqual(missing_consent.exception.code, 400)
 
@@ -690,6 +691,56 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(repeat_status, 200)
             self.assertTrue(repeat["token"])
             self.assertFalse(repeat.get("phoneRequired", False))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_legacy_social_login_can_continue_with_consent_pending(self):
+        server, thread = self.start_server()
+        try:
+            claims = {
+                "sub": "google-legacy-member",
+                "email": "legacy-social@example.com",
+                "email_verified": True,
+                "name": "Legacy Social Member",
+            }
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                status, social = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "verified-google-token",
+                })
+            self.assertEqual(status, 200)
+            self.assertTrue(social["phoneRequired"])
+
+            complete_status, completed = self.post_json(server, "/api/mobile/auth/phone/complete", {
+                "continuationToken": social["continuationToken"],
+                "countryCode": "+1",
+                "phone": "937-555-0177",
+            })
+            self.assertEqual(complete_status, 200)
+            self.assertTrue(completed["token"])
+            self.assertTrue(completed["consentPending"])
+
+            with app.db() as con:
+                pending_user = con.execute(
+                    "SELECT * FROM users WHERE email = ?", ("legacy-social@example.com",)
+                ).fetchone()
+            self.assertEqual(pending_user["phone"], "+19375550177")
+            self.assertIsNone(pending_user["consented_at"])
+            self.assertIsNone(pending_user["terms_version"])
+            self.assertIsNone(pending_user["privacy_version"])
+            self.assertIsNone(pending_user["community_guidelines_version"])
+
+            # Pending consent must be requested again on the next social login.
+            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+                repeat_status, repeat = self.post_json(server, "/api/mobile/auth/oauth", {
+                    "provider": "google",
+                    "identityToken": "verified-google-token",
+                })
+            self.assertEqual(repeat_status, 200)
+            self.assertTrue(repeat["phoneRequired"])
+            self.assertFalse(repeat.get("token"))
         finally:
             server.shutdown()
             server.server_close()

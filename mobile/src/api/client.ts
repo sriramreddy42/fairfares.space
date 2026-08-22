@@ -2221,7 +2221,7 @@ export async function completeSocialPhone(continuationToken: string, phone: stri
   const payload = await request<{ ok: boolean; token: string; user: BootstrapPayload["user"] }>("/api/mobile/auth/phone/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ continuationToken, phone, countryCode, consentAccepted })
+    body: JSON.stringify({ continuationToken, phone, countryCode, consentAccepted, consentUiPresented: true })
   });
   await setAuthToken(payload.token);
   return payload;
