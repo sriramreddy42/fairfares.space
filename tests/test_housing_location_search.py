@@ -108,6 +108,13 @@ class HousingLocationSearchTest(unittest.TestCase):
         names = {row["name"] for row in app.get_chat_communities_for_user(self.user_id, "Boise")}
         self.assertIn("Boise Community", names)
 
+    def test_international_city_region_feeds_group_suggestions(self):
+        self.assertEqual(app.chat_suggestion_city("Bengaluru, Karnataka"), "Bengaluru, Karnataka")
+        names = {row["name"] for row in app.get_chat_communities_for_user(self.user_id, "Bengaluru, Karnataka")}
+        self.assertIn("Bengaluru Housing & Roommates", names)
+        self.assertIn("Bengaluru Ride Share", names)
+        self.assertIn("Bengaluru Community", names)
+
     def test_city_autocomplete_combines_verified_places_and_cache(self):
         with app.db() as con:
             metro_id = app.upsert_accommodation_metro(con, "St. Louis Metro Area", country="US", state="MO", center_city="St. Louis")

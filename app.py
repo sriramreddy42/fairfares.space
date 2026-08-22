@@ -17458,19 +17458,22 @@ def chat_suggestion_city(value: str) -> str:
             placeholders = ",".join("?" for _ in city_candidates)
             cached_rows = con.execute(
                 f"""
-                SELECT DISTINCT area.city, area.state
+                SELECT DISTINCT area.city, area.state, metro.country
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE LOWER(area.city) IN ({placeholders})
-                  AND UPPER(COALESCE(metro.country, 'US')) IN ('US', 'USA')
-                  AND LENGTH(TRIM(area.state)) = 2
                 """,
                 tuple(sorted(city_candidates)),
             ).fetchall()
-        cached_labels = {
-            f"{str(row['city']).strip()}, {str(row['state']).strip().upper()}"
-            for row in cached_rows if str(row["city"] or "").strip() and str(row["state"] or "").strip()
-        }
+        cached_labels = set()
+        for row in cached_rows:
+            cached_city = str(row["city"] or "").strip()
+            cached_state = str(row["state"] or "").strip()
+            cached_country = str(row["country"] or "").strip()
+            if not cached_city:
+                continue
+            region = cached_state or cached_country
+            cached_labels.add(f"{cached_city}, {region}" if region else cached_city)
         if len(cached_labels) == 1:
             return next(iter(cached_labels))
     except sqlite3.Error:
@@ -17485,6 +17488,18 @@ def chat_suggestion_city(value: str) -> str:
     if city_state and city_state.group(2).upper() in us_state_codes:
         city_name = " ".join(part.capitalize() for part in city_state.group(1).split())
         return f"{city_name}, {city_state.group(2).upper()}"
+    # Reverse geocoding and FairFares location lookup return international
+    # localities as City, Region/Country. Accept that bounded, text-only shape
+    # so Chitthi discovery is not limited to U.S. state abbreviations.
+    global_parts = [part.strip() for part in clean.split(",")]
+    if 2 <= len(global_parts) <= 3 and all(
+        1 < len(part) <= 50 and not re.search(r"[\d<>\[\]{}\\/@#$%^*_=+|]", part)
+        for part in global_parts
+    ):
+        normalized_parts = [" ".join(word.capitalize() for word in part.split()) for part in global_parts]
+        if len(normalized_parts[-1]) in {2, 3}:
+            normalized_parts[-1] = normalized_parts[-1].upper()
+        return ", ".join(normalized_parts)
     return ""
 
 

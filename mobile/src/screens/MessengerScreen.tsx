@@ -46,6 +46,7 @@ import {
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
   joinChatGroupInvite,
+  lookupAccommodationLocation,
   previewChatGroupInvite,
   leaveChatGroup,
   muteChatConversation,
@@ -2021,12 +2022,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (Platform.OS === "web") return () => { cancelled = true; };
     void (async () => {
       try {
-        const permission = await Location.getForegroundPermissionsAsync();
+        let permission = await Location.getForegroundPermissionsAsync();
+        if (permission.canAskAgain && !permission.granted) permission = await Location.requestForegroundPermissionsAsync();
         if (!permission.granted || !isCurrentRequest()) return;
         const position = await Location.getLastKnownPositionAsync() || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (!position || !isCurrentRequest()) return;
         const [address] = await Location.reverseGeocodeAsync(position.coords);
-        const localCity = String(address?.city || address?.district || address?.subregion || "").trim();
+        const locality = String(address?.city || address?.district || address?.subregion || "").trim();
+        const region = String(address?.region || address?.isoCountryCode || address?.country || "").trim();
+        const localCity = [locality, region].filter(Boolean).join(", ");
         if (!localCity || !isCurrentRequest()) return;
         const nextCommunities = await getChatCommunities(localCity);
         if (!isCurrentRequest()) return;
@@ -3974,6 +3978,32 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
+  async function searchGroupsByLocation(value: string) {
+    setLoading(true);
+    try {
+      const lookup = await lookupAccommodationLocation(value);
+      const resolvedCity = String(lookup?.selectedLocation || value).trim();
+      const nextCommunities = await getChatCommunities(resolvedCity);
+      const hasLocalGroups = nextCommunities.some((community) => {
+        const communityCity = String(community.suggestionCity || community.area || "").split(",", 1)[0].trim().toLowerCase();
+        return !community.joined && communityCity === resolvedCity.split(",", 1)[0].trim().toLowerCase();
+      });
+      if (!hasLocalGroups) {
+        Alert.alert("Location not found", "Choose a city or area from FairFares location search and try again.");
+        return;
+      }
+      setSuggestionCity(resolvedCity);
+      setCommunities(nextCommunities);
+      setGroupSuggestionsDismissed(false);
+      setTab("Groups");
+      setSearch("");
+    } catch (error) {
+      Alert.alert("Group search", error instanceof Error ? error.message : "Could not find groups near that location.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleMessengerSearchSubmit() {
     const value = search.trim();
     if (!value) return;
@@ -3983,7 +4013,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       } else void confirmGroupInvitation(value);
       return;
     }
-    if (value.replace(/\D/g, "").length >= 10) void startPhoneChat(value);
+    if (value.replace(/\D/g, "").length >= 10) {
+      void startPhoneChat(value);
+      return;
+    }
+    void searchGroupsByLocation(value);
   }
 
   async function openCommunityThread(community: Community) {
@@ -5848,7 +5882,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       <View style={styles.searchRow}>
         <TextInput
-          placeholder="Search people or groups"
+          placeholder="Search people, groups, or city"
           placeholderTextColor={theme.colors.muted}
           style={[styles.search, styles.searchInput]}
           value={search}
@@ -5861,6 +5895,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       {/(?:group_invite|community_id)=/.test(search.trim()) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Open group invitation</Text></TouchableOpacity> : null}
       {search.replace(/\D/g, "").length >= 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Message this FairFares member</Text></TouchableOpacity> : null}
+      {search.trim().length >= 2 && search.replace(/\D/g, "").length < 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Show groups near {search.trim()}</Text></TouchableOpacity> : null}
 
       <View style={styles.tabs}>
         {(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => (
