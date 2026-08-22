@@ -15663,11 +15663,7 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
     except sqlite3.Error:
         pass
 
-    search_queries = (
-        f"major cities in {country_scope}",
-        f"largest cities in {country_scope}",
-        f"popular cities in {country_scope}",
-    )
+    search_queries = (f"popular cities in {country_scope}",)
     live_places: list[dict[str, object]] = []
     for search_query in search_queries:
         try:
@@ -15678,11 +15674,46 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
             continue
         if payload.get("status") == "OK":
             live_places.extend(item for item in (payload.get("results") or []) if isinstance(item, dict))
+
+    # Text Search often interprets "major cities" as attractions or returns no
+    # locality records. Country-filtered autocomplete is the reliable dynamic
+    # source. Spread prefixes across the alphabet so results are not limited to
+    # one initial, while avoiding any maintained country/city lookup table.
+    autocomplete_candidates: list[str] = []
+    prefix_seed = sum(ord(char) for char in origin_country_code) % 26
+    prefixes = [chr(97 + ((prefix_seed + step) % 26)) for step in (0, 6, 12, 18)]
+    for prefix in prefixes:
+        params = {
+            "input": prefix,
+            "types": "(cities)",
+            "components": f"country:{origin_country_code.lower()}",
+            "key": api_key,
+        }
+        try:
+            payload = google_api_get(
+                f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}"
+            )
+        except Exception:
+            continue
+        if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+            continue
+        for prediction in payload.get("predictions") or []:
+            if not isinstance(prediction, dict):
+                continue
+            formatting = prediction.get("structured_formatting") if isinstance(prediction.get("structured_formatting"), dict) else {}
+            candidate = normalize_accommodation_place_label(str(formatting.get("main_text") or ""))
+            if candidate and candidate.lower() not in {value.lower() for value in autocomplete_candidates}:
+                autocomplete_candidates.append(candidate)
+            if len(autocomplete_candidates) >= 16:
+                break
+        if len(autocomplete_candidates) >= 16:
+            break
     candidates.extend(
         normalize_accommodation_place_label(str(place.get("name") or ""))
         for place in live_places
         if {str(value) for value in (place.get("types") or [])}.intersection(city_types)
     )
+    candidates.extend(autocomplete_candidates)
     candidates.append(city.split(",", 1)[0].strip())
     candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
 

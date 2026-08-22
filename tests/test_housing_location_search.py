@@ -543,6 +543,47 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual([item["label"] for item in results], ["Pune, Maharashtra, India"])
         self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=pune-photo-ref")
 
+    def test_popular_ride_cities_use_country_filtered_autocomplete(self):
+        origin = {
+            "address_components": [
+                {"long_name": "United States", "short_name": "US", "types": ["country"]}
+            ]
+        }
+        denver = {
+            "status": "OK",
+            "results": [{
+                "name": "Denver", "formatted_address": "Denver, CO, USA", "types": ["locality"],
+                "geometry": {"location": {"lat": 39.7392, "lng": -104.9903}},
+                "photos": [{"photo_reference": "denver-photo"}],
+            }],
+        }
+        seattle = {
+            "status": "OK",
+            "results": [{
+                "name": "Seattle", "formatted_address": "Seattle, WA, USA", "types": ["locality"],
+                "geometry": {"location": {"lat": 47.6062, "lng": -122.3321}},
+                "photos": [{"photo_reference": "seattle-photo"}],
+            }],
+        }
+
+        def google_response(url):
+            if "/autocomplete/" in url:
+                return {"status": "OK", "predictions": [{"structured_formatting": {"main_text": "Seattle"}}]}
+            if "Seattle+city" in url:
+                return seattle
+            if "Denver+city" in url:
+                return denver
+            return {"status": "ZERO_RESULTS", "results": []}
+
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
+            app, "google_accommodation_geocode", return_value=origin
+        ), patch.object(app, "google_api_get", side_effect=google_response) as google_call:
+            results = app.google_ride_popular_cities("Denver, CO")
+        self.assertIn("Seattle, WA, USA", [item["label"] for item in results])
+        autocomplete_urls = [call.args[0] for call in google_call.call_args_list if "/autocomplete/" in call.args[0]]
+        self.assertTrue(autocomplete_urls)
+        self.assertTrue(all("components=country%3Aus" in url for url in autocomplete_urls))
+
     def test_housing_rent_uses_location_country_currency(self):
         india = {"city_area_zip": "Mumbai, Maharashtra, India", "rent_min": 18000, "rent_max": 24000, "rent_period": "MONTH"}
         us = {"city_area_zip": "Denver, CO", "rent_min": 900, "rent_max": 1200, "rent_period": "MONTH"}
