@@ -67,10 +67,10 @@ function compactDate(date: string, time = "") {
   return time ? `${label} · ${time}` : label;
 }
 
-function money(value: number | string | undefined) {
+function money(value: number | string | undefined, symbol = "$") {
   const amount = Number(value || 0);
   if (!amount) return "";
-  return `$${amount.toFixed(amount % 1 ? 2 : 0)}`;
+  return `${symbol}${amount.toFixed(amount % 1 ? 2 : 0)}`;
 }
 
 function etaFromDistance(distance: number | null | undefined) {
@@ -666,7 +666,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                 <Text style={styles.requestRouteTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
                 <View style={styles.metricRow}>
                   <View style={styles.iconMetricPill}><ActivityIcon kind="person" color="#d5dbea" /><Text style={styles.iconMetricText}>{ride.seats || 1} seat{ride.seats === 1 ? "" : "s"}</Text></View>
-                  <Text style={styles.metricPill}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
+                  <Text style={styles.metricPill}>{ride.contributionPerSeat ? money(ride.contributionPerSeat, ride.currencySymbol || "") : "Direct agreement"}</Text>
                 </View>
               </View>
               <View style={styles.requestSide}>
@@ -705,7 +705,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           <Text style={styles.roleBadge}>{statusCopy(ride)}</Text>
           <Text style={styles.cardTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
           <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
-          <Text style={styles.cardMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
+          <Text style={styles.cardMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat, ride.currencySymbol || "") : "Direct agreement"}</Text>
           <View style={styles.actionRow}>
             {ride.myRating ? <View style={styles.ratedPill}><Text style={styles.ratedPillText}>{"★".repeat(ride.myRating)} Rated</Text></View> : <TouchableOpacity style={styles.secondaryPill} onPress={() => { setRatingRide(ride); setRatingScore(0); setRatingComment(""); }}><Text style={styles.secondaryPillText}>☆ Rate {isIncomingRiderRequest(ride) ? "rider" : "driver"}</Text></TouchableOpacity>}
             <TouchableOpacity style={styles.secondaryPill} onPress={handleReserveRide}>
@@ -721,7 +721,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           <View style={styles.rowText}>
             <Text style={styles.rowTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
             <Text style={styles.rowMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
-            <Text style={styles.rowMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat) : "Direct agreement"}</Text>
+            <Text style={styles.rowMeta}>{ride.contributionPerSeat ? money(ride.contributionPerSeat, ride.currencySymbol || "") : "Direct agreement"}</Text>
           </View>
           <Text style={styles.rebookText}>Rebook</Text>
         </TouchableOpacity>
@@ -765,7 +765,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             <Text style={styles.ratingEyebrow}>Completed carpool</Text>
             <Text style={styles.ratingTitle}>How was your trip with {ratingRide ? ratingTargetName(ratingRide) : "this member"}?</Text>
             <View style={styles.ratingPersonRow}><View style={styles.ratingPersonAvatar}><Text style={styles.ratingPersonAvatarText}>{ratingRide ? ratingTargetName(ratingRide).split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() : "FF"}</Text></View><View style={styles.ratingPersonCopy}><Text style={styles.ratingPersonName}>{ratingRide ? ratingTargetName(ratingRide) : "FairFares member"}</Text><Text style={styles.ratingPersonRole}>{ratingRide && isIncomingRiderRequest(ratingRide) ? "Rider" : "Driver"} · FairFares member</Text></View></View>
-            {ratingRide ? <View style={styles.ratingTripCard}><Text style={styles.ratingTripLabel}>Trip summary</Text><Text style={styles.ratingTripRoute}>{routeLabel(ratingRide)}</Text><View style={styles.ratingTripMetaRow}><Text style={styles.ratingTripMeta}>{compactDate(ratingRide.pickupDate || ratingRide.startDate, ratingRide.pickupTime)}</Text><Text style={styles.ratingTripContribution}>{ratingRide.contributionPerSeat ? `${money(ratingRide.contributionPerSeat)} agreed contribution` : "Direct agreement"}</Text></View></View> : null}
+            {ratingRide ? <View style={styles.ratingTripCard}><Text style={styles.ratingTripLabel}>Trip summary</Text><Text style={styles.ratingTripRoute}>{routeLabel(ratingRide)}</Text><View style={styles.ratingTripMetaRow}><Text style={styles.ratingTripMeta}>{compactDate(ratingRide.pickupDate || ratingRide.startDate, ratingRide.pickupTime)}</Text><Text style={styles.ratingTripContribution}>{ratingRide.contributionPerSeat ? `${money(ratingRide.contributionPerSeat, ratingRide.currencySymbol || "")} agreed contribution` : "Direct agreement"}</Text></View></View> : null}
             <View style={styles.ratingDivider} />
             <Text style={styles.ratingSectionTitle}>Rate your trip</Text>
             <Text style={styles.ratingCopy}>Your rating helps build a safer and more dependable FairFares community.</Text>

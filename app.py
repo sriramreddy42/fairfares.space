@@ -168,6 +168,21 @@ SOCIAL_AUTH_CONTINUATION_MINUTES = positive_int_env("FAIRFARES_SOCIAL_AUTH_CONTI
 # checkbox. These users are admitted with consent pending, never recorded as
 # accepted. Set to 0 after the fixed mobile build has been adopted.
 LEGACY_SOCIAL_CONSENT_GRACE_ENABLED = os.environ.get("FAIRFARES_LEGACY_SOCIAL_CONSENT_GRACE", "1").strip() == "1"
+LEGACY_SOCIAL_CONSENT_GRACE_UNTIL = os.environ.get(
+    "FAIRFARES_LEGACY_SOCIAL_CONSENT_GRACE_UNTIL", "2026-09-30T00:00:00Z"
+).strip()
+
+
+def legacy_social_consent_grace_active() -> bool:
+    if not LEGACY_SOCIAL_CONSENT_GRACE_ENABLED or not LEGACY_SOCIAL_CONSENT_GRACE_UNTIL:
+        return False
+    try:
+        deadline = datetime.fromisoformat(LEGACY_SOCIAL_CONSENT_GRACE_UNTIL.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+    except ValueError:
+        return False
+    return datetime.now(UTC) < deadline.astimezone(UTC)
 PHONE_OTP_COOLDOWN_SECONDS = positive_int_env("FAIRFARES_PHONE_OTP_COOLDOWN_SECONDS", 60)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
@@ -3183,6 +3198,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/chat/e2ee/keys": ("chat-key-registration", 120, 60),
     "/api/chat/e2ee/backup": ("chat-key-backup", 30, 60),
     "/api/mobile/profile": ("account-write", 20, 60),
+    "/api/mobile/profile/consent": ("account-write", 20, 60),
     "/api/mobile/student-verification": ("account-write", 20, 60),
     "/api/mobile/push-token": ("account-preference", 60, 60),
     "/api/mobile/notification-preferences": ("account-preference", 60, 60),
@@ -3468,6 +3484,14 @@ def find_user_by_login_identifier(con: sqlite3.Connection, identifier: object) -
     for row in rows:
         if normalize_phone(row_value(row, "phone")) == target_phone:
             return row
+    return None
+
+
+def find_other_user_by_phone(con: sqlite3.Connection, phone: object, user_id: int) -> sqlite3.Row | None:
+    """Find a duplicate phone independent of legacy display formatting."""
+    owner = find_user_by_login_identifier(con, phone)
+    if owner and int(row_value(owner, "id") or 0) != int(user_id):
+        return owner
     return None
 
 
@@ -15384,6 +15408,12 @@ def create_account_deletion_request(user_id: int, email: str, source: str) -> di
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
     if not user:
         return None
+    has_current_consent = bool(
+        row_value(user, "consented_at")
+        and row_value(user, "terms_version") == TERMS_VERSION
+        and row_value(user, "privacy_version") == PRIVACY_VERSION
+        and row_value(user, "community_guidelines_version") == COMMUNITY_GUIDELINES_VERSION
+    )
     return {
         "id": int(row_value(user, "id") or 0),
         "name": row_value(user, "name"),
@@ -15394,6 +15424,8 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
         "phoneVerified": bool(row_value(user, "phone_verified_at")),
+        "phonePending": not bool(canonical_e164_phone(row_value(user, "phone"))),
+        "consentPending": not has_current_consent,
         "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_push_opt_in") or 0)),
         "profilePhotoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0)),
     }
@@ -15429,7 +15461,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
     stored_country = str(row_value(row, "country") or "").strip().upper()
     currency_code, currency_symbol = accommodation_currency(listing_location)
     if stored_country:
-        currency_code = stored_country
+        currency_code = COUNTRY_CURRENCY_CODES.get(stored_country, stored_country)
         currency_symbol = COUNTRY_CURRENCY_SYMBOLS.get(stored_country, f"{stored_country} ")
     return {
         "id": row_value(row, "public_id"),
@@ -15440,7 +15472,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "category": row_value(row, "category"),
         "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
         "location": row_value(row, "city_area_zip") or row_value(row, "city") or "Location open",
-        "country": stored_country or currency_code,
+        "country": stored_country or accommodation_country_code(listing_location),
         "area": row_value(row, "area_or_apartment") or row_value(row, "primary_neighborhood"),
         "workLocation": row_value(row, "work_school_location"),
         "moveIn": row_value(row, "move_in_date"),
@@ -15455,7 +15487,6 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "imageUrl": preview_image,
         "images": images,
         "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
-        "posterEmail": normalize_email(row_value(row, "contact_email")),
         "posterUserId": int(row_value(row, "user_id") or 0),
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
@@ -16206,6 +16237,9 @@ def mobile_ride_payload(
         except sqlite3.Error:
             owner_name = owner_name or ""
             owner_photo = owner_photo or ""
+    ride_currency_code, ride_currency_symbol = accommodation_currency(
+        row_value(row, "city_label") or row_value(row, "origin_label")
+    )
     return {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
@@ -16222,6 +16256,8 @@ def mobile_ride_payload(
         "destinationLat": float(row_value(row, "destination_lat") or 0) or None,
         "destinationLng": float(row_value(row, "destination_lng") or 0) or None,
         "city": row_value(row, "city_label"),
+        "currencyCode": ride_currency_code,
+        "currencySymbol": ride_currency_symbol,
         "pickupDate": row_value(row, "pickup_date") or row_value(row, "start_date"),
         "pickupTime": row_value(row, "pickup_time"),
         "startDate": row_value(row, "start_date"),
@@ -17206,6 +17242,7 @@ def mobile_sample_housing_posts(
         else SAMPLE_HOUSING_OWNER_NAME
     )
     selected_location = " ".join((area or city or "your selected location").split())[:120]
+    selected_country = accommodation_country_code(selected_location)
     currency_code, currency_symbol = accommodation_currency(selected_location)
     mode = "NEED_PLACE" if need in {"have_place", "need_roommates"} else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
@@ -17235,7 +17272,7 @@ def mobile_sample_housing_posts(
                 "category": sample_category,
                 "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, sample_category, "Housing"),
                 "location": selected_location,
-                "country": currency_code,
+                "country": selected_country,
                 "area": f"Near {selected_location}",
                 "workLocation": selected_location,
                 "moveIn": (move_in_base + timedelta(days=index * 3)).isoformat(),
@@ -17250,7 +17287,6 @@ def mobile_sample_housing_posts(
                 "imageUrl": images[0],
                 "images": images,
                 "posterName": sample_owner_name,
-                "posterEmail": SAMPLE_HOUSING_OWNER_EMAIL,
                 "posterUserId": sample_owner_id,
                 "daysLeft": 30,
                 "expiryLabel": "30 days left",
@@ -17468,6 +17504,15 @@ COUNTRY_CURRENCY_SYMBOLS = {
     "BE": "€", "PT": "€", "AT": "€", "FI": "€", "GR": "€",
 }
 
+COUNTRY_CURRENCY_CODES = {
+    "US": "USD", "CA": "CAD", "GB": "GBP", "IN": "INR", "AU": "AUD", "NZ": "NZD",
+    "AE": "AED", "SG": "SGD", "JP": "JPY", "CN": "CNY", "KR": "KRW", "MX": "MXN",
+    "BR": "BRL", "ZA": "ZAR", "CH": "CHF", "SE": "SEK", "NO": "NOK", "DK": "DKK",
+    "PL": "PLN", "CZ": "CZK", "TR": "TRY", "SA": "SAR", "QA": "QAR",
+    "DE": "EUR", "FR": "EUR", "ES": "EUR", "IT": "EUR", "IE": "EUR", "NL": "EUR",
+    "BE": "EUR", "PT": "EUR", "AT": "EUR", "FI": "EUR", "GR": "EUR",
+}
+
 LOCATION_COUNTRY_HINTS = {
     "IN": ("india", "mumbai", "delhi", "bengaluru", "bangalore", "hyderabad", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "gurugram", "gurgaon", "noida"),
     "GB": ("united kingdom", "uk", "london", "manchester", "birmingham", "glasgow", "edinburgh", "liverpool"),
@@ -17504,7 +17549,7 @@ def accommodation_country_code(location: object) -> str:
 
 def accommodation_currency(location: object) -> tuple[str, str]:
     country = accommodation_country_code(location)
-    return country, COUNTRY_CURRENCY_SYMBOLS.get(country, f"{country} ")
+    return COUNTRY_CURRENCY_CODES.get(country, country), COUNTRY_CURRENCY_SYMBOLS.get(country, f"{country} ")
 
 
 def format_accommodation_rent(row: sqlite3.Row | dict[str, object]) -> str:
@@ -22664,6 +22709,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
+            "/api/mobile/profile/consent": self.api_mobile_accept_current_policies,
             "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
             "/api/mobile/housing": self.api_mobile_create_housing,
@@ -23045,11 +23091,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     seats = int(row_value(row, "seats") or 1)
                     subtitle = row_value(row, "city_label") or "Shared route, shared cost"
                     contribution = float(row_value(row, "contribution_per_seat") or 0)
+                    _, contribution_symbol = accommodation_currency(
+                        row_value(row, "city_label") or row_value(row, "origin_label")
+                    )
                     details = tuple(str(item) for item in (
                         row_value(row, "pickup_date"),
                         row_value(row, "pickup_time"),
                         f"{seats} seat{'s' if seats != 1 else ''} available",
-                        f"${contribution:g} per seat" if contribution else "Coordinate securely in Chitthi",
+                        f"{contribution_symbol}{contribution:g} per seat" if contribution else "Coordinate securely in Chitthi",
                     ) if item)
             elif kind == "group":
                 row = None
@@ -33251,7 +33300,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         consented, consented_at = consent_values(payload)
         consent_ui_presented = payload.get("consentUiPresented") is True
-        legacy_consent_grace = LEGACY_SOCIAL_CONSENT_GRACE_ENABLED and not consent_ui_presented
+        legacy_consent_grace = legacy_social_consent_grace_active() and not consent_ui_presented
         action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-social")
         retry_after = auth_action_retry_after(action_key)
         if retry_after:
@@ -33368,7 +33417,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         consented, consented_at = consent_values(payload)
         consent_ui_presented = payload.get("consentUiPresented") is True
-        legacy_consent_grace = LEGACY_SOCIAL_CONSENT_GRACE_ENABLED and not consent_ui_presented
+        legacy_consent_grace = legacy_social_consent_grace_active() and not consent_ui_presented
         continuation = str(payload.get("continuationToken") or "").strip()
         phone = canonical_e164_phone(payload.get("phone"), payload.get("countryCode"))
         if not consented and not legacy_consent_grace:
@@ -33387,7 +33436,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
                 return
             user_id = int(row["user_id"])
-            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, user_id)).fetchone()
+            owner = find_other_user_by_phone(con, phone, user_id)
             if owner:
                 owner_user = con.execute("SELECT email FROM users WHERE id = ?", (int(owner["id"]),)).fetchone()
                 self.send_json({
@@ -33442,7 +33491,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not row:
                 self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
                 return
-            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, int(row["user_id"]))).fetchone()
+            owner = find_other_user_by_phone(con, phone, int(row["user_id"]))
             if owner:
                 self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
                 return
@@ -33510,7 +33559,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "That verification code is incorrect or expired."}, 400)
             return
         with db() as con:
-            owner = con.execute("SELECT id FROM users WHERE phone = ? AND id != ? LIMIT 1", (phone, user_id)).fetchone()
+            owner = find_other_user_by_phone(con, phone, user_id)
             if owner:
                 self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
                 return
@@ -33811,6 +33860,26 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             row = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (current_user_id,)).fetchone()
         self.send_json({"ok": True, "preferences": notification_preferences_payload(row)})
 
+    def api_mobile_accept_current_policies(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        consented, consented_at = consent_values(payload)
+        if not consented:
+            self.send_json({"ok": False, "error": "Review and accept the current FairFares policies to continue."}, 400)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            con.execute(
+                """UPDATE users SET consented_at = ?, terms_version = ?, privacy_version = ?,
+                          community_guidelines_version = ? WHERE id = ?""",
+                (consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
+            )
+            updated = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        self.send_json({"ok": True, "user": mobile_user_payload(updated)})
+
     def api_mobile_update_profile(self) -> None:
         user = self.current_user()
         if not user:
@@ -33827,14 +33896,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         current_phone = clean_text_value(row_value(user, "phone"), 40)
         email_changed = email != current_email
         phone_changed = normalize_phone(phone) != normalize_phone(current_phone)
+        canonical_phone = canonical_e164_phone(phone) if phone_changed else current_phone
         if not name:
             self.send_json({"ok": False, "error": "Name is required."}, 400)
             return
         if not valid_contact_email(email):
             self.send_json({"ok": False, "error": "Use a valid email address."}, 400)
             return
-        if len(clean_phone) < 7:
-            self.send_json({"ok": False, "error": "Use a valid phone number."}, 400)
+        if (clean_phone and len(clean_phone) < 7) or (phone_changed and not canonical_phone):
+            self.send_json({"ok": False, "error": "Use a complete phone number with country code, such as +1 303 555 0123."}, 400)
             return
         if date_of_birth:
             try:
@@ -33846,9 +33916,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if birthday > today or birthday.year < today.year - 120:
                 self.send_json({"ok": False, "error": "Use a valid birthday."}, 400)
                 return
-        if (email_changed or phone_changed) and not verify_password(current_password, row_value(user, "password_hash")):
-            self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
-            return
+        if email_changed or phone_changed:
+            with db() as con:
+                has_social_identity = con.execute(
+                    "SELECT 1 FROM auth_identities WHERE user_id = ? LIMIT 1",
+                    (int(row_value(user, "id") or 0),),
+                ).fetchone() is not None
+                phone_owner = find_other_user_by_phone(
+                    con, canonical_phone, int(row_value(user, "id") or 0)
+                ) if phone_changed else None
+            # A social-only account created by the temporary legacy rollout has
+            # no password the member knows. Permit only its initial phone to be
+            # completed from its authenticated session; later changes still
+            # require normal credential verification.
+            initial_social_phone = phone_changed and not normalize_phone(current_phone) and has_social_identity and not email_changed
+            if not initial_social_phone and not verify_password(current_password, row_value(user, "password_hash")):
+                self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
+                return
+            if phone_owner:
+                self.send_json({"ok": False, "error": "That phone number belongs to another FairFares account."}, 409)
+                return
+        if phone_changed:
+            phone = canonical_phone
         photo = None
         uploaded_photo = ""
         old_photo = str(row_value(user, "profile_photo_url") or "").strip()
@@ -33910,14 +33999,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
                 if photo is None:
                     con.execute(
-                        "UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ? WHERE id = ?",
-                        (name, email, phone, date_of_birth or None, verified_value, user["id"]),
+                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?,
+                                  chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
+                           WHERE id = ?""",
+                        (name, email, phone, date_of_birth or None, verified_value, 1 if phone_changed else 0, user["id"]),
                     )
                 else:
                     cursor = con.execute(
-                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?
+                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?,
+                                  chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
                            WHERE id = ? AND profile_photo_url = ?""",
-                        (name, email, phone, date_of_birth or None, verified_value, photo, user["id"], old_photo),
+                        (name, email, phone, date_of_birth or None, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
                 if email_changed and not photo_conflict:

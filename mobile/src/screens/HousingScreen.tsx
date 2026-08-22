@@ -73,17 +73,17 @@ const quickLinks: Array<{
 }> = [
   {
     key: "earn",
-    title: "List anywhere in the USA",
+    title: "List a ride in your area",
     accent: theme.colors.brand
   },
   {
     key: "cheapRide",
-    title: "Get cheap rides anywhere in the USA",
+    title: "Find affordable rides nearby",
     accent: theme.colors.blue
   },
   {
     key: "carpoolMove",
-    title: "Moving to another state? Try carpool",
+    title: "Traveling farther? Try carpool",
     accent: "#9b5cff"
   }
 ];
@@ -194,7 +194,7 @@ function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | 
     .filter(Boolean)
     .join(", ");
 }
-const budgetOptions = ["Any", "$700", "$900", "$1,200", "$1,600", "$2,000"];
+const budgetValues = [700, 900, 1200, 1600, 2000];
 const renterAgeOptions = ["21-24", "25+"];
 const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "GENERAL_REQUEST", title: "Request a ride", copy: "Point-to-point ride for today or later." },
@@ -790,6 +790,7 @@ export function HousingScreen({
       return compareOptionalNumber(a.distanceMiles, b.distanceMiles);
     });
   }, [posts, selectedSort]);
+  const housingCurrencySymbol = posts.find((post) => post.currencySymbol)?.currencySymbol || "$";
   const renderHousingPostCard = (post: HousingPost) => (
     <HousingCard
       key={post.id}
@@ -837,10 +838,10 @@ export function HousingScreen({
         name: value.name,
         offered: value.offered,
         needed: value.needed,
-        rent: value.count ? `$${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
+        rent: value.count ? `${housingCurrencySymbol}${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
         preset: value.preset
       }));
-  }, [data?.location.city, data?.location.suggestedAreas, posts]);
+  }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, posts]);
   const rentalRows = rentalSearched ? rentalCars : [];
   const rentalLocationOptions = useMemo(() => {
     const locations = new Set<string>();
@@ -2911,7 +2912,7 @@ export function HousingScreen({
                           <View style={styles.rideChoiceAvailability}>
                             <View style={[styles.rideChoiceAvailabilityDot, expired && styles.rideChoiceAvailabilityDotExpired]} />
                             <Text style={[styles.rideChoicePrice, expired && styles.rideChoicePriceExpired]}>
-                              {offer.contributionPerSeat ? `$${Number(offer.contributionPerSeat).toFixed(2)}` : "Open"}
+                              {offer.contributionPerSeat ? `${offer.currencySymbol || ""}${Number(offer.contributionPerSeat).toFixed(2)}` : "Open"}
                             </Text>
                           </View>
                           <Text style={[styles.rideChoicePriceMeta, expired && styles.rideChoiceExpiredMeta]}>{offer.contributionPerSeat ? "expected" : "agree in chat"}</Text>
@@ -3176,7 +3177,7 @@ export function HousingScreen({
       <View style={styles.quickHero}>
         <Text style={styles.quickPill}>Quick links</Text>
         <Text style={styles.quickHeaderTitle}>
-          Find rides, rentals, and roommate options <Text style={styles.quickTitleAccent}>anywhere</Text> in the USA.
+          Find rides, rentals, and roommate options <Text style={styles.quickTitleAccent}>wherever you are.</Text>
         </Text>
         <Text style={styles.quickAnimatedWord}>
           {quickLinkAnimatedWord}
@@ -3605,8 +3606,9 @@ export function HousingScreen({
             </ScrollView>
             <Text style={styles.filterTitle}>Budget</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-              {budgetOptions.map((option) => {
-                const value = option === "Any" ? "" : option.replace(/[$,]/g, "");
+              {[null, ...budgetValues].map((amount) => {
+                const option = amount === null ? "Any" : `${housingCurrencySymbol}${amount.toLocaleString()}`;
+                const value = amount === null ? "" : String(amount);
                 return (
                   <TouchableOpacity key={option} style={[styles.filterChip, selectedBudget === value && styles.filterChipActive]} onPress={() => onBudgetSelect(value)}>
                     <Text style={[styles.filterChipText, selectedBudget === value && styles.filterChipTextActive]}>{option}</Text>

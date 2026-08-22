@@ -594,6 +594,40 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_social_member_can_complete_initial_phone_without_unknown_generated_password(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Pending Social", "pending-social@example.com", app.hash_password("server-generated-secret")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO auth_identities (user_id, provider, provider_subject, provider_email) VALUES (?, 'google', ?, ?)",
+                (user_id, "pending-social-subject", "pending-social@example.com"),
+            )
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("pending-social-token", user_id))
+
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({"phone": "+91 98765 43210"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer pending-social-token"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["user"]["phone"], "+919876543210")
+            self.assertFalse(payload["user"]["phonePending"])
+            with app.db() as con:
+                saved = con.execute("SELECT phone, chat_phone_discoverable FROM users WHERE id = ?", (user_id,)).fetchone()
+            self.assertEqual(saved["phone"], "+919876543210")
+            self.assertEqual(int(saved["chat_phone_discoverable"]), 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_preserves_guest_profile_and_rejects_member_phone_reuse(self):
         with app.db() as con:
             con.execute(
@@ -636,6 +670,39 @@ class MobileAuthTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_pending_policy_status_is_private_and_grace_deadline_fails_closed(self):
+        pending = app.mobile_user_payload({
+            "id": 91,
+            "name": "Pending Member",
+            "email": "pending@example.com",
+            "phone": "",
+            "role": "CUSTOMER",
+            "is_admin": 0,
+            "is_verified": 1,
+        })
+        self.assertTrue(pending["phonePending"])
+        self.assertTrue(pending["consentPending"])
+        with mock.patch.object(app, "LEGACY_SOCIAL_CONSENT_GRACE_ENABLED", True), mock.patch.object(
+            app, "LEGACY_SOCIAL_CONSENT_GRACE_UNTIL", "invalid"
+        ):
+            self.assertFalse(app.legacy_social_consent_grace_active())
+
+    def test_duplicate_phone_lookup_normalizes_legacy_formatting(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Legacy Phone", "legacy-phone@example.com", "+1 (303) 555-0123", "x"),
+            )
+            owner_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Other Member", "other-phone@example.com", "x"),
+            )
+            other_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            duplicate = app.find_other_user_by_phone(con, "+13035550123", other_id)
+            self.assertEqual(int(duplicate["id"]), owner_id)
+            self.assertIsNone(app.find_other_user_by_phone(con, "+13035550123", owner_id))
 
     def test_social_login_collects_phone_without_sms_before_issuing_session(self):
         server, thread = self.start_server()

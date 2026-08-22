@@ -216,7 +216,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(len(results), 11)
         self.assertTrue(all(item.get("sample") is False for item in results[1:]))
         self.assertTrue(all(item.get("posterName") == app.SAMPLE_HOUSING_OWNER_NAME for item in results[1:]))
-        self.assertTrue(all(item.get("posterEmail") == app.SAMPLE_HOUSING_OWNER_EMAIL for item in results[1:]))
+        self.assertTrue(all("posterEmail" not in item for item in results))
         self.assertTrue(all(item.get("posterUserId") == self.sample_owner_id for item in results[1:]))
         self.assertLessEqual(results[0]["distanceMiles"], 10)
 
@@ -237,7 +237,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(len(results), 10)
         self.assertTrue(all(item["sample"] is False for item in results))
         self.assertTrue(all(item["posterName"] == app.SAMPLE_HOUSING_OWNER_NAME for item in results))
-        self.assertTrue(all(item["posterEmail"] == app.SAMPLE_HOUSING_OWNER_EMAIL for item in results))
+        self.assertTrue(all("posterEmail" not in item for item in results))
         self.assertTrue(all(item["posterUserId"] == self.sample_owner_id for item in results))
         self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
@@ -631,7 +631,8 @@ class HousingLocationSearchTest(unittest.TestCase):
     def test_india_sample_housing_uses_rupees(self):
         result = app.mobile_sample_housing_posts(city="Bengaluru, India", limit=1)[0]
         self.assertTrue(str(result["rent"]).startswith("₹"))
-        self.assertEqual(result["currencyCode"], "IN")
+        self.assertEqual(result["country"], "IN")
+        self.assertEqual(result["currencyCode"], "INR")
 
     def test_listing_country_is_structured_and_drives_payload_currency(self):
         with app.db() as con:

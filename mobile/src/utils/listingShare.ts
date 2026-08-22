@@ -41,9 +41,11 @@ export async function shareCarpoolListing(ride: RidePost) {
   const route = `${compact(ride.origin, "Pickup area")} → ${compact(ride.destination, "Destination")}`;
   const timing = [ride.pickupDate, ride.pickupTime].filter(Boolean).join(" · ");
   const seats = Number(ride.seats || 1);
+  const contribution = Number(ride.contributionPerSeat || 0);
+  const contributionLabel = contribution ? `${ride.currencySymbol || ""}${contribution.toLocaleString()} per seat` : "";
   await shareAppCard(
     `FairFares carpool: ${route}`,
-    `Check out this carpool on FairFares\n${route}${timing ? `\n${timing}` : ""} · ${seats} seat${seats === 1 ? "" : "s"}`,
+    `Check out this carpool on FairFares\n${route}${timing ? `\n${timing}` : ""} · ${seats} seat${seats === 1 ? "" : "s"}${contributionLabel ? ` · ${contributionLabel}` : ""}`,
     url
   );
 }

@@ -2321,3 +2321,11 @@ export async function updateMobileProfile(input: MobileProfileInput) {
     body: JSON.stringify(input)
   });
 }
+
+export async function acceptCurrentPolicies() {
+  return request<{ ok: boolean; user: BootstrapPayload["user"] }>("/api/mobile/profile/consent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consentAccepted: true })
+  });
+}

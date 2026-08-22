@@ -154,7 +154,8 @@ export function ProfileScreen({
     email.trim().toLowerCase() !== user.email.toLowerCase()
     || phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "")
   ));
-  const canSaveProfile = Boolean(user && profileDirty && name.trim() && email.trim() && (!sensitiveChanged || currentPassword.trim()) && !saving);
+  const completingInitialPhone = Boolean(user && !String(user.phone || "").replace(/\D/g, "") && phone.replace(/\D/g, ""));
+  const canSaveProfile = Boolean(user && profileDirty && name.trim() && email.trim() && (!sensitiveChanged || completingInitialPhone || currentPassword.trim()) && !saving);
   const accountHistoryItems = useMemo<AccountHistoryItem[]>(() => {
     if (historySection === "housing") return housingActivity.map((post) => ({
       id: post.id,
@@ -403,11 +404,12 @@ export function ProfileScreen({
             <Text style={styles.label}>Email</Text>
             <TextInput value={email} onChangeText={(value) => { setEmail(value); setProfileDirty(true); }} style={styles.input} placeholder="Email" placeholderTextColor={theme.colors.muted} autoCapitalize="none" keyboardType="email-address" />
             <Text style={styles.label}>Phone</Text>
-            <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" />
+            <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number, including +country code" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" autoComplete="tel" />
+            {completingInitialPhone ? <Text style={styles.securityNote}>Include the country code, for example +1 303 555 0123 or +91 98765 43210.</Text> : null}
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
             {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
-            {sensitiveChanged ? (
+            {sensitiveChanged && !completingInitialPhone ? (
             <>
               <Text style={styles.securityNote}>Current password is required to change email or phone. Email changes require activation before the next login.</Text>
               <Text style={styles.label}>Current password</Text>
@@ -419,7 +421,7 @@ export function ProfileScreen({
                 <Text style={styles.secondaryButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
-                <Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving..." : profileDirty && sensitiveChanged && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
+                <Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving..." : profileDirty && sensitiveChanged && !completingInitialPhone && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
               </TouchableOpacity>
             </View>
           </> : null}

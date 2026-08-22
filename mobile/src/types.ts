@@ -23,7 +23,6 @@ export type HousingPost = {
   imageUrl: string;
   images: string[];
   posterName?: string;
-  posterEmail?: string;
   posterUserId?: number;
   daysLeft: number;
   expiryLabel: string;
@@ -46,6 +45,8 @@ export type FairFaresUser = {
   role: string;
   isAdmin: boolean;
   isVerified: boolean;
+  phonePending?: boolean;
+  consentPending?: boolean;
   promotionalNotificationsEnabled?: boolean;
   profilePhotoUrl?: string;
 };
@@ -218,6 +219,8 @@ export type RidePost = {
   destinationLat?: number | null;
   destinationLng?: number | null;
   city: string;
+  currencyCode?: string;
+  currencySymbol?: string;
   pickupDate: string;
   pickupTime: string;
   startDate: string;

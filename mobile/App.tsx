@@ -14,7 +14,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getMobileNotificationPreferences, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getMobileNotificationPreferences, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -346,6 +346,8 @@ function FairFaresApp() {
   const [reviewPromptContext, setReviewPromptContext] = useState<{ name: string; photoUrl: string; listingTitle: string } | null>(null);
   const [profileCompletionOpen, setProfileCompletionOpen] = useState(false);
   const [profileCompletionEditRequested, setProfileCompletionEditRequested] = useState(false);
+  const [profileConsentAccepted, setProfileConsentAccepted] = useState(false);
+  const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
@@ -611,6 +613,7 @@ function FairFaresApp() {
       || !user?.name?.trim()
       || !user?.email?.trim()
       || !user?.phone?.trim()
+      || user?.consentPending
     ));
     if (!profileIncomplete) {
       setProfileCompletionOpen(false);
@@ -1998,6 +2001,39 @@ function FairFaresApp() {
     }
   }
 
+  async function continueProfileCompletion() {
+    const user = data?.user;
+    if (!user) return;
+    let nextUser = user;
+    if (user.consentPending) {
+      if (!profileConsentAccepted) {
+        Alert.alert("FairFares policies", "Review and accept the Terms, Community Guidelines, and Privacy Policy to continue.");
+        return;
+      }
+      if (profileConsentBusy) return;
+      setProfileConsentBusy(true);
+      try {
+        const payload = await acceptCurrentPolicies();
+        if (payload.user) {
+          nextUser = payload.user;
+          updateLocalUser(payload.user);
+        }
+        setProfileConsentAccepted(false);
+      } catch (error) {
+        Alert.alert("Could not save acceptance", error instanceof Error ? error.message : "Please try again.");
+        return;
+      } finally {
+        setProfileConsentBusy(false);
+      }
+    }
+    setProfileCompletionOpen(false);
+    const detailsMissing = !nextUser.profilePhotoUrl?.trim() || !nextUser.name?.trim() || !nextUser.email?.trim() || !nextUser.phone?.trim();
+    if (detailsMissing) {
+      setProfileCompletionEditRequested(true);
+      setActiveTab("profile");
+    }
+  }
+
   function updateLocalUser(user: BootstrapPayload["user"]) {
     if (!user) return;
     const userId = Number(user.id || 0);
@@ -2689,9 +2725,26 @@ function FairFaresApp() {
               {!data?.user?.name?.trim() ? <Text style={styles.profileCompletionChip}>Full name</Text> : null}
               {!data?.user?.email?.trim() ? <Text style={styles.profileCompletionChip}>Email</Text> : null}
               {!data?.user?.phone?.trim() ? <Text style={styles.profileCompletionChip}>Phone number</Text> : null}
+              {data?.user?.consentPending ? <Text style={styles.profileCompletionChip}>Policy acceptance</Text> : null}
             </View>
-            <TouchableOpacity style={styles.profileCompletionPrimary} onPress={() => { setProfileCompletionOpen(false); setProfileCompletionEditRequested(true); setActiveTab("profile"); }}>
-              <Text style={styles.profileCompletionPrimaryText}>Complete profile</Text>
+            {data?.user?.consentPending ? (
+              <View style={styles.signupConsentRow}>
+                <TouchableOpacity
+                  style={[styles.signupConsentBox, profileConsentAccepted && styles.signupConsentBoxChecked]}
+                  onPress={() => setProfileConsentAccepted((accepted) => !accepted)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: profileConsentAccepted }}
+                  accessibilityLabel="Accept current FairFares policies"
+                >
+                  <Text style={styles.signupConsentCheck}>{profileConsentAccepted ? "✓" : ""}</Text>
+                </TouchableOpacity>
+                <Text style={styles.signupConsentText}>
+                  I agree to the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/terms")}>Terms of Service</Text> and <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/community-guidelines")}>Community Guidelines</Text> and acknowledge the <Text style={styles.signupConsentLink} onPress={() => void Linking.openURL("https://www.fairfare.space/privacy")}>Privacy Policy</Text>.
+                </Text>
+              </View>
+            ) : null}
+            <TouchableOpacity style={[styles.profileCompletionPrimary, profileConsentBusy && styles.disabledButton]} disabled={profileConsentBusy} onPress={() => void continueProfileCompletion()}>
+              <Text style={styles.profileCompletionPrimaryText}>{profileConsentBusy ? "Saving..." : "Complete profile"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.profileCompletionLater} onPress={() => setProfileCompletionOpen(false)}>
               <Text style={styles.profileCompletionLaterText}>Not now</Text>
