@@ -6,6 +6,23 @@ import app
 
 
 class ChatLinkPreviewTest(unittest.TestCase):
+    def test_render_origin_is_never_published_as_share_origin(self):
+        with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://fairfares.onrender.com"}, clear=False):
+            app.os.environ.pop("FAIRFARES_CANONICAL_ORIGIN", None)
+            self.assertEqual(app.schema_origin(), "https://www.fairfare.space")
+
+    def test_chitthi_share_links_use_verified_public_app_link_domain(self):
+        handler = object.__new__(app.FairFaresHandler)
+        with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://www.fairfare.space"}):
+            self.assertEqual(
+                handler.community_join_url("FFG-TEST"),
+                "https://www.fairfare.space/chitthi/group?community_id=FFG-TEST",
+            )
+            self.assertEqual(
+                handler.community_invite_url("private-token"),
+                "https://www.fairfare.space/chitthi/invite?group_invite=private-token",
+            )
+
     def test_metadata_parser_prefers_open_graph_content(self):
         parser = app.ChatLinkMetadataParser()
         parser.feed(

@@ -2025,7 +2025,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         let permission = await Location.getForegroundPermissionsAsync();
         if (permission.canAskAgain && !permission.granted) permission = await Location.requestForegroundPermissionsAsync();
         if (!permission.granted || !isCurrentRequest()) return;
-        const position = await Location.getLastKnownPositionAsync() || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const position = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60 * 1000, requiredAccuracy: 5000 })
+          || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (!position || !isCurrentRequest()) return;
         const [address] = await Location.reverseGeocodeAsync(position.coords);
         const locality = String(address?.city || address?.district || address?.subregion || "").trim();
@@ -3979,11 +3980,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   async function searchGroupsByLocation(value: string) {
+    // This explicit search takes precedence over any current-location lookup
+    // that may still be resolving in the background.
+    const requestId = suggestionRequestId.current + 1;
+    suggestionRequestId.current = requestId;
+    const isCurrentRequest = () => suggestionRequestId.current === requestId;
     setLoading(true);
     try {
       const lookup = await lookupAccommodationLocation(value);
+      if (!isCurrentRequest()) return;
       const resolvedCity = String(lookup?.selectedLocation || value).trim();
       const nextCommunities = await getChatCommunities(resolvedCity);
+      if (!isCurrentRequest()) return;
       const hasLocalGroups = nextCommunities.some((community) => {
         const communityCity = String(community.suggestionCity || community.area || "").split(",", 1)[0].trim().toLowerCase();
         return !community.joined && communityCity === resolvedCity.split(",", 1)[0].trim().toLowerCase();
@@ -3998,9 +4006,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setTab("Groups");
       setSearch("");
     } catch (error) {
-      Alert.alert("Group search", error instanceof Error ? error.message : "Could not find groups near that location.");
+      if (isCurrentRequest()) Alert.alert("Group search", error instanceof Error ? error.message : "Could not find groups near that location.");
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   }
 

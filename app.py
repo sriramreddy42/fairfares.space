@@ -21272,7 +21272,18 @@ def should_include_structured_data(template_name: str) -> bool:
 
 
 def schema_origin() -> str:
-    return os.environ.get("PUBLIC_BASE_URL", "https://www.fairfare.space").rstrip("/")
+    configured = os.environ.get("FAIRFARES_CANONICAL_ORIGIN", "").strip().rstrip("/") \
+        or os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not configured:
+        return "https://www.fairfare.space"
+    hostname = (urllib.parse.urlparse(configured).hostname or "").lower()
+    # Render's service URL is an origin-server implementation detail. Publishing
+    # it in share metadata bypasses the iOS/Android association files and opens
+    # the browser. Preserve loopback/custom development origins, but always map
+    # the production Render hostname to FairFares' verified App Link domain.
+    if hostname.endswith(".onrender.com"):
+        return "https://www.fairfare.space"
+    return configured
 
 
 def html_meta_content(html_text: str, name: str, default: str = "") -> str:
@@ -22634,10 +22645,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return f"/login?next={urllib.parse.quote(safe_next, safe='')}"
 
     def community_join_url(self, public_id: str) -> str:
-        return f"{self.public_origin()}/chitthi/group?community_id={urllib.parse.quote(public_id)}"
+        return f"{schema_origin()}/chitthi/group?community_id={urllib.parse.quote(public_id)}"
 
     def community_invite_url(self, token: str) -> str:
-        return f"{self.public_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
+        return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
 
     def app_association_file(self, platform: str) -> None:
         if platform == "ios":
