@@ -26305,6 +26305,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # housing, rides, account, and Chitthi—not only after a direct
                 # conversation exists. The object key remains private in R2.
                 authenticated_request_allowed = True
+            # Public community discovery is intentionally visible before
+            # joining (and before login in Ask). Its group avatar must follow
+            # the same visibility rule instead of requiring a chat session.
+            public_community_allowed = False
+            if community_id > 0:
+                public_community_allowed = con.execute(
+                    "SELECT 1 FROM chat_communities WHERE id = ? AND visibility = 'PUBLIC' LIMIT 1",
+                    (community_id,),
+                ).fetchone() is not None
             public_testimonial_allowed = False
             if user_id > 0:
                 public_testimonial_allowed = con.execute(
@@ -26315,7 +26324,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        LIMIT 1""",
                     (user_id,),
                 ).fetchone() is not None
-            if not signed_request_valid and not authenticated_request_allowed and not public_testimonial_allowed:
+            if not signed_request_valid and not authenticated_request_allowed and not public_community_allowed and not public_testimonial_allowed:
                 self.send_error(404)
                 return
             avatar_row = (
