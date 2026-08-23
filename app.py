@@ -7242,9 +7242,102 @@ def init_db() -> None:
                 FOREIGN KEY(group_id) REFERENCES workspace_groups(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS ask_community_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                author_id INTEGER NOT NULL,
+                community_id INTEGER,
+                post_type TEXT NOT NULL DEFAULT 'QUESTION' CHECK(post_type IN ('QUESTION', 'UPDATE', 'RECOMMENDATION', 'REQUEST')),
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'GENERAL',
+                city TEXT NOT NULL DEFAULT '',
+                area TEXT NOT NULL DEFAULT '',
+                link_url TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'PUBLISHED' CHECK(status IN ('PUBLISHED', 'LOCKED', 'HIDDEN', 'DELETED')),
+                accepted_answer_id INTEGER,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                fulfillment_status TEXT NOT NULL DEFAULT 'OPEN',
+                expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(author_id) REFERENCES users(id),
+                FOREIGN KEY(community_id) REFERENCES chat_communities(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_post_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER NOT NULL,
+                image_url TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(post_id) REFERENCES ask_community_posts(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                post_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                parent_answer_id INTEGER,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PUBLISHED' CHECK(status IN ('PUBLISHED', 'HIDDEN', 'DELETED')),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(post_id) REFERENCES ask_community_posts(id),
+                FOREIGN KEY(author_id) REFERENCES users(id),
+                FOREIGN KEY(parent_answer_id) REFERENCES ask_community_answers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER,
+                answer_id INTEGER,
+                user_id INTEGER NOT NULL,
+                reaction TEXT NOT NULL DEFAULT 'HELPFUL',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(post_id, answer_id, user_id),
+                FOREIGN KEY(post_id) REFERENCES ask_community_posts(id),
+                FOREIGN KEY(answer_id) REFERENCES ask_community_answers(id),
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                CHECK((post_id IS NOT NULL AND answer_id IS NULL) OR (post_id IS NULL AND answer_id IS NOT NULL))
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_saved_posts (
+                post_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(post_id, user_id),
+                FOREIGN KEY(post_id) REFERENCES ask_community_posts(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER,
+                answer_id INTEGER,
+                reporter_id INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                reviewed_by INTEGER,
+                reviewed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(post_id, answer_id, reporter_id),
+                FOREIGN KEY(post_id) REFERENCES ask_community_posts(id),
+                FOREIGN KEY(answer_id) REFERENCES ask_community_answers(id),
+                FOREIGN KEY(reporter_id) REFERENCES users(id),
+                FOREIGN KEY(reviewed_by) REFERENCES users(id)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
+        ensure_column(con, "ask_community_posts", "details_json", "details_json TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(con, "ask_community_posts", "fulfillment_status", "fulfillment_status TEXT NOT NULL DEFAULT 'OPEN'")
+        ensure_column(con, "ask_community_posts", "expires_at", "expires_at TEXT")
+        ensure_column(con, "ask_community_posts", "source_kind", "source_kind TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ask_community_posts", "source_public_id", "source_public_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "phone", "phone TEXT")
         ensure_column(con, "users", "chat_phone_discoverable", "chat_phone_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "address", "address TEXT")
@@ -7668,6 +7761,13 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_posts_visibility_created ON workspace_posts(visibility, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_comments_post_created ON workspace_post_comments(post_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_workspace_reactions_post_user ON workspace_post_reactions(post_id, user_id, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_feed ON ask_community_posts(status, created_at DESC, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_location ON ask_community_posts(city COLLATE NOCASE, area COLLATE NOCASE, status, id DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_author ON ask_community_posts(author_id, id DESC)")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_posts_source ON ask_community_posts(source_kind, source_public_id) WHERE source_kind != '' AND source_public_id != ''")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_answers_post ON ask_community_answers(post_id, status, id ASC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reports_status ON ask_community_reports(status, created_at DESC)")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_reports_one_per_target ON ask_community_reports(COALESCE(post_id, 0), COALESCE(answer_id, 0), reporter_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_reactions_message ON chat_message_reactions(message_id, emoji)")
         con.execute(
             """
@@ -10824,6 +10924,45 @@ def get_admin_users() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_admin_community_posts(limit: int = 200) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT posts.*, users.name AS author_name, users.email AS author_email,
+                   communities.name AS community_name,
+                   (SELECT COUNT(*) FROM ask_community_answers answers WHERE answers.post_id = posts.id AND answers.status = 'PUBLISHED') AS answer_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
+                   (SELECT COUNT(*) FROM ask_community_reports reports WHERE reports.post_id = posts.id AND reports.status = 'OPEN') AS report_count
+            FROM ask_community_posts posts
+            JOIN users ON users.id = posts.author_id
+            LEFT JOIN chat_communities communities ON communities.id = posts.community_id
+            ORDER BY CASE WHEN EXISTS(SELECT 1 FROM ask_community_reports reports WHERE reports.post_id = posts.id AND reports.status = 'OPEN') THEN 0 ELSE 1 END,
+                     posts.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+
+
+def get_admin_community_reports(limit: int = 200) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT reports.*, reporter.name AS reporter_name, reviewer.name AS reviewer_name,
+                   posts.public_id AS post_public_id, posts.title AS post_title,
+                   answers.public_id AS answer_public_id, answers.body AS answer_body
+            FROM ask_community_reports reports
+            JOIN users reporter ON reporter.id = reports.reporter_id
+            LEFT JOIN users reviewer ON reviewer.id = reports.reviewed_by
+            LEFT JOIN ask_community_posts posts ON posts.id = reports.post_id
+            LEFT JOIN ask_community_answers answers ON answers.id = reports.answer_id
+            ORDER BY CASE WHEN reports.status = 'OPEN' THEN 0 ELSE 1 END, reports.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+
+
 def get_staff_accounts() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -11729,6 +11868,244 @@ def render_workspace_posts(posts: list[sqlite3.Row]) -> str:
             """
         )
     return "\n".join(cards)
+
+
+COMMUNITY_POST_TYPES = {"QUESTION", "UPDATE", "RECOMMENDATION", "REQUEST"}
+COMMUNITY_CATEGORIES = {
+    "GENERAL", "NEED_ROOMMATE", "NEED_PLACE", "HAVE_PLACE", "CARPOOL_RIDE",
+    # Keep original values so existing posts remain readable and editable.
+    "HOUSING", "RIDES", "LOCAL", "STUDENT", "SERVICES", "SAFETY",
+}
+COMMUNITY_REACTIONS = {"HELPFUL", "THANKS", "SUPPORT", "LOVE"}
+COMMUNITY_REPORT_REASONS = {"SPAM", "HARASSMENT", "MISINFORMATION", "PRIVACY", "UNSAFE", "OTHER"}
+
+
+def community_public_id(prefix: str = "FFC") -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:10].upper()}"
+
+
+def community_safe_link(value: object) -> str:
+    raw = clean_text_value(value, 500)
+    if not raw:
+        return ""
+    parsed = urllib.parse.urlparse(raw)
+    return raw if parsed.scheme.lower() in {"https", "http"} and parsed.netloc else ""
+
+
+def sync_housing_into_community() -> None:
+    """Project every active housing listing into the shared community feed."""
+    with db() as con:
+        listings = con.execute(
+            """
+            SELECT accommodation_posts.*
+            FROM accommodation_posts
+            JOIN users ON users.id = accommodation_posts.user_id
+            WHERE accommodation_posts.visibility_status = 'ACTIVE'
+              AND accommodation_posts.public_id IS NOT NULL
+              AND accommodation_posts.public_id != ''
+            """
+        ).fetchall()
+        for listing in listings:
+            source_id = str(row_value(listing, "public_id") or "")
+            category = "HAVE_PLACE" if str(row_value(listing, "post_mode") or "").upper() == "HAVE_PLACE" else "NEED_PLACE"
+            details = {
+                "rent": format_accommodation_rent(listing),
+                "moveInDate": str(row_value(listing, "move_in_date") or ""),
+                "roomType": option_label(ACCOMMODATION_CATEGORIES, row_value(listing, "category"), "Housing"),
+                "leaseTerm": option_label(ACCOMMODATION_LEASE_TERMS, row_value(listing, "lease_term"), "Flexible"),
+            }
+            con.execute(
+                """
+                INSERT OR IGNORE INTO ask_community_posts
+                    (public_id, author_id, post_type, title, body, category, city, area,
+                     status, details_json, fulfillment_status, expires_at, created_at, updated_at,
+                     source_kind, source_public_id)
+                VALUES (?, ?, 'REQUEST', ?, ?, ?, ?, ?, 'PUBLISHED', ?, 'OPEN', ?, ?, ?, 'HOUSING', ?)
+                """,
+                (
+                    f"FFH-{source_id}", int(row_value(listing, "user_id") or 0),
+                    str(row_value(listing, "title") or "Housing listing"), str(row_value(listing, "description") or ""),
+                    category, str(row_value(listing, "city") or ""),
+                    str(row_value(listing, "area_or_apartment") or row_value(listing, "primary_neighborhood") or ""),
+                    json.dumps({key: value for key, value in details.items() if value}, separators=(",", ":")),
+                    str(row_value(listing, "expires_at") or ""), str(row_value(listing, "created_at") or ""),
+                    str(row_value(listing, "updated_at") or row_value(listing, "created_at") or ""), source_id,
+                ),
+            )
+            con.execute(
+                """UPDATE ask_community_posts
+                   SET title = ?, body = ?, category = ?, city = ?, area = ?, details_json = ?,
+                       expires_at = ?, updated_at = ?,
+                       status = CASE WHEN status = 'DELETED' THEN 'DELETED' ELSE 'PUBLISHED' END
+                   WHERE source_kind = 'HOUSING' AND source_public_id = ?""",
+                (
+                    str(row_value(listing, "title") or "Housing listing"), str(row_value(listing, "description") or ""),
+                    category, str(row_value(listing, "city") or ""),
+                    str(row_value(listing, "area_or_apartment") or row_value(listing, "primary_neighborhood") or ""),
+                    json.dumps({key: value for key, value in details.items() if value}, separators=(",", ":")),
+                    str(row_value(listing, "expires_at") or ""),
+                    str(row_value(listing, "updated_at") or row_value(listing, "created_at") or ""), source_id,
+                ),
+            )
+            projected = con.execute("SELECT id FROM ask_community_posts WHERE source_kind = 'HOUSING' AND source_public_id = ?", (source_id,)).fetchone()
+            if not projected:
+                continue
+            projected_id = int(projected["id"])
+            con.execute("DELETE FROM ask_community_post_images WHERE post_id = ?", (projected_id,))
+            image_rows = con.execute("SELECT image_url, sort_order FROM accommodation_post_images WHERE post_id = ? ORDER BY sort_order, id LIMIT 4", (int(row_value(listing, "id") or 0),)).fetchall()
+            for image_row in image_rows:
+                con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)", (projected_id, row_value(image_row, "image_url"), int(row_value(image_row, "sort_order") or 0)))
+
+
+def community_post_rows(
+    viewer_id: int = 0,
+    *,
+    city: str = "",
+    category: str = "",
+    community_public_id: str = "",
+    post_public_id: str = "",
+    query: str = "",
+    saved_only: bool = False,
+    limit: int = 30,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    filters = ["posts.status IN ('PUBLISHED', 'LOCKED')", "(posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now') OR posts.author_id = ?)"]
+    values: list[object] = [viewer_id, viewer_id, viewer_id, viewer_id]
+    if city:
+        filters.append("posts.city = ? COLLATE NOCASE")
+        values.append(clean_text_value(city, 120))
+    if category.upper() == "HOUSING":
+        filters.append("posts.category IN ('NEED_ROOMMATE','NEED_PLACE','HAVE_PLACE','HOUSING')")
+    elif category.upper() == "RIDES":
+        filters.append("posts.category IN ('CARPOOL_RIDE','RIDES')")
+    elif category.upper() == "PLACES":
+        filters.append("posts.category IN ('LOCAL','GENERAL')")
+    elif category and category.upper() in COMMUNITY_CATEGORIES:
+        filters.append("posts.category = ?")
+        values.append(category.upper())
+    if community_public_id:
+        filters.append("communities.public_id = ?")
+        values.append(clean_text_value(community_public_id, 80))
+    if post_public_id:
+        filters.append("posts.public_id = ?")
+        values.append(clean_text_value(post_public_id, 80))
+    if query:
+        search = f"%{clean_text_value(query, 100)}%"
+        filters.append("(posts.title LIKE ? COLLATE NOCASE OR posts.body LIKE ? COLLATE NOCASE OR posts.city LIKE ? COLLATE NOCASE OR posts.area LIKE ? COLLATE NOCASE)")
+        values.extend([search, search, search, search])
+    if saved_only:
+        filters.append("EXISTS (SELECT 1 FROM ask_community_saved_posts saved_filter WHERE saved_filter.post_id = posts.id AND saved_filter.user_id = ?)")
+        values.append(viewer_id)
+    # Private group posts are visible only to members. Public and city-wide posts
+    # remain readable so links can open before login without exposing contact data.
+    filters.append("(posts.community_id IS NULL OR communities.visibility = 'PUBLIC' OR EXISTS (SELECT 1 FROM chat_community_members access_member WHERE access_member.community_id = posts.community_id AND access_member.user_id = ?))")
+    values.append(viewer_id)
+    values.extend([max(1, min(limit, 50)), max(0, offset)])
+    with db() as con:
+        return con.execute(
+            f"""
+            SELECT posts.*, users.name AS author_name, users.profile_photo_url AS author_photo,
+                   communities.public_id AS community_public_id, communities.name AS community_name,
+                   communities.visibility AS community_visibility,
+                   (SELECT public_id FROM ask_community_answers accepted WHERE accepted.id = posts.accepted_answer_id) AS accepted_answer_public_id,
+                   (SELECT COUNT(*) FROM ask_community_answers answers WHERE answers.post_id = posts.id AND answers.status = 'PUBLISHED') AS answer_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
+                   EXISTS(SELECT 1 FROM ask_community_reactions mine WHERE mine.post_id = posts.id AND mine.user_id = ?) AS reacted,
+                   (SELECT reaction FROM ask_community_reactions mine_type WHERE mine_type.post_id = posts.id AND mine_type.user_id = ? LIMIT 1) AS viewer_reaction,
+                   EXISTS(SELECT 1 FROM ask_community_saved_posts saved WHERE saved.post_id = posts.id AND saved.user_id = ?) AS saved,
+                   (SELECT GROUP_CONCAT(image_url, char(31)) FROM (SELECT image_url FROM ask_community_post_images WHERE post_id = posts.id ORDER BY sort_order, id)) AS image_urls
+            FROM ask_community_posts posts
+            JOIN users ON users.id = posts.author_id
+            LEFT JOIN chat_communities communities ON communities.id = posts.community_id
+            WHERE {' AND '.join(filters)}
+            ORDER BY CASE WHEN posts.post_type = 'QUESTION' AND posts.accepted_answer_id IS NULL THEN 0 ELSE 1 END,
+                     datetime(posts.created_at) DESC, posts.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            values,
+        ).fetchall()
+
+
+def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, object]:
+    author_id = int(row_value(row, "author_id") or 0)
+    images = [item for item in str(row_value(row, "image_urls") or "").split(chr(31)) if item]
+    try:
+        details = json.loads(str(row_value(row, "details_json") or "{}"))
+    except (TypeError, ValueError):
+        details = {}
+    if not isinstance(details, dict):
+        details = {}
+    return {
+        "id": str(row_value(row, "public_id") or ""),
+        "type": str(row_value(row, "post_type") or "QUESTION"),
+        "title": str(row_value(row, "title") or ""),
+        "body": str(row_value(row, "body") or ""),
+        "category": str(row_value(row, "category") or "GENERAL"),
+        "city": str(row_value(row, "city") or ""),
+        "area": str(row_value(row, "area") or ""),
+        "linkUrl": str(row_value(row, "link_url") or ""),
+        "images": images,
+        "status": str(row_value(row, "status") or "PUBLISHED"),
+        "fulfillmentStatus": str(row_value(row, "fulfillment_status") or "OPEN"),
+        "expiresAt": str(row_value(row, "expires_at") or ""),
+        "details": {str(key): str(value) for key, value in details.items() if value is not None},
+        "author": {
+            "id": author_id,
+            "name": str(row_value(row, "author_name") or "FairFares member"),
+            "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id),
+        },
+        "community": {
+            "id": str(row_value(row, "community_public_id") or ""),
+            "name": str(row_value(row, "community_name") or ""),
+            "visibility": str(row_value(row, "community_visibility") or "PUBLIC"),
+        } if row_value(row, "community_public_id") else None,
+        "answerCount": int(row_value(row, "answer_count") or 0),
+        "reactionCount": int(row_value(row, "reaction_count") or 0),
+        "viewerReaction": str(row_value(row, "viewer_reaction") or ""),
+        "reacted": bool(int(float_from_value(row_value(row, "reacted")) or 0)),
+        "saved": bool(int(float_from_value(row_value(row, "saved")) or 0)),
+        "acceptedAnswerId": str(row_value(row, "accepted_answer_public_id") or ""),
+        "canEdit": bool(viewer_id and viewer_id == author_id),
+        "canAnswer": str(row_value(row, "status") or "") == "PUBLISHED" and str(row_value(row, "fulfillment_status") or "OPEN") == "OPEN",
+        "createdAt": str(row_value(row, "created_at") or ""),
+        "updatedAt": str(row_value(row, "updated_at") or ""),
+        "sourceKind": str(row_value(row, "source_kind") or ""),
+        "sourceId": str(row_value(row, "source_public_id") or ""),
+    }
+
+
+def community_answer_rows(post_id: int, viewer_id: int = 0) -> list[sqlite3.Row]:
+    with db() as con:
+        return con.execute(
+            """
+            SELECT answers.*, users.name AS author_name, users.profile_photo_url AS author_photo,
+                   (SELECT public_id FROM ask_community_answers parent WHERE parent.id = answers.parent_answer_id) AS parent_answer_public_id,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id) AS reaction_count,
+                   (SELECT reaction FROM ask_community_reactions mine WHERE mine.answer_id = answers.id AND mine.user_id = ? LIMIT 1) AS viewer_reaction
+            FROM ask_community_answers answers
+            JOIN users ON users.id = answers.author_id
+            WHERE answers.post_id = ? AND answers.status = 'PUBLISHED'
+            ORDER BY CASE WHEN answers.id = (SELECT accepted_answer_id FROM ask_community_posts WHERE id = ?) THEN 0 ELSE 1 END,
+                     answers.id ASC
+            """,
+            (viewer_id, post_id, post_id),
+        ).fetchall()
+
+
+def community_answer_payload(row: sqlite3.Row, accepted_answer_id: int = 0, viewer_id: int = 0) -> dict[str, object]:
+    author_id = int(row_value(row, "author_id") or 0)
+    return {
+        "id": str(row_value(row, "public_id") or ""),
+        "body": str(row_value(row, "body") or ""),
+        "parentAnswerId": str(row_value(row, "parent_answer_public_id") or ""),
+        "author": {"id": author_id, "name": str(row_value(row, "author_name") or "FairFares member"), "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id)},
+        "reactionCount": int(row_value(row, "reaction_count") or 0),
+        "viewerReaction": str(row_value(row, "viewer_reaction") or ""),
+        "accepted": int(row_value(row, "id") or 0) == accepted_answer_id,
+        "canEdit": bool(viewer_id and viewer_id == author_id),
+        "createdAt": str(row_value(row, "created_at") or ""),
+        "updatedAt": str(row_value(row, "updated_at") or ""),
+    }
 
 
 def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
@@ -15521,6 +15898,15 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
     if stored_country:
         currency_code = COUNTRY_CURRENCY_CODES.get(stored_country, stored_country)
         currency_symbol = COUNTRY_CURRENCY_SYMBOLS.get(stored_country, f"{stored_country} ")
+    owner_user_id = int(row_value(row, "user_id") or 0)
+    owner_photo = row_value(row, "owner_photo")
+    if owner_user_id and not owner_photo:
+        try:
+            with db() as con:
+                owner = con.execute("SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone()
+            owner_photo = row_value(owner, "profile_photo_url") if owner else ""
+        except sqlite3.Error:
+            owner_photo = ""
     return {
         "id": row_value(row, "public_id"),
         "title": row_value(row, "title"),
@@ -15545,7 +15931,8 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "imageUrl": preview_image,
         "images": images,
         "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
-        "posterUserId": int(row_value(row, "user_id") or 0),
+        "posterUserId": owner_user_id,
+        "photoUrl": avatar_delivery_path(owner_photo, owner_user_id),
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -17157,6 +17544,7 @@ def mobile_housing_posts(
             )
             SELECT accommodation_posts.*,
                    users.name AS owner_name,
+                   users.profile_photo_url AS owner_photo,
                    first_images.image_url AS preview_image_url
             FROM accommodation_posts
             LEFT JOIN users ON users.id = accommodation_posts.user_id
@@ -22468,6 +22856,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/housing/activity":
             self.api_mobile_housing_activity()
             return
+        if parsed.path == "/api/mobile/community":
+            self.api_mobile_community(parsed)
+            return
+        if parsed.path == "/community" or re.fullmatch(r"/community/[A-Za-z0-9_-]+", parsed.path):
+            self.community_share_page(parsed)
+            return
         if parsed.path == "/api/mobile/rides":
             self.api_mobile_rides(parsed)
             return
@@ -22592,6 +22986,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/cars/detail": self.admin_car_detail_page,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/users": self.admin_users_page,
+            "/admin/community": self.admin_community_page,
             "/admin/requests": self.admin_requests_page,
             "/admin/tickets": self.admin_tickets_page,
             "/admin/oncall": self.admin_oncall_page,
@@ -22782,6 +23177,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
             "/api/mobile/housing": self.api_mobile_create_housing,
+            "/api/mobile/community": self.api_mobile_create_community_post,
+            "/api/mobile/community/answer": self.api_mobile_create_community_answer,
+            "/api/mobile/community/react": self.api_mobile_react_community,
+            "/api/mobile/community/save": self.api_mobile_save_community_post,
+            "/api/mobile/community/report": self.api_mobile_report_community,
+            "/api/mobile/community/accept-answer": self.api_mobile_accept_community_answer,
+            "/api/mobile/community/update": self.api_mobile_update_community_post,
+            "/api/mobile/community/status": self.api_mobile_update_community_status,
+            "/api/mobile/community/delete": self.api_mobile_delete_community_post,
             "/api/mobile/rides": self.api_mobile_create_ride,
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
             "/api/mobile/rides/driver-location": self.api_mobile_update_ride_driver_location,
@@ -22824,6 +23228,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/post/react": self.react_workspace_post,
             "/admin/workspace/post/comment": self.comment_workspace_post,
             "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
+            "/admin/community/moderate": self.moderate_community_content,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/bookings/refund": self.refund_admin_booking_payment,
             "/admin/oncall/assign": self.assign_oncall_shift,
@@ -23804,6 +24209,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"""
                 SELECT accommodation_posts.*,
                        (SELECT name FROM users WHERE users.id = accommodation_posts.user_id) AS owner_name,
+                       (SELECT profile_photo_url FROM users WHERE users.id = accommodation_posts.user_id) AS owner_photo,
                        (SELECT image_url FROM accommodation_post_images
                         WHERE accommodation_post_images.post_id = accommodation_posts.id
                         ORDER BY sort_order ASC, id ASC LIMIT 1) AS preview_image_url
@@ -28908,7 +29314,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("workspace", "Workspace", "/admin", [("workspace", "/admin", "Workspace")]),
             ("fleet", "Fleet", "/admin/inventory", [("portal", "/admin/inventory", "Inventory"), ("roi", "/admin/roi", "ROI")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
-            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("requests", "/admin/requests", "Staff Requests")]),
+            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("community", "/admin/community", "Community"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
             ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
             ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
@@ -29511,6 +29917,63 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             users=users or '<p class="admin-empty">No users yet.</p>',
         )
         self.send_html(body)
+
+    def admin_community_page(self) -> None:
+        user = self.require_owner_admin()
+        if not user:
+            return
+        posts = get_admin_community_posts()
+        reports = get_admin_community_reports()
+        post_rows = "".join(
+            f"""
+            <article class="admin-community-card" data-admin-user-card data-admin-community-card data-search="{escape(' '.join(str(value or '') for value in (row_value(post, 'public_id'), row_value(post, 'title'), row_value(post, 'body'), row_value(post, 'author_name'), row_value(post, 'author_email'), row_value(post, 'city'), row_value(post, 'area'))).lower())}">
+              <div class="admin-community-head">
+                <div><span class="admin-community-status status-{escape(str(row_value(post, 'status') or '').lower())}">{escape(row_value(post, 'status'))}</span><b>{escape(row_value(post, 'title'))}</b><small>{escape(row_value(post, 'public_id'))} · {escape(row_value(post, 'post_type'))} · {escape(row_value(post, 'category'))}</small></div>
+                <strong>{escape(str(row_value(post, 'report_count') or 0))} reports</strong>
+              </div>
+              <p>{escape(row_value(post, 'body'))}</p>
+              <div class="admin-community-meta"><span>By {escape(row_value(post, 'author_name'))} · {escape(row_value(post, 'author_email'))}</span><span>{escape(row_value(post, 'community_name') or 'Public feed')} · {escape(row_value(post, 'city') or 'No city')} {escape(row_value(post, 'area') or '')}</span><span>{escape(str(row_value(post, 'answer_count') or 0))} answers · {escape(str(row_value(post, 'reaction_count') or 0))} reactions · {escape(row_value(post, 'created_at'))}</span></div>
+              <form method="post" action="/admin/community/moderate" class="admin-community-actions">
+                <input type="hidden" name="post_id" value="{escape(row_value(post, 'public_id'))}">
+                <button name="action" value="PUBLISH" type="submit">Publish</button>
+                <button name="action" value="LOCK" type="submit">Lock</button>
+                <button name="action" value="HIDE" type="submit">Hide</button>
+                <button class="danger-button" name="action" value="DELETE" type="submit">Delete</button>
+              </form>
+            </article>
+            """ for post in posts
+        ) or '<p class="admin-empty">No community posts yet.</p>'
+        report_rows = "".join(
+            f"""<tr><td><b>{escape(row_value(report, 'reason'))}</b><span>{escape(row_value(report, 'details') or 'No additional details')}</span></td><td>{escape(row_value(report, 'post_public_id') or row_value(report, 'answer_public_id'))}<span>{escape(row_value(report, 'post_title') or row_value(report, 'answer_body'))}</span></td><td>{escape(row_value(report, 'reporter_name'))}</td><td>{escape(row_value(report, 'status'))}</td><td>{escape(row_value(report, 'created_at'))}</td></tr>"""
+            for report in reports
+        ) or '<tr><td colspan="5">No reports.</td></tr>'
+        self.send_html(render_template(
+            "admin_community.html",
+            admin_name=escape(user["name"]),
+            admin_nav=self.render_admin_nav(user, "community"),
+            post_count=escape(str(len(posts))),
+            open_report_count=escape(str(sum(1 for report in reports if row_value(report, "status") == "OPEN"))),
+            ask_community_posts=post_rows,
+            ask_community_reports=report_rows,
+        ))
+
+    def moderate_community_content(self) -> None:
+        user = self.require_owner_admin("/admin/community")
+        if not user:
+            return
+        form = self.read_form()
+        post_public_id = clean_text_value(form.get("post_id"), 80)
+        action = clean_text_value(form.get("action"), 20).upper()
+        status = {"PUBLISH": "PUBLISHED", "LOCK": "LOCKED", "HIDE": "HIDDEN", "DELETE": "DELETED"}.get(action)
+        if not post_public_id or not status:
+            self.redirect("/admin/community")
+            return
+        with db() as con:
+            post = con.execute("SELECT id FROM ask_community_posts WHERE public_id = ?", (post_public_id,)).fetchone()
+            if post:
+                con.execute("UPDATE ask_community_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, int(post["id"])))
+                con.execute("UPDATE ask_community_reports SET status = 'RESOLVED', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE post_id = ? AND status = 'OPEN'", (int(user["id"]), int(post["id"])))
+        self.redirect("/admin/community")
 
     def admin_requests_page(self) -> None:
         user = self.require_owner_admin()
@@ -35727,6 +36190,328 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             },
             201,
         )
+
+    def community_share_page(self, parsed: urllib.parse.ParseResult) -> None:
+        public_id = clean_text_value(parsed.path.rsplit("/", 1)[-1] if parsed.path != "/community" else "", 80)
+        rows = community_post_rows(0, post_public_id=public_id, limit=1) if public_id else []
+        post = community_post_payload(rows[0], 0) if rows else None
+        title = html.escape(str(post["title"]) if post else "Ask Community on FairFares")
+        body = html.escape(str(post["body"]) if post else "Ask questions and get trusted local answers from the FairFares community.")
+        author = html.escape(str(post["author"]["name"]) if post else "FairFares Community")
+        app_link = f"fairfares://community?postId={urllib.parse.quote(public_id)}" if public_id else "fairfares://community"
+        status = 200 if post or not public_id else 404
+        markup = f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\"><style>body{{margin:0;background:#07140f;color:#f4fff9;font:16px system-ui,-apple-system,sans-serif}}main{{max-width:680px;margin:auto;padding:56px 20px}}.brand{{color:#62d8a6;font-weight:850;letter-spacing:.08em}}article{{margin-top:22px;padding:28px;background:#10291f;border:1px solid #285641;border-radius:26px}}h1{{font-size:clamp(28px,6vw,44px);line-height:1.08;margin:12px 0}}p{{color:#c5dbd2;line-height:1.65;white-space:pre-wrap}}.by{{color:#7fc7a8;font-size:14px}}.actions{{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}}a{{padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:800}}.open{{background:#62d8a6;color:#06291e}}.home{{border:1px solid #46705e;color:#dff8ed}}</style></head><body><main><div class=\"brand\">FAIRFARES · ASK COMMUNITY</div><article><div class=\"by\">Shared by {author}</div><h1>{title}</h1><p>{body}</p><div class=\"actions\"><a class=\"open\" href=\"{html.escape(app_link)}\">Open in FairFares</a><a class=\"home\" href=\"/\">Visit FairFares</a></div></article></main></body></html>"""
+        self.send_html(markup.encode("utf-8"), status)
+
+    def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
+        sync_housing_into_community()
+        user = self.current_user()
+        viewer_id = int(row_value(user, "id") or 0) if user else 0
+        params = urllib.parse.parse_qs(parsed.query)
+        post_public_id = clean_text_value((params.get("postId") or [""])[0], 80)
+        city = clean_text_value((params.get("city") or [""])[0], 120)
+        category = clean_text_value((params.get("category") or [""])[0], 40).upper()
+        group_id = clean_text_value((params.get("communityId") or [""])[0], 80)
+        query = clean_text_value((params.get("q") or [""])[0], 100)
+        saved_only = (params.get("saved") or [""])[0] == "1"
+        limit = int(float_from_value((params.get("limit") or ["30"])[0]) or 30)
+        offset = int(float_from_value((params.get("offset") or ["0"])[0]) or 0)
+        if saved_only and not viewer_id:
+            self.send_json({"ok": False, "error": "Login is required to view saved posts."}, 401)
+            return
+        rows = community_post_rows(
+            viewer_id,
+            city=city,
+            category=category,
+            community_public_id=group_id,
+            post_public_id=post_public_id,
+            query=query,
+            saved_only=saved_only,
+            limit=limit,
+            offset=offset,
+        )
+        posts = [community_post_payload(row, viewer_id) for row in rows]
+        if post_public_id and posts:
+            database_id = int(row_value(rows[0], "id") or 0)
+            accepted_id = int(row_value(rows[0], "accepted_answer_id") or 0)
+            posts[0]["answers"] = [community_answer_payload(answer, accepted_id, viewer_id) for answer in community_answer_rows(database_id, viewer_id)]
+        self.send_json({"ok": True, "posts": posts, "pagination": {"limit": max(1, min(limit, 50)), "offset": max(0, offset), "returned": len(posts), "hasMore": len(posts) >= max(1, min(limit, 50))}})
+
+    def api_mobile_create_community_post(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to ask the community."}, 401)
+            return
+        payload = self.read_json_body()
+        post_type = clean_text_value(payload.get("type"), 30).upper() or "QUESTION"
+        category = clean_text_value(payload.get("category"), 30).upper() or "GENERAL"
+        title = clean_text_value(payload.get("title"), 140)
+        body = clean_multiline_text_value(payload.get("body"), 3000)
+        city = clean_text_value(payload.get("city"), 120)
+        area = clean_text_value(payload.get("area"), 120)
+        link_url = community_safe_link(payload.get("linkUrl"))
+        raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        detail_limits = {"budget": 40, "moveInDate": 20, "preference": 160, "rent": 40, "availableDate": 20, "roomType": 60, "origin": 120, "destination": 120, "travelDate": 20, "travelTime": 20, "seats": 3}
+        details = {key: clean_text_value(raw_details.get(key), limit) for key, limit in detail_limits.items() if clean_text_value(raw_details.get(key), limit)}
+        group_public_id = clean_text_value(payload.get("communityId"), 80)
+        expires_in_days = max(7, min(int(float_from_value(payload.get("expiresInDays")) or 45), 90))
+        expires_at = (datetime.utcnow() + timedelta(days=expires_in_days)).isoformat(timespec="seconds")
+        if post_type not in COMMUNITY_POST_TYPES or category not in COMMUNITY_CATEGORIES:
+            self.send_json({"ok": False, "error": "Choose a valid post type and category."}, 400)
+            return
+        if len(title) < 6 or len(body) < 12:
+            self.send_json({"ok": False, "error": "Add a clear title and at least 12 characters of detail."}, 400)
+            return
+        raw_images = payload.get("images") if isinstance(payload.get("images"), list) else []
+        valid_images = [
+            str(value) for value in raw_images[:4]
+            if data_url_upload_parts(str(value or ""), "community-image", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
+        ]
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        public_id = community_public_id()
+        with db() as con:
+            recent_posts = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_posts WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (int(user["id"]),)).fetchone()["count"])
+            if recent_posts >= 6:
+                self.send_json({"ok": False, "error": "You have reached the hourly community post limit. Please try again later."}, 429)
+                return
+            community_id = None
+            if group_public_id:
+                community = con.execute("SELECT id, visibility FROM chat_communities WHERE public_id = ?", (group_public_id,)).fetchone()
+                if not community or not chat_group_member_role(con, int(community["id"]), int(user["id"])):
+                    self.send_json({"ok": False, "error": "Join this group before posting."}, 403)
+                    return
+                community_id = int(community["id"])
+            cursor = con.execute(
+                """INSERT INTO ask_community_posts
+                   (public_id, author_id, community_id, post_type, title, body, category, city, area, link_url, details_json, fulfillment_status, expires_at, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, 'PUBLISHED', ?, ?)""",
+                (public_id, int(user["id"]), community_id, post_type, title, body, category, city, area, link_url, json.dumps(details, separators=(",", ":")), expires_at, now, now),
+            )
+            database_id = int(cursor.lastrowid)
+            for index, image_data in enumerate(valid_images, start=1):
+                image_url = save_data_url_payload_locally(folder_name="community", data_url=image_data, fallback_name=f"{public_id.lower()}-{index}", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
+                if image_url:
+                    con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order, created_at) VALUES (?, ?, ?, ?)", (database_id, image_url, index, now))
+        row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
+        self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"]))}, 201)
+
+    def api_mobile_create_community_answer(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to answer."}, 401)
+            return
+        payload = self.read_json_body()
+        post_public_id = clean_text_value(payload.get("postId"), 80)
+        body = clean_multiline_text_value(payload.get("body"), 1800)
+        parent_public_id = clean_text_value(payload.get("parentAnswerId"), 80)
+        if len(body) < 2:
+            self.send_json({"ok": False, "error": "Write an answer before posting."}, 400)
+            return
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        notify_user_id = 0
+        notify_title = ""
+        with db() as con:
+            post = con.execute("SELECT * FROM ask_community_posts WHERE public_id = ? AND status = 'PUBLISHED'", (post_public_id,)).fetchone()
+            if not post:
+                self.send_json({"ok": False, "error": "This post is unavailable or closed."}, 404)
+                return
+            if row_value(post, "community_id") and not chat_group_member_role(con, int(post["community_id"]), int(user["id"])):
+                self.send_json({"ok": False, "error": "Join this group before answering."}, 403)
+                return
+            recent_answers = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_answers WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (int(user["id"]),)).fetchone()["count"])
+            if recent_answers >= 30:
+                self.send_json({"ok": False, "error": "You have reached the hourly answer limit. Please try again later."}, 429)
+                return
+            parent_id = None
+            if parent_public_id:
+                parent = con.execute("SELECT id FROM ask_community_answers WHERE public_id = ? AND post_id = ? AND status = 'PUBLISHED'", (parent_public_id, int(post["id"]))).fetchone()
+                if not parent:
+                    self.send_json({"ok": False, "error": "The reply target is unavailable."}, 404)
+                    return
+                parent_id = int(parent["id"])
+            answer_id = community_public_id("FFA")
+            con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), int(user["id"]), parent_id, body, now, now))
+            notify_user_id = int(post["author_id"] or 0)
+            notify_title = str(post["title"] or "Community question")
+        if notify_user_id and notify_user_id != int(user["id"]):
+            send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or 'A FairFares member'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
+        self.send_json({"ok": True, "answerId": answer_id}, 201)
+
+    def api_mobile_react_community(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to react."}, 401)
+            return
+        payload = self.read_json_body()
+        post_public_id = clean_text_value(payload.get("postId"), 80)
+        answer_public_id = clean_text_value(payload.get("answerId"), 80)
+        reaction = clean_text_value(payload.get("reaction"), 20).upper() or "HELPFUL"
+        if reaction not in COMMUNITY_REACTIONS or bool(post_public_id) == bool(answer_public_id):
+            self.send_json({"ok": False, "error": "Choose one post or answer and a valid reaction."}, 400)
+            return
+        with db() as con:
+            if post_public_id:
+                target = con.execute("SELECT id FROM ask_community_posts WHERE public_id = ? AND status IN ('PUBLISHED','LOCKED')", (post_public_id,)).fetchone()
+                target_column, target_id = "post_id", int(target["id"]) if target else 0
+            else:
+                target = con.execute("SELECT id FROM ask_community_answers WHERE public_id = ? AND status = 'PUBLISHED'", (answer_public_id,)).fetchone()
+                target_column, target_id = "answer_id", int(target["id"]) if target else 0
+            if not target_id:
+                self.send_json({"ok": False, "error": "The content is unavailable."}, 404)
+                return
+            existing = con.execute(f"SELECT id, reaction FROM ask_community_reactions WHERE {target_column} = ? AND user_id = ?", (target_id, int(user["id"]))).fetchone()
+            if existing and existing["reaction"] == reaction:
+                con.execute("DELETE FROM ask_community_reactions WHERE id = ?", (int(existing["id"]),))
+                active = False
+            elif existing:
+                con.execute("UPDATE ask_community_reactions SET reaction = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?", (reaction, int(existing["id"])))
+                active = True
+            else:
+                con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, int(user["id"]), reaction))
+                active = True
+            count = int(con.execute(f"SELECT COUNT(*) AS count FROM ask_community_reactions WHERE {target_column} = ?", (target_id,)).fetchone()["count"])
+        self.send_json({"ok": True, "active": active, "reaction": reaction if active else "", "count": count})
+
+    def api_mobile_save_community_post(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to save posts."}, 401)
+            return
+        payload = self.read_json_body()
+        with db() as con:
+            post = con.execute("SELECT id FROM ask_community_posts WHERE public_id = ? AND status IN ('PUBLISHED','LOCKED')", (clean_text_value(payload.get("postId"), 80),)).fetchone()
+            if not post:
+                self.send_json({"ok": False, "error": "Post not found."}, 404)
+                return
+            existing = con.execute("SELECT 1 FROM ask_community_saved_posts WHERE post_id = ? AND user_id = ?", (int(post["id"]), int(user["id"]))).fetchone()
+            if existing:
+                con.execute("DELETE FROM ask_community_saved_posts WHERE post_id = ? AND user_id = ?", (int(post["id"]), int(user["id"])))
+            else:
+                con.execute("INSERT INTO ask_community_saved_posts (post_id, user_id) VALUES (?, ?)", (int(post["id"]), int(user["id"])))
+        self.send_json({"ok": True, "saved": not bool(existing)})
+
+    def api_mobile_report_community(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to report content."}, 401)
+            return
+        payload = self.read_json_body()
+        reason = clean_text_value(payload.get("reason"), 30).upper()
+        details = clean_multiline_text_value(payload.get("details"), 600)
+        post_public_id = clean_text_value(payload.get("postId"), 80)
+        answer_public_id = clean_text_value(payload.get("answerId"), 80)
+        if reason not in COMMUNITY_REPORT_REASONS or bool(post_public_id) == bool(answer_public_id):
+            self.send_json({"ok": False, "error": "Choose a report reason and one item."}, 400)
+            return
+        with db() as con:
+            post_id = answer_id = None
+            if post_public_id:
+                target = con.execute("SELECT id, author_id FROM ask_community_posts WHERE public_id = ?", (post_public_id,)).fetchone()
+                post_id = int(target["id"]) if target else None
+            else:
+                target = con.execute("SELECT id, author_id FROM ask_community_answers WHERE public_id = ?", (answer_public_id,)).fetchone()
+                answer_id = int(target["id"]) if target else None
+            if not target:
+                self.send_json({"ok": False, "error": "Content not found."}, 404)
+                return
+            if int(target["author_id"]) == int(user["id"]):
+                self.send_json({"ok": False, "error": "You cannot report your own content."}, 400)
+                return
+            existing = con.execute(
+                "SELECT id FROM ask_community_reports WHERE COALESCE(post_id, 0) = COALESCE(?, 0) AND COALESCE(answer_id, 0) = COALESCE(?, 0) AND reporter_id = ?",
+                (post_id, answer_id, int(user["id"])),
+            ).fetchone()
+            if existing:
+                con.execute("UPDATE ask_community_reports SET reason = ?, details = ?, status = 'OPEN', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?", (reason, details, int(existing["id"])))
+            else:
+                con.execute("INSERT INTO ask_community_reports (post_id, answer_id, reporter_id, reason, details) VALUES (?, ?, ?, ?, ?)", (post_id, answer_id, int(user["id"]), reason, details))
+        self.send_json({"ok": True, "message": "Report submitted for moderator review."}, 201)
+
+    def api_mobile_accept_community_answer(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        notify_user_id = 0
+        answer_public_id = clean_text_value(payload.get("answerId"), 80)
+        post_public_id = clean_text_value(payload.get("postId"), 80)
+        with db() as con:
+            post = con.execute("SELECT id, author_id, post_type FROM ask_community_posts WHERE public_id = ? AND status = 'PUBLISHED'", (post_public_id,)).fetchone()
+            answer = con.execute("SELECT id, post_id, author_id FROM ask_community_answers WHERE public_id = ? AND status = 'PUBLISHED'", (answer_public_id,)).fetchone()
+            if not post or not answer or int(answer["post_id"]) != int(post["id"]):
+                self.send_json({"ok": False, "error": "Post or answer not found."}, 404)
+                return
+            if int(post["author_id"]) != int(user["id"]) or post["post_type"] != "QUESTION":
+                self.send_json({"ok": False, "error": "Only the question author can accept an answer."}, 403)
+                return
+            con.execute("UPDATE ask_community_posts SET accepted_answer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (int(answer["id"]), int(post["id"])))
+            notify_user_id = int(answer["author_id"] or 0)
+        if notify_user_id and notify_user_id != int(user["id"]):
+            send_mobile_push_for_users([notify_user_id], "Your answer was accepted", "The question author marked your community answer as helpful.", {"type": "COMMUNITY_ACCEPTED", "postId": post_public_id, "target": "community"})
+        self.send_json({"ok": True, "acceptedAnswerId": answer_public_id})
+
+    def api_mobile_update_community_post(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        title = clean_text_value(payload.get("title"), 140)
+        body = clean_multiline_text_value(payload.get("body"), 3000)
+        link_url = community_safe_link(payload.get("linkUrl"))
+        raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        detail_limits = {"budget": 40, "moveInDate": 20, "preference": 160, "rent": 40, "availableDate": 20, "roomType": 60, "origin": 120, "destination": 120, "travelDate": 20, "travelTime": 20, "seats": 3}
+        details = {key: clean_text_value(raw_details.get(key), limit) for key, limit in detail_limits.items() if clean_text_value(raw_details.get(key), limit)}
+        if len(title) < 6 or len(body) < 12:
+            self.send_json({"ok": False, "error": "Add a clear title and description."}, 400)
+            return
+        with db() as con:
+            cursor = con.execute("UPDATE ask_community_posts SET title = ?, body = ?, link_url = ?, details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE public_id = ? AND author_id = ? AND status = 'PUBLISHED'", (title, body, link_url, json.dumps(details, separators=(",", ":")), clean_text_value(payload.get("postId"), 80), int(user["id"])))
+        if not cursor.rowcount:
+            self.send_json({"ok": False, "error": "You can only edit your own active post."}, 403)
+            return
+        self.send_json({"ok": True})
+
+    def api_mobile_delete_community_post(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        with db() as con:
+            cursor = con.execute("UPDATE ask_community_posts SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE public_id = ? AND author_id = ? AND status IN ('PUBLISHED','LOCKED')", (clean_text_value(payload.get("postId"), 80), int(user["id"])))
+        if not cursor.rowcount:
+            self.send_json({"ok": False, "error": "You can only delete your own post."}, 403)
+            return
+        self.send_json({"ok": True})
+
+    def api_mobile_update_community_status(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        public_id = clean_text_value(payload.get("postId"), 80)
+        requested = clean_text_value(payload.get("status"), 20).upper()
+        allowed = {"OPEN", "RESOLVED", "FOUND", "FILLED", "ARRANGED"}
+        if requested not in allowed:
+            self.send_json({"ok": False, "error": "Choose a valid post status."}, 400)
+            return
+        with db() as con:
+            post = con.execute("SELECT id, category FROM ask_community_posts WHERE public_id = ? AND author_id = ? AND status IN ('PUBLISHED','LOCKED')", (public_id, int(user["id"]))).fetchone()
+            if not post:
+                self.send_json({"ok": False, "error": "You can only update your own post."}, 403)
+                return
+            permitted = {
+                "NEED_ROOMMATE": {"OPEN", "FOUND"}, "NEED_PLACE": {"OPEN", "FOUND"},
+                "HAVE_PLACE": {"OPEN", "FILLED"}, "CARPOOL_RIDE": {"OPEN", "ARRANGED"},
+            }.get(str(post["category"] or ""), {"OPEN", "RESOLVED"})
+            if requested not in permitted:
+                self.send_json({"ok": False, "error": "That status does not match this post type."}, 400)
+                return
+            con.execute("UPDATE ask_community_posts SET fulfillment_status = ?, expires_at = CASE WHEN ? = 'OPEN' THEN datetime('now', '+45 days') ELSE expires_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (requested, requested, int(post["id"])))
+        self.send_json({"ok": True, "status": requested})
 
     def api_mobile_create_housing(self) -> None:
         user = self.current_user()

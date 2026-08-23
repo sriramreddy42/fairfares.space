@@ -3515,6 +3515,24 @@
   color: var(--muted);
   display: block;
 }
+.admin-community-summary { display:grid; grid-template-columns:repeat(2,minmax(0,220px)); gap:14px; }
+.admin-community-summary article { background:#fff; border:1px solid var(--line); border-radius:8px; display:grid; gap:4px; padding:18px; }
+.admin-community-summary b { color:var(--navy); font-size:1.6rem; }
+.admin-community-summary span,.admin-community-meta { color:var(--muted); }
+.admin-community-layout,.admin-community-list { display:grid; gap:18px; }
+.admin-community-card { background:#fff; border:1px solid var(--line); border-radius:8px; display:grid; gap:12px; padding:18px; }
+.admin-community-card p { line-height:1.55; margin:0; white-space:pre-wrap; }
+.admin-community-head { align-items:start; display:flex; gap:14px; justify-content:space-between; }
+.admin-community-head>div { display:grid; gap:5px; }
+.admin-community-head small { color:var(--muted); }
+.admin-community-head>strong { color:var(--red); white-space:nowrap; }
+.admin-community-status { border-radius:999px; color:#fff; font-size:.7rem; font-weight:800; justify-self:start; padding:4px 8px; }
+.admin-community-status.status-published { background:#18794e; }.admin-community-status.status-locked { background:#9a6700; }.admin-community-status.status-hidden,.admin-community-status.status-deleted { background:#b42318; }
+.admin-community-meta { display:grid; font-size:.82rem; gap:5px; }
+.admin-community-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.admin-community-actions button { background:#fff; border:1px solid var(--line); border-radius:6px; color:var(--navy); cursor:pointer; font-weight:800; min-height:38px; padding:8px 13px; }
+.admin-community-actions .danger-button { border-color:#efb0b0; color:var(--red); }
+@media(max-width:700px){.admin-community-summary{grid-template-columns:1fr 1fr}.admin-community-head{display:grid}.admin-community-actions{display:grid;grid-template-columns:1fr 1fr}.admin-community-actions button{width:100%}}
 .admin-search {
   display: grid;
   gap: 8px;

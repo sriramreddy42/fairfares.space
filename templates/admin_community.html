@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Community | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header"><a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>$admin_nav</header>
+  <main class="admin-layout">
+    <section class="admin-hero"><div><p class="eyebrow">Developer Portal</p><h1>Ask Community</h1><span>Moderate public questions, answers, groups, and reports · $admin_name</span></div></section>
+    <section class="admin-community-summary"><article><b>$post_count</b><span>Recent posts</span></article><article><b>$open_report_count</b><span>Open reports</span></article></section>
+    <section class="admin-card"><label class="admin-search"><span>Search community</span><input id="adminUserSearch" placeholder="Post ID, title, author, email, city, or content"></label></section>
+    <section class="admin-community-layout">
+      <div><h2>Posts</h2><div class="admin-community-list">$ask_community_posts</div></div>
+      <div><h2>Reports</h2><div class="admin-table-scroll"><table class="admin-mini-table"><thead><tr><th>Reason</th><th>Content</th><th>Reporter</th><th>Status</th><th>Created</th></tr></thead><tbody>$ask_community_reports</tbody></table></div></div>
+    </section>
+  </main>
+</body>
+</html>

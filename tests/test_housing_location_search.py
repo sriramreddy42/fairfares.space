@@ -88,6 +88,24 @@ class HousingLocationSearchTest(unittest.TestCase):
                 (public_id, self.user_id, mode, category, public_id, description, city, country, city, rent_min, rent_max, gender, roommate_intent, status, expires_at),
             )
 
+    def test_housing_payload_uses_posters_current_profile_photo(self):
+        self.insert_post("PROFILE-PHOTO", "Room with poster avatar", "Denver, CO", "Capitol Hill", 39.7392, -104.9903)
+        first_photo = "https://cdn.example.test/avatar-v1.jpg"
+        updated_photo = "https://cdn.example.test/avatar-v2.jpg"
+        with app.db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (first_photo, self.user_id))
+
+        first = app.mobile_housing_posts(city="Denver, CO", limit=10)
+        first_listing = next(item for item in first if item["id"] == "PROFILE-PHOTO")
+        self.assertEqual(first_listing["photoUrl"], first_photo)
+
+        with app.db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (updated_photo, self.user_id))
+
+        refreshed = app.mobile_housing_posts(city="Denver, CO", limit=10)
+        refreshed_listing = next(item for item in refreshed if item["id"] == "PROFILE-PHOTO")
+        self.assertEqual(refreshed_listing["photoUrl"], updated_photo)
+
     def test_plain_miami_does_not_resolve_to_miamisburg(self):
         options = app.accommodation_location_options("Miami")
         self.assertNotIn("Miamisburg", options["selectedLocation"])
