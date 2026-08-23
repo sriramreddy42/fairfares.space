@@ -4,7 +4,7 @@ import {
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import {
-  API_URL, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
+  absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   getChatCommunities, getCommunityFeed, getCommunityPost, getHousing, joinChatCommunity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityPost, updateCommunityPostStatus,
@@ -57,8 +57,7 @@ const reactionOptions = [
 const emptyDetails = { budget: "", moveInDate: "", preference: "", rent: "", availableDate: "", roomType: "", origin: "", destination: "", travelDate: "", travelTime: "", seats: "" };
 
 function absoluteUrl(value: string) {
-  if (!value || /^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
-  return `${API_URL}${value.startsWith("/") ? "" : "/"}${value}`;
+  return absoluteAssetUrl(value);
 }
 
 function relativeTime(value: string) {
