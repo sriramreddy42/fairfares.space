@@ -687,6 +687,7 @@ ACCOMMODATION_STATIC_POINTS = {
     "huber heights, oh": (39.8439, -84.1247),
     "oakwood, oh": (39.7253, -84.1741),
     "riverside, oh": (39.7798, -84.1241),
+    "brookville, oh": (39.8367, -84.4113),
     "chicago, il": (41.8781, -87.6298),
     "chicago": (41.8781, -87.6298),
     "chicago metro area": (41.8781, -87.6298),
@@ -14771,7 +14772,14 @@ def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     query = (query or "").strip()
     if not api_key or not query:
         return None
-    params = urllib.parse.urlencode({"address": query, "key": api_key})
+    params_values = {"address": query, "key": api_key}
+    _query_city, query_region = split_city_state(query)
+    if re.fullmatch(r"[A-Za-z]{2}", query_region):
+        # A City, ST query is explicitly U.S.-scoped. This prevents Google from
+        # preferring a same-named locality abroad before the result validator
+        # below checks the requested state.
+        params_values.update({"components": "country:US", "region": "us"})
+    params = urllib.parse.urlencode(params_values)
     try:
         payload = google_api_get(f"https://maps.googleapis.com/maps/api/geocode/json?{params}")
     except Exception:
@@ -14972,6 +14980,15 @@ def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> 
     if not city:
         city, parsed_state = split_city_state(formatted)
         state = state or parsed_state
+    _requested_city, requested_state = split_city_state(query)
+    if (
+        re.fullmatch(r"[A-Za-z]{2}", requested_state)
+        and state
+        and requested_state.upper() != state.upper()
+    ):
+        # Never poison the exact-place cache with a same-named locality from a
+        # different state. Keep any previous cache entry untouched.
+        return cached
     geometry = geocode.get("geometry") if isinstance(geocode.get("geometry"), dict) else {}
     location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
     lat = float(location.get("lat") or 0)
@@ -15065,6 +15082,30 @@ def distance_miles_between(lat1: float, lng1: float, lat2: float, lng2: float) -
         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lng / 2) ** 2
     )
     return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def accommodation_post_search_point(row: sqlite3.Row | dict[str, object]) -> tuple[float, float, bool]:
+    """Return coordinates safe for location filtering.
+
+    Older listings can contain a geocode for a same-named place in another
+    country (for example Wilmington near London for a Dayton, Ohio listing).
+    Treat a point more than 100 miles from its structured city as stale and
+    fall back to the verified city center. This keeps the listing searchable
+    without pretending the city-center fallback is its precise address.
+    """
+    lat = float(row_value(row, "lat") or 0)
+    lng = float(row_value(row, "lng") or 0)
+    city = row_value(row, "city") or row_value(row, "city_area_zip")
+    city_point = accommodation_location_point(city, allow_refresh=False) if city else {}
+    city_lat = float(city_point.get("lat") or 0)
+    city_lng = float(city_point.get("lng") or 0)
+    if city_lat and city_lng and (
+        not lat
+        or not lng
+        or distance_miles_between(city_lat, city_lng, lat, lng) > 100
+    ):
+        return city_lat, city_lng, True
+    return lat, lng, False
 
 
 def google_directions_key() -> str:
@@ -17016,13 +17057,21 @@ def mobile_housing_posts(
         latitude_delta = nearby_limit / 69.0
         longitude_scale = max(0.1, math.cos(math.radians(center_lat)))
         longitude_delta = nearby_limit / (69.0 * longitude_scale)
-        clauses.append("lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?")
+        # Include records tagged to the selected city even when an older bad
+        # geocode put their stored point outside the rectangle. The exact
+        # distance pass below replaces obviously stale points with the verified
+        # city center before deciding whether the listing is nearby.
+        city_root = city.split(",", 1)[0].strip()
+        city_fallback = " OR lower(city) = lower(?)" if city_root else ""
+        clauses.append(f"((lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?){city_fallback})")
         values.extend([
             center_lat - latitude_delta,
             center_lat + latitude_delta,
             center_lng - longitude_delta,
             center_lng + longitude_delta,
         ])
+        if city_root:
+            values.append(city_root)
     search_term_groups: list[list[str]] = []
     raw_search_terms = () if post_public_id or (area or "").strip() else (city,)
     for raw_term in raw_search_terms:
@@ -17116,8 +17165,11 @@ def mobile_housing_posts(
     ranked_payloads: list[tuple[int, float, dict[str, object]]] = []
     for row in rows:
         item = mobile_housing_post_payload(row)
-        lat = float(row_value(row, "lat") or 0)
-        lng = float(row_value(row, "lng") or 0)
+        lat, lng, used_city_fallback = accommodation_post_search_point(row)
+        if used_city_fallback:
+            item["lat"] = lat
+            item["lng"] = lng
+            item["locationApproximate"] = True
         distance = None
         if center_lat and center_lng and lat and lng:
             distance = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)

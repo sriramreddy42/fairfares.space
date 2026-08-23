@@ -93,6 +93,131 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertNotIn("Miamisburg", options["selectedLocation"])
         self.assertNotEqual(app.cached_accommodation_metro_for_place("Miami"), "Dayton Metro Area")
 
+    def test_brookville_oh_static_point_wins_over_poisoned_cache(self):
+        with app.db() as con:
+            metro_id = app.upsert_accommodation_metro(
+                con,
+                "Wrong Brookville",
+                country="US",
+                state="IN",
+                center_city="Brookville",
+                lat=39.407,
+                lng=-85.0187,
+            )
+            app.upsert_accommodation_local_area(
+                con,
+                metro_id,
+                "Brookville, OH",
+                city="Brookville",
+                state="IN",
+                lat=39.407,
+                lng=-85.0187,
+            )
+
+        point = app.accommodation_location_point("Brookville, OH", allow_refresh=False)
+
+        self.assertEqual(point["source"], "static")
+        self.assertAlmostEqual(point["lat"], 39.8367, places=4)
+        self.assertAlmostEqual(point["lng"], -84.4113, places=4)
+
+    def test_state_mismatched_geocode_is_not_cached(self):
+        wrong_geocode = {
+            "formatted_address": "Brookville, IN, USA",
+            "address_components": [
+                {"long_name": "Brookville", "short_name": "Brookville", "types": ["locality"]},
+                {"long_name": "Indiana", "short_name": "IN", "types": ["administrative_area_level_1"]},
+                {"long_name": "United States", "short_name": "US", "types": ["country"]},
+            ],
+            "geometry": {"location": {"lat": 39.407, "lng": -85.0187}},
+        }
+        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test-key"}), patch.object(
+            app, "google_accommodation_geocode", return_value=wrong_geocode
+        ):
+            metro = app.refresh_accommodation_location_cache("Brookville, OH", force=True)
+
+        self.assertEqual(metro, "")
+        with app.db() as con:
+            poisoned = con.execute(
+                "SELECT 1 FROM accommodation_local_areas WHERE lower(name) = lower('Brookville, OH')"
+            ).fetchone()
+        self.assertIsNone(poisoned)
+
+    def test_location_cache_saves_state_matched_results_for_every_us_state_and_dc(self):
+        state_codes = (
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+        )
+
+        def matching_geocode(query):
+            city, state = app.split_city_state(query)
+            index = state_codes.index(state)
+            return {
+                "formatted_address": f"{city}, {state}, USA",
+                "address_components": [
+                    {"long_name": city, "short_name": city, "types": ["locality"]},
+                    {"long_name": state, "short_name": state, "types": ["administrative_area_level_1"]},
+                    {"long_name": "United States", "short_name": "US", "types": ["country"]},
+                ],
+                "geometry": {"location": {"lat": 25.0 + index * 0.4, "lng": -124.0 + index * 0.8}},
+            }
+
+        with patch.object(app, "google_accommodation_geocode", side_effect=matching_geocode), patch.object(
+            app, "google_accommodation_nearby_areas", return_value=[]
+        ):
+            for state in state_codes:
+                city = f"Regression{state}"
+                self.assertTrue(app.refresh_accommodation_location_cache(f"{city}, {state}", force=True))
+
+        with app.db() as con:
+            saved = con.execute(
+                """
+                SELECT area.city, area.state, area.lat, area.lng, metro.country
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE area.city LIKE 'Regression%'
+                """
+            ).fetchall()
+
+        self.assertEqual(len(saved), len(state_codes))
+        self.assertEqual({row["state"] for row in saved}, set(state_codes))
+        self.assertTrue(all(row["country"] == "US" for row in saved))
+        self.assertTrue(all(float(row["lat"]) and float(row["lng"]) for row in saved))
+
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        side_effect=lambda query, *args, **kwargs: (
+            {"label": "Brookville, OH", "lat": 39.8367, "lng": -84.4113, "source": "test"}
+            if "Brookville" in query
+            else {"label": "Dayton, OH", "lat": 39.7589, "lng": -84.1916, "source": "test"}
+        ),
+    )
+    def test_area_search_recovers_listing_with_foreign_stale_coordinates(self, _mock_point):
+        self.insert_post(
+            "STALE-DAYTON",
+            "Dayton listing with bad geocode",
+            "Dayton",
+            "Brookville",
+            51.4805847,
+            -0.2655634,
+        )
+
+        results = app.mobile_housing_posts(
+            city="Dayton, OH",
+            area="Brookville, OH",
+            need="need_place",
+            radius=25,
+            limit=30,
+        )
+
+        listing = next(item for item in results if item["id"] == "STALE-DAYTON")
+        self.assertTrue(listing["locationApproximate"])
+        self.assertAlmostEqual(listing["lat"], 39.7589, places=4)
+        self.assertLessEqual(listing["distanceMiles"], 25)
+
     def test_geocoded_us_city_dynamically_feeds_group_suggestions(self):
         geocode = {
             "formatted_address": "Boise, ID, USA",
