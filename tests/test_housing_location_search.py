@@ -142,6 +142,48 @@ class HousingLocationSearchTest(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(poisoned)
 
+    def test_state_qualified_lookup_ignores_same_label_cached_for_another_state(self):
+        with app.db() as con:
+            wrong_metro_id = app.upsert_accommodation_metro(
+                con, "Portland OR", country="US", state="OR", center_city="Portland"
+            )
+            app.upsert_accommodation_local_area(
+                con,
+                wrong_metro_id,
+                "Portland, ME",
+                city="Portland",
+                state="OR",
+                lat=45.5152,
+                lng=-122.6784,
+            )
+
+        correct_geocode = {
+            "formatted_address": "Portland, ME, USA",
+            "address_components": [
+                {"long_name": "Portland", "short_name": "Portland", "types": ["locality"]},
+                {"long_name": "Maine", "short_name": "ME", "types": ["administrative_area_level_1"]},
+                {"long_name": "United States", "short_name": "US", "types": ["country"]},
+            ],
+            "geometry": {"location": {"lat": 43.6591, "lng": -70.2568}},
+        }
+        with patch.object(app, "google_accommodation_geocode", return_value=correct_geocode), patch.object(
+            app, "google_accommodation_nearby_areas", return_value=[]
+        ):
+            point = app.accommodation_location_point("Portland, ME")
+
+        self.assertEqual(point["label"], "Portland, ME")
+        self.assertAlmostEqual(point["lat"], 43.6591, places=4)
+        self.assertAlmostEqual(point["lng"], -70.2568, places=4)
+        self.assertEqual(app.cached_accommodation_country_for_place("Portland, ME"), "US")
+        with app.db() as con:
+            states = {
+                row["state"]
+                for row in con.execute(
+                    "SELECT state FROM accommodation_local_areas WHERE lower(name) = lower('Portland, ME')"
+                ).fetchall()
+            }
+        self.assertEqual(states, {"OR", "ME"})
+
     def test_location_cache_saves_state_matched_results_for_every_us_state_and_dc(self):
         state_codes = (
             "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",

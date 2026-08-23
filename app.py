@@ -14693,6 +14693,7 @@ def cached_accommodation_metro_for_place(place: str) -> str:
     place = normalize_accommodation_place_label(place)
     if not place:
         return ""
+    _requested_city, requested_state = split_city_state(place)
     try:
         with db() as con:
             exact = con.execute(
@@ -14700,10 +14701,11 @@ def cached_accommodation_metro_for_place(place: str) -> str:
                 SELECT metro.name
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
-                WHERE lower(area.name) = lower(?) OR area.zip_code = ?
+                WHERE (lower(area.name) = lower(?) OR area.zip_code = ?)
+                  AND (? = '' OR upper(area.state) = upper(?))
                 LIMIT 1
                 """,
-                (place, place),
+                (place, place, requested_state, requested_state),
             ).fetchone()
             if exact:
                 return row_value(exact, "name")
@@ -14714,9 +14716,10 @@ def cached_accommodation_metro_for_place(place: str) -> str:
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE lower(area.city) = lower(?)
+                  AND (? = '' OR upper(area.state) = upper(?))
                 LIMIT 1
                 """,
-                (city,),
+                (city, requested_state, requested_state),
             ).fetchone()
             return row_value(city_match, "name") if city_match else ""
     except sqlite3.Error:
@@ -14728,6 +14731,7 @@ def cached_accommodation_country_for_place(place: str) -> str:
     if not place:
         return ""
     city = place.split(",", 1)[0].strip()
+    _requested_city, requested_state = split_city_state(place)
     try:
         with db() as con:
             row = con.execute(
@@ -14735,10 +14739,11 @@ def cached_accommodation_country_for_place(place: str) -> str:
                 SELECT upper(metro.country) AS country
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
-                WHERE lower(area.name) = lower(?) OR lower(area.city) = lower(?) OR area.zip_code = ?
+                WHERE (lower(area.name) = lower(?) OR lower(area.city) = lower(?) OR area.zip_code = ?)
+                  AND (? = '' OR upper(area.state) = upper(?))
                 LIMIT 1
                 """,
-                (place, city, place),
+                (place, city, place, requested_state, requested_state),
             ).fetchone()
         return str(row_value(row, "country") or "").upper()
     except sqlite3.Error:
@@ -15168,6 +15173,7 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
         query = normalize_accommodation_place_label(search_metro)
     if not query:
         return {}
+    _requested_city, requested_state = split_city_state(query)
     # Prefer an exact built-in place before broad cache matching. For example,
     # a cache row for "Miamisburg, OH" must never satisfy "Miami, Florida".
     static_lat, static_lng = static_accommodation_point(query)
@@ -15180,11 +15186,12 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                 SELECT area.name, area.city, area.zip_code, area.lat, area.lng, metro.name AS metro_name, metro.lat AS metro_lat, metro.lng AS metro_lng
                 FROM accommodation_local_areas area
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
-                WHERE lower(area.name) = lower(?) OR area.zip_code = ?
+                WHERE (lower(area.name) = lower(?) OR area.zip_code = ?)
+                  AND (? = '' OR upper(area.state) = upper(?))
                 ORDER BY CASE WHEN area.lat != 0 AND area.lng != 0 THEN 0 ELSE 1 END
                 LIMIT 1
                 """,
-                (query, query),
+                (query, query, requested_state, requested_state),
             ).fetchone()
             # For an unqualified search, match the structured city field only.
             # Substring matching makes Miami collide with Miamisburg.
