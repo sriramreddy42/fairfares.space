@@ -3492,6 +3492,20 @@
   border-collapse: collapse;
   width: 100%;
 }
+.admin-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.admin-listings-table {
+  min-width: 1050px;
+}
+.admin-mini-table th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding: 8px 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
 .admin-mini-table td {
   border-top: 1px solid var(--line);
   padding: 12px;

@@ -10810,7 +10810,8 @@ def get_admin_users() -> list[sqlite3.Row]:
                    COUNT(DISTINCT CASE WHEN bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP') THEN bookings.id END) AS current_count,
                    COUNT(DISTINCT transactions.id) AS transaction_count,
                    COALESCE(SUM(transactions.amount), 0) AS transaction_total,
-                   MAX(bookings.booking_id) AS latest_booking_id
+                   MAX(bookings.booking_id) AS latest_booking_id,
+                   (SELECT COUNT(*) FROM accommodation_posts WHERE accommodation_posts.user_id = users.id) AS housing_listing_count
             FROM users
             LEFT JOIN bookings ON bookings.user_id = users.id
             LEFT JOIN transactions ON transactions.booking_id = bookings.id
@@ -11195,6 +11196,14 @@ def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite
             """,
             (user_id,),
         ).fetchall()
+        housing_listings = con.execute(
+            """
+            SELECT * FROM accommodation_posts
+            WHERE user_id = ?
+            ORDER BY datetime(created_at) DESC, id DESC
+            """,
+            (user_id,),
+        ).fetchall()
     return {
         "user": user,
         "bookings": bookings,
@@ -11202,6 +11211,7 @@ def get_admin_user_profile(user_id: int) -> dict[str, list[sqlite3.Row] | sqlite
         "transactions": transactions,
         "insurances": insurances,
         "agreements": agreements,
+        "housing_listings": housing_listings,
     }
 
 
@@ -30090,6 +30100,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         transactions = profile["transactions"]
         insurances = profile["insurances"]
         agreements = profile["agreements"]
+        housing_listings = profile["housing_listings"]
         search_text = " ".join(
             [
                 str(row["id"]),
@@ -30098,6 +30109,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 row["phone"] or "",
                 row["student_id"] or "",
                 row["latest_booking_id"] or "",
+                *(str(value or "") for listing in housing_listings for value in (
+                    listing["public_id"], listing["title"], listing["city"], listing["city_area_zip"], listing["zip_code"]
+                )),
             ]
         ).lower()
         booking_rows = "".join(
@@ -30158,12 +30172,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
             for agreement in agreements
         ) or '<tr><td colspan="4">No rental agreements.</td></tr>'
+        housing_listing_rows = "".join(
+            f"""
+            <tr>
+                <td><b>{escape(listing["public_id"])}</b><span>{escape(listing["title"] or "Untitled listing")}</span></td>
+                <td>{escape(listing["visibility_status"] or "Unknown")}<span>{escape(listing["post_mode"] or "")}</span></td>
+                <td>{escape(listing["category"] or "Not set")}</td>
+                <td>{escape(listing["city"] or "No city")}<span>{escape(listing["street_address"] or listing["apartment_name"] or "No street saved")}</span><span>{escape(listing["city_area_zip"] or listing["primary_neighborhood"] or listing["area_or_apartment"] or "No area")}</span></td>
+                <td>{escape(listing["zip_code"] or "No ZIP")}<span>{escape(listing["country"] or "No country")}</span></td>
+                <td>{format_money(listing["rent_min"])}{f' - {format_money(listing["rent_max"])}' if float(listing["rent_max"] or 0) > float(listing["rent_min"] or 0) else ''}<span>{escape(listing["rent_period"] or "")}</span></td>
+                <td>{escape(listing["contact_name"] or "No contact name")}<span>{escape(listing["contact_phone"] or "No phone")}</span><span>{escape(listing["contact_email"] or "No email")}</span></td>
+                <td>{escape(listing["created_at"] or "Unknown")}<span>Expires: {escape(listing["expires_at"] or "Not set")}</span></td>
+                <td>{escape(str(listing["lat"] or 0))}, {escape(str(listing["lng"] or 0))}</td>
+            </tr>
+            """
+            for listing in housing_listings
+        ) or '<tr><td colspan="9">No housing listings.</td></tr>'
         return f"""
         <details class="admin-user-card" data-admin-user-card data-search="{escape(search_text)}">
             <summary>
                 <span><b>{escape(row["name"])}</b><small>#{row["id"]} · {escape(row["email"])}</small></span>
                 <span>{escape(row["phone"] or "No phone")}</span>
-                <span>{row["booking_count"]} bookings</span>
+                <span>{row["booking_count"]} bookings<small>{row["housing_listing_count"] or 0} listings</small></span>
                 <span>{row["cancelled_count"] or 0} cancelled</span>
                 <span>{format_money(row["transaction_total"])}</span>
             </summary>
@@ -30174,6 +30204,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     <span><b>Student</b>{'Verified' if row["student_verified"] else 'Not verified'}</span>
                     <span><b>DOB</b>{escape(row["date_of_birth"] or "Not captured")}</span>
                     <span><b>Address</b>{escape(row["address"] or "Not captured")}</span>
+                </div>
+                <h3>Housing Listings ({row["housing_listing_count"] or 0})</h3>
+                <div class="admin-table-scroll">
+                    <table class="admin-mini-table admin-listings-table">
+                        <thead><tr><th>Listing</th><th>Status / mode</th><th>Type</th><th>Location</th><th>ZIP / country</th><th>Rent</th><th>Contact</th><th>Created / expiry</th><th>Coordinates</th></tr></thead>
+                        <tbody>{housing_listing_rows}</tbody>
+                    </table>
                 </div>
                 <h3>Bookings</h3>
                 <table class="admin-mini-table"><tbody>{booking_rows}</tbody></table>
