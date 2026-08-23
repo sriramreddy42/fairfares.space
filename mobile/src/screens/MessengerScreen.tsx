@@ -3725,7 +3725,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function confirmGroupInvitation(invitation: string) {
     if (invitation.startsWith("community:")) {
       const communityId = invitation.slice("community:".length).trim();
-      const community = communities.find((item) => item.id === communityId);
+      let community = communities.find((item) => item.id === communityId);
+      if (!community) {
+        try {
+          const refreshed = await getChatCommunities(suggestionCity || data?.location.city || "");
+          setCommunities(refreshed);
+          community = refreshed.find((item) => item.id === communityId);
+        } catch {
+          // The normal unavailable message below handles a failed refresh.
+        }
+      }
       onClearPendingGroupInvite?.();
       if (!community) {
         Alert.alert("Group unavailable", "Refresh Chitthi and try this group link again.");

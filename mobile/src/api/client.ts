@@ -1,8 +1,8 @@
-import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
-import { NativeModules, Platform } from "react-native";
+import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Directory, File, Paths } from "expo-file-system";
@@ -18,23 +18,13 @@ declare const process: {
   };
 };
 
-const API_PORT = "8010";
-
-function metroHostApiUrl() {
-  const scriptURL = String(NativeModules.SourceCode?.scriptURL || "");
-  const match = scriptURL.match(/^[a-z]+:\/\/([^/:]+)(?::\d+)?/i);
-  const host = match?.[1];
-  if (!host || host === "localhost" || host === "127.0.0.1") {
-    return "";
-  }
-  return `http://${host}:${API_PORT}`;
-}
+const LOCAL_API_PORT = "8010";
 
 function browserLocalApiUrl() {
   const locationLike = (globalThis as unknown as { location?: { hostname?: string } }).location;
   const host = locationLike?.hostname || "";
   if (host === "localhost" || host === "127.0.0.1") {
-    return `http://127.0.0.1:${API_PORT}`;
+    return `http://127.0.0.1:${LOCAL_API_PORT}`;
   }
   return "";
 }
@@ -54,8 +44,13 @@ function normalizeExplicitApiUrl(value: string | undefined) {
 const CONFIGURED_APP_API_URL = String(Constants.expoConfig?.extra?.apiUrl || "");
 const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL || CONFIGURED_APP_API_URL);
 const WEB_LOCAL_API_URL = Platform.OS === "web" ? browserLocalApiUrl() : "";
-const METRO_HOST_API_URL = metroHostApiUrl();
-const DEFAULT_API_URL = EXPLICIT_API_URL || WEB_LOCAL_API_URL || METRO_HOST_API_URL || "http://127.0.0.1:8010";
+const PRODUCTION_API_URL = "https://www.fairfare.space";
+// A development client can occasionally start without the Expo manifest
+// extras (for example after a native rebuild while Metro still has an older
+// bundle). Falling back to localhost in that state makes production account
+// login fail even though the device is online. Local API development remains
+// available by setting EXPO_PUBLIC_FAIRFARES_API_URL explicitly.
+const DEFAULT_API_URL = EXPLICIT_API_URL || WEB_LOCAL_API_URL || PRODUCTION_API_URL;
 
 export const API_URL =
   DEFAULT_API_URL;
@@ -64,8 +59,8 @@ const API_CANDIDATES = uniqueUrls(
   EXPLICIT_API_URL
     ? [EXPLICIT_API_URL]
     : Platform.OS === "web"
-      ? [WEB_LOCAL_API_URL, "http://127.0.0.1:8010", METRO_HOST_API_URL]
-      : [METRO_HOST_API_URL, "http://127.0.0.1:8010"]
+      ? [WEB_LOCAL_API_URL, PRODUCTION_API_URL]
+      : [PRODUCTION_API_URL]
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
@@ -465,7 +460,11 @@ export async function getBootstrap(city = "Denver, CO") {
   try {
     return await request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
   } catch (error) {
-    if (EXPLICIT_API_URL) throw error;
+    const status = Number((error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus || 0);
+    // Authentication rejections must still reach App so it can clear a stale
+    // token. Network outages and upstream 5xx responses should not block the
+    // public guest experience with a modal alert.
+    if (status === 401 || status === 403) throw error;
     return fallbackBootstrap(city);
   }
 }
@@ -803,6 +802,88 @@ export async function startRentalSecurityDeposit(bookingId: string) {
 export async function getHousingActivity() {
   const payload = await request<{ ok: boolean; posts: HousingActivityPost[] }>("/api/mobile/housing/activity");
   return payload.posts || [];
+}
+
+export type CommunityFeedFilters = {
+  q?: string;
+  city?: string;
+  category?: string;
+  communityId?: string;
+  saved?: boolean;
+  offset?: number;
+  limit?: number;
+};
+
+export async function getCommunityFeed(filters: CommunityFeedFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.q) params.set("q", filters.q);
+  if (filters.city) params.set("city", filters.city);
+  if (filters.category) params.set("category", filters.category);
+  if (filters.communityId) params.set("communityId", filters.communityId);
+  if (filters.saved) params.set("saved", "1");
+  params.set("offset", String(Math.max(0, filters.offset || 0)));
+  params.set("limit", String(Math.max(1, Math.min(50, filters.limit || 30))));
+  const payload = await request<{ ok: boolean; posts: CommunityPost[]; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`);
+  return payload;
+}
+
+export async function getCommunityPost(postId: string) {
+  const payload = await request<{ ok: boolean; posts: CommunityPost[] }>(`/api/mobile/community?postId=${encodeURIComponent(postId)}&limit=1`);
+  return payload.posts[0] || null;
+}
+
+export type CommunityPostInput = {
+  type: CommunityPost["type"];
+  category: CommunityPost["category"];
+  title: string;
+  body: string;
+  city: string;
+  area: string;
+  linkUrl: string;
+  communityId: string;
+  images: string[];
+  details: Record<string, string>;
+  expiresInDays: number;
+};
+
+async function communityPostRequest<T>(path: string, body: Record<string, unknown>) {
+  return request<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+export async function createCommunityPost(input: CommunityPostInput) {
+  return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
+}
+
+export async function updateCommunityPost(postId: string, input: Pick<CommunityPostInput, "title" | "body" | "linkUrl" | "details">) {
+  return communityPostRequest<{ ok: boolean }>("/api/mobile/community/update", { postId, ...input });
+}
+
+export async function deleteCommunityPost(postId: string) {
+  return communityPostRequest<{ ok: boolean }>("/api/mobile/community/delete", { postId });
+}
+
+export async function updateCommunityPostStatus(postId: string, status: CommunityPost["fulfillmentStatus"]) {
+  return communityPostRequest<{ ok: boolean; status: CommunityPost["fulfillmentStatus"] }>("/api/mobile/community/status", { postId, status });
+}
+
+export async function answerCommunityPost(postId: string, body: string, parentAnswerId = "") {
+  return communityPostRequest<{ ok: boolean; answerId: string }>("/api/mobile/community/answer", { postId, body, parentAnswerId });
+}
+
+export async function reactToCommunityContent(target: { postId?: string; answerId?: string }, reaction = "HELPFUL") {
+  return communityPostRequest<{ ok: boolean; active: boolean; reaction: string; count: number; counts: Record<string, number> }>("/api/mobile/community/react", { ...target, reaction });
+}
+
+export async function saveCommunityPost(postId: string) {
+  return communityPostRequest<{ ok: boolean; saved: boolean }>("/api/mobile/community/save", { postId });
+}
+
+export async function reportCommunityContent(target: { postId?: string; answerId?: string }, reason: string, details = "") {
+  return communityPostRequest<{ ok: boolean; message: string }>("/api/mobile/community/report", { ...target, reason, details });
+}
+
+export async function acceptCommunityAnswer(postId: string, answerId: string) {
+  return communityPostRequest<{ ok: boolean; acceptedAnswerId: string }>("/api/mobile/community/accept-answer", { postId, answerId });
 }
 
 export async function getRentalBookings() {

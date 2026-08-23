@@ -10,22 +10,23 @@ import {
   useResponsiveLayout,
 } from "../utils/layout";
 
-export type TabKey = "home" | "housing" | "services" | "activity" | "messenger" | "profile";
+export type TabKey = "home" | "housing" | "community" | "services" | "activity" | "messenger" | "profile";
 
 type VisibleTabKey = Exclude<TabKey, "housing">;
 
 type NavigationItem = {
   key: VisibleTabKey;
   label: string;
-  icon: ImageSourcePropType;
+  icon?: ImageSourcePropType;
+  glyph?: string;
   width: number;
   height: number;
 };
 
 const navigationItems: NavigationItem[] = [
-  { key: "home", label: "Home", icon: appAssets.navHome, width: 25, height: 25 },
+  { key: "home", label: "Housing", icon: appAssets.navHome, width: 25, height: 25 },
   { key: "services", label: "Services", icon: appAssets.navServices, width: 25, height: 25 },
-  { key: "activity", label: "Activity", icon: appAssets.navActivity, width: 25, height: 25 },
+  { key: "community", label: "Ask", glyph: "+", width: 30, height: 30 },
   { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, width: 31, height: 35 },
   { key: "profile", label: "Account", icon: appAssets.profile, width: 25, height: 25 },
 ];
@@ -81,19 +82,21 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
               accessibilityState={{ selected: isSelected }}
               activeOpacity={0.72}
               onPress={() => onChange(item.key)}
-              style={styles.touchTarget}
+              style={[styles.touchTarget, item.key === "community" && styles.centerTouchTarget]}
             >
-              <View style={styles.itemContent}>
-                <View style={[styles.iconFrame, isSelected && styles.selectedItem]}>
+              <View style={[styles.itemContent, item.key === "community" && styles.centerItemContent]}>
+                <View style={[styles.iconFrame, item.key === "community" && styles.centerIconFrame, isSelected && styles.selectedItem, item.key === "community" && isSelected && styles.selectedCenterItem]}>
                   {item.key === "profile" && user?.profilePhotoUrl ? (
                     <UserAvatar
                       photoUrl={user.profilePhotoUrl}
                       style={[styles.profileAvatar, isSelected && styles.selectedProfileAvatar]}
                       imageStyle={styles.profileAvatarImage}
                     />
+                  ) : item.glyph ? (
+                    <Text style={[styles.glyph, item.key === "community" && styles.centerGlyph, isSelected && styles.selectedGlyph, item.key === "community" && isSelected && styles.selectedCenterGlyph]}>{item.glyph}</Text>
                   ) : (
                     <Image
-                      source={item.icon}
+                      source={item.icon!}
                       resizeMode="contain"
                       style={[
                         styles.icon,
@@ -109,7 +112,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                     </View>
                   ) : null}
                 </View>
-                <Text numberOfLines={1} style={[styles.label, isSelected && styles.selectedLabel]}>
+                <Text numberOfLines={1} style={[styles.label, item.key === "community" && styles.centerLabel, isSelected && styles.selectedLabel]}>
                   {item.label}
                 </Text>
               </View>
@@ -179,12 +182,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  centerTouchTarget: {
+    overflow: "visible",
+  },
   itemContent: {
     width: 54,
     height: 56,
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
+  },
+  centerItemContent: {
+    height: 70,
+    justifyContent: "flex-start",
+    paddingTop: 0,
   },
   selectedItem: {
     borderRadius: 20,
@@ -203,8 +214,57 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  centerIconFrame: {
+    width: 54,
+    height: 54,
+    marginTop: -13,
+    borderRadius: 27,
+    backgroundColor: theme.colors.brand,
+    borderWidth: 3,
+    borderColor: "#111715",
+    shadowColor: theme.colors.brand,
+    shadowOpacity: 0.34,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
+  },
+  selectedCenterItem: {
+    borderRadius: 27,
+    backgroundColor: "#28c997",
+    borderColor: "#effff9",
+  },
   icon: {
     opacity: 1,
+  },
+  glyph: {
+    color: "rgba(255,255,255,0.68)",
+    fontSize: 19,
+    fontWeight: "900",
+    width: 27,
+    height: 27,
+    lineHeight: 27,
+    textAlign: "center",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.42)",
+  },
+  centerGlyph: {
+    width: 36,
+    height: 36,
+    lineHeight: 33,
+    borderRadius: 18,
+    borderWidth: 0,
+    color: "#06291e",
+    fontSize: 31,
+    fontWeight: "700",
+  },
+  selectedGlyph: {
+    color: "#F0C671",
+    borderColor: "#F0C671",
+  },
+  selectedCenterGlyph: {
+    color: "#06291e",
+    borderColor: "transparent",
   },
   selectedIcon: {
     tintColor: "#F0C671",
@@ -235,6 +295,10 @@ const styles = StyleSheet.create({
     lineHeight: 12,
     fontWeight: "800",
     textAlign: "center",
+  },
+  centerLabel: {
+    marginTop: 0,
+    color: "#D8FFF0",
   },
   selectedLabel: {
     color: "#FFFFFF",

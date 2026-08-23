@@ -10932,6 +10932,13 @@ def get_admin_community_posts(limit: int = 200) -> list[sqlite3.Row]:
                    communities.name AS community_name,
                    (SELECT COUNT(*) FROM ask_community_answers answers WHERE answers.post_id = posts.id AND answers.status = 'PUBLISHED') AS answer_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LIKE','HELPFUL')) AS reaction_like_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'LOVE') AS reaction_love_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'CARE') AS reaction_care_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'HAHA') AS reaction_haha_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'WOW') AS reaction_wow_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'SAD') AS reaction_sad_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'ANGRY') AS reaction_angry_count,
                    (SELECT COUNT(*) FROM ask_community_reports reports WHERE reports.post_id = posts.id AND reports.status = 'OPEN') AS report_count
             FROM ask_community_posts posts
             JOIN users ON users.id = posts.author_id
@@ -11876,7 +11883,7 @@ COMMUNITY_CATEGORIES = {
     # Keep original values so existing posts remain readable and editable.
     "HOUSING", "RIDES", "LOCAL", "STUDENT", "SERVICES", "SAFETY",
 }
-COMMUNITY_REACTIONS = {"HELPFUL", "THANKS", "SUPPORT", "LOVE"}
+COMMUNITY_REACTIONS = {"LIKE", "LOVE", "CARE", "HAHA", "WOW", "SAD", "ANGRY", "HELPFUL", "THANKS", "SUPPORT"}
 COMMUNITY_REPORT_REASONS = {"SPAM", "HARASSMENT", "MISINFORMATION", "PRIVACY", "UNSAFE", "OTHER"}
 
 
@@ -12009,6 +12016,12 @@ def community_post_rows(
                    communities.visibility AS community_visibility,
                    (SELECT public_id FROM ask_community_answers accepted WHERE accepted.id = posts.accepted_answer_id) AS accepted_answer_public_id,
                    (SELECT COUNT(*) FROM ask_community_answers answers WHERE answers.post_id = posts.id AND answers.status = 'PUBLISHED') AS answer_count,
+                   (SELECT latest.public_id FROM ask_community_answers latest WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_public_id,
+                   (SELECT latest.body FROM ask_community_answers latest WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_body,
+                   (SELECT latest.created_at FROM ask_community_answers latest WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_created_at,
+                   (SELECT latest.author_id FROM ask_community_answers latest WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_id,
+                   (SELECT users_latest.name FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_name,
+                   (SELECT users_latest.profile_photo_url FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_photo,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
                    EXISTS(SELECT 1 FROM ask_community_reactions mine WHERE mine.post_id = posts.id AND mine.user_id = ?) AS reacted,
                    (SELECT reaction FROM ask_community_reactions mine_type WHERE mine_type.post_id = posts.id AND mine_type.user_id = ? LIMIT 1) AS viewer_reaction,
@@ -12060,7 +12073,26 @@ def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, ob
             "visibility": str(row_value(row, "community_visibility") or "PUBLIC"),
         } if row_value(row, "community_public_id") else None,
         "answerCount": int(row_value(row, "answer_count") or 0),
+        "latestAnswer": {
+            "id": str(row_value(row, "latest_answer_public_id") or ""),
+            "body": str(row_value(row, "latest_answer_body") or ""),
+            "author": {
+                "id": int(row_value(row, "latest_answer_author_id") or 0),
+                "name": str(row_value(row, "latest_answer_author_name") or "FairFares member"),
+                "photoUrl": avatar_delivery_path(row_value(row, "latest_answer_author_photo"), int(row_value(row, "latest_answer_author_id") or 0)),
+            },
+            "createdAt": str(row_value(row, "latest_answer_created_at") or ""),
+        } if row_value(row, "latest_answer_public_id") else None,
         "reactionCount": int(row_value(row, "reaction_count") or 0),
+        "reactionCounts": {
+            "LIKE": int(row_value(row, "reaction_like_count") or 0),
+            "LOVE": int(row_value(row, "reaction_love_count") or 0),
+            "CARE": int(row_value(row, "reaction_care_count") or 0),
+            "HAHA": int(row_value(row, "reaction_haha_count") or 0),
+            "WOW": int(row_value(row, "reaction_wow_count") or 0),
+            "SAD": int(row_value(row, "reaction_sad_count") or 0),
+            "ANGRY": int(row_value(row, "reaction_angry_count") or 0),
+        },
         "viewerReaction": str(row_value(row, "viewer_reaction") or ""),
         "reacted": bool(int(float_from_value(row_value(row, "reacted")) or 0)),
         "saved": bool(int(float_from_value(row_value(row, "saved")) or 0)),
@@ -26324,7 +26356,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        LIMIT 1""",
                     (user_id,),
                 ).fetchone() is not None
-            if not signed_request_valid and not authenticated_request_allowed and not public_community_allowed and not public_testimonial_allowed:
+            # A public post already displays its author's name and avatar in
+            # the signed-out Ask/Housing feed. Permit only that author's
+            # avatar—not arbitrary user photos—so the image URL returned by
+            # the public feed can actually render before login.
+            public_post_author_allowed = False
+            if user_id > 0:
+                public_post_author_allowed = con.execute(
+                    """SELECT 1
+                       WHERE EXISTS (
+                           SELECT 1 FROM ask_community_posts post
+                           LEFT JOIN chat_communities community ON community.id = post.community_id
+                           WHERE post.author_id = ? AND post.status IN ('PUBLISHED','LOCKED')
+                             AND (post.expires_at IS NULL OR post.expires_at = '' OR datetime(post.expires_at) > datetime('now'))
+                             AND (post.community_id IS NULL OR community.visibility = 'PUBLIC')
+                       ) OR EXISTS (
+                           SELECT 1 FROM accommodation_posts housing
+                           WHERE housing.user_id = ? AND housing.visibility_status = 'ACTIVE'
+                             AND (housing.expires_at IS NULL OR housing.expires_at = '' OR datetime(housing.expires_at) > datetime('now'))
+                       )
+                       LIMIT 1""",
+                    (user_id, user_id),
+                ).fetchone() is not None
+            public_avatar_allowed = public_testimonial_allowed or public_post_author_allowed
+            if not signed_request_valid and not authenticated_request_allowed and not public_community_allowed and not public_avatar_allowed:
                 self.send_error(404)
                 return
             avatar_row = (
@@ -26352,7 +26407,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_response(200)
                     self.send_header("Content-Type", content_type)
                     self.send_header("Content-Length", str(len(payload)))
-                    self.send_header("Cache-Control", "public, max-age=300" if public_testimonial_allowed else "private, max-age=300")
+                    self.send_header("Cache-Control", "public, max-age=300" if public_avatar_allowed else "private, max-age=300")
                     self.send_header("X-Content-Type-Options", "nosniff")
                     self.end_headers()
                     self.wfile.write(payload)
@@ -26363,7 +26418,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Cache-Control", "private, max-age=600")
+            self.send_header("Cache-Control", "public, max-age=600" if public_avatar_allowed else "private, max-age=600")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(payload)
@@ -36380,8 +36435,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, int(user["id"]), reaction))
                 active = True
-            count = int(con.execute(f"SELECT COUNT(*) AS count FROM ask_community_reactions WHERE {target_column} = ?", (target_id,)).fetchone()["count"])
-        self.send_json({"ok": True, "active": active, "reaction": reaction if active else "", "count": count})
+            reaction_rows = con.execute(f"SELECT reaction, COUNT(*) AS count FROM ask_community_reactions WHERE {target_column} = ? GROUP BY reaction", (target_id,)).fetchall()
+            counts = {str(row["reaction"]): int(row["count"] or 0) for row in reaction_rows}
+            count = sum(counts.values())
+        self.send_json({"ok": True, "active": active, "reaction": reaction if active else "", "count": count, "counts": counts})
 
     def api_mobile_save_community_post(self) -> None:
         user = self.current_user()

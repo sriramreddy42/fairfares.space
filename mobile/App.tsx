@@ -33,6 +33,7 @@ import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServicesScreen } from "./src/screens/ServicesScreen";
 import { StaffPickupScreen } from "./src/screens/StaffPickupScreen";
+import { CommunityScreen } from "./src/screens/CommunityScreen";
 
 declare const process: {
   env: {
@@ -229,7 +230,7 @@ export default function App() {
   );
   return (
     <AppErrorBoundary>
-      {IS_EXPO_GO ? content : <KeyboardProvider preload>{content}</KeyboardProvider>}
+      {IS_EXPO_GO || Platform.OS === "web" ? content : <KeyboardProvider preload>{content}</KeyboardProvider>}
     </AppErrorBoundary>
   );
 }
@@ -272,6 +273,7 @@ function FairFaresApp() {
   const [sentCardOwnerUserId, setSentCardOwnerUserId] = useState(0);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
   const [linkedHousingPost, setLinkedHousingPost] = useState<HousingPost | null>(null);
+  const [linkedCommunityPostId, setLinkedCommunityPostId] = useState("");
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
@@ -350,6 +352,7 @@ function FairFaresApp() {
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
+  const [carpoolFocusKey, setCarpoolFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
   const launchStartedAt = useRef(Date.now());
   const bootstrapGenerationRef = useRef(0);
@@ -759,6 +762,11 @@ function FairFaresApp() {
         setPendingPost(null);
         setPendingRide(null);
         setActiveTab("messenger");
+      } else if (type === "COMMUNITY_ANSWER" || type === "COMMUNITY_ACCEPTED") {
+        setPendingPost(null);
+        setPendingRide(null);
+        setLinkedCommunityPostId(String(response?.notification.request.content.data?.postId || ""));
+        setActiveTab("community");
       } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
         setPendingPost(null);
         setPendingRide(null);
@@ -879,6 +887,13 @@ function FairFaresApp() {
       try {
         const parsed = new URL(url);
         const host = parsed.hostname.replace(/^www\./i, "");
+        const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
+        const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
+        if (opensCommunity) {
+          setLinkedCommunityPostId(communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "");
+          setActiveTab("community");
+          return;
+        }
         const opensHousing = (host === "fairfare.space" && parsed.pathname === "/accommodations") || (parsed.protocol === "fairfares:" && host === "housing");
         if (opensHousing) {
           const postId = parsed.searchParams.get("ad_id") || parsed.searchParams.get("postId") || "";
@@ -2100,6 +2115,35 @@ function FairFaresApp() {
       <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
     ) : activeTab === "messenger" ? (
       null
+    ) : activeTab === "community" ? (
+      <CommunityScreen
+        user={data?.user || null}
+        city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
+        onRequireLogin={() => setLoginOpen(true)}
+        onOpenHousing={() => setActiveTab("housing")}
+        onSearchHousing={() => {
+          setActiveTab("housing");
+          setSearchCity(city);
+          setSearchArea(area);
+          setSearchRadius(searchRadius);
+          setSearchNeed(selectedNeed || "need_place");
+          setSearchOpen(true);
+        }}
+        onOpenRides={() => {
+          setSelectedNeed("ride_need");
+          setCarpoolFocusKey((value) => value + 1);
+          setActiveTab("housing");
+        }}
+        onOpenCommunity={(communityId) => {
+          setPendingPost(null);
+          setPendingRide(null);
+          setPendingGroupInvite(`community:${communityId}`);
+          setActiveTab("messenger");
+        }}
+        onBottomTabsHiddenChange={setBottomTabsHidden}
+        initialPostId={linkedCommunityPostId}
+        onInitialPostOpened={() => setLinkedCommunityPostId("")}
+      />
     ) : activeTab === "activity" ? (
       <DashboardScreen
         data={data}
@@ -2224,6 +2268,7 @@ function FairFaresApp() {
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        carpoolFocusKey={carpoolFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
@@ -2276,6 +2321,7 @@ function FairFaresApp() {
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        carpoolFocusKey={carpoolFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}

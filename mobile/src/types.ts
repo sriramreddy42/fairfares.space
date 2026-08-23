@@ -185,6 +185,59 @@ export type Community = {
   suggestionPurpose?: "HOUSING" | "RIDES" | "COMMUNITY" | "";
 };
 
+export type CommunityAuthor = {
+  id: number;
+  name: string;
+  photoUrl: string;
+};
+
+export type CommunityAnswer = {
+  id: string;
+  body: string;
+  parentAnswerId: string;
+  author: CommunityAuthor;
+  reactionCount: number;
+  reactionCounts?: Record<string, number>;
+  viewerReaction: string;
+  accepted: boolean;
+  canEdit: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunityPost = {
+  id: string;
+  type: "QUESTION" | "UPDATE" | "RECOMMENDATION" | "REQUEST";
+  title: string;
+  body: string;
+  category: "GENERAL" | "NEED_ROOMMATE" | "NEED_PLACE" | "HAVE_PLACE" | "CARPOOL_RIDE" | "HOUSING" | "RIDES" | "LOCAL" | "STUDENT" | "SERVICES" | "SAFETY";
+  city: string;
+  area: string;
+  linkUrl: string;
+  images: string[];
+  status: "PUBLISHED" | "LOCKED";
+  fulfillmentStatus: "OPEN" | "RESOLVED" | "FOUND" | "FILLED" | "ARRANGED";
+  expiresAt: string;
+  details: Record<string, string>;
+  author: CommunityAuthor;
+  community: { id: string; name: string; visibility: "PUBLIC" | "PRIVATE" } | null;
+  answerCount: number;
+  latestAnswer?: Pick<CommunityAnswer, "id" | "body" | "author" | "createdAt"> | null;
+  reactionCount: number;
+  reactionCounts?: Record<string, number>;
+  viewerReaction: string;
+  reacted: boolean;
+  saved: boolean;
+  acceptedAnswerId: string;
+  canEdit: boolean;
+  canAnswer: boolean;
+  createdAt: string;
+  updatedAt: string;
+  sourceKind?: "HOUSING" | "";
+  sourceId?: string;
+  answers?: CommunityAnswer[];
+};
+
 export type ChatGroupMember = {
   id: number;
   name: string;

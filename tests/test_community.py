@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import tempfile
@@ -93,6 +94,23 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
 
+    def test_public_post_author_avatar_is_readable_without_login(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        with app.db() as con:
+            con.execute(
+                "UPDATE users SET profile_photo_url = ? WHERE id = ?",
+                (f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}", self.owner_id),
+            )
+        self.create_post()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}/api/chat/notification-avatar?user={self.owner_id}"
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get_content_type(), "image/png")
+            self.assertEqual(response.headers.get("Cache-Control"), "public, max-age=600")
+            self.assertEqual(response.read(), png)
+
     def test_search_and_public_share_page_find_the_right_post(self):
         _, dayton = self.create_post(title="Best groceries in Brookville?", body="Looking for fresh produce west of Dayton.", area="Brookville")
         self.create_post(title="Columbus airport advice", body="Which terminal is easiest for pickup?", city="Columbus, OH", area="Columbus")
@@ -160,6 +178,13 @@ class CommunityFeatureTest(unittest.TestCase):
         status, answered = self.request("POST", "/api/mobile/community/answer", "member-token", {"postId": post_id, "body": "Brookville has several quiet areas and a direct drive into Dayton."})
         self.assertEqual(status, 201)
         answer_id = answered["answerId"]
+        _, feed_with_comment = self.request("GET", "/api/mobile/community", "owner-token")
+        feed_post = next(item for item in feed_with_comment["posts"] if item["id"] == post_id)
+        self.assertEqual(feed_post["latestAnswer"]["id"], answer_id)
+        self.assertEqual(feed_post["latestAnswer"]["author"]["name"], "Member")
+        self.assertIn("Brookville", feed_post["latestAnswer"]["body"])
+        status, loved = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "LOVE"})
+        self.assertEqual((status, loved["active"], loved["reaction"]), (200, True, "LOVE"))
         status, reacted = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "HELPFUL"})
         self.assertEqual((status, reacted["active"], reacted["count"]), (200, True, 1))
         _, unreacted = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "HELPFUL"})

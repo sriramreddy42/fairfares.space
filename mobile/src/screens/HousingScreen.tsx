@@ -47,6 +47,7 @@ type Props = {
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   focusWelcomeKey?: number;
+  carpoolFocusKey?: number;
   rideOwnerOpenToken?: number;
   rideOwnerOpenTarget?: "workspace" | "requests" | "listings";
   rideOwnerEditId?: string;
@@ -564,6 +565,7 @@ export function HousingScreen({
   onBookCar,
   onBottomTabsHiddenChange,
   focusWelcomeKey = 0,
+  carpoolFocusKey = 0,
   rideOwnerOpenToken = 0,
   rideOwnerOpenTarget = "workspace",
   rideOwnerEditId = "",
@@ -1027,6 +1029,12 @@ export function HousingScreen({
       }));
     }
   }, [selectedNeed]);
+
+  useEffect(() => {
+    if (!carpoolFocusKey) return;
+    setMode("ride");
+    setSelectedRideService("carpool");
+  }, [carpoolFocusKey]);
 
   useEffect(() => {
     if (!focusWelcomeKey) return;
