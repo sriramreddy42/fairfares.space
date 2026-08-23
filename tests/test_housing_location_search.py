@@ -411,6 +411,9 @@ class HousingLocationSearchTest(unittest.TestCase):
         return_value={"label": "Madison, WI", "lat": 43.0731, "lng": -89.4012, "source": "test"},
     )
     def test_empty_location_returns_ten_local_contactable_seeded_posts(self, _mock_point):
+        profile_photo = "https://cdn.example.test/sample-owner-current.jpg"
+        with app.db() as con:
+            con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (profile_photo, self.sample_owner_id))
         results = app.mobile_housing_posts(
             city="Madison, WI",
             area="University of Wisconsin–Madison",
@@ -424,6 +427,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(all(item["posterName"] == app.SAMPLE_HOUSING_OWNER_NAME for item in results))
         self.assertTrue(all("posterEmail" not in item for item in results))
         self.assertTrue(all(item["posterUserId"] == self.sample_owner_id for item in results))
+        self.assertTrue(all(item["photoUrl"] == profile_photo for item in results))
         self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
         self.assertTrue(all(float(item["distanceMiles"]) <= 5 for item in results))

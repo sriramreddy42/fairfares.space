@@ -17689,7 +17689,7 @@ def mobile_sample_housing_posts(
         return []
     with db() as con:
         sample_owner = con.execute(
-            "SELECT id, name FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
+            "SELECT id, name, profile_photo_url FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
             (SAMPLE_HOUSING_OWNER_EMAIL,),
         ).fetchone()
     sample_owner_id = int(row_value(sample_owner, "id") or 0) if sample_owner else 0
@@ -17698,6 +17698,7 @@ def mobile_sample_housing_posts(
         if sample_owner
         else SAMPLE_HOUSING_OWNER_NAME
     )
+    sample_owner_photo = avatar_delivery_path(row_value(sample_owner, "profile_photo_url"), sample_owner_id)
     selected_location = " ".join((area or city or "your selected location").split())[:120]
     selected_country = accommodation_country_code(selected_location)
     currency_code, currency_symbol = accommodation_currency(selected_location)
@@ -17745,6 +17746,7 @@ def mobile_sample_housing_posts(
                 "images": images,
                 "posterName": sample_owner_name,
                 "posterUserId": sample_owner_id,
+                "photoUrl": sample_owner_photo,
                 "daysLeft": 30,
                 "expiryLabel": "30 days left",
                 "roommateIntent": need == "need_roommates" or bool(roommate_count),
