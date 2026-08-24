@@ -1120,7 +1120,11 @@ export function HousingScreen({
     }
     const timer = setTimeout(() => {
       setRideSuggestionsBusy(true);
-      getRidePlaceSuggestions(rideForm.city || data?.location.city || "Denver, CO", query, rideFocusedField === "origin")
+      getRidePlaceSuggestions(
+        rideForm.city || data?.location.city || "Denver, CO",
+        query,
+        rideFocusedField !== "origin"
+      )
         .then(setRideSuggestions)
         .catch(() => setRideSuggestions([]))
         .finally(() => setRideSuggestionsBusy(false));
@@ -1215,20 +1219,26 @@ export function HousingScreen({
     }
   }
 
-  async function useCurrentRideLocationForOrigin() {
+  async function useCurrentRideLocationForOrigin(onlyIfOriginIs?: string) {
     const location = await resolveCurrentRideLocation();
     if (!location?.label) return;
     selectedRideSuggestionRef.current = location.label;
-    setRideForm((current) => ({
-      ...current,
-      city: location.label,
-      origin: location.label,
-      originLat: location.coords.latitude,
-      originLng: location.coords.longitude
-    }));
+    setRideForm((current) => {
+      // Automatic location hydration may finish after the user has started
+      // typing. Never replace that newer route input with the device location.
+      if (onlyIfOriginIs !== undefined && current.origin !== onlyIfOriginIs) return current;
+      return {
+        ...current,
+        city: location.label,
+        origin: location.label,
+        originLat: location.coords.latitude,
+        originLng: location.coords.longitude
+      };
+    });
   }
 
   function openRidePlanner() {
+    const initialOrigin = rideDefaultPickup;
     setMode("ride");
     setRidePlannerStage("plan");
     setRideFocusedField("destination");
@@ -1239,7 +1249,7 @@ export function HousingScreen({
     setRideForm((current) => ({
       ...current,
       city: rideDefaultCity || current.city || "Denver, CO",
-      origin: rideDefaultPickup,
+      origin: initialOrigin,
       originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
       originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
       destination: "",
@@ -1249,7 +1259,7 @@ export function HousingScreen({
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
-    void useCurrentRideLocationForOrigin();
+    void useCurrentRideLocationForOrigin(initialOrigin);
   }
 
   function closeRidePlanner() {
@@ -1406,7 +1416,8 @@ export function HousingScreen({
     }));
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
-    void useCurrentRideLocationForOrigin();
+    // Do not asynchronously force the device's current location into a route
+    // listing. Drivers may be publishing a future route in another country.
   }
 
   async function startRideOfferListing() {
@@ -1447,7 +1458,7 @@ export function HousingScreen({
       ...current,
       [rideFocusedField]: place.label,
       ...(rideFocusedField === "origin"
-        ? { originLat: place.lat, originLng: place.lng }
+        ? { city: place.label, originLat: place.lat, originLng: place.lng }
         : { destinationLat: place.lat, destinationLng: place.lng })
     }));
     if (selectedField === "origin") {

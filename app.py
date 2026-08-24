@@ -16634,9 +16634,9 @@ def ride_route_match_is_valid(
     # trips that estimate can falsely reject a legitimate intermediate stop
     # because the real highway bends substantially away from the straight line
     # (for example Denver -> Huntsville commonly passes through Nashville).
-    # Permit a narrow, distance-scaled corridor only for same-direction trips
-    # whose pickup is already close to the driver's route. Detailed dispatch
-    # matching still prefers Google road-route totals when available.
+    # Permit a narrow, distance-scaled corridor only for same-direction trips.
+    # This is a provisional search shortlist: detailed dispatch matching still
+    # prefers Google road-route totals when available.
     if ride_uses_long_distance_corridor(row, metrics, allowed_miles=allowed_miles):
         return True
     return False
@@ -16661,10 +16661,18 @@ def ride_uses_long_distance_corridor(
             ride_coordinate_value(row, "destination_lat", "destinationLat"),
             ride_coordinate_value(row, "destination_lng", "destinationLng"),
         )
-        pickup_distance = metrics.get("pickupDistanceMiles")
-        pickup_is_close = pickup_distance is not None and float(pickup_distance) <= max(configured_allowance, 25.0)
-        estimated_long_route_allowance = min(75.0, max(configured_allowance, driver_miles * 0.06))
-        if driver_miles >= 300 and pickup_is_close and deviation_miles <= estimated_long_route_allowance:
+        # A rider can join and leave midway along a long route, so distance from
+        # the driver's starting point is not an acceptance condition. Allow a
+        # small extra shortlist margin for highway curvature; the hard 75-mile
+        # ceiling prevents remote parallel routes from becoming candidates.
+        estimated_long_route_allowance = min(
+            75.0,
+            max(
+                configured_allowance + min(25.0, driver_miles * 0.08),
+                driver_miles * 0.06,
+            ),
+        )
+        if driver_miles >= 300 and deviation_miles <= estimated_long_route_allowance:
             return True
     return False
 

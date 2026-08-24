@@ -20,6 +20,10 @@ POINTS = {
     "Cincinnati, OH": {"label": "Cincinnati, OH", "lat": 39.1031, "lng": -84.5120},
     "Miamisburg, OH": {"label": "Miamisburg, OH", "lat": 39.6428, "lng": -84.2866},
     "Miami, Florida": {"label": "Miami, Florida", "lat": 25.7617, "lng": -80.1918},
+    "Hyderabad, Telangana, India": {"label": "Hyderabad, Telangana, India", "lat": 17.3850, "lng": 78.4867},
+    "Guntur, Andhra Pradesh, India": {"label": "Guntur, Andhra Pradesh, India", "lat": 16.3067, "lng": 80.4365},
+    "Nellore, Andhra Pradesh, India": {"label": "Nellore, Andhra Pradesh, India", "lat": 14.4426, "lng": 79.9865},
+    "Chennai, Tamil Nadu, India": {"label": "Chennai, Tamil Nadu, India", "lat": 13.0827, "lng": 80.2707},
 }
 
 
@@ -286,6 +290,153 @@ class RideCarpoolMatchingTest(unittest.TestCase):
 
         self.assertGreater(metrics["routeDeviationMiles"], app.ride_allowed_detour_miles(denver_to_huntsville))
         self.assertTrue(app.ride_route_match_is_valid(denver_to_huntsville, metrics))
+
+    def test_hyderabad_chennai_search_keeps_mid_route_towns_for_road_verification(self):
+        hyderabad_to_chennai = {
+            "origin_lat": 17.3850,
+            "origin_lng": 78.4867,
+            "destination_lat": 13.0827,
+            "destination_lng": 80.2707,
+            "max_detour_minutes": 100,
+            "max_pickup_distance_miles": 50,
+        }
+
+        # Guntur -> Nellore is a same-direction, midway request. Its fast
+        # straight-line detour is slightly above the driver's configured limit
+        # because the intercity corridor bends, so search must retain it for
+        # road-route verification instead of hiding it.
+        midway_metrics = app.ride_route_match_metrics(
+            hyderabad_to_chennai,
+            {"lat": 16.3067, "lng": 80.4365},
+            {"lat": 14.4426, "lng": 79.9865},
+            allow_google=False,
+        )
+        self.assertGreater(midway_metrics["routeDeviationMiles"], app.ride_allowed_detour_miles(hyderabad_to_chennai))
+        self.assertTrue(app.ride_route_match_is_valid(hyderabad_to_chennai, midway_metrics))
+
+        # Warangal -> Chennai is well outside the provisional corridor and must
+        # not be admitted merely because it travels in a similar direction.
+        off_corridor_metrics = app.ride_route_match_metrics(
+            hyderabad_to_chennai,
+            {"lat": 17.9689, "lng": 79.5941},
+            {"lat": 13.0827, "lng": 80.2707},
+            allow_google=False,
+        )
+        self.assertFalse(app.ride_route_match_is_valid(hyderabad_to_chennai, off_corridor_metrics))
+
+    def test_hyderabad_chennai_database_search_returns_midway_request(self):
+        with app.db() as con:
+            offer = self.insert_ride(
+                con,
+                self.driver_id,
+                "CARPOOL_OFFER",
+                "Hyderabad, Telangana, India",
+                "Chennai, Tamil Nadu, India",
+                max_detour=100,
+                pickup_distance=50,
+            )
+
+        def india_point(query, _city="", **_kwargs):
+            return POINTS.get(query, {})
+
+        with patch.object(app, "accommodation_location_point", side_effect=india_point):
+            results = app.mobile_ride_posts(
+                city="Hyderabad, Telangana, India",
+                ride_type="CARPOOL_OFFER",
+                origin="Guntur, Andhra Pradesh, India",
+                destination="Nellore, Andhra Pradesh, India",
+                origin_lat=POINTS["Guntur, Andhra Pradesh, India"]["lat"],
+                origin_lng=POINTS["Guntur, Andhra Pradesh, India"]["lng"],
+                destination_lat=POINTS["Nellore, Andhra Pradesh, India"]["lat"],
+                destination_lng=POINTS["Nellore, Andhra Pradesh, India"]["lng"],
+            )
+
+        self.assertEqual([item["id"] for item in results], [offer["public_id"]])
+        self.assertEqual(results[0]["routeDeviationSource"], "ROAD_ROUTE_PENDING")
+
+    def test_hyderabad_chennai_dispatch_uses_real_road_detour(self):
+        with app.db() as con:
+            self.insert_ride(
+                con,
+                self.driver_id,
+                "CARPOOL_OFFER",
+                "Hyderabad, Telangana, India",
+                "Chennai, Tamil Nadu, India",
+                max_detour=100,
+                pickup_distance=50,
+            )
+            request = self.insert_ride(
+                con,
+                self.rider_id,
+                "CARPOOL_REQUEST",
+                "Guntur, Andhra Pradesh, India",
+                "Nellore, Andhra Pradesh, India",
+                max_detour=50,
+                pickup_distance=50,
+            )
+
+            def road_totals(points):
+                return (390.0, 480) if len(points) == 2 else (405.0, 510)
+
+            with patch.object(app, "google_route_totals", side_effect=road_totals):
+                dispatch = app.create_ride_dispatch_notifications(con, request, self.rider_id)
+
+        self.assertEqual(dispatch["notifiedCount"], 1)
+        self.assertEqual(dispatch["nearestRadius"], 20)
+        self.assertEqual(dispatch["driverDetours"][self.driver_id]["miles"], 15.0)
+        self.assertEqual(dispatch["driverDetours"][self.driver_id]["minutes"], 30)
+
+    def test_us_interstate_midway_search_and_safety_filters_remain_correct(self):
+        denver_to_dayton = {
+            "origin_lat": 39.7392,
+            "origin_lng": -104.9903,
+            "destination_lat": 39.7589,
+            "destination_lng": -84.1916,
+            "max_detour_minutes": 35,
+            "max_pickup_distance_miles": 20,
+        }
+        cases = (
+            ("Kansas City to St Louis", (39.0997, -94.5786), (38.6270, -90.1994), True),
+            ("St Louis to Indianapolis", (38.6270, -90.1994), (39.7684, -86.1581), True),
+            ("Indianapolis to Dayton", (39.7684, -86.1581), (39.7589, -84.1916), True),
+            ("reverse Dayton to Denver", (39.7589, -84.1916), (39.7392, -104.9903), False),
+            ("Nashville to Dayton", (36.1627, -86.7816), (39.7589, -84.1916), False),
+            ("Denver to Dallas", (39.7392, -104.9903), (32.7767, -96.7970), False),
+        )
+
+        for name, origin, destination, expected in cases:
+            with self.subTest(name=name):
+                metrics = app.ride_route_match_metrics(
+                    denver_to_dayton,
+                    {"lat": origin[0], "lng": origin[1]},
+                    {"lat": destination[0], "lng": destination[1]},
+                    allow_google=False,
+                )
+                self.assertEqual(app.ride_route_match_is_valid(denver_to_dayton, metrics), expected, metrics)
+
+    @patch.object(app, "google_route_totals")
+    def test_us_interstate_final_match_still_obeys_road_detour(self, mock_routes):
+        denver_to_dayton = {
+            "origin_lat": 39.7392,
+            "origin_lng": -104.9903,
+            "destination_lat": 39.7589,
+            "destination_lng": -84.1916,
+            "max_detour_minutes": 35,
+            "max_pickup_distance_miles": 20,
+        }
+        kansas_city = {"lat": 39.0997, "lng": -94.5786}
+        st_louis = {"lat": 38.6270, "lng": -90.1994}
+
+        mock_routes.side_effect = [(1150.0, 1000), (1162.0, 1024)]
+        valid_metrics = app.ride_route_match_metrics(denver_to_dayton, kansas_city, st_louis)
+        self.assertEqual(valid_metrics["routeDeviationSource"], "GOOGLE_DIRECTIONS")
+        self.assertEqual(valid_metrics["routeDeviationMiles"], 12.0)
+        self.assertTrue(app.ride_route_match_is_valid(denver_to_dayton, valid_metrics))
+
+        mock_routes.side_effect = [(1150.0, 1000), (1195.0, 1090)]
+        excessive_metrics = app.ride_route_match_metrics(denver_to_dayton, kansas_city, st_louis)
+        self.assertEqual(excessive_metrics["routeDeviationMiles"], 45.0)
+        self.assertFalse(app.ride_route_match_is_valid(denver_to_dayton, excessive_metrics))
 
     @patch.object(app, "google_route_totals")
     def test_ride_search_does_not_call_google_directions_per_candidate(self, mock_route):
