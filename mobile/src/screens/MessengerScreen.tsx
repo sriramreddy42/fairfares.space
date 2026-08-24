@@ -34,6 +34,7 @@ import {
   findChatPeopleByContactHashes,
   forwardEncryptedChatAttachment,
   getChatCommunities,
+  getChatCommunity,
   getChatDeviceKeys,
   getChatEncryptedEnvelopes,
   getChatEncryptedPreviewEnvelopes,
@@ -3728,9 +3729,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       let community = communities.find((item) => item.id === communityId);
       if (!community) {
         try {
-          const refreshed = await getChatCommunities(suggestionCity || data?.location.city || "");
-          setCommunities(refreshed);
-          community = refreshed.find((item) => item.id === communityId);
+          community = await getChatCommunity(communityId) || undefined;
+          if (community) {
+            const linkedCommunity = community;
+            setCommunities((current) => [linkedCommunity, ...current.filter((item) => item.id !== linkedCommunity.id)]);
+          }
         } catch {
           // The normal unavailable message below handles a failed refresh.
         }

@@ -1096,6 +1096,13 @@ export async function getChatCommunities(city = "") {
   return payload.communities || [];
 }
 
+export async function getChatCommunity(communityId: string) {
+  const payload = await request<{ ok: boolean; communities: Community[] }>(
+    `/api/chat/communities?community_id=${encodeURIComponent(communityId.trim())}`
+  );
+  return payload.communities?.[0] || null;
+}
+
 export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30, deviceId = "") {
   const params = new URLSearchParams({
     conversation_id: conversationId,
