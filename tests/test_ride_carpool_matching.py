@@ -67,6 +67,24 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         )
         return int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
+    def test_specific_ride_label_is_not_replaced_by_country_fallback(self):
+        self.assertEqual(
+            app.ride_display_label(
+                "Hyderabad, Telangana, India",
+                {"label": "United States", "lat": 17.3850, "lng": 78.4867},
+                "Dayton, OH",
+            ),
+            "Hyderabad, Telangana, India",
+        )
+        self.assertEqual(
+            app.ride_display_label(
+                "Chennai, Tamil Nadu, India",
+                {"label": "United States", "lat": 13.0827, "lng": 80.2707},
+                "Dayton, OH",
+            ),
+            "Chennai, Tamil Nadu, India",
+        )
+
     def insert_ride(self, con, user_id, ride_type, origin, destination, *, max_detour=35, pickup_distance=20, seats=3, pickup_date="2099-08-02"):
         public_id = app.ride_public_id()
         origin_point = POINTS[origin]

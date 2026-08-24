@@ -1582,7 +1582,7 @@ export function HousingScreen({
       return;
     }
     ridePlanSubmittingRef.current = true;
-    const effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
+    let effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
     let effectiveDestination = submittedDestination;
     const listingRide = requestedRideType === "CARPOOL_OFFER";
     const destinationAlreadyPicked = Boolean(
@@ -1594,9 +1594,24 @@ export function HousingScreen({
     );
     setRideBusy(true);
     try {
+      let originPoint: RidePlaceSuggestion | undefined;
+      const originAlreadyPicked = Boolean(
+        rideForm.origin.trim() &&
+          rideForm.originLat !== null &&
+          rideForm.originLng !== null
+      );
+      if (!originAlreadyPicked) {
+        // Resolve manually typed origins without the device/current-city bias.
+        // Otherwise an international route such as Hyderabad -> Chennai can
+        // be geocoded against a previous US discovery location.
+        const originMatches = await getRidePlaceSuggestions(rideForm.city, effectiveOrigin, false);
+        originPoint = originMatches[0];
+        if (originPoint?.label) effectiveOrigin = originPoint.label;
+      }
+      const routeCity = effectiveOrigin;
       let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
       if (!destinationAlreadyPicked) {
-        const destinationMatches = await getRidePlaceSuggestions(rideForm.city, effectiveDestination);
+        const destinationMatches = await getRidePlaceSuggestions(routeCity, effectiveDestination, false);
         destinationPoint = destinationMatches[0];
         if (destinationPoint?.label) {
           effectiveDestination = destinationPoint.label;
@@ -1607,7 +1622,10 @@ export function HousingScreen({
       setSelectedRideService("carpool");
       const nextRideForm = {
         ...rideForm,
+        city: routeCity,
         origin: effectiveOrigin,
+        originLat: originPoint?.lat ?? rideForm.originLat ?? null,
+        originLng: originPoint?.lng ?? rideForm.originLng ?? null,
         destination: effectiveDestination,
         destinationLat: destinationPoint?.lat ?? rideForm.destinationLat ?? null,
         destinationLng: destinationPoint?.lng ?? rideForm.destinationLng ?? null,
@@ -1615,7 +1633,10 @@ export function HousingScreen({
       };
       setRideForm((current) => ({
         ...current,
+        city: routeCity,
         origin: effectiveOrigin,
+        originLat: originPoint?.lat ?? current.originLat ?? null,
+        originLng: originPoint?.lng ?? current.originLng ?? null,
         destination: effectiveDestination,
         destinationLat: destinationPoint?.lat ?? current.destinationLat ?? null,
         destinationLng: destinationPoint?.lng ?? current.destinationLng ?? null,

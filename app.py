@@ -16080,6 +16080,18 @@ def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: 
     resolved = dedupe_repeated_location_label(str(resolved_point.get("label") or ""))
     city_label = normalize_accommodation_place_label(city)
     city_root = city_label.split(",", 1)[0].strip().lower()
+    country_only_labels = {
+        "us", "usa", "united states", "united states of america",
+        "india", "canada", "mexico", "united kingdom", "uk",
+        "australia", "new zealand", "united arab emirates", "uae",
+        "singapore", "japan", "china", "south korea", "brazil",
+        "south africa", "germany", "france", "spain", "italy",
+    }
+    # A broad geocoder/cache fallback must never erase a more specific place
+    # supplied by the user. This previously saved Hyderabad and Chennai as
+    # "United States" when the form still carried a US discovery-city bias.
+    if fallback and resolved.lower() in country_only_labels and fallback.lower() != resolved.lower():
+        return fallback
     if fallback and resolved and city_root and resolved.lower() == city_root and fallback.lower() != city_root:
         return fallback
     return resolved or fallback or city_label or "Location open"
