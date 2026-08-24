@@ -658,10 +658,8 @@ export function HousingScreen({
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
-  const rideOwnerScrollRef = useRef<ScrollView | null>(null);
   const homeStoryScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
-  const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
 
   useEffect(() => {
@@ -1103,12 +1101,6 @@ export function HousingScreen({
     }
     void openRideOwnerTracker();
   }, [rideOwnerEditId, rideOwnerOpenTarget, rideOwnerOpenToken]);
-
-  useEffect(() => {
-    if (!rideOwnerOpen || rideOwnerOpenTarget === "workspace" || !rideOwnerTrackerY) return;
-    const timer = setTimeout(() => rideOwnerScrollRef.current?.scrollTo({ y: Math.max(rideOwnerTrackerY - 16, 0), animated: true }), 220);
-    return () => clearTimeout(timer);
-  }, [rideActivityBusy, rideOwnerOpen, rideOwnerOpenTarget, rideOwnerTrackerY]);
 
   useEffect(() => {
     if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
@@ -1807,7 +1799,6 @@ export function HousingScreen({
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
         <SafeAreaView style={styles.rideOwnerScreen} edges={["right", "bottom", "left"]}>
           <ScrollView
-            ref={rideOwnerScrollRef}
             contentContainerStyle={[
               styles.rideOwnerContent,
               {
@@ -1824,11 +1815,12 @@ export function HousingScreen({
                 <Text style={styles.ridePlannerBackText}>‹</Text>
               </TouchableOpacity>
               <View style={styles.rideOwnerHeaderCopy}>
-                <Text style={styles.rideOwnerEyebrow}>Driver workspace</Text>
-                <Text style={styles.rideOwnerTitle}>Offer a ride</Text>
+                <Text style={styles.rideOwnerEyebrow}>{rideOwnerOpenTarget === "workspace" ? "Driver workspace" : "Carpool activity"}</Text>
+                <Text style={styles.rideOwnerTitle}>{rideOwnerOpenTarget === "workspace" ? "Offer a ride" : trackerTitle}</Text>
               </View>
             </View>
 
+            {rideOwnerOpenTarget === "workspace" ? <>
             <View style={styles.rideOwnerHero}>
               <View style={styles.rideOwnerHeroIcon}><CarpoolOutlineIcon /></View>
               <View style={styles.rideOwnerHeroCopy}>
@@ -1955,8 +1947,9 @@ export function HousingScreen({
                 </View>
               ))}
             </View>
+            </> : null}
 
-            <View style={styles.rideOwnerCard} onLayout={(event) => setRideOwnerTrackerY(event.nativeEvent.layout.y)}>
+            <View style={styles.rideOwnerCard}>
               <View style={styles.rideOwnerSectionHeading}><Image source={appAssets.navActivity} style={styles.rideOwnerSectionIcon} resizeMode="contain" /><Text style={styles.rideOwnerSectionTitle}>{trackerTitle}</Text></View>
               {rideActivityBusy ? <Text style={styles.rideOwnerEmptyText}>Refreshing ride activity...</Text> : null}
               <View style={styles.rideOwnerStatusWrap}>
