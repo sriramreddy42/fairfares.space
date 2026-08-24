@@ -96,7 +96,7 @@ export function ServicesScreen({
   onOpenProfile,
   onSelect,
   editBookingId = "",
-  onEditBookingOpened
+  onEditBookingOpened,
 }: Props) {
   const layout = useResponsiveLayout();
   const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);

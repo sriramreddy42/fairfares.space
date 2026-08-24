@@ -278,6 +278,38 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertAlmostEqual(listing["lat"], 39.7589, places=4)
         self.assertLessEqual(listing["distanceMiles"], 25)
 
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        side_effect=lambda query, *args, **kwargs: (
+            {"label": "Parker, CO", "lat": 39.5186, "lng": -104.7614, "source": "test"}
+            if "Parker" in str(query)
+            else {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903, "source": "test"}
+        ),
+    )
+    def test_metro_city_search_admits_selected_suburb_listing_with_missing_coordinates(self, _mock_point):
+        self.insert_post(
+            "FFH-B854C0F7",
+            "PG Room is available",
+            "Parker, CO",
+            "Black Rose Circle",
+            0,
+            0,
+        )
+
+        results = app.mobile_housing_posts(
+            city="Denver, CO",
+            area="Parker, CO",
+            need="need_place",
+            radius=25,
+            limit=30,
+        )
+
+        listing = next(item for item in results if item["id"] == "FFH-B854C0F7")
+        self.assertTrue(listing["locationApproximate"])
+        self.assertAlmostEqual(listing["lat"], 39.5186, places=4)
+        self.assertLessEqual(listing["distanceMiles"], 25)
+
     def test_geocoded_us_city_dynamically_feeds_group_suggestions(self):
         geocode = {
             "formatted_address": "Boise, ID, USA",

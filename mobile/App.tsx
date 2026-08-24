@@ -238,7 +238,7 @@ export default function App() {
 function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
-  const [activeTab, setActiveTab] = useState<TabKey>("home");
+  const [activeTab, setActiveTab] = useState<TabKey>("community");
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
@@ -353,6 +353,7 @@ function FairFaresApp() {
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [carpoolFocusKey, setCarpoolFocusKey] = useState(0);
+  const [rentalFocusKey, setRentalFocusKey] = useState(0);
   const [launchVisible, setLaunchVisible] = useState(true);
   const launchStartedAt = useRef(Date.now());
   const bootstrapGenerationRef = useRef(0);
@@ -1744,7 +1745,7 @@ function FairFaresApp() {
     setShowSocialRecoveryEmail(false);
     setLoginOpen(false);
     setAuthMessage("");
-    if (activeTab === "profile") setActiveTab("home");
+    if (activeTab === "profile") setActiveTab("community");
     if (pendingListingAfterLogin) {
       setPendingListingAfterLogin(false);
       openListingFormForUser(user, selectedNeed || "need_place");
@@ -1913,7 +1914,7 @@ function FairFaresApp() {
       setLoginOpen(false);
       setIdentifier("");
       setPassword("");
-      if (activeTab === "profile") setActiveTab("home");
+      if (activeTab === "profile") setActiveTab("community");
       if (pendingListingAfterLogin) {
         setPendingListingAfterLogin(false);
         openListingFormForUser(payload.user, selectedNeed || "need_place");
@@ -1975,7 +1976,7 @@ function FairFaresApp() {
           setData((current) => current ? { ...current, user: payload.user || null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
         }
         setLoginOpen(false);
-        if (activeTab === "profile") setActiveTab("home");
+        if (activeTab === "profile") setActiveTab("community");
         if (pendingListingAfterLogin) {
           setPendingListingAfterLogin(false);
           openListingFormForUser(payload.user || data?.user || null, selectedNeed || "need_place");
@@ -2004,7 +2005,7 @@ function FairFaresApp() {
     setPendingPost(null);
     setPendingRide(null);
     setBottomTabsHidden(false);
-    setActiveTab("home");
+    setActiveTab("community");
     try {
       await unregisterNotificationsForLogout();
       await mobileLogout();
@@ -2080,6 +2081,8 @@ function FairFaresApp() {
     if (tab === "home" || tab === "housing") {
       setRideOwnerOpenToken(0);
       setRideOwnerReturnTab(null);
+      setSelectedNeed("need_place");
+      setHousingWelcomeFocusKey((value) => value + 1);
     }
     setActiveTab(tab);
   }
@@ -2120,18 +2123,38 @@ function FairFaresApp() {
         user={data?.user || null}
         city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
         onRequireLogin={() => setLoginOpen(true)}
-        onOpenHousing={() => setActiveTab("housing")}
-        onSearchHousing={() => {
+        onOpenHousing={(postId = "") => {
+          setSelectedNeed("need_place");
+          setHousingWelcomeFocusKey((value) => value + 1);
           setActiveTab("housing");
-          setSearchCity(city);
-          setSearchArea(area);
-          setSearchRadius(searchRadius);
-          setSearchNeed(selectedNeed || "need_place");
-          setSearchOpen(true);
+          if (!postId) return;
+          const existing = visiblePosts.find((post) => post.id === postId);
+          if (existing) {
+            setLinkedHousingPost(existing);
+            return;
+          }
+          void getHousingListing(postId).then((post) => {
+            if (!post) {
+              Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
+              return;
+            }
+            setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+            setLinkedHousingPost(post);
+          }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+        }}
+        onCreateHousingPost={(intent) => {
+          setActiveTab("housing");
+          postNeed(intent);
         }}
         onOpenRides={() => {
           setSelectedNeed("ride_need");
           setCarpoolFocusKey((value) => value + 1);
+          setActiveTab("housing");
+        }}
+        onOpenRentalCars={() => {
+          setSelectedService("cars");
+          setSelectedNeed("rental_cars");
+          setRentalFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
         onOpenCommunity={(communityId) => {
@@ -2269,6 +2292,7 @@ function FairFaresApp() {
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
         carpoolFocusKey={carpoolFocusKey}
+        rentalFocusKey={rentalFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
@@ -2322,6 +2346,7 @@ function FairFaresApp() {
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
         carpoolFocusKey={carpoolFocusKey}
+        rentalFocusKey={rentalFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}

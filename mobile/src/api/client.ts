@@ -131,17 +131,34 @@ export async function setAuthToken(token: string) {
     }
   }
   if (Platform.OS !== "web") {
-    if (token) {
-      await SecureStore.setItemAsync(AUTH_TOKEN_STORAGE_KEY, token);
-    } else {
-      await SecureStore.deleteItemAsync(AUTH_TOKEN_STORAGE_KEY);
+    try {
+      if (token) {
+        await SecureStore.setItemAsync(AUTH_TOKEN_STORAGE_KEY, token);
+      } else {
+        await SecureStore.deleteItemAsync(AUTH_TOKEN_STORAGE_KEY);
+      }
+      if (__DEV__) await AsyncStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    } catch (error) {
+      // Simulator/dev signing can omit the Keychain entitlement even when the
+      // Xcode target declares it. Keep release builds Keychain-only, but allow
+      // a development session to remain usable while that native build is
+      // being regenerated.
+      if (!__DEV__) throw error;
+      if (token) await AsyncStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+      else await AsyncStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     }
   }
 }
 
 export async function hydrateAuthToken() {
   if (authToken || Platform.OS === "web") return authToken;
-  const storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_STORAGE_KEY).catch(() => null);
+  let storedToken: string | null = null;
+  try {
+    storedToken = await SecureStore.getItemAsync(AUTH_TOKEN_STORAGE_KEY);
+  } catch (error) {
+    if (!__DEV__) throw error;
+    storedToken = await AsyncStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  }
   if (authToken !== (storedToken || "")) authTokenGeneration += 1;
   authToken = storedToken || "";
   return authToken;
@@ -867,7 +884,7 @@ export async function updateCommunityPostStatus(postId: string, status: Communit
 }
 
 export async function answerCommunityPost(postId: string, body: string, parentAnswerId = "") {
-  return communityPostRequest<{ ok: boolean; answerId: string }>("/api/mobile/community/answer", { postId, body, parentAnswerId });
+  return communityPostRequest<{ ok: boolean; answerId: string; conversationId?: string }>("/api/mobile/community/answer", { postId, body, parentAnswerId });
 }
 
 export async function reactToCommunityContent(target: { postId?: string; answerId?: string }, reaction = "HELPFUL") {

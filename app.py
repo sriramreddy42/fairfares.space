@@ -17498,8 +17498,15 @@ def mobile_housing_posts(
         # distance pass below replaces obviously stale points with the verified
         # city center before deciding whether the listing is nearby.
         city_root = city.split(",", 1)[0].strip()
+        area_root = area.split(",", 1)[0].strip()
         city_fallback = " OR lower(city) = lower(?)" if city_root else ""
-        clauses.append(f"((lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?){city_fallback})")
+        area_fallback = (
+            " OR lower(city) = lower(?)"
+            " OR lower(city_area_zip) LIKE lower(?)"
+            " OR lower(area_or_apartment) LIKE lower(?)"
+            " OR lower(primary_neighborhood) LIKE lower(?)"
+        ) if area_root else ""
+        clauses.append(f"((lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?){city_fallback}{area_fallback})")
         values.extend([
             center_lat - latitude_delta,
             center_lat + latitude_delta,
@@ -17508,6 +17515,9 @@ def mobile_housing_posts(
         ])
         if city_root:
             values.append(city_root)
+        if area_root:
+            area_pattern = f"%{area_root}%"
+            values.extend([area_root, area_pattern, area_pattern, area_pattern])
     search_term_groups: list[list[str]] = []
     raw_search_terms = () if post_public_id or (area or "").strip() else (city,)
     for raw_term in raw_search_terms:
@@ -17622,7 +17632,11 @@ def mobile_housing_posts(
             requested_state = requested_state.strip().lower()
             listing_city = listing_city.strip().lower()
             listing_state = listing_state.strip().lower()
-            selected_area_text = area.lower()
+            # Include the geocoder's canonical label so a neighborhood selected
+            # under a broad metro city (Denver -> Parker) remains consistent
+            # with the listing's actual municipality. Radius enforcement below
+            # still prevents unrelated text matches from leaking into results.
+            selected_area_text = f"{area} {center.get('label') or ''}".lower()
             same_city_and_region = (
                 requested_city == listing_city
                 and (
@@ -36376,6 +36390,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         now = datetime.utcnow().isoformat(timespec="seconds")
         notify_user_id = 0
         notify_title = ""
+        chitthi_conversation_public_id = ""
         with db() as con:
             post = con.execute("SELECT * FROM ask_community_posts WHERE public_id = ? AND status = 'PUBLISHED'", (post_public_id,)).fetchone()
             if not post:
@@ -36399,9 +36414,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), int(user["id"]), parent_id, body, now, now))
             notify_user_id = int(post["author_id"] or 0)
             notify_title = str(post["title"] or "Community question")
-        if notify_user_id and notify_user_id != int(user["id"]):
+            if notify_user_id and notify_user_id != int(user["id"]):
+                conversation, _ = get_or_create_person_conversation(con, user, notify_user_id)
+                if conversation:
+                    owner = con.execute("SELECT name FROM users WHERE id = ?", (notify_user_id,)).fetchone()
+                    chat_message = save_chat_message(
+                        con,
+                        int(conversation["id"]),
+                        user,
+                        body,
+                        client_message_id=f"community-answer-{answer_id}",
+                        context={
+                            "type": "COMMUNITY",
+                            "id": post_public_id,
+                            "title": notify_title,
+                            "subtitle": "New comment on your Ask Community post",
+                            "ownerUserId": str(notify_user_id),
+                            "ownerName": str(row_value(owner, "name") or "FairFares member"),
+                        },
+                    )
+                    chitthi_conversation_public_id = str(row_value(conversation, "public_id") or "")
+                    self.notify_chat_recipients(con, conversation, user, chat_message)
+        if notify_user_id and notify_user_id != int(user["id"]) and not chitthi_conversation_public_id:
             send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or 'A FairFares member'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
-        self.send_json({"ok": True, "answerId": answer_id}, 201)
+        self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id}, 201)
 
     def api_mobile_react_community(self) -> None:
         user = self.current_user()

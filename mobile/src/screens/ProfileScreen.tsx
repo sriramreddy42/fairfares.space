@@ -204,6 +204,7 @@ export function ProfileScreen({
   const historyTitle = historySection === "housing" ? "Your listings" : historySection === "carpool" ? "Carpool history" : "Rental car history";
   const historyAction = historySection === "housing" ? onOpenHousing : historySection === "carpool" ? onOpenRide : onOpenServices;
   const profileLinks: Array<{ title: string; copy: string; icon?: ImageSourcePropType; glyph?: string; fullColor?: boolean; onPress?: () => void; requiresUser?: boolean; danger?: boolean }> = [
+    { title: "Services", copy: "Rental cars and other FairFares services", icon: appAssets.navServices, onPress: () => onOpenServices?.() },
     { title: "Housing", copy: "Your posted rooms, homes, and roommate searches", icon: appAssets.serviceHome, onPress: () => user ? setHistorySection("housing") : onLogin() },
     { title: "Carpool", copy: "Your listings, requests, and previous trips", icon: appAssets.carpoolProfile, fullColor: true, onPress: () => { if (!user) return onLogin(); setCarpoolHistoryView("listings"); setHistorySection("carpool"); } },
     { title: "Rental Cars", copy: "Current and previous bookings", glyph: "🔑", onPress: () => user ? setHistorySection("rentals") : onLogin() },

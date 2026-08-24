@@ -1,5 +1,5 @@
-import React from "react";
-import { Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useRef } from "react";
+import { Animated, Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { FairFaresUser } from "../types";
@@ -25,7 +25,7 @@ type NavigationItem = {
 
 const navigationItems: NavigationItem[] = [
   { key: "home", label: "Housing", icon: appAssets.navHome, width: 25, height: 25 },
-  { key: "services", label: "Services", icon: appAssets.navServices, width: 25, height: 25 },
+  { key: "activity", label: "Activity", icon: appAssets.navActivity, width: 25, height: 25 },
   { key: "community", label: "Ask", glyph: "+", width: 30, height: 30 },
   { key: "messenger", label: "Chitthi", icon: appAssets.chittiMascot, width: 31, height: 35 },
   { key: "profile", label: "Account", icon: appAssets.profile, width: 25, height: 25 },
@@ -45,6 +45,8 @@ function visibleActiveTab(active: TabKey): VisibleTabKey {
 
 export function BottomTabs({ active, unreadCount, user, onChange, hidden = false }: Props) {
   const layout = useResponsiveLayout();
+  const housingScale = useRef(new Animated.Value(1)).current;
+
   if (hidden) return null;
 
   const selected = visibleActiveTab(active);
@@ -81,10 +83,23 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
               accessibilityLabel={item.label}
               accessibilityState={{ selected: isSelected }}
               activeOpacity={0.72}
-              onPress={() => onChange(item.key)}
+              onPress={() => {
+                onChange(item.key);
+                if (item.key !== "home") return;
+                housingScale.stopAnimation();
+                housingScale.setValue(1);
+                Animated.sequence([
+                  Animated.timing(housingScale, { toValue: 1.16, duration: 130, useNativeDriver: true }),
+                  Animated.spring(housingScale, { toValue: 1, friction: 4, tension: 150, useNativeDriver: true }),
+                ]).start();
+              }}
               style={[styles.touchTarget, item.key === "community" && styles.centerTouchTarget]}
             >
-              <View style={[styles.itemContent, item.key === "community" && styles.centerItemContent]}>
+              <Animated.View style={[
+                styles.itemContent,
+                item.key === "community" && styles.centerItemContent,
+                item.key === "home" && { transform: [{ scale: housingScale }] },
+              ]}>
                 <View style={[styles.iconFrame, item.key === "community" && styles.centerIconFrame, isSelected && styles.selectedItem, item.key === "community" && isSelected && styles.selectedCenterItem]}>
                   {item.key === "profile" && user?.profilePhotoUrl ? (
                     <UserAvatar
@@ -115,7 +130,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                 <Text numberOfLines={1} style={[styles.label, item.key === "community" && styles.centerLabel, isSelected && styles.selectedLabel]}>
                   {item.label}
                 </Text>
-              </View>
+              </Animated.View>
             </TouchableOpacity>
           );
         })}
@@ -186,7 +201,7 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
   itemContent: {
-    width: 54,
+    width: 48,
     height: 56,
     alignItems: "center",
     justifyContent: "center",

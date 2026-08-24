@@ -178,6 +178,26 @@ class CommunityFeatureTest(unittest.TestCase):
         status, answered = self.request("POST", "/api/mobile/community/answer", "member-token", {"postId": post_id, "body": "Brookville has several quiet areas and a direct drive into Dayton."})
         self.assertEqual(status, 201)
         answer_id = answered["answerId"]
+        self.assertTrue(answered["conversationId"])
+        with app.db() as con:
+            chitthi_message = con.execute(
+                """SELECT messages.*, conversations.public_id AS conversation_public_id
+                   FROM chat_messages messages
+                   JOIN chat_conversations conversations ON conversations.id = messages.conversation_id
+                   WHERE messages.client_message_id = ?""",
+                (f"community-answer-{answer_id}",),
+            ).fetchone()
+            self.assertIsNotNone(chitthi_message)
+            self.assertEqual(chitthi_message["conversation_public_id"], answered["conversationId"])
+            self.assertEqual(chitthi_message["sender_id"], self.member_id)
+            self.assertEqual(chitthi_message["context_type"], "COMMUNITY")
+            self.assertEqual(chitthi_message["context_public_id"], post_id)
+            self.assertEqual(chitthi_message["message_text"], "Brookville has several quiet areas and a direct drive into Dayton.")
+            owner_participant = con.execute(
+                "SELECT last_read_message_id FROM chat_participants WHERE conversation_id = ? AND user_id = ?",
+                (chitthi_message["conversation_id"], self.owner_id),
+            ).fetchone()
+            self.assertLess(int(owner_participant["last_read_message_id"] or 0), int(chitthi_message["id"]))
         _, feed_with_comment = self.request("GET", "/api/mobile/community", "owner-token")
         feed_post = next(item for item in feed_with_comment["posts"] if item["id"] == post_id)
         self.assertEqual(feed_post["latestAnswer"]["id"], answer_id)

@@ -35,9 +35,14 @@ export function useResponsiveLayout(): ResponsiveLayout {
     const contentMaxWidth: number | "100%" = isTablet
       ? Math.min(width, TABLET_CONTENT_MAX_WIDTH)
       : "100%";
-    // The root SafeAreaView already keeps the app above the home indicator.
-    // Apply only the floating-pill offset here so the bar is not lifted twice.
-    const navBottomInset = BOTTOM_NAV_BOTTOM_OFFSET;
+    // The root SafeAreaView already ends above the device home-indicator inset.
+    // Let the floating pill extend into that reserved area so it sits visually
+    // near the screen edge, while retaining 16pt beneath it on gesture devices.
+    const navBottomInset = isTablet
+      ? BOTTOM_NAV_BOTTOM_OFFSET
+      : insets.bottom > 0
+        ? -(Math.max(0, insets.bottom - 16))
+        : BOTTOM_NAV_BOTTOM_OFFSET;
     // Extra 14pt breathing room so the last card is fully visible above the pill.
     const navClearance =
       BOTTOM_NAV_HEIGHT + BOTTOM_NAV_BOTTOM_OFFSET + 14;

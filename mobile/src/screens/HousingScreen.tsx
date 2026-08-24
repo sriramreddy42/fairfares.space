@@ -48,6 +48,7 @@ type Props = {
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   focusWelcomeKey?: number;
   carpoolFocusKey?: number;
+  rentalFocusKey?: number;
   rideOwnerOpenToken?: number;
   rideOwnerOpenTarget?: "workspace" | "requests" | "listings";
   rideOwnerEditId?: string;
@@ -122,12 +123,6 @@ function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
     </View>
   );
 }
-
-const postActions: Array<{ label: string; sub: string; icon: ImageSourcePropType; intent: string; bg: string; tint: string }> = [
-  { label: "I need a place", sub: "Post the room, area, budget, and move-in timing you need.", icon: appAssets.bed, intent: "need_place", bg: "#f5e5ff", tint: "#8f3fe7" },
-  { label: "I need roommates", sub: "Find the perfect roommates to share and save.", icon: appAssets.roommates, intent: "need_roommates", bg: "#effcf1", tint: "#18b984" },
-  { label: "I have a place", sub: "List your property or room and find the right people.", icon: appAssets.bed, intent: "have_place", bg: "#fff2d9", tint: "#f19a22" }
-];
 
 const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropType }> = [
   { label: "Shared Room", category: "shared_room", icon: appAssets.roommates },
@@ -566,6 +561,7 @@ export function HousingScreen({
   onBottomTabsHiddenChange,
   focusWelcomeKey = 0,
   carpoolFocusKey = 0,
+  rentalFocusKey = 0,
   rideOwnerOpenToken = 0,
   rideOwnerOpenTarget = "workspace",
   rideOwnerEditId = "",
@@ -659,7 +655,6 @@ export function HousingScreen({
   );
   const housingCardHeight = compactHousingHome ? 520 : 638;
   const scrollRef = useRef<ScrollView | null>(null);
-  const lastScrollYRef = useRef(0);
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
@@ -668,6 +663,11 @@ export function HousingScreen({
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [rideOwnerTrackerY, setRideOwnerTrackerY] = useState(0);
   const [welcomeY, setWelcomeY] = useState(0);
+
+  useEffect(() => {
+    if (ridePlannerOpen || rideOwnerOpen || rideListingSuccess) return;
+    onBottomTabsHiddenChange?.(false);
+  }, [onBottomTabsHiddenChange, rideListingSuccess, rideOwnerOpen, ridePlannerOpen]);
 
   useEffect(() => {
     if (!linkedHousingPost) return;
@@ -1021,6 +1021,11 @@ export function HousingScreen({
   }, [data?.location.city]);
 
   useEffect(() => {
+    if (selectedNeed === "rental_cars") {
+      setMode("cheapCars");
+      setRentalSearched(false);
+      return;
+    }
     if (selectedNeed === "ride_need" || selectedNeed === "ride_offer") {
       setMode("ride");
       setRideForm((current) => ({
@@ -1037,13 +1042,20 @@ export function HousingScreen({
   }, [carpoolFocusKey]);
 
   useEffect(() => {
+    if (!rentalFocusKey) return;
+    setMode("cheapCars");
+    setRentalSearched(false);
+  }, [rentalFocusKey]);
+
+  useEffect(() => {
     if (!focusWelcomeKey) return;
+    if (selectedNeed === "rental_cars" || selectedNeed === "ride_need" || selectedNeed === "ride_offer") return;
     setMode("housing");
     const timer = setTimeout(() => {
       scrollRef.current?.scrollTo({ y: Math.max(welcomeY - 92, 0), animated: true });
     }, 120);
     return () => clearTimeout(timer);
-  }, [focusWelcomeKey, welcomeY]);
+  }, [focusWelcomeKey, selectedNeed, welcomeY]);
 
   useEffect(() => {
     if (!rideOwnerOpenToken || rideOwnerOpenToken === lastRideOwnerOpenTokenRef.current) return;
@@ -1156,10 +1168,6 @@ export function HousingScreen({
   function updateScrollVisibility(y: number) {
     const nextSearchIsScrolled = y > 8;
     setSearchIsScrolled((current) => current === nextSearchIsScrolled ? current : nextSearchIsScrolled);
-    const previous = lastScrollYRef.current;
-    if (Math.abs(y - previous) < 18) return;
-    onBottomTabsHiddenChange?.(y > previous && y > 80);
-    lastScrollYRef.current = y;
   }
 
   async function resolveCurrentRideLocation() {
@@ -3392,28 +3400,33 @@ export function HousingScreen({
       <View style={styles.segment}>
         <TouchableOpacity
           style={[styles.segmentButton, mode === "housing" && styles.segmentActive]}
-          onPress={() => {
-            setMode("housing");
-            onNeedSelect("need_place");
-          }}
+          onPress={() => setMode("housing")}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: mode === "housing" }}
+          accessibilityLabel="Open Housing"
         >
           {renderSegmentIcon("housing", mode === "housing")}
           <Text style={[styles.segmentText, mode === "housing" && styles.segmentTextActive]}>Housing</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.segmentButton, mode === "ride" && styles.segmentActive]}
-          onPress={() => {
-            setMode("ride");
-          }}
+          onPress={() => setMode("ride")}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: mode === "ride" }}
+          accessibilityLabel="Open Carpool"
         >
           {renderSegmentIcon("ride", mode === "ride")}
           <Text style={[styles.segmentText, mode === "ride" && styles.segmentTextActive]}>Carpool</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.segmentButton, mode === "cheapCars" && styles.segmentActive]}
-          onPress={() => {
-            setMode("cheapCars");
-          }}
+          onPress={() => setMode("cheapCars")}
+          hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: mode === "cheapCars" }}
+          accessibilityLabel="Open Rental Cars"
         >
           {renderSegmentIcon("rental", mode === "cheapCars")}
           <Text style={[styles.segmentText, mode === "cheapCars" && styles.segmentTextActive]}>Rental Cars</Text>
@@ -3422,38 +3435,6 @@ export function HousingScreen({
 
       {mode === "cheapCars" ? renderRentalCarsOnly() : mode === "ride" ? renderRideOnly() : (
         <>
-
-      <View style={styles.homeSectionHeader}>
-        <Text style={styles.homeSectionTitle}>Create a post</Text>
-        <TouchableOpacity onPress={() => onPostNeed()}>
-          <Text style={styles.homeSectionAction}>View all ›</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.postActionGrid}>
-        {postActions.map((action, index) => (
-          <TouchableOpacity
-            key={action.intent}
-            activeOpacity={0.86}
-            style={[
-              styles.postActionCard,
-              index === 0 ? styles.postActionTiltLeft : index === 1 ? styles.postActionTiltCenter : styles.postActionTiltRight,
-              { backgroundColor: action.bg }
-            ]}
-            onPress={() => onPostNeed(action.intent)}
-          >
-            <View style={styles.postActionIconTile}>
-              <Image source={action.icon} style={styles.postActionIcon} resizeMode="contain" />
-            </View>
-            <View style={styles.postActionCopy}>
-              <Text style={styles.postNeedTitle}>{action.label}</Text>
-              <Text style={styles.postNeedMeta}>{action.sub}</Text>
-            </View>
-            <View style={[styles.postActionArrow, { backgroundColor: action.tint }]}>
-              <Text style={styles.postActionArrowText}>›</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </View>
 
       <View
         style={styles.welcome}
@@ -4200,70 +4181,6 @@ const styles = StyleSheet.create({
   exportsInfoFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
   exportsInfoDoneButton: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 2 },
   exportsInfoDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
-  homeSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 2 },
-  homeSectionTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
-  homeSectionAction: { color: theme.colors.brand, fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  postActionGrid: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingHorizontal: 4, paddingVertical: 5 },
-  postActionCard: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 170,
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    alignItems: "flex-start",
-    gap: 7,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.72)"
-  },
-  postActionTiltLeft: { transform: [{ rotate: "-1.2deg" }], marginTop: 4 },
-  postActionTiltCenter: { transform: [{ rotate: "0.7deg" }] },
-  postActionTiltRight: { transform: [{ rotate: "1.2deg" }], marginTop: 4 },
-  postActionIconTile: {
-    width: 39,
-    height: 39,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.72)",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 }
-  },
-  postActionIcon: { width: 25, height: 25 },
-  postActionCopy: { flex: 1, minWidth: 0, zIndex: 2 },
-  postNeedTitle: { color: "#111827", fontSize: 14, lineHeight: 17, fontWeight: "700" },
-  postNeedMeta: { color: "#263143", marginTop: 3, fontSize: 11, lineHeight: 15, fontWeight: "500" },
-  postActionScene: {
-    position: "absolute",
-    right: 42,
-    top: 0,
-    bottom: 0,
-    width: 118,
-    alignItems: "center",
-    justifyContent: "center",
-    opacity: 0.42
-  },
-  postActionSceneCircle: {
-    position: "absolute",
-    width: 112,
-    height: 112,
-    borderRadius: 56,
-    opacity: 0.16
-  },
-  postActionSceneIcon: { width: 78, height: 78 },
-  postActionArrow: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignSelf: "flex-end",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 2
-  },
-  postActionArrowText: { color: theme.colors.text, fontSize: 24, lineHeight: 26, fontWeight: "600", marginTop: -2 },
   cityExperienceEyebrow: { color: "#56d99c", fontSize: 10, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
   cityExperienceProfileRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   cityExperienceAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#1a8f61", borderWidth: 3, borderColor: "#c9f5df", overflow: "hidden", alignItems: "center", justifyContent: "center" },

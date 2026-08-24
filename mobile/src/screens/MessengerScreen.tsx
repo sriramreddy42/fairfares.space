@@ -5421,7 +5421,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {message.contextTitle ? (
                   <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
-                      {message.contextType === "CARPOOL" ? "Carpool listing" : "Housing listing"}
+                      {message.contextType === "CARPOOL" ? "Carpool listing" : message.contextType === "COMMUNITY" ? "Ask Community" : "Housing listing"}
                       {message.contextOwnerName ? ` · ${message.contextOwnerName}` : ""}
                     </Text>
                     <Text style={[styles.messageContextTitle, message.mine ? styles.myMessageContextTitle : styles.theirMessageContextTitle]} numberOfLines={2}>
