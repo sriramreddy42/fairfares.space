@@ -18603,6 +18603,37 @@ def chat_group_invite_hash(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
+def public_chat_group_invite_token(public_id: str) -> str:
+    """Return a stable signed token understood by legacy token-based clients."""
+    clean_public_id = clean_text_value(public_id, 100)
+    encoded = base64.urlsafe_b64encode(clean_public_id.encode("utf-8")).decode("ascii").rstrip("=")
+    signature = hmac.new(
+        application_secret().encode("utf-8"),
+        f"chitthi-public-group:{encoded}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"public.{encoded}.{signature}"
+
+
+def public_chat_group_id_from_invite(token: str) -> str:
+    parts = (token or "").strip().split(".")
+    if len(parts) != 3 or parts[0] != "public" or not parts[1] or not parts[2]:
+        return ""
+    expected = hmac.new(
+        application_secret().encode("utf-8"),
+        f"chitthi-public-group:{parts[1]}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(parts[2], expected):
+        return ""
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        public_id = base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    return clean_text_value(public_id, 100)
+
+
 def chat_group_member_role(con: sqlite3.Connection, community_id: int, user_id: int) -> str:
     row = con.execute(
         "SELECT role FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
@@ -18634,6 +18665,10 @@ def create_chat_group_invite(public_id: str, user_id: int, expires_days: int = 7
 
 def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, object] | None, str]:
     clean_token = (token or "").strip()
+    public_group_id = public_chat_group_id_from_invite(clean_token)
+    if public_group_id:
+        joined, error = join_chat_community(public_group_id, user_id)
+        return joined, error or ("" if joined else "This public group is unavailable.")
     if len(clean_token) < 24:
         return None, "This invitation link is invalid."
     with db() as con:
@@ -18679,6 +18714,28 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
 def preview_chat_group_invite(token: str, user_id: int) -> tuple[dict[str, object] | None, str]:
     """Validate an invitation without joining or consuming it."""
     clean_token = (token or "").strip()
+    public_group_id = public_chat_group_id_from_invite(clean_token)
+    if public_group_id:
+        with db() as con:
+            community = con.execute(
+                """SELECT communities.*,
+                          (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count,
+                          EXISTS(SELECT 1 FROM chat_community_members mine WHERE mine.community_id = communities.id AND mine.user_id = ?) AS already_member
+                   FROM chat_communities communities
+                   WHERE communities.public_id = ? AND communities.visibility = 'PUBLIC'
+                   LIMIT 1""",
+                (user_id, public_group_id),
+            ).fetchone()
+        if not community:
+            return None, "This public group is unavailable."
+        return {
+            "id": str(row_value(community, "public_id") or ""),
+            "name": str(row_value(community, "name") or "Public group"),
+            "description": str(row_value(community, "description") or ""),
+            "area": str(row_value(community, "area_label") or ""),
+            "memberCount": int(row_value(community, "member_count") or 0),
+            "alreadyMember": bool(int(row_value(community, "already_member") or 0)),
+        }, ""
     if len(clean_token) < 24:
         return None, "This invitation link is invalid."
     with db() as con:
@@ -23559,7 +23616,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return f"/login?next={urllib.parse.quote(safe_next, safe='')}"
 
     def community_join_url(self, public_id: str) -> str:
-        return f"{schema_origin()}/chitthi/group?community_id={urllib.parse.quote(public_id)}"
+        token = public_chat_group_invite_token(public_id)
+        return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
 
     def community_invite_url(self, token: str) -> str:
         return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
@@ -23729,10 +23787,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # showing the alarming "application couldn't be opened" dialog that
         # an unavailable custom URL scheme produces. Devices without the app
         # simply follow the normal apex-to-www redirect back to this page.
-        universal_app_link = f"https://fairfare.space{parsed.path}?{parsed.query}"
+        app_invite_token = token or public_chat_group_invite_token(community_id)
+        app_invite_query = urllib.parse.urlencode({"group_invite": app_invite_token})
+        universal_app_link = f"https://fairfare.space/chitthi/invite?{app_invite_query}"
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
-        group_query = f"group_invite={urllib.parse.quote(token)}" if token else f"community_id={urllib.parse.quote(community_id)}"
+        group_query = app_invite_query
         android_app_link = (
             f"intent://group?{group_query}#Intent;scheme=fairfares;"
             "package=com.fairfares.mobile;"

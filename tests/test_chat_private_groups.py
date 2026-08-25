@@ -279,6 +279,39 @@ class ChatPrivateGroupsTest(unittest.TestCase):
                 "SELECT 1 FROM chat_community_members WHERE user_id = ?", (self.member,)
             ).fetchone())
 
+    def test_signed_public_invite_supports_legacy_token_join_flow(self):
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO chat_communities
+                   (public_id, kind, name, description, area_label, visibility)
+                   VALUES ('FFG-LEGACY-PUBLIC', 'GROUP', 'Legacy public group', 'Compatible with 0.1.6', 'Denver, CO', 'PUBLIC')"""
+            )
+        token = app.public_chat_group_invite_token("FFG-LEGACY-PUBLIC")
+        self.assertGreaterEqual(len(token), 24)
+        preview, error = app.preview_chat_group_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertEqual(preview["id"], "FFG-LEGACY-PUBLIC")
+        self.assertFalse(preview["alreadyMember"])
+
+        joined, error = app.join_chat_group_by_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertTrue(joined["joined"])
+        preview, error = app.preview_chat_group_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertTrue(preview["alreadyMember"])
+
+    def test_signed_public_invite_rejects_tampering_and_private_groups(self):
+        group = self.create_group()
+        private_token = app.public_chat_group_invite_token(group["id"])
+        joined, error = app.join_chat_group_by_invite(private_token, self.outsider)
+        self.assertIsNone(joined)
+        self.assertIn("private", error.lower())
+
+        tampered = private_token[:-1] + ("0" if private_token[-1] != "0" else "1")
+        preview, error = app.preview_chat_group_invite(tampered, self.outsider)
+        self.assertIsNone(preview)
+        self.assertIn("invalid", error.lower())
+
     def test_expired_and_revoked_invites_are_rejected(self):
         group = self.create_group()
         expired_token, _ = app.create_chat_group_invite(group["id"], self.owner)
