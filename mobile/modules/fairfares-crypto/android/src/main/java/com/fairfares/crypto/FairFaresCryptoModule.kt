@@ -241,9 +241,9 @@ class FairFaresCryptoModule : Module() {
         ?: retriever.getFrameAtTime(100_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
         ?: return ""
       val sourceFrame = frame ?: return ""
-      var width = minOf(240, sourceFrame.width)
-      var quality = 52
-      repeat(6) {
+      var width = minOf(320, sourceFrame.width)
+      var quality = 68
+      repeat(7) {
         val height = maxOf(1, Math.round(sourceFrame.height.toFloat() * width.toFloat() / sourceFrame.width.toFloat()))
         if (scaled !== sourceFrame) scaled?.recycle()
         scaled = Bitmap.createScaledBitmap(sourceFrame, width, height, true)
@@ -257,8 +257,8 @@ class FairFaresCryptoModule : Module() {
         } finally {
           output.close()
         }
-        width = maxOf(72, Math.round(width * 0.78f))
-        quality = maxOf(18, quality - 7)
+        width = maxOf(96, Math.round(width * 0.82f))
+        quality = maxOf(28, quality - 7)
       }
       return ""
     } finally {

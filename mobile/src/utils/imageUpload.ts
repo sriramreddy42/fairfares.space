@@ -6,10 +6,11 @@ import { createVideoPlayer } from "expo-video";
 import { Platform } from "react-native";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 
-// Large enough to remain recognizable in a chat bubble, while keeping the
-// complete per-device encrypted descriptor below the backend's 12 KB envelope
-// ceiling even after JSON, NaCl and base64 overhead.
-const CHAT_THUMBNAIL_MAX_BYTES = 5_000;
+// The thumbnail stays inside the per-device end-to-end encrypted descriptor;
+// it is never stored as a public image. 320 px / 15 KB is sharp enough for a
+// modern chat bubble while remaining comfortably below the backend envelope
+// allowance after JSON, NaCl and base64 overhead.
+const CHAT_THUMBNAIL_MAX_BYTES = 15_000;
 const IS_EXPO_GO = Constants.appOwnership === "expo";
 
 function decodedBase64Size(value: string) {
@@ -18,9 +19,9 @@ function decodedBase64Size(value: string) {
 }
 
 export async function createLightweightChatThumbnail(uri: string) {
-  let width = 240;
-  let quality = 0.52;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  let width = 320;
+  let quality = 0.68;
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     const thumbnail = await ImageManipulator.manipulateAsync(uri, [{ resize: { width } }], {
       base64: true,
       compress: quality,
@@ -34,8 +35,8 @@ export async function createLightweightChatThumbnail(uri: string) {
         await FileSystem.deleteAsync(thumbnail.uri, { idempotent: true }).catch(() => undefined);
       }
     }
-    width = Math.max(72, Math.round(width * 0.78));
-    quality = Math.max(0.18, quality - 0.07);
+    width = Math.max(96, Math.round(width * 0.82));
+    quality = Math.max(0.28, quality - 0.07);
   }
   // A thumbnail is an optimization, never a reason to block the attachment.
   return "";
@@ -77,9 +78,9 @@ export async function createLightweightVideoThumbnail(uri: string) {
     }
     const frame = frames[0];
     if (!frame) return "";
-    let width = 240;
-    let quality = 0.52;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    let width = 320;
+    let quality = 0.68;
+    for (let attempt = 0; attempt < 7; attempt += 1) {
       const context = ImageManipulator.ImageManipulator.manipulate(frame);
       let rendered: Awaited<ReturnType<typeof context.renderAsync>> | undefined;
       let savedUri = "";
@@ -98,8 +99,8 @@ export async function createLightweightVideoThumbnail(uri: string) {
         context.release();
         if (savedUri) await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
       }
-      width = Math.max(72, Math.round(width * 0.78));
-      quality = Math.max(0.18, quality - 0.07);
+      width = Math.max(96, Math.round(width * 0.82));
+      quality = Math.max(0.28, quality - 0.07);
     }
     return "";
   } finally {

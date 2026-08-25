@@ -165,7 +165,7 @@ public final class FairFaresCryptoModule: Module {
 
   private func generateVideoThumbnail(_ fileUri: String, _ maximumBytes: Int) throws -> String {
     let source = try url(fileUri)
-    guard maximumBytes >= 1_000 && maximumBytes <= 12_000,
+    guard maximumBytes >= 1_000 && maximumBytes <= 32_000,
           FileManager.default.fileExists(atPath: source.path) else {
       throw NSError(domain: "FairFaresCrypto", code: 15, userInfo: [NSLocalizedDescriptionKey: "The selected video is unavailable for thumbnail generation."])
     }
@@ -200,7 +200,7 @@ public final class FairFaresCryptoModule: Module {
   }
 
   private func generatePhotoLibraryVideoThumbnail(_ assetIdentifier: String, _ maximumBytes: Int) throws -> String {
-    guard maximumBytes >= 1_000 && maximumBytes <= 12_000, !assetIdentifier.isEmpty else {
+    guard maximumBytes >= 1_000 && maximumBytes <= 32_000, !assetIdentifier.isEmpty else {
       throw NSError(domain: "FairFaresCrypto", code: 15, userInfo: [NSLocalizedDescriptionKey: "The selected video is unavailable for thumbnail generation."])
     }
     guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil).firstObject,
@@ -230,8 +230,8 @@ public final class FairFaresCryptoModule: Module {
 
   private func encodeThumbnail(_ sourceImage: UIImage, _ maximumBytes: Int) throws -> String {
     var uiImage = sourceImage
-    var quality: CGFloat = 0.52
-    var width: CGFloat = min(240, uiImage.size.width)
+    var quality: CGFloat = 0.68
+    var width: CGFloat = min(320, uiImage.size.width)
     for _ in 0..<7 {
       let scale = width / max(1, uiImage.size.width)
       let size = CGSize(width: width, height: max(1, uiImage.size.height * scale))
@@ -241,8 +241,8 @@ public final class FairFaresCryptoModule: Module {
         return jpeg.base64EncodedString()
       }
       uiImage = resized
-      width = max(64, width * 0.78)
-      quality = max(0.14, quality - 0.07)
+      width = max(96, width * 0.82)
+      quality = max(0.28, quality - 0.07)
     }
     throw NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The video thumbnail could not be reduced safely."])
   }

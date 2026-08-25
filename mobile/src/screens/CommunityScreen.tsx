@@ -32,16 +32,17 @@ type Props = {
 
 const categories = ["ALL", "GENERAL", "NEED_ROOMMATE", "NEED_PLACE", "HAVE_PLACE", "CARPOOL_RIDE"] as const;
 const popularTopics = [
-  { value: "HOUSING", icon: "🏠", title: "Housing", subtitle: "Ask or share", color: "#d8edff" },
-  { value: "RIDES", icon: "🚙", title: "Carpool", subtitle: "Find or offer", color: "#d9ffe7" },
-  { value: "ALL", icon: "💬", title: "General", subtitle: "All local posts", color: "#eee4ff" },
-  { value: "RENTALS", icon: "🚘", title: "Car Rental", subtitle: "Find a car", color: "#ffeadb" },
+  { value: "HOUSING", image: require("../../assets/ask-topic-housing.png"), title: "Housing", subtitle: "Ask or share", color: "#d8edff" },
+  { value: "RIDES", image: require("../../assets/ask-topic-carpool.png"), title: "Carpool", subtitle: "Find or offer", color: "#d9ffe7" },
+  { value: "ALL", image: require("../../assets/ask-topic-general.png"), title: "General", subtitle: "All local posts", color: "#eee4ff" },
+  { value: "RENTALS", image: require("../../assets/ask-topic-rental.png"), title: "Car Rental", subtitle: "Find a car", color: "#ffeadb" },
 ] as const;
 const housingQuickLinks = [
-  { intent: "need_place", title: "I need a place" },
-  { intent: "need_roommates", title: "Need roommates" },
-  { intent: "have_place", title: "I have a place" },
+  { intent: "need_place", icon: "👤", title: "I need a place", accent: "#16c98d", background: "#0a211b" },
+  { intent: "need_roommates", icon: "👥", title: "Need roommates", accent: "#398bff", background: "#091827" },
+  { intent: "have_place", icon: "⌂", title: "I have a place", accent: "#ff7b16", background: "#21160d" },
 ] as const;
+const communityHeroPoster = require("../../assets/ask-community-hero-v3.png");
 const types: Array<{ value: CommunityPost["type"]; label: string }> = [
   { value: "QUESTION", label: "Ask a question" }, { value: "REQUEST", label: "Request help" },
   { value: "RECOMMENDATION", label: "Recommend" }, { value: "UPDATE", label: "Share update" },
@@ -81,12 +82,18 @@ function relativeTime(value: string) {
 
 function message(error: unknown) { return error instanceof Error ? error.message : "Something went wrong. Please try again."; }
 function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "FF"; }
+function firstWebUrl(value: string) {
+  const match = value.match(/https?:\/\/[^\s<>]+/i)?.[0] || "";
+  return match.replace(/[),.!?;:'\"]+$/, "");
+}
 function previewOrFallback<T>(promise: Promise<T>, fallback: T, timeoutMs = 2500) {
   return Promise.race([promise.catch(() => fallback), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs))]);
 }
 
 function SharedLinkCard({ url }: { url: string }) {
   const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
+  const [previewImageFailed, setPreviewImageFailed] = useState(false);
+  const [faviconFailed, setFaviconFailed] = useState(false);
   const fallbackHost = useMemo(() => {
     try { return new URL(url).hostname.replace(/^www\./, ""); }
     catch { return url; }
@@ -94,6 +101,9 @@ function SharedLinkCard({ url }: { url: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    setPreview(null);
+    setPreviewImageFailed(false);
+    setFaviconFailed(false);
     void getChatLinkPreview(url)
       .then((payload) => { if (!cancelled) setPreview(payload.preview || null); })
       .catch(() => undefined);
@@ -102,23 +112,29 @@ function SharedLinkCard({ url }: { url: string }) {
 
   const title = preview?.title || preview?.siteName || fallbackHost;
   const host = preview?.siteName || preview?.host || fallbackHost;
+  const fallbackFaviconUrl = useMemo(() => {
+    try { return `${new URL(url).origin}/favicon.ico`; }
+    catch { return ""; }
+  }, [url]);
+  const faviconUrl = preview?.faviconUrl || fallbackFaviconUrl;
+  const destinationUrl = preview?.url || url;
   return (
     <TouchableOpacity
       style={styles.linkCard}
       activeOpacity={0.84}
-      onPress={(event) => { event.stopPropagation(); void Linking.openURL(url); }}
+      onPress={(event) => { event.stopPropagation(); void Linking.openURL(destinationUrl); }}
       accessibilityRole="link"
       accessibilityLabel={`Open helpful link from ${host}`}
     >
-      {preview?.imageUrl
-        ? <Image source={{ uri: preview.imageUrl }} style={styles.linkPreviewImage} resizeMode="cover" />
+      {preview?.imageUrl && !previewImageFailed
+        ? <Image source={{ uri: preview.imageUrl }} style={styles.linkPreviewImage} resizeMode="cover" onError={() => setPreviewImageFailed(true)} />
         : <View style={styles.linkPreviewPlaceholder}><Text style={styles.linkPreviewPlaceholderText}>↗</Text></View>}
       <View style={styles.linkContent}>
         <Text style={styles.linkLabel} numberOfLines={2}>{title}</Text>
         {preview?.description ? <Text style={styles.linkDescription} numberOfLines={2}>{preview.description}</Text> : null}
         <View style={styles.linkSource}>
-          {preview?.faviconUrl
-            ? <Image source={{ uri: preview.faviconUrl }} style={styles.linkFavicon} resizeMode="contain" />
+          {faviconUrl && !faviconFailed
+            ? <Image source={{ uri: faviconUrl }} style={styles.linkFavicon} resizeMode="contain" onError={() => setFaviconFailed(true)} />
             : <View style={styles.linkFaviconFallback}><Text style={styles.linkFaviconFallbackText}>↗</Text></View>}
           <Text style={styles.linkUrl} numberOfLines={1}>{host}</Text>
         </View>
@@ -294,9 +310,16 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   };
 
   const groupOptions = useMemo(() => groups.filter((group) => group.joined), [groups]);
-  const suggestedCommunities = useMemo(() => groups
-    .filter((group) => group.visibility === "PUBLIC")
-    .sort((left, right) => Number(right.joined) - Number(left.joined) || right.memberCount - left.memberCount), [groups]);
+  const suggestedCommunities = useMemo(() => {
+    const currentCity = city.trim().toLocaleLowerCase();
+    return groups
+      .filter((group) => {
+        if (group.visibility !== "PUBLIC") return false;
+        const groupCity = (group.suggestionCity || group.area || "").trim().toLocaleLowerCase();
+        return Boolean(currentCity && groupCity === currentCity);
+      })
+      .sort((left, right) => Number(left.joined) - Number(right.joined) || right.memberCount - left.memberCount);
+  }, [city, groups]);
   const setDetailField = (key: keyof typeof emptyDetails, value: string) => setForm((current) => ({ ...current, details: { ...current.details, [key]: value } }));
 
   const joinSuggestedCommunity = async (group: Community) => {
@@ -339,7 +362,7 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
       <Text style={styles.postBody} numberOfLines={4}>{post.body}</Text>
       {Object.keys(post.details || {}).length ? <View style={styles.detailFacts}>{Object.entries(post.details).filter(([, value]) => value).slice(0, 6).map(([key, value]) => <View key={key} style={styles.fact}><Text style={styles.factLabel}>{key.replace(/([A-Z])/g, " $1")}</Text><Text style={styles.factValue}>{value}</Text></View>)}</View> : null}
       {post.images.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imageRow}>{post.images.map((image, index) => <Image key={`${image}-${index}`} source={{ uri: absoluteUrl(image) }} style={styles.postImage} />)}</ScrollView> : null}
-      {post.linkUrl ? <SharedLinkCard url={post.linkUrl} /> : null}
+      {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       {post.reactionCount ? <View style={styles.activitySummary}><View style={styles.reactionBreakdown}>{reactionOptions.map((option) => { const count = option.value === "LIKE" ? (post.reactionCounts?.LIKE || 0) + (post.reactionCounts?.HELPFUL || 0) : post.reactionCounts?.[option.value] || 0; return count ? <Text key={option.value} style={styles.activityText}>{count} {option.emoji} {option.label}</Text> : null; })}</View></View> : null}
       <View style={styles.postActions}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, (reaction) => void reactPost(post, reaction), true)}
@@ -352,14 +375,14 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
 
   return <View style={styles.screen}>
     <ScrollView contentContainerStyle={[styles.content, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]} refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}>
-      <View style={styles.hero}><View style={styles.heroGlow} /><Text style={styles.accentLeft}>′′′</Text><Text style={styles.accentRight}>′′</Text><View style={styles.heroTop}><View style={styles.heroMark}><View style={styles.askBadge}><View style={styles.askBadgeTail} /><Text style={styles.askBadgeText}>Ask</Text></View><View style={styles.chatBubbles}><Text style={styles.chatBubbleBlue}>•••</Text></View></View><View style={styles.heroCopy}><View style={styles.communityTag}><View style={styles.communityTagTail} /><View style={styles.communityTagStitch} /><Text style={styles.heroCommunity}>Community</Text><Text style={styles.communityTagDot}>●</Text></View></View></View><Text style={styles.subtitle}>Trusted local answers from people who <Text style={styles.subtitleAccent}>know your city.</Text></Text></View>
+      <View style={styles.heroPosterFrame} accessibilityLabel="Ask Community. Trusted local answers from people who know your city. Local people, helpful answers, safe and private."><Image source={communityHeroPoster} style={styles.heroPoster} resizeMode="cover" /></View>
       <View style={styles.quickComposer}>
         <UserAvatar photoUrl={user?.profilePhotoUrl} style={styles.composerAvatar} imageStyle={styles.composerAvatarImage} />
         <TouchableOpacity style={styles.composerPrompt} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={styles.composerPromptText}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>
-      <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text>{category !== "ALL" ? <TouchableOpacity onPress={() => setCategory("ALL")}><Text style={styles.manageLink}>Show all</Text></TouchableOpacity> : null}</View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Text style={styles.topicIcon}>{item.icon}</Text><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
-      {category === "ALL" ? <View style={styles.quickLinksSection}><Text style={styles.quickLinksHeading}>Quick links</Text><View style={styles.quickLinksRow}>{housingQuickLinks.map((item, index) => <React.Fragment key={item.intent}>{index ? <View style={styles.quickLinkDivider} /> : null}<TouchableOpacity style={styles.quickLinkTextButton} activeOpacity={0.7} onPress={() => onCreateHousingPost(item.intent)} accessibilityRole="button" accessibilityLabel={`Create post: ${item.title}`}><Text style={styles.quickLinkText}>{item.title}</Text><Text style={styles.quickLinkChevron}>›</Text></TouchableOpacity></React.Fragment>)}</View></View> : null}
+      <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
+      {category === "ALL" ? <View style={styles.quickLinksSection}><Text style={styles.quickLinksHeading}>Quick links</Text><View style={styles.quickLinksRow}>{housingQuickLinks.map((item) => <TouchableOpacity key={item.intent} style={[styles.quickLinkTextButton, { backgroundColor: item.background, borderColor: item.accent }]} activeOpacity={0.7} onPress={() => onCreateHousingPost(item.intent)} accessibilityRole="button" accessibilityLabel={`Create post: ${item.title}`}><Text style={[styles.quickLinkIcon, { color: item.accent }]}>{item.icon}</Text><Text style={[styles.quickLinkText, { color: item.accent }]}>{item.title}</Text><Text style={[styles.quickLinkChevron, { color: item.accent }]}>›</Text></TouchableOpacity>)}</View></View> : null}
       <View style={styles.feedControls}><View><Text style={styles.relevanceTitle}>Most relevant</Text><Text style={styles.relevanceSubtitle}>{category === "ALL" ? "Posts and listings near you" : categoryLabels[category]}</Text></View><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={styles.filterIcon}>☷</Text></TouchableOpacity></View>
       {loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : <View style={styles.unifiedFeed}>
         {posts.map((post, index) => <React.Fragment key={post.id}>{renderPost(post)}{category === "ALL" && index === communityInsertIndex ? renderCommunitySuggestions() : null}</React.Fragment>)}
@@ -410,8 +433,9 @@ const styles = StyleSheet.create({
   currentLocationCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: "#315348", backgroundColor: "#171d1b" }, currentLocationPin: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#21372f" }, currentLocationPinText: { color: theme.colors.brand, fontSize: 25, lineHeight: 28, fontWeight: "800" }, currentLocationCopy: { flex: 1 }, currentLocationEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .8 }, currentLocationCity: { color: theme.colors.text, fontSize: 15, fontWeight: "900", marginTop: 2 }, currentLocationArea: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 }, currentLocationArrow: { color: theme.colors.brand, fontSize: 28, lineHeight: 30, fontWeight: "300" },
   inlineCommunities: { marginVertical: 8, paddingVertical: 12, gap: 7, borderRadius: 15, borderWidth: 1, borderColor: "#383838", backgroundColor: "#181818", overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .7 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, minHeight: 28, borderRadius: 999, backgroundColor: "#292929" }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 9, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 18, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, paddingHorizontal: 12 }, inlineCommunityRail: { paddingHorizontal: 12, gap: 8 }, inlineCommunityCard: { width: 124, minHeight: 153, padding: 9, borderRadius: 13, borderWidth: 1, borderColor: "#3a3a3a", backgroundColor: "#202020", alignItems: "center" }, inlineCommunityPhoto: { width: 46, height: 46, borderRadius: 23, marginBottom: 6, backgroundColor: "#2b2b2b" }, inlineCommunityPhotoImage: { borderRadius: 23 }, inlineCommunityPhotoGlyph: { fontSize: 22 }, inlineCommunityName: { color: theme.colors.text, fontSize: 11, lineHeight: 13, fontWeight: "900", minHeight: 26, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 8, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: "#a8b5af", fontSize: 8, fontWeight: "700", marginTop: 2, marginBottom: 6 }, inlineJoinButton: { width: "100%", minHeight: 28, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 10 }, inlineJoinedButton: { borderWidth: 1, borderColor: "#505050", backgroundColor: "#292929" }, inlineJoinText: { color: "#06291e", fontSize: 10, fontWeight: "900" }, inlineJoinedText: { color: "#e8e8e8" },
   hero: { minHeight: 136, gap: 11, padding: 16, paddingTop: 23, backgroundColor: "#071e1b", borderWidth: 1, borderColor: "#17604e", borderRadius: 28, overflow: "hidden" }, heroTop: { width: "100%", flexDirection: "row", alignItems: "center", gap: 12 }, heroMark: { width: 92, height: 70, justifyContent: "center" }, askBadge: { width: 82, height: 55, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#ef3e42", transform: [{ rotate: "-5deg" }], shadowColor: "#000", shadowOpacity: .25, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } }, askBadgeText: { color: "#fff", fontSize: 29, fontStyle: "italic", fontWeight: "900" }, chatBubbles: { position: "absolute", right: 0, top: -5 }, chatBubbleBlue: { color: "#e8fff7", backgroundColor: "#16a878", borderRadius: 14, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 9 }, chatBubbleGold: { alignSelf: "flex-end", marginTop: -1, color: "#fff7d1", backgroundColor: "#f0a800", borderRadius: 9, overflow: "hidden", paddingHorizontal: 5, fontSize: 7 }, heroCopy: { flex: 1 }, communityTag: { alignSelf: "flex-start", minWidth: 150, height: 43, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 13, backgroundColor: "#fff5cf", borderWidth: 2, borderColor: "#e9aa20", borderRadius: 10, transform: [{ rotate: "-2deg" }], shadowColor: "#000", shadowOpacity: .22, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }, communityTagTail: { position: "absolute", left: -5, bottom: -4, width: 12, height: 12, backgroundColor: "#fff5cf", borderLeftWidth: 2, borderBottomWidth: 2, borderColor: "#e9aa20", transform: [{ rotate: "-20deg" }] }, communityTagDot: { position: "absolute", right: 6, color: "#e9aa20", fontSize: 7 }, heroCommunity: { color: "#082b62", fontSize: 24, lineHeight: 30, fontFamily: Platform.select({ ios: "Bradley Hand", android: "cursive", default: "serif" }), fontWeight: "700", letterSpacing: -0.4 }, eyebrow: { ...theme.typography.eyebrow, color: "#72d9ae" }, title: { color: "#fff", fontSize: 31, lineHeight: 36, fontWeight: "800" }, subtitle: { width: "100%", color: "#f2faf7", fontSize: 14, lineHeight: 20, marginTop: 2, paddingHorizontal: 4 }, askButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center" }, askButtonText: { color: "#06291e", fontWeight: "800", fontSize: 14 },
-  topicGrid: { flexDirection: "row", justifyContent: "space-between", gap: 6, paddingTop: 8 }, topicCard: { minHeight: 88, borderRadius: 16, padding: 7, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,.45)" }, topicSelected: { borderColor: theme.colors.brand, transform: [{ scale: 0.98 }] }, topicIcon: { fontSize: 24, marginBottom: 4 }, topicTitle: { color: "#11181b", fontWeight: "900", fontSize: 12 }, topicSubtitle: { color: "#627078", fontSize: 9, marginTop: 2, textAlign: "center" }, tipCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 13, borderRadius: 22, paddingHorizontal: 17, backgroundColor: "#0d4038", borderWidth: 1, borderColor: "#25685b" }, tipIcon: { fontSize: 25 }, tipTitle: { color: "#fff", fontWeight: "900", fontSize: 16 }, tipBody: { color: "#a9cfc5", fontSize: 12, lineHeight: 18, marginTop: 3 }, tipArrow: { color: "#fff", fontSize: 38, fontWeight: "300" },
-  quickLinksSection: { gap: 5 }, quickLinksHeading: { color: theme.colors.muted, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: .5 }, quickLinksRow: { minHeight: 38, flexDirection: "row", alignItems: "center" }, quickLinkTextButton: { flex: 1, minWidth: 0, minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, paddingHorizontal: 3 }, quickLinkText: { color: theme.colors.brand, fontSize: 12, lineHeight: 16, fontWeight: "700", textAlign: "center" }, quickLinkChevron: { color: theme.colors.brand, fontSize: 18, lineHeight: 20, fontWeight: "400", marginTop: -1 }, quickLinkDivider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: theme.colors.line },
+  heroPosterFrame: { width: "100%", aspectRatio: 1400 / 623, borderRadius: 25, overflow: "hidden", backgroundColor: "#020b18" }, heroPoster: { ...StyleSheet.absoluteFillObject, width: undefined, height: undefined },
+  topicGrid: { flexDirection: "row", justifyContent: "space-between", gap: 6, paddingTop: 8 }, topicCard: { minHeight: 88, borderRadius: 16, padding: 7, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,.45)" }, topicSelected: { borderColor: theme.colors.brand, transform: [{ scale: 0.98 }] }, topicImage: { width: 38, height: 38, marginBottom: 2 }, topicTitle: { color: "#11181b", fontWeight: "900", fontSize: 12 }, topicSubtitle: { color: "#627078", fontSize: 9, marginTop: 2, textAlign: "center" }, tipCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 13, borderRadius: 22, paddingHorizontal: 17, backgroundColor: "#0d4038", borderWidth: 1, borderColor: "#25685b" }, tipIcon: { fontSize: 25 }, tipTitle: { color: "#fff", fontWeight: "900", fontSize: 16 }, tipBody: { color: "#a9cfc5", fontSize: 12, lineHeight: 18, marginTop: 3 }, tipArrow: { color: "#fff", fontSize: 38, fontWeight: "300" },
+  quickLinksSection: { gap: 7 }, quickLinksHeading: { color: theme.colors.text, fontSize: 13, fontWeight: "900" }, quickLinksRow: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 7 }, quickLinkTextButton: { flex: 1, minWidth: 0, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, paddingHorizontal: 6, borderRadius: 14, borderWidth: 1 }, quickLinkIcon: { fontSize: 15, lineHeight: 18, fontWeight: "900" }, quickLinkText: { flexShrink: 1, fontSize: 10, lineHeight: 14, fontWeight: "800", textAlign: "center" }, quickLinkChevron: { fontSize: 20, lineHeight: 21, fontWeight: "600", marginTop: -1 }, quickLinkDivider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: theme.colors.line },
   needGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 }, needOption: { width: "48%", minHeight: 76, flexDirection: "row", alignItems: "center", gap: 9, padding: 12, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, needIcon: { fontSize: 22 }, needText: { flex: 1, color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
   searchRow: { flexDirection: "row", gap: 8 }, searchInput: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, backgroundColor: theme.colors.panel, color: theme.colors.text, paddingHorizontal: 14 }, searchButton: { minHeight: 48, justifyContent: "center", paddingHorizontal: 16, borderRadius: 15, backgroundColor: theme.colors.brand }, searchButtonText: { color: "#06291e", fontWeight: "800" },
   chips: { gap: 8, paddingRight: 12 }, chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center", marginRight: 8, backgroundColor: theme.colors.panel }, chipActive: { backgroundColor: "#d8fff0", borderColor: "#d8fff0" }, chipText: { color: theme.colors.soft, fontWeight: "700", fontSize: 13 }, chipTextActive: { color: "#093525" }, sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" }, manageLink: { color: theme.colors.brand, fontWeight: "800", fontSize: 13 }, groups: { gap: 7, paddingTop: 7, paddingRight: 8 }, groupCard: { width: 96, minHeight: 78, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 14, padding: 9, gap: 3 }, groupActive: { borderColor: theme.colors.brand, backgroundColor: "#14271f" }, groupEmoji: { fontSize: 20 }, groupPhoto: { width: 24, height: 24, borderRadius: 8 }, groupName: { color: theme.colors.text, fontWeight: "800", fontSize: 11 }, groupCount: { color: theme.colors.muted, fontSize: 9 }, feedHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 }, feedHint: { color: theme.colors.muted, fontSize: 11 }, loader: { marginVertical: 50 },

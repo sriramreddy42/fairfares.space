@@ -452,6 +452,23 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             self.assertIsNone(rejected)
             self.assertIn("sender", error.lower())
 
+            sharper_preview_envelopes = [{**item, "ciphertext": "x" * 30_000} for item in envelopes]
+            sharper_message, error = app.save_encrypted_chat_message(
+                con, conversation, owner, sharper_preview_envelopes, "encrypted-sharp-preview"
+            )
+            self.assertFalse(error)
+            self.assertIsNotNone(sharper_message)
+
+            oversized_envelopes = [
+                {**item, "ciphertext": "x" * (app.MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS + 1)}
+                for item in envelopes
+            ]
+            rejected, error = app.save_encrypted_chat_message(
+                con, conversation, owner, oversized_envelopes, "encrypted-oversized-preview"
+            )
+            self.assertIsNone(rejected)
+            self.assertIn("invalid", error.lower())
+
     def test_device_key_registration_rejects_malformed_curve_key(self):
         malformed = base64.b64encode(b"too short").decode("ascii")
         error = app.register_chat_device_key(self.owner, "owner-device-invalid", malformed)

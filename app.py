@@ -117,6 +117,10 @@ ALLOWED_CHAT_FILE_MIME_TYPES = {
 MAX_CHAT_FILE_BYTES = 8_000_000
 # 100 MB plaintext plus bounded CHUNKED_SECRETBOX_V2 authentication overhead.
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
+# Attachment descriptors include a small end-to-end encrypted chat preview.
+# Keep accepting the original compact envelopes while leaving enough room for
+# newer clients to embed a sharper 15 KB thumbnail after encryption/base64.
+MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS = 40_000
 CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
 CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 100)))
@@ -19089,7 +19093,7 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
     for item in envelopes:
         if str(item.get("senderPublicKey") or "") not in sender_public_keys:
             return None, "The sender encryption key is not registered to this device."
-        if (len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000
+        if (len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS
                 or len(str(item.get("previewNonce") or "")) > 100 or len(str(item.get("previewCiphertext") or "")) > 1000):
             return None, "Encrypted message is invalid."
     if reply_to_message_id:
@@ -26675,7 +26679,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if not isinstance(item, dict) or str(item.get("senderPublicKey") or "") not in sender_public_keys:
                     self.send_json({"ok": False, "message": "The edited message encryption key is invalid."}, 400)
                     return
-                if len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > 12000:
+                if len(str(item.get("nonce") or "")) > 100 or len(str(item.get("ciphertext") or "")) > MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS:
                     self.send_json({"ok": False, "message": "The encrypted replacement is invalid."}, 400)
                     return
             con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (message_id,))
