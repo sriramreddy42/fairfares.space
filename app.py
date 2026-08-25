@@ -21229,14 +21229,12 @@ def absolute_public_url(value: str, fallback: str = "/static/img/appicon.png") -
     return f"{schema_origin()}/{value.lstrip('/')}"
 
 
-def app_only_open_script(deep_link: str, *, auto_open: bool = True) -> str:
+def app_only_open_script(deep_link: str) -> str:
     if not deep_link:
         return ""
     ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
     android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
-    if auto_open:
-        return f"""<script>(function(){{var app={json.dumps(deep_link)},ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;var fallback=setTimeout(function(){{if(!document.hidden)location.replace(store)}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.replace(app)}})()</script>"""
-    return f"""<script>(function(){{var ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;document.querySelectorAll('[data-open-fairfares]').forEach(function(link){{link.addEventListener('click',function(){{var fallback=setTimeout(function(){{if(!document.hidden)location.href=store}},1800);document.addEventListener('visibilitychange',function hidden(){{if(document.hidden){{clearTimeout(fallback);document.removeEventListener('visibilitychange',hidden)}}}})}})}})}})()</script>"""
+    return f"""<script>(function(){{var app={json.dumps(deep_link)},ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;var fallback=setTimeout(function(){{if(!document.hidden)location.replace(store)}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.replace(app)}})()</script>"""
 
 
 def share_card_image_bytes(value: str, max_bytes: int = 6_000_000) -> bytes:
@@ -23715,8 +23713,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        LIMIT 1""",
                     (community_id,),
                 ).fetchone()
-        deep_link = f"fairfares://group?group_invite={urllib.parse.quote(token)}" if token else f"fairfares://group?community_id={urllib.parse.quote(community_id)}"
-        safe_deep_link = html.escape(deep_link, quote=True)
         app_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
         safe_app_store_url = html.escape(app_store_url, quote=True)
         group_name = str(row_value(group, "name") or "Chitthi group")
@@ -23728,6 +23724,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         share_card_query = f"kind=group&token={urllib.parse.quote(token)}" if token else f"kind=group&id={urllib.parse.quote(community_id)}"
         share_image = f"{schema_origin()}/api/share-card?{share_card_query}"
         share_url = f"{schema_origin()}{parsed.path}?{parsed.query}"
+        # Use the apex host as a cross-site Universal Link from the canonical
+        # www landing page. iOS can hand this HTTPS URL to FairFares without
+        # showing the alarming "application couldn't be opened" dialog that
+        # an unavailable custom URL scheme produces. Devices without the app
+        # simply follow the normal apex-to-www redirect back to this page.
+        universal_app_link = f"https://fairfare.space{parsed.path}?{parsed.query}"
+        safe_universal_app_link = html.escape(universal_app_link, quote=True)
+        android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+        group_query = f"group_invite={urllib.parse.quote(token)}" if token else f"community_id={urllib.parse.quote(community_id)}"
+        android_app_link = (
+            f"intent://group?{group_query}#Intent;scheme=fairfares;"
+            "package=com.fairfares.mobile;"
+            f"S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
+        )
         escaped_image = html.escape(share_image, quote=True)
         # Use the official high-contrast lockup here as well as inside the generated
         # preview card so the landing page and social preview have identical branding.
@@ -23745,8 +23755,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if group_photo
             else ""
         )
-        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_deep_link}\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"robots\" content=\"noindex,nofollow\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{escaped_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_image}\"><meta property=\"og:image:type\" content=\"image/png\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(group_name + ' Chitthi group preview', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_image}\"></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a data-open-fairfares href=\"{safe_deep_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install or update FairFares</a></main>{app_only_open_script(deep_link, auto_open=False)}</body></html>"""
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"robots\" content=\"noindex,nofollow\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{escaped_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_image}\"><meta property=\"og:image:type\" content=\"image/png\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(group_name + ' Chitthi group preview', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_image}\"></head>
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a id=\"open-chitthi-app\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install or update FairFares</a></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var link=document.getElementById('open-chitthi-app');if(link)link.href={json.dumps(android_app_link)}}}}})()</script></body></html>"""
         self.send_text(
             body,
             "text/html; charset=utf-8",
