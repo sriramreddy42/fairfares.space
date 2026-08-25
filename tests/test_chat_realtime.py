@@ -682,10 +682,10 @@ class ChatRealtimeTest(unittest.TestCase):
             with urllib.request.urlopen(confirmation, timeout=3) as response:
                 confirmed = json.loads(response.read().decode())
             self.assertTrue(confirmed["recorded"])
-            self.assertTrue(confirmed["deleted"])
+            self.assertFalse(confirmed["deleted"])
             with app.db() as con:
                 after_confirmation = con.execute("SELECT attachment_url, metadata_json FROM chat_messages WHERE id = ?", (int(result["message"]["id"]),)).fetchone()
-            self.assertEqual(after_confirmation["attachment_url"], "")
+            self.assertTrue(after_confirmation["attachment_url"])
             self.assertIn("downloadedByAll", after_confirmation["metadata_json"])
 
             backup_payload = "encrypted-only-" + ("Z" * 120)

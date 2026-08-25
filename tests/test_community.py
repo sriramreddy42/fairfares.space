@@ -94,6 +94,68 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
 
+    def test_layered_feed_returns_local_first_and_active_public_usa_fallback(self):
+        _, local = self.create_post(title="Dayton neighborhood advice", city="Dayton, OH")
+        _, local_full_state = self.create_post(token="member-token", title="Dayton events this weekend", city="Dayton, Ohio")
+        _, national = self.create_post(title="Columbus community update", city="Columbus, OH")
+        _, national_full_state = self.create_post(token="outsider-token", title="Austin community update", city="Austin, Texas")
+        _, international = self.create_post(title="Hyderabad community update", city="Hyderabad, Telangana, India")
+        _, resolved = self.create_post(title="Resolved Denver housing request", city="Denver, CO")
+        _, private = self.create_post(title="Private Dallas group update", city="Dallas, TX")
+        _, reported = self.create_post(token="member-token", title="Reported Seattle community post", city="Seattle, WA")
+        with app.db() as con:
+            con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-DENVER-SUFFIX', ?, 'UPDATE', 'Denver listing with country suffix', 'Local Denver update with a country-qualified city.', 'GENERAL', 'Denver, CO, United States', 'Denver', 'PUBLISHED', 'OPEN')", (self.owner_id,))
+            con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-DENVER-NC', ?, 'UPDATE', 'Denver North Carolina update', 'This must not appear in Colorado local results.', 'GENERAL', 'Denver, NC', 'Denver', 'PUBLISHED', 'OPEN')", (self.owner_id,))
+            con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-PARKER-CO', ?, 'UPDATE', 'Parker metro update', 'This should appear in the Denver metro feed.', 'GENERAL', 'Parker, CO', 'Parker', 'PUBLISHED', 'OPEN')", (self.owner_id,))
+            con.execute("UPDATE ask_community_posts SET fulfillment_status = 'RESOLVED' WHERE public_id = ?", (resolved["post"]["id"],))
+            group = con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility, created_by_user_id) VALUES ('FFG-PRIVATE-USA', 'GROUP', 'Private USA', '', 'Dallas, TX', 'PRIVATE', ?)",
+                (self.owner_id,),
+            )
+            con.execute("UPDATE ask_community_posts SET community_id = ? WHERE public_id = ?", (int(group.lastrowid), private["post"]["id"]))
+            con.execute("INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'OWNER')", (int(group.lastrowid), self.owner_id))
+        report_status, _ = self.request("POST", "/api/mobile/community/report", "outsider-token", {"postId": reported["post"]["id"], "reason": "SPAM"})
+        self.assertEqual(report_status, 201)
+
+        status, feed = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&limit=20", "owner-token")
+        self.assertEqual(status, 200)
+        local_ids = [post["id"] for post in feed["sections"]["local"]["posts"]]
+        national_ids = [post["id"] for post in feed["sections"]["national"]["posts"]]
+        self.assertEqual(set(local_ids), {local["post"]["id"], local_full_state["post"]["id"]})
+        self.assertIn(national["post"]["id"], national_ids)
+        self.assertIn(national_full_state["post"]["id"], national_ids)
+        self.assertNotIn(local["post"]["id"], national_ids)
+        self.assertNotIn(international["post"]["id"], national_ids)
+        self.assertNotIn(resolved["post"]["id"], national_ids)
+        self.assertNotIn(private["post"]["id"], national_ids)
+        self.assertNotIn(reported["post"]["id"], national_ids)
+
+        status, denver_feed = self.request("GET", "/api/mobile/community?city=Denver%2C%20CO&layered=1&limit=20")
+        self.assertEqual(status, 200)
+        denver_local_ids = {post["id"] for post in denver_feed["sections"]["local"]["posts"]}
+        self.assertIn("FFC-DENVER-SUFFIX", denver_local_ids)
+        self.assertIn("FFC-PARKER-CO", denver_local_ids)
+        self.assertNotIn("FFC-DENVER-NC", denver_local_ids)
+
+        status, empty_local_feed = self.request("GET", "/api/mobile/community?city=Boston%2C%20MA&layered=1&limit=20")
+        self.assertEqual(status, 200)
+        self.assertEqual(empty_local_feed["sections"]["local"]["posts"], [])
+        empty_market_national_ids = [post["id"] for post in empty_local_feed["sections"]["national"]["posts"]]
+        self.assertIn(local["post"]["id"], empty_market_national_ids)
+        self.assertIn(national["post"]["id"], empty_market_national_ids)
+        self.assertIn("FFC-DENVER-SUFFIX", empty_market_national_ids)
+
+        _, first_page = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&limit=1&localOffset=0&nationalOffset=0")
+        _, second_page = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&limit=1&localOffset=1&nationalOffset=1")
+        first_local_page = {post["id"] for post in first_page["sections"]["local"]["posts"]}
+        second_local_page = {post["id"] for post in second_page["sections"]["local"]["posts"]}
+        first_national_page = {post["id"] for post in first_page["sections"]["national"]["posts"]}
+        second_national_page = {post["id"] for post in second_page["sections"]["national"]["posts"]}
+        self.assertTrue(first_local_page and second_local_page)
+        self.assertTrue(first_national_page and second_national_page)
+        self.assertFalse(first_local_page & second_local_page)
+        self.assertFalse(first_national_page & second_national_page)
+
     def test_public_post_author_avatar_is_readable_without_login(self):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         with app.db() as con:

@@ -388,7 +388,13 @@ export async function getAuthenticatedAssetDataUrl(value: string) {
   const directUrl = absoluteAssetUrl(value);
   if (!directUrl || directUrl.startsWith("data:image/")) return directUrl;
   const headers: Record<string, string> = {};
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    if (authToken && new URL(directUrl).origin === new URL(currentApiBase()).origin) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+  } catch {
+    // A malformed URL will fail naturally below without exposing the token.
+  }
   const response = await fetch(directUrl, { headers });
   if (!response.ok) throw new Error(`Could not load attachment: ${response.status}`);
   const blob = await response.blob();
@@ -423,9 +429,28 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
     const temporary = `${cacheRoot}chitthi-preview-source-${Date.now()}-${Math.random().toString(36).slice(2)}.img`;
     try {
       const headers: Record<string, string> = {};
-      if (authToken) headers.Authorization = `Bearer ${authToken}`;
-      const result = await FileSystem.downloadAsync(directUrl, temporary, { headers });
-      if (result.status < 200 || result.status >= 300) throw new Error(`Could not load photo preview (${result.status}).`);
+      try {
+        if (authToken && new URL(directUrl).origin === new URL(currentApiBase()).origin) {
+          headers.Authorization = `Bearer ${authToken}`;
+        }
+      } catch {
+        // A malformed URL will fail naturally without exposing the token.
+      }
+      let result: Awaited<ReturnType<typeof FileSystem.downloadAsync>> | null = null;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          result = await FileSystem.downloadAsync(directUrl, temporary, { headers });
+          if (result.status >= 200 && result.status < 300) break;
+          throw new Error(`Could not load photo preview (${result.status}).`);
+        } catch (error) {
+          lastError = error;
+          result = null;
+          await FileSystem.deleteAsync(temporary, { idempotent: true }).catch(() => undefined);
+          if (attempt === 0) await wait(500);
+        }
+      }
+      if (!result) throw lastError instanceof Error ? lastError : new Error("Could not load photo preview.");
       const resized = await ImageManipulator.manipulateAsync(
         temporary,
         [{ resize: { width: 720 } }],
@@ -827,8 +852,18 @@ export type CommunityFeedFilters = {
   category?: string;
   communityId?: string;
   saved?: boolean;
+  layered?: boolean;
   offset?: number;
+  localOffset?: number;
+  nationalOffset?: number;
   limit?: number;
+};
+
+export type CommunityFeedSection = {
+  city?: string;
+  label?: string;
+  posts: CommunityPost[];
+  hasMore: boolean;
 };
 
 export async function getCommunityFeed(filters: CommunityFeedFilters = {}) {
@@ -838,9 +873,12 @@ export async function getCommunityFeed(filters: CommunityFeedFilters = {}) {
   if (filters.category) params.set("category", filters.category);
   if (filters.communityId) params.set("communityId", filters.communityId);
   if (filters.saved) params.set("saved", "1");
+  if (filters.layered) params.set("layered", "1");
   params.set("offset", String(Math.max(0, filters.offset || 0)));
+  if (filters.localOffset !== undefined) params.set("localOffset", String(Math.max(0, filters.localOffset)));
+  if (filters.nationalOffset !== undefined) params.set("nationalOffset", String(Math.max(0, filters.nationalOffset)));
   params.set("limit", String(Math.max(1, Math.min(50, filters.limit || 30))));
-  const payload = await request<{ ok: boolean; posts: CommunityPost[]; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`);
+  const payload = await request<{ ok: boolean; posts: CommunityPost[]; sections?: { local: CommunityFeedSection; national: CommunityFeedSection }; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`);
   return payload;
 }
 

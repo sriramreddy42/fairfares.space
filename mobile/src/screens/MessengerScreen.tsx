@@ -871,16 +871,26 @@ function NativeAuthenticatedChatImage({ attachmentUrl, compact = false }: { atta
     setCachedPreviewUri(cached);
     setPreviewLoading(!cached);
     if (cached) return () => { cancelled = true; };
-    void loadChatImagePreview(attachmentUrl)
-      .then((localUri) => {
+    void (async () => {
+      try {
+        const localUri = await loadChatImagePreview(attachmentUrl);
         if (!cancelled) setCachedPreviewUri(localUri);
-      })
-      .catch(() => {
-        if (!cancelled) setPreviewFailed(true);
-      })
-      .finally(() => {
+      } catch {
+        // One screen-level retry covers a transient failure that outlasted the
+        // downloader's quick retry without leaving the bubble permanently
+        // unavailable until the user closes and reopens the conversation.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        if (cancelled) return;
+        try {
+          const localUri = await loadChatImagePreview(attachmentUrl);
+          if (!cancelled) setCachedPreviewUri(localUri);
+        } catch {
+          if (!cancelled) setPreviewFailed(true);
+        }
+      } finally {
         if (!cancelled) setPreviewLoading(false);
-      });
+      }
+    })();
     return () => { cancelled = true; };
   }, [attachmentUrl]);
 
@@ -2218,9 +2228,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!userId || outboxFlushRunning.current) return;
     outboxFlushRunning.current = true;
     try {
+      // This runs on a short retry timer while Chitthi is mounted. Avoid key
+      // registration and its network request when there is nothing to send.
+      const items = await readEncryptedOutbox(userId);
+      if (!items.length) return;
       const identity = deviceIdentity || await getOrCreateDeviceIdentity(userId);
       await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
-      const items = await readEncryptedOutbox(userId);
       for (const item of items) {
         const lastAttempt = Date.parse(item.lastAttemptAt || "") || 0;
         const retryDelay = Math.min(60_000, Math.max(3_000, 2 ** Math.min(item.attempts, 5) * 1_000));
@@ -3889,10 +3902,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Contacts unavailable", "Contact discovery is available in the FairFares Android and iOS apps.");
       return;
     }
+    setContactPickerMode(mode);
+    setAddPeopleCommunityId(communityId);
+    setContactMatches([]);
+    setInviteContacts([]);
+    setContactPickerOpen(true);
     setContactsLoading(true);
     try {
       const permission = await Contacts.requestPermissionsAsync();
       if (permission.status !== "granted") {
+        setContactPickerOpen(false);
         Alert.alert("Contacts permission not enabled", "You can still find a member by entering their full phone number in Chitthi search.");
         return;
       }
@@ -3919,7 +3938,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const hashes = Array.from(localNames.keys());
       if (!hashes.length) {
         setContactMatches([]);
-        Alert.alert("No phone contacts found", "Add a phone number to a device contact and try again.");
         return;
       }
       const peopleById = new Map<number, { id: number; name: string; photoUrl: string; phoneHash: string }>();
@@ -3935,15 +3953,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(({ id, name, phone }) => ({ id, name, phone }));
       setInviteContacts(invitations);
-      if (people.length || (mode === "chat" && invitations.length)) {
-        setContactPickerMode(mode);
-        setAddPeopleCommunityId(communityId);
-        setContactPickerOpen(true);
-      }
-      else Alert.alert(
-        "No FairFares contacts found",
-        "Make sure FairFares can access that contact and that the saved phone number matches the verified number on their FairFares account."
-      );
     } catch (error) {
       Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");
     } finally {
@@ -5191,7 +5200,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View style={styles.groupInfoHeader}>
               <View style={styles.groupInfoHeaderButton} />
               <Text style={styles.groupInfoHeaderTitle}>Group info</Text>
-              <TouchableOpacity style={styles.groupInfoDoneButton} onPress={() => setGroupMembersOpen(false)}><Text style={styles.groupInfoDoneText}>Done</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.groupInfoDoneButton} onPress={() => setGroupMembersOpen(false)} accessibilityRole="button" accessibilityLabel="Close group info"><Text style={styles.groupInfoDoneText}>Done</Text></TouchableOpacity>
             </View>
             <ScrollView style={styles.groupInfoScroll} contentContainerStyle={styles.groupInfoContent}>
               <View style={styles.groupInfoHero}>
@@ -5204,9 +5213,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>
 
               <View style={styles.groupInfoActions}>
-                <TouchableOpacity style={styles.groupInfoAction} onPress={() => void toggleMute()}><Text style={styles.groupInfoActionIcon}>♩</Text><Text style={styles.groupInfoActionLabel}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text></TouchableOpacity>
-                {activeGroup?.canManageMembers ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => { setGroupMembersOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation?.communityId || ""); }}><Text style={styles.groupInfoActionIcon}>＋</Text><Text style={styles.groupInfoActionLabel}>Add</Text></TouchableOpacity> : null}
-                {activeConversation?.communityId ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => void inviteToActiveGroup()}><Text style={styles.groupInfoActionIcon}>↗</Text><Text style={styles.groupInfoActionLabel}>Invite</Text></TouchableOpacity> : null}
+                <TouchableOpacity style={styles.groupInfoAction} onPress={() => void toggleMute()} accessibilityRole="button" accessibilityLabel={activeConversation?.mutedAt ? "Unmute group notifications" : "Mute group notifications"}><Text style={styles.groupInfoActionIcon}>♩</Text><Text style={styles.groupInfoActionLabel}>{activeConversation?.mutedAt ? "Unmute" : "Mute"}</Text></TouchableOpacity>
+                {activeGroup?.canManageMembers ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => { setGroupMembersOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation?.communityId || ""); }} accessibilityRole="button" accessibilityLabel="Add group members"><Text style={styles.groupInfoActionIcon}>＋</Text><Text style={styles.groupInfoActionLabel}>Add</Text></TouchableOpacity> : null}
+                {activeConversation?.communityId ? <TouchableOpacity style={styles.groupInfoAction} onPress={() => void inviteToActiveGroup()} accessibilityRole="button" accessibilityLabel="Invite with group link"><Text style={styles.groupInfoActionIcon}>↗</Text><Text style={styles.groupInfoActionLabel}>Invite</Text></TouchableOpacity> : null}
               </View>
 
               <View style={styles.groupInfoCard}>
@@ -5236,8 +5245,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>
 
               <View style={styles.groupInfoCard}>
-                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => void toggleMute()}><Text style={styles.groupInfoSettingIcon}>♩</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Notifications</Text><Text style={styles.groupInfoSettingMeta}>{activeConversation?.mutedAt ? "Muted" : "On"}</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => { setGroupMembersOpen(false); setWallpaperPanelOpen(true); }}><Text style={styles.groupInfoSettingIcon}>◉</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Chat theme</Text><Text style={styles.groupInfoSettingMeta}>Choose a Chitthi wallpaper</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => void toggleMute()} accessibilityRole="button" accessibilityLabel={`Group notifications ${activeConversation?.mutedAt ? "muted" : "on"}`}><Text style={styles.groupInfoSettingIcon}>♩</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Notifications</Text><Text style={styles.groupInfoSettingMeta}>{activeConversation?.mutedAt ? "Muted" : "On"}</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.groupInfoSettingRow} onPress={() => { setGroupMembersOpen(false); setWallpaperPanelOpen(true); }} accessibilityRole="button" accessibilityLabel="Open group chat wallpaper"><Text style={styles.groupInfoSettingIcon}>◉</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Chat theme</Text><Text style={styles.groupInfoSettingMeta}>Choose a Chitthi wallpaper</Text></View><Text style={styles.groupInfoChevron}>›</Text></TouchableOpacity>
                 <View style={[styles.groupInfoSettingRow, styles.groupInfoSettingRowLast]}><Text style={styles.groupInfoSettingIcon}>▢</Text><View style={styles.groupInfoSettingCopy}><Text style={styles.groupInfoSettingTitle}>Encryption</Text><Text style={styles.groupInfoSettingMeta}>Messages are end-to-end encrypted</Text></View></View>
               </View>
 
@@ -5258,7 +5267,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 })}
                 {!filteredGroupMembers.length ? <Text style={styles.groupMembersEmpty}>No members match your search.</Text> : null}
               </View>
-              <TouchableOpacity style={styles.leaveGroupButton} onPress={() => Alert.alert("Leave this group?", "You will stop receiving messages from this group.", [{ text: "Cancel", style: "cancel" }, { text: "Leave group", style: "destructive", onPress: () => void leaveActiveGroup() }])}><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.leaveGroupButton} onPress={() => Alert.alert("Leave this group?", "You will stop receiving messages from this group.", [{ text: "Cancel", style: "cancel" }, { text: "Leave group", style: "destructive", onPress: () => void leaveActiveGroup() }])} accessibilityRole="button" accessibilityLabel="Leave group"><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
             </ScrollView>
           </View>
         ) : null}
@@ -5554,13 +5563,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <Pressable
             style={styles.messageActionBackdrop}
             onPress={() => setActionMessage(null)}
-            accessibilityRole="button"
-            accessibilityLabel="Close message actions"
+            accessible={false}
           >
             {Platform.OS === "web" || actionMessage?.type === "VIDEO" ? <View pointerEvents="none" style={styles.messageActionBlurFallback} /> : <BlurView pointerEvents="none" intensity={34} tint="dark" style={styles.messageActionBlurFallback} />}
               {actionMessage ? (
-              <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]}>
-                <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageReactionTray, actionMessage.mine && styles.messageReactionTrayMine]}>
+              <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionStack, actionMessage.mine && styles.messageActionStackMine]} accessible={false}>
+                <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageReactionTray, actionMessage.mine && styles.messageReactionTrayMine]} accessible={false}>
                   {["👍", "❤️", "😂", "😮", "😢", "🙏", "👏"].map((emoji) => (
                     <TouchableOpacity key={emoji} style={styles.messageReactionChoice} onPress={() => void reactToMessage(actionMessage, emoji)} accessibilityRole="button" accessibilityLabel={`React ${emoji}`}>
                       <Text style={styles.messageReactionChoiceText}>{emoji}</Text>
@@ -5579,15 +5587,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     {(actionMessage.reactions || []).length ? <View style={styles.messagePreviewReactions}>{actionMessage.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(actionMessage, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
                   </View>
                 </Pressable>
-                <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]}>
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
+                <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]} accessible={false}>
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)} accessibilityRole="button" accessibilityLabel="Reply"><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
                   {!actionMessage.mine && Boolean(activeConversation?.communityId) && Number(actionMessage.senderId || 0) > 0 ? <TouchableOpacity style={styles.messageActionRow} onPress={() => void replyToGroupMessagePrivately(actionMessage)} accessibilityRole="button" accessibilityLabel={`Reply privately to ${actionMessage.senderName || "member"}`}><Text style={styles.messageActionGlyph}>✉</Text><Text style={styles.messageActionLabel}>Reply privately</Text></TouchableOpacity> : null}
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => forwardActionMessage(actionMessage)}><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
-                  {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
-                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)}><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
-                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }}><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
-                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
-                  {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }}><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => forwardActionMessage(actionMessage)} accessibilityRole="button" accessibilityLabel="Forward"><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
+                  {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }} accessibilityRole="button" accessibilityLabel="Copy"><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
+                  <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)} accessibilityRole="button" accessibilityLabel="Select"><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
+                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }} accessibilityRole="button" accessibilityLabel="Edit"><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
+                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }} accessibilityRole="button" accessibilityLabel="Delete"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
+                  {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }} accessibilityRole="button" accessibilityLabel="Report"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
                 </Pressable>
               </Pressable>
               ) : null}
@@ -5661,12 +5669,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
 
-        <Modal visible={forwardPickerOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!forwardingMessages) setForwardPickerOpen(false); }}>
+        <Modal visible={forwardPickerOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!forwardingMessages) { setForwardPickerOpen(false); setSelectedMessageIds([]); setSelectedForwardConversationIds([]); } }}>
           <View style={styles.forwardPickerBackdrop}>
             <View style={styles.forwardPickerCard}>
               <View style={styles.forwardPickerHeader}>
                 <View><Text style={styles.forwardPickerTitle}>Forward messages</Text><Text style={styles.forwardPickerSubtitle}>Choose one or more Chitthi conversations</Text></View>
-                <TouchableOpacity style={styles.attachmentPreviewClose} disabled={forwardingMessages} onPress={() => setForwardPickerOpen(false)}><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.attachmentPreviewClose} disabled={forwardingMessages} onPress={() => { setForwardPickerOpen(false); setSelectedMessageIds([]); setSelectedForwardConversationIds([]); }} accessibilityLabel="Close forward picker"><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
               </View>
               {forwardingMessages ? <View style={styles.forwardSecureProgress} accessibilityRole="progressbar" accessibilityLabel={forwardingStatus || "Forwarding securely"}><ActivityIndicator size="small" color="#71e39b" /><View style={styles.forwardSecureProgressCopy}><Text style={styles.forwardSecureProgressTitle}>Forwarding securely</Text><Text style={styles.forwardSecureProgressText} numberOfLines={2}>{forwardingStatus}</Text></View></View> : null}
               <ScrollView style={styles.forwardPickerList}>
@@ -5760,7 +5768,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <Text style={styles.pollPrivacyNote}>Results sync through Chitthi's secure poll service.</Text>
               </ScrollView>
             </> : <>
-              <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>{richComposer === "EVENT" ? "Create event" : "Share contact"}</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setRichComposer("")}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
+              <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>{richComposer === "EVENT" ? "Create event" : "Share contact"}</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setRichComposer("")} accessibilityLabel={`Close ${richComposer === "EVENT" ? "event" : "contact"} composer`}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
               <TextInput style={styles.richInput} placeholder={richComposer === "EVENT" ? "Event title" : "Contact name"} placeholderTextColor="#777" value={richDraft.primary} onChangeText={(primary) => setRichDraft((current) => ({ ...current, primary }))} />
               {richComposer === "EVENT" ? <DateTimeField label="Event date" mode="date" minimumDate={todayLocalIso()} value={richDraft.secondary} onChange={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} /> : <TextInput style={styles.richInput} placeholder="Phone number" placeholderTextColor="#777" value={richDraft.secondary} onChangeText={(secondary) => setRichDraft((current) => ({ ...current, secondary }))} />}
               {richComposer === "EVENT" ? <DateTimeField label="Event time" mode="time" value={richDraft.tertiary} onChange={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} /> : <TextInput style={styles.richInput} placeholder="Email address" placeholderTextColor="#777" value={richDraft.tertiary} onChangeText={(tertiary) => setRichDraft((current) => ({ ...current, tertiary }))} />}
@@ -5772,10 +5780,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {wallpaperPanelOpen ? (
           <View style={styles.wallpaperPanel}>
-            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>Chat wallpaper</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setWallpaperPanelOpen(false)}><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
+            <View style={styles.attachmentPanelHeader}><Text style={styles.attachmentPanelTitle}>Chat wallpaper</Text><TouchableOpacity style={styles.attachmentClose} onPress={() => setWallpaperPanelOpen(false)} accessibilityLabel="Close chat wallpaper"><Text style={styles.attachmentCloseText}>×</Text></TouchableOpacity></View>
             <Text style={styles.wallpaperHelp}>Only you will see this wallpaper.</Text>
             <View style={styles.wallpaperGrid}>
-              {wallpaperChoices.map((choice) => <TouchableOpacity key={choice.id} style={[styles.wallpaperChoice, { backgroundColor: choice.color }, wallpaper === choice.id && styles.wallpaperChoiceSelected]} onPress={() => void applyWallpaper(choice.id)}><View style={[styles.wallpaperChoiceGlow, { backgroundColor: choice.accent }]} /><Text style={styles.wallpaperChoiceLabel}>{choice.label}</Text></TouchableOpacity>)}
+              {wallpaperChoices.map((choice) => <TouchableOpacity key={choice.id} style={[styles.wallpaperChoice, { backgroundColor: choice.color }, wallpaper === choice.id && styles.wallpaperChoiceSelected]} onPress={() => void applyWallpaper(choice.id)} accessibilityRole="button" accessibilityState={{ selected: wallpaper === choice.id }}><View style={[styles.wallpaperChoiceGlow, { backgroundColor: choice.accent }]} /><Text style={styles.wallpaperChoiceLabel}>{choice.label}</Text></TouchableOpacity>)}
               <TouchableOpacity style={[styles.wallpaperChoice, styles.customWallpaperChoice, wallpaper === "custom" && styles.wallpaperChoiceSelected]} onPress={() => void chooseCustomWallpaper()}>{customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.customWallpaperPreview} /> : <Text style={styles.customWallpaperPlus}>＋</Text>}<Text style={styles.wallpaperChoiceLabel}>Your photo</Text></TouchableOpacity>
             </View>
             <TouchableOpacity style={styles.wallpaperReset} onPress={() => void applyWallpaper("midnight")}><Text style={styles.wallpaperResetText}>Reset to default</Text></TouchableOpacity>
@@ -5866,6 +5874,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         {Platform.OS === "ios" && safeAreaInsets.bottom > 0 ? <View pointerEvents="none" style={[styles.composerSafeArea, { height: safeAreaInsets.bottom }]} /> : null}
         </ThreadKeyboardBody>
         </View>
+        <Modal visible={contactPickerOpen && contactPickerMode === "add"} transparent animationType="fade" onRequestClose={() => setContactPickerOpen(false)}>
+          <View style={styles.contactPickerBackdrop}>
+            <View style={styles.contactPickerCard}>
+              <View style={styles.contactPickerHeader}>
+                <View style={styles.contactPickerHeadingCopy}><Text style={styles.contactPickerTitle}>Add members</Text><Text style={styles.contactPickerSubtitle}>Select FairFares contacts to add to this group</Text></View>
+                <TouchableOpacity style={styles.contactPickerClose} onPress={() => setContactPickerOpen(false)} accessibilityLabel="Close contacts"><Text style={styles.contactPickerCloseText}>×</Text></TouchableOpacity>
+              </View>
+              {contactsLoading && !contactMatches.length ? <View style={styles.contactSectionEmpty}><ActivityIndicator color={theme.colors.brand} /><Text style={styles.contactSectionEmpty}>Checking your FairFares contacts…</Text></View> : null}
+              <ScrollView style={styles.contactPickerList} contentContainerStyle={styles.contactPickerListContent} showsVerticalScrollIndicator={false}>
+                {!contactsLoading && !contactMatches.length ? <Text style={styles.contactSectionEmpty}>No registered contacts matched yet.</Text> : null}
+                {contactMatches.map((person) => <TouchableOpacity key={`thread-contact-picker-${person.id}`} style={[styles.contactPickerRow, selectedGroupPeople.includes(person.id) && styles.contactPickerRowSelected]} onPress={() => toggleGroupPerson(person.id)}><View style={styles.avatar}><InitialsAvatar photoUrl={person.photoUrl} label={person.localName} imageStyle={styles.avatarImage} textStyle={styles.avatarText} /></View><View style={styles.chatCopy}><Text style={styles.chatName}>{person.localName}</Text><Text style={styles.chatLast}>{person.name !== person.localName ? `${person.name} · FairFares member` : "FairFares member"}</Text></View><View style={styles.contactPickerMessageButton}><Text style={styles.contactPickerMessageText}>{selectedGroupPeople.includes(person.id) ? "Selected" : "Add"}</Text></View></TouchableOpacity>)}
+              </ScrollView>
+              <TouchableOpacity style={[styles.primaryButton, !selectedGroupPeople.length && styles.disabledButton]} disabled={!selectedGroupPeople.length || contactsLoading} onPress={() => void addSelectedPeopleToExistingGroup()}><Text style={styles.primaryButtonText}>{contactsLoading ? "Checking…" : `Add ${selectedGroupPeople.length} ${selectedGroupPeople.length === 1 ? "person" : "people"}`}</Text></TouchableOpacity>
+              <Text style={styles.contactPickerPrivacy}>Phone numbers stay private and are never displayed.</Text>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -5889,7 +5914,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <Image source={appAssets.chittiLettersGold} style={styles.chittiBrandPaper} resizeMode="contain" />
         </View>
         <View style={styles.headerIcons}>
-          <TouchableOpacity style={styles.headerIcon} accessibilityLabel="Chitthi options"><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerIcon}
+            accessibilityRole="button"
+            accessibilityLabel="Chitthi options"
+            onPress={() => Alert.alert("Chitthi", "Choose an inbox action.", [
+              { text: "Refresh inbox", onPress: () => void refreshMessenger() },
+              { text: "Find contacts", onPress: () => void findPeopleFromContacts() },
+              { text: "Create group", onPress: () => setCreatingGroup(true) },
+              { text: "Cancel", style: "cancel" },
+            ])}
+          ><Text style={styles.headerIconText}>•••</Text></TouchableOpacity>
         </View>
         <TouchableOpacity
           style={styles.iconButton}
@@ -5919,7 +5954,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       <View style={styles.tabs}>
         {(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => (
-          <TouchableOpacity key={item} onPress={() => { setTab(item); if (item === "Contacts") void findPeopleFromContacts(); }} style={[styles.tab, tab === item && styles.activeTab]}>
+          <TouchableOpacity key={item} onPress={() => { setTab(item); if (item === "Contacts") void findPeopleFromContacts(); }} style={[styles.tab, tab === item && styles.activeTab]} accessibilityRole="tab" accessibilityState={{ selected: tab === item }}>
             <Text style={[styles.tabText, tab === item && styles.activeTabText]}>{item}</Text>
           </TouchableOpacity>
         ))}
@@ -6017,7 +6052,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             onChangeText={(name) => setGroupDraft((current) => ({ ...current, name }))}
             style={styles.input}
           />
-          <TouchableOpacity style={styles.groupPeoplePicker} onPress={() => void findPeopleFromContacts("create")} disabled={contactsLoading}>
+          <TouchableOpacity style={styles.groupPeoplePicker} onPress={() => void findPeopleFromContacts("create")} disabled={contactsLoading} accessibilityRole="button" accessibilityLabel="Add people to new group" accessibilityState={{ disabled: contactsLoading }}>
             <Text style={styles.groupPeoplePickerIcon}>＋</Text>
             <View style={styles.groupPeoplePickerCopy}>
               <Text style={styles.groupPeoplePickerTitle}>{selectedGroupPeople.length ? `${selectedGroupPeople.length} people selected` : "Add people"}</Text>
@@ -6025,7 +6060,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <Text style={styles.groupPeoplePickerArrow}>›</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.primaryButton} onPress={createGroup} disabled={loading}>
+          <TouchableOpacity style={styles.primaryButton} onPress={createGroup} disabled={loading} accessibilityRole="button" accessibilityLabel="Create group and add people" accessibilityState={{ disabled: loading }}>
             <Text style={styles.primaryButtonText}>{loading ? "Creating..." : "Create group and add people"}</Text>
           </TouchableOpacity>
         </View>

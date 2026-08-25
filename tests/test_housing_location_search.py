@@ -111,6 +111,19 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertNotIn("Miamisburg", options["selectedLocation"])
         self.assertNotEqual(app.cached_accommodation_metro_for_place("Miami"), "Dayton Metro Area")
 
+    def test_state_qualified_denver_never_uses_colorado_static_point(self):
+        colorado = app.static_accommodation_point("Denver, CO")
+        self.assertNotEqual(colorado, (0.0, 0.0))
+
+        for selected in ("Denver, NC", "Denver, PA"):
+            with self.subTest(selected=selected):
+                self.assertEqual(app.static_accommodation_point(selected), (0.0, 0.0))
+                point = app.accommodation_location_point(selected, allow_refresh=False)
+                self.assertFalse(
+                    point.get("lat") == colorado[0] and point.get("lng") == colorado[1],
+                    f"{selected} incorrectly reused Denver, CO coordinates",
+                )
+
     def test_brookville_oh_static_point_wins_over_poisoned_cache(self):
         with app.db() as con:
             metro_id = app.upsert_accommodation_metro(
@@ -309,6 +322,38 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(listing["locationApproximate"])
         self.assertAlmostEqual(listing["lat"], 39.5186, places=4)
         self.assertLessEqual(listing["distanceMiles"], 25)
+
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        side_effect=lambda query, *args, **kwargs: (
+            {"label": "Parker, CO", "lat": 39.5186, "lng": -104.7614, "source": "test"}
+            if "Parker" in str(query)
+            else {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903, "source": "test"}
+        ),
+    )
+    def test_city_radius_search_includes_nearby_suburb_without_city_text_match(self, _mock_point):
+        self.insert_post(
+            "PARKER-IN-DENVER-RADIUS",
+            "Parker room inside Denver radius",
+            "Parker, CO",
+            "Black Rose Circle",
+            0,
+            0,
+        )
+
+        results = app.mobile_housing_posts(
+            city="Denver, CO",
+            need="need_place",
+            radius=60,
+            limit=30,
+            center_lat=39.7392,
+            center_lng=-104.9903,
+        )
+
+        listing = next(item for item in results if item["id"] == "PARKER-IN-DENVER-RADIUS")
+        self.assertTrue(listing["locationApproximate"])
+        self.assertLessEqual(listing["distanceMiles"], 60)
 
     def test_geocoded_us_city_dynamically_feeds_group_suggestions(self):
         geocode = {

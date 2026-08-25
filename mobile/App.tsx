@@ -943,6 +943,7 @@ function FairFaresApp() {
       }
       if (url.includes("payment/success")) {
         setPaymentUrl("");
+        setPaymentMessage("");
         void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
         setPaymentStatus({
           title: "Payment completed",
@@ -952,12 +953,7 @@ function FairFaresApp() {
         void load();
       }
       if (url.includes("payment/cancel")) {
-        setPaymentUrl("");
-        setPaymentStatus({
-          title: "Payment not completed",
-          body: "Stripe checkout was cancelled. Your payment window remains active until the timer expires.",
-          action: "Continue payment"
-        });
+        void returnToRentalCars();
       }
     }
     Linking.getInitialURL().then(handleAppUrl).catch(() => undefined);
@@ -1150,7 +1146,6 @@ function FairFaresApp() {
       };
       const payload = await startRentalCheckout(paymentOption, bookingId, returnUrls);
       if (payload.url) {
-        setPaymentUrl(payload.url);
         if (Platform.OS !== "web") {
           const pending: PendingRentalCheckout = {
             url: payload.url,
@@ -1166,11 +1161,26 @@ function FairFaresApp() {
           return true;
         }
         const canOpen = await Linking.canOpenURL(payload.url).catch(() => true);
-        if (canOpen) {
-          await Linking.openURL(payload.url);
-        } else {
+        if (!canOpen) {
+          setPaymentUrl(payload.url);
           setPaymentMessage("Stripe checkout is ready, but the device did not open it automatically. Tap Open payment to continue.");
           return false;
+        }
+        setPaymentUrl("");
+        const browserResult = await WebBrowser.openAuthSessionAsync(payload.url, "fairfares://payment");
+        if (browserResult.type === "success" && browserResult.url?.includes("payment/success")) {
+          setPaymentMessage("");
+          await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
+          setPaymentStatus({
+            title: "Payment completed",
+            body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
+            action: "View booking"
+          });
+          void load();
+        } else if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
+          // Includes Done, Cancel, swipe-down dismissal, and an explicit Stripe
+          // cancel redirect. Every unpaid exit returns to a fresh rental screen.
+          await returnToRentalCars();
         }
         return true;
       }
@@ -1195,11 +1205,34 @@ function FairFaresApp() {
         Alert.alert("Payment window expired", "Start payment again from the rental car checkout.");
         return;
       }
-      setPaymentUrl(pending.url);
-      setPaymentMessage("Your Stripe payment window is still active. Continue securely before the timer expires.");
-      await Linking.openURL(pending.url);
+      setPaymentUrl("");
+      const browserResult = await WebBrowser.openAuthSessionAsync(pending.url, "fairfares://payment");
+      if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
+        await returnToRentalCars();
+      }
     } catch {
       Alert.alert("Payment unavailable", "The saved Stripe checkout could not be reopened. Start payment again.");
+    }
+  }
+
+  async function returnToRentalCars() {
+    setPaymentUrl("");
+    setPaymentMessage("");
+    setPaymentStatus(null);
+    setSelectedNeed("rental_cars");
+    setActiveTab("housing");
+    setRentalFocusKey((value) => value + 1);
+    await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
+  }
+
+  async function dismissRentalPayment(clearSavedCheckout = false) {
+    // Deep-link return and the fallback UI are asynchronous. Clear both modal
+    // states together so they can never overlap and leave a touch-blocking view.
+    setPaymentUrl("");
+    setPaymentMessage("");
+    setPaymentStatus(null);
+    if (clearSavedCheckout) {
+      await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
     }
   }
 
@@ -1300,7 +1333,12 @@ function FairFaresApp() {
     // Keep the place the user typed or selected. A broad geocoder fallback (for
     // example, Dayton) must not replace a specific query such as Wilmington Pike.
     const resolvedArea = cleanArea;
-    const resolvedCity = cleanArea ? cleanCity : normalizeCityInput(lookup?.selectedLocation || cleanCity);
+    const hasExplicitRegion = /^[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?$/i.test(cleanCity);
+    const selectedSuggestion = selectedCitySuggestionRef.current.trim().toLowerCase();
+    const preserveSelectedCity = hasExplicitRegion || selectedSuggestion === cleanCity.trim().toLowerCase();
+    const resolvedCity = cleanArea || preserveSelectedCity
+      ? cleanCity
+      : normalizeCityInput(lookup?.selectedLocation || cleanCity);
     const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setCity(resolvedCity);
     setArea(resolvedArea);
@@ -2255,6 +2293,7 @@ function FairFaresApp() {
       />
     ) : activeTab === "housing" || activeTab === "home" ? (
       <HousingScreen
+        key={`housing-${rentalFocusKey}`}
         data={data}
         posts={visiblePosts}
         cars={cars}
@@ -2309,6 +2348,7 @@ function FairFaresApp() {
       />
     ) : (
       <HousingScreen
+        key={`housing-fallback-${rentalFocusKey}`}
         data={data}
         posts={visiblePosts}
         cars={cars}
@@ -2731,7 +2771,7 @@ function FairFaresApp() {
           </View>
         </View>
       </Modal>
-      <Modal visible={Boolean(paymentUrl)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentUrl("")}>
+      <Modal visible={Boolean(paymentUrl)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => void dismissRentalPayment(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Secure payment</Text>
@@ -2746,13 +2786,13 @@ function FairFaresApp() {
             >
               <Text style={styles.primaryButtonText}>Open payment</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentUrl("")}>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => void dismissRentalPayment(true)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-      <Modal visible={Boolean(paymentStatus)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setPaymentStatus(null)}>
+      <Modal visible={Boolean(paymentStatus)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => void dismissRentalPayment(true)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{paymentStatus?.title}</Text>
@@ -2761,18 +2801,17 @@ function FairFaresApp() {
               style={styles.primaryButton}
               onPress={() => {
                 const shouldResumePayment = paymentStatus?.action === "Continue payment";
-                setPaymentStatus(null);
                 if (shouldResumePayment) {
+                  setPaymentStatus(null);
                   void resumePendingRentalCheckout();
                 } else {
-                  setSelectedService("cars");
-                  setActiveTab("services");
+                  void returnToRentalCars();
                 }
               }}
             >
               <Text style={styles.primaryButtonText}>{paymentStatus?.action || "Continue"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setPaymentStatus(null)}>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => void dismissRentalPayment(true)}>
               <Text style={styles.secondaryButtonText}>Close</Text>
             </TouchableOpacity>
           </View>

@@ -97,6 +97,22 @@ const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
 const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
 
+function RentalCarImage({ uri, name }: { uri: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setFailed(false), [uri]);
+
+  return (
+    <Image
+      source={!uri || failed ? appAssets.carFallback : { uri }}
+      style={styles.carMiniImage}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+      accessibilityLabel={`${name} rental car`}
+    />
+  );
+}
+
 function RentalPromoCarousel({ onPress }: { onPress: () => void }) {
   const { width: viewportWidth } = useWindowDimensions();
   const slideWidth = Math.max(280, viewportWidth - 28);
@@ -1041,6 +1057,14 @@ export function HousingScreen({
 
   useEffect(() => {
     if (!rentalFocusKey) return;
+    // A Stripe return can arrive while the native full-screen quote modal is
+    // still mounted. Reset every transient rental surface before showing the
+    // car list again; changing selectedNeed alone is a no-op when rentals were
+    // already selected and leaves the stale modal owning the touch responder.
+    setRentalQuote(null);
+    setSelectedRentalCar(null);
+    setRentalPicker(null);
+    setRentalBusy(false);
     setMode("cheapCars");
     setRentalSearched(false);
   }, [rentalFocusKey]);
@@ -2544,7 +2568,7 @@ export function HousingScreen({
               const image = absoluteAssetUrl(car.image_url);
               return (
                 <TouchableOpacity key={car.id} style={[styles.carMiniCard, selectedRentalCar?.id === car.id && styles.carMiniCardActive]} onPress={() => reviewRentalCar(car)}>
-                  {image ? <Image source={{ uri: image }} style={styles.carMiniImage} /> : <Image source={appAssets.carFallback} style={styles.carMiniImage} />}
+                  <RentalCarImage uri={image} name={car.name} />
                   <View style={styles.carMiniBody}>
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
@@ -3722,7 +3746,7 @@ export function HousingScreen({
           <View style={styles.detailCard}>
             <View style={styles.detailHeader}>
               <Text style={styles.detailEyebrow}>Housing details</Text>
-              <TouchableOpacity style={styles.detailClose} onPress={() => setDetailPost(null)}>
+              <TouchableOpacity style={styles.detailClose} onPress={() => setDetailPost(null)} accessibilityRole="button" accessibilityLabel="Close housing details">
                 <Text style={styles.detailCloseText}>X</Text>
               </TouchableOpacity>
             </View>

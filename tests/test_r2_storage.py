@@ -636,7 +636,7 @@ class R2StorageTest(unittest.TestCase):
             self.assertEqual(result["deleted"], 1)
             self.assertEqual(client.objects, {})
 
-    def test_chitthi_download_receipt_deletes_one_on_one_media_after_recipient_download(self):
+    def test_chitthi_download_receipt_preserves_one_on_one_media_until_expiry(self):
         self.addCleanup(app.refresh_storage_paths)
         with tempfile.TemporaryDirectory() as directory, \
              mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
@@ -672,14 +672,14 @@ class R2StorageTest(unittest.TestCase):
                     (message_id, recipient_id),
                 )
             result = app.record_chitthi_attachment_download(message_id, recipient_id, "device-r")
-            self.assertTrue(result["deleted"])
-            self.assertIsNone(app.stored_upload_parts(reference))
+            self.assertFalse(result["deleted"])
+            self.assertEqual(app.stored_upload_parts(reference)[2], b"one-on-one")
             with app.db() as con:
                 row = con.execute("SELECT attachment_url, metadata_json FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
-            self.assertEqual(row["attachment_url"], "")
+            self.assertEqual(row["attachment_url"], reference)
             self.assertIn("downloadedByAll", row["metadata_json"])
 
-    def test_chitthi_group_media_waits_for_last_recipient_download(self):
+    def test_chitthi_group_media_is_preserved_after_last_recipient_download(self):
         self.addCleanup(app.refresh_storage_paths)
         with tempfile.TemporaryDirectory() as directory, \
              mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
@@ -718,8 +718,8 @@ class R2StorageTest(unittest.TestCase):
             self.assertFalse(first["deleted"])
             self.assertEqual(app.stored_upload_parts(reference)[2], b"group-media")
             second = app.record_chitthi_attachment_download(message_id, second_id, "device-2")
-            self.assertTrue(second["deleted"])
-            self.assertIsNone(app.stored_upload_parts(reference))
+            self.assertFalse(second["deleted"])
+            self.assertEqual(app.stored_upload_parts(reference)[2], b"group-media")
 
     def test_chitthi_media_waits_for_every_device_on_same_account(self):
         self.addCleanup(app.refresh_storage_paths)
@@ -747,7 +747,7 @@ class R2StorageTest(unittest.TestCase):
             self.assertFalse(first["deleted"])
             self.assertEqual(first["recipientCount"], 2)
             second = app.record_chitthi_attachment_download(message_id, recipient_id, "tablet-device")
-            self.assertTrue(second["deleted"])
+            self.assertFalse(second["deleted"])
 
     def test_presigned_download_is_scoped_to_recipient_device(self):
         self.addCleanup(app.refresh_storage_paths)

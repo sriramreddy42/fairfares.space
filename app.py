@@ -2207,10 +2207,12 @@ def cleanup_deleted_chitthi_messages(*, force: bool = True, limit: int | None = 
 
 
 def record_chitthi_attachment_download(message_id: int, user_id: int, device_id: str = "") -> dict[str, object]:
-    """Record a recipient download and delete cloud media once all recipients have it.
+    """Record durable recipient downloads without prematurely deleting media.
 
     Recipient membership is based on the message's encrypted envelopes so users
-    who join a group later do not block cleanup for media they could not decrypt.
+    who join a group later do not affect delivery accounting. The encrypted blob
+    remains available until its advertised retention expiry so senders, restored
+    devices, and recipients that clear local storage can still reopen the media.
     """
     device_id = clean_text_value(device_id, 100)
     if message_id <= 0 or user_id <= 0 or not device_id:
@@ -2278,37 +2280,24 @@ def record_chitthi_attachment_download(message_id: int, user_id: int, device_id:
                 "recipientCount": len(recipient_devices),
                 "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
             }
-        attachment_url = row_value(row, "attachment_url")
         try:
             metadata = json.loads(row_value(row, "metadata_json") or "{}")
         except (TypeError, json.JSONDecodeError):
             metadata = {}
         if not isinstance(metadata, dict):
             metadata = {}
-        if not delete_stored_upload_reference(attachment_url):
-            con.commit()
-            return {
-                "recorded": True,
-                "deleted": False,
-                "recipientCount": len(recipient_devices),
-                "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
-            }
         metadata.update({
-            "mediaExpired": True,
-            "expiredAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-            "deletedFromStorage": True,
             "downloadedByAll": True,
             "downloadedByAllAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-            "retentionDays": max(1, CHITTHI_ATTACHMENT_RETENTION_DAYS),
         })
         con.execute(
-            "UPDATE chat_messages SET attachment_url = '', metadata_json = ? WHERE id = ?",
+            "UPDATE chat_messages SET metadata_json = ? WHERE id = ?",
             (json.dumps(metadata, sort_keys=True), message_id),
         )
         con.commit()
         return {
             "recorded": True,
-            "deleted": True,
+            "deleted": False,
             "recipientCount": len(recipient_devices),
             "downloadedCount": len(recipient_devices.intersection(downloaded_devices)),
         }
@@ -11968,6 +11957,60 @@ def sync_housing_into_community() -> None:
                 con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)", (projected_id, row_value(image_row, "image_url"), int(row_value(image_row, "sort_order") or 0)))
 
 
+COMMUNITY_US_STATE_NAMES = {
+    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA", "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD", "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS", "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC", "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC",
+}
+COMMUNITY_US_STATE_CODES = frozenset(COMMUNITY_US_STATE_NAMES.values())
+
+
+def community_us_city_variants(value: str) -> tuple[str, ...]:
+    parts = [part.strip() for part in clean_text_value(value, 120).split(",")]
+    if len(parts) == 3 and parts[2].upper() in {"US", "USA", "UNITED STATES"}:
+        parts = parts[:2]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return ()
+    region = parts[1].upper()
+    code = region if region in COMMUNITY_US_STATE_CODES else COMMUNITY_US_STATE_NAMES.get(region, "")
+    if not code:
+        return ()
+    state_name = next((name.title() for name, state_code in COMMUNITY_US_STATE_NAMES.items() if state_code == code), "")
+    return tuple(dict.fromkeys((f"{parts[0]}, {code}", f"{parts[0]}, {state_name}")))
+
+
+def community_local_city_variants(value: str) -> tuple[str, ...]:
+    """Expand a selected US city to its known metro without crossing state lines."""
+    selected = community_us_city_variants(value)
+    if not selected:
+        return (clean_text_value(value, 120),)
+    selected_keys = {item.lower() for item in selected}
+    variants: list[str] = list(selected)
+    for group in ACCOMMODATION_METRO_GROUPS.values():
+        suggestions = tuple(str(item) for item in group.get("suggested", ()))
+        if not any(selected_keys.intersection(item.lower() for item in community_us_city_variants(suggestion)) for suggestion in suggestions):
+            continue
+        for suggestion in suggestions:
+            variants.extend(community_us_city_variants(suggestion))
+    try:
+        city_name, state = split_city_state(selected[0])
+        with db() as con:
+            metro_rows = con.execute(
+                """SELECT DISTINCT metro_id FROM accommodation_local_areas
+                   WHERE lower(city) = lower(?) AND upper(state) = upper(?)""",
+                (city_name, state),
+            ).fetchall()
+            metro_ids = tuple(int(row["metro_id"]) for row in metro_rows if int(row["metro_id"] or 0))
+            if metro_ids:
+                locality_rows = con.execute(
+                    f"SELECT city, state FROM accommodation_local_areas WHERE metro_id IN ({','.join('?' for _ in metro_ids)}) AND trim(city) != ''",
+                    metro_ids,
+                ).fetchall()
+                for row in locality_rows:
+                    variants.extend(community_us_city_variants(f"{row['city']}, {row['state']}"))
+    except sqlite3.Error:
+        pass
+    return tuple(dict.fromkeys(item for item in variants if item))
+
+
 def community_post_rows(
     viewer_id: int = 0,
     *,
@@ -11977,14 +12020,53 @@ def community_post_rows(
     post_public_id: str = "",
     query: str = "",
     saved_only: bool = False,
+    active_only: bool = False,
+    us_only: bool = False,
+    public_only: bool = False,
+    exclude_reported: bool = False,
+    exclude_city: str = "",
+    exclude_public_ids: tuple[str, ...] = (),
     limit: int = 30,
     offset: int = 0,
 ) -> list[sqlite3.Row]:
     filters = ["posts.status IN ('PUBLISHED', 'LOCKED')", "(posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now') OR posts.author_id = ?)"]
     values: list[object] = [viewer_id, viewer_id, viewer_id, viewer_id]
     if city:
-        filters.append("posts.city = ? COLLATE NOCASE")
-        values.append(clean_text_value(city, 120))
+        city_variants = community_local_city_variants(city)
+        city_checks = []
+        for city_variant in city_variants:
+            city_checks.extend(("posts.city = ? COLLATE NOCASE", "posts.city LIKE ? COLLATE NOCASE"))
+            values.extend((city_variant, f"{city_variant},%"))
+        filters.append(f"({' OR '.join(city_checks)})")
+    if exclude_city:
+        excluded_city_variants = community_local_city_variants(exclude_city)
+        excluded_checks = []
+        for city_variant in excluded_city_variants:
+            excluded_checks.extend(("posts.city = ? COLLATE NOCASE", "posts.city LIKE ? COLLATE NOCASE"))
+            values.extend((city_variant, f"{city_variant},%"))
+        filters.append(f"NOT ({' OR '.join(excluded_checks)})")
+    if active_only:
+        filters.append("posts.status = 'PUBLISHED' AND posts.fulfillment_status = 'OPEN' AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))")
+    if public_only:
+        filters.append("(posts.community_id IS NULL OR communities.visibility = 'PUBLIC')")
+    if exclude_reported:
+        filters.append("NOT EXISTS (SELECT 1 FROM ask_community_reports national_reports WHERE national_reports.post_id = posts.id AND national_reports.status = 'OPEN')")
+    if us_only:
+        us_regions = tuple(COMMUNITY_US_STATE_CODES) + tuple(COMMUNITY_US_STATE_NAMES)
+        us_city_checks: list[str] = []
+        for region in us_regions:
+            us_city_checks.extend((
+                "UPPER(TRIM(posts.city)) LIKE ?",
+                "UPPER(TRIM(posts.city)) LIKE ?",
+                "UPPER(TRIM(posts.city)) LIKE ?",
+                "UPPER(TRIM(posts.city)) LIKE ?",
+            ))
+            values.extend((f"%, {region}", f"%, {region}, US", f"%, {region}, USA", f"%, {region}, UNITED STATES"))
+        filters.append(f"({' OR '.join(us_city_checks)})")
+    clean_excluded_ids = tuple(clean_text_value(value, 80) for value in exclude_public_ids if clean_text_value(value, 80))
+    if clean_excluded_ids:
+        filters.append(f"posts.public_id NOT IN ({','.join('?' for _ in clean_excluded_ids)})")
+        values.extend(clean_excluded_ids)
     if category.upper() == "HOUSING":
         filters.append("posts.category IN ('NEED_ROOMMATE','NEED_PLACE','HAVE_PLACE','HOUSING')")
     elif category.upper() == "RIDES":
@@ -14968,7 +15050,10 @@ def static_accommodation_point(value: str) -> tuple[float, float]:
     if not label:
         return (0.0, 0.0)
     candidates = [label]
-    if "," in label:
+    _city, explicit_region = split_city_state(label)
+    # A state-qualified city must never fall through to a same-named city's
+    # unqualified static point (Denver, NC/PA previously became Denver, CO).
+    if "," in label and not explicit_region:
         candidates.append(label.split(",", 1)[0].strip())
     for candidate in candidates:
         if candidate in ACCOMMODATION_STATIC_POINTS:
@@ -17508,6 +17593,7 @@ def mobile_housing_posts(
     center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
     center_lat = float(center_lat or center.get("lat") or 0)
     center_lng = float(center_lng or center.get("lng") or 0)
+    radius_search = bool(search_radius_miles and center_lat and center_lng)
     if area and center_lat and center_lng:
         # First narrow the database scan to a rectangle around the requested
         # radius. The exact circular distance is still enforced below. Without
@@ -17543,7 +17629,10 @@ def mobile_housing_posts(
             area_pattern = f"%{area_root}%"
             values.extend([area_root, area_pattern, area_pattern, area_pattern])
     search_term_groups: list[list[str]] = []
-    raw_search_terms = () if post_public_id or (area or "").strip() else (city,)
+    # A radius is geographic, not a city-name text filter. Nearby suburbs such
+    # as Parker must reach the distance pass for a Denver radius search even
+    # though their stored city field does not contain "Denver".
+    raw_search_terms = () if post_public_id or (area or "").strip() or radius_search else (city,)
     for raw_term in raw_search_terms:
         term = (raw_term or "").strip()
         if not term:
@@ -17593,8 +17682,8 @@ def mobile_housing_posts(
     # city searches can page directly in SQLite.
     # Area candidates are already bounded geographically and must all reach the
     # exact-distance sorter; limiting by creation time here produces false misses.
-    sql_limit = -1 if area and center_lat and center_lng else (min(100, offset + limit) if area else limit)
-    sql_offset = 0 if area else offset
+    sql_limit = -1 if (area and center_lat and center_lng) or radius_search else (min(100, offset + limit) if area else limit)
+    sql_offset = 0 if area or radius_search else offset
     where_sql = " AND ".join(clauses)
     with db() as con:
         rows = con.execute(
@@ -17687,11 +17776,15 @@ def mobile_housing_posts(
                 if not (area_match or city_match):
                     continue
                 rank = 0 if area_match else 2
+        elif radius_search:
+            if distance is None or distance > search_radius_miles:
+                continue
+            rank = 0
         else:
             rank = 0
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
-    ranked_page = ranked_payloads[offset:offset + limit] if area else ranked_payloads[:limit]
+    ranked_page = ranked_payloads[offset:offset + limit] if area or radius_search else ranked_payloads[:limit]
     matched_posts = [item for _, _, item in ranked_page]
     sample_limit = max(0, limit - len(matched_posts)) if offset == 0 else 0
     sample_posts = mobile_sample_housing_posts(
@@ -27036,7 +27129,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         denver_terms = {str(item).lower() for item in ACCOMMODATION_METRO_GROUPS.get("Denver Metro Area", {}).get("suggested", ())}
         denver_terms.update({"denver", "denver, co", "denver metro area"})
-        query_is_denver_context = any(term and term in query.lower() for term in denver_terms)
+        query_city, query_state = split_city_state(query)
+        normalized_query = query.strip().lower()
+        query_is_denver_context = (
+            (query_city.strip().lower() == "denver" and query_state.upper() == "CO")
+            or (not query_state and normalized_query in denver_terms)
+        )
         if not metro_name and not is_zip_query and query_is_denver_context:
             metro_name = "Denver Metro Area"
         if (
@@ -36393,10 +36491,51 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         group_id = clean_text_value((params.get("communityId") or [""])[0], 80)
         query = clean_text_value((params.get("q") or [""])[0], 100)
         saved_only = (params.get("saved") or [""])[0] == "1"
+        layered = (params.get("layered") or [""])[0] == "1"
         limit = int(float_from_value((params.get("limit") or ["30"])[0]) or 30)
         offset = int(float_from_value((params.get("offset") or ["0"])[0]) or 0)
+        local_offset = int(float_from_value((params.get("localOffset") or [str(offset)])[0]) or 0)
+        national_offset = int(float_from_value((params.get("nationalOffset") or [str(offset)])[0]) or 0)
         if saved_only and not viewer_id:
             self.send_json({"ok": False, "error": "Login is required to view saved posts."}, 401)
+            return
+        if layered and city and not post_public_id and not group_id and not saved_only:
+            section_limit = max(1, min(limit, 30))
+            local_rows = community_post_rows(
+                viewer_id,
+                city=city,
+                category=category,
+                query=query,
+                active_only=True,
+                limit=section_limit,
+                offset=local_offset,
+            )
+            local_posts = [community_post_payload(row, viewer_id) for row in local_rows]
+            local_ids = tuple(str(post.get("id") or "") for post in local_posts)
+            national_rows = community_post_rows(
+                viewer_id,
+                category=category,
+                query=query,
+                active_only=True,
+                us_only=True,
+                public_only=True,
+                exclude_reported=True,
+                exclude_city=city,
+                exclude_public_ids=local_ids,
+                limit=section_limit,
+                offset=national_offset,
+            )
+            national_posts = [community_post_payload(row, viewer_id) for row in national_rows]
+            combined_posts = local_posts + national_posts
+            self.send_json({
+                "ok": True,
+                "posts": combined_posts,
+                "sections": {
+                    "local": {"city": city, "posts": local_posts, "hasMore": len(local_posts) >= section_limit},
+                    "national": {"label": "Across the USA", "posts": national_posts, "hasMore": len(national_posts) >= section_limit},
+                },
+                "pagination": {"limit": section_limit, "offset": max(0, offset), "returned": len(combined_posts), "hasMore": len(local_posts) >= section_limit or len(national_posts) >= section_limit},
+            })
             return
         rows = community_post_rows(
             viewer_id,
