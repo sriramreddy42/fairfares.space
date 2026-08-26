@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Image, Linking, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from "react-native";
 import { getNearbyGasPrices, nearbyGasMapUrl } from "../api/client";
 import { GasFuelType, GasStation } from "../types";
+import { readGasCache, writeGasCache } from "../utils/gasPriceCache";
 
 type Props = { onBack: () => void };
 type Coordinates = { latitude: number; longitude: number };
@@ -112,13 +113,22 @@ export function GasStationsScreen({ onBack }: Props) {
     setError("");
     setMapFailed(false);
     try {
-      let coordinates = position;
-      if (!coordinates || refresh) {
-        coordinates = await resolveDeviceCoordinates();
-        setPosition(coordinates);
+      if (!refresh) {
+        const cached = await readGasCache(nextFuel);
+        if (cached) {
+          if (requestGeneration.current !== generation) return;
+          setPosition(cached.center);
+          setConfigured(cached.configured);
+          setStations(cached.stations || []);
+        }
       }
+      // Entering Cheap Gas is an explicit user request, so always acquire the
+      // current device position and refresh the provider data on each visit.
+      const coordinates = await resolveDeviceCoordinates();
+      setPosition(coordinates);
       const result = await getNearbyGasPrices(coordinates.latitude, coordinates.longitude, 10, nextFuel);
       if (requestGeneration.current !== generation) return;
+      await writeGasCache(nextFuel, result).catch(() => undefined);
       setConfigured(result.configured);
       setStations(result.stations || []);
     } catch (cause) {

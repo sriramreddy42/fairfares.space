@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
-  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getNearbyGasPrices, joinChatCommunity,
+  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
@@ -17,6 +17,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
+import { readGasCache } from "../utils/gasPriceCache";
 
 type Props = {
   user: FairFaresUser | null;
@@ -340,24 +341,15 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousin
   }, [city, locationRefreshKey, user?.id]);
   useEffect(() => {
     let cancelled = false;
-    if (Platform.OS === "web") return () => { cancelled = true; };
-    void (async () => {
-      try {
-        const permission = await Location.getForegroundPermissionsAsync();
-        if (!permission.granted || cancelled) return;
-        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-          .catch(() => Location.getLastKnownPositionAsync({ maxAge: 2 * 60 * 1000, requiredAccuracy: 1000 }));
-        if (!position || cancelled) return;
-        const result = await getNearbyGasPrices(position.coords.latitude, position.coords.longitude, 10, "regular");
-        if (cancelled) return;
-        const prices = (result.stations || [])
-          .map((station) => Number(station.price))
-          .filter((price) => Number.isFinite(price) && price > 0);
-        setLowestGasPrice(prices.length ? Math.min(...prices) : null);
-      } catch {
-        if (!cancelled) setLowestGasPrice(null);
-      }
-    })();
+    // Ask only reads the last result saved when Cheap Gas was explicitly
+    // opened. Merely loading this feed never contacts Google.
+    void readGasCache("regular").then((result) => {
+      if (cancelled) return;
+      const prices = (result?.stations || [])
+        .map((station) => Number(station.price))
+        .filter((price) => Number.isFinite(price) && price > 0);
+      setLowestGasPrice(prices.length ? Math.min(...prices) : null);
+    });
     return () => { cancelled = true; };
   }, [locationRefreshKey, user?.id]);
   useEffect(() => {
@@ -640,7 +632,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousin
       <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel={lowestGasPrice !== null ? `Cheapest reported regular gas nearby is ${lowestGasPrice.toFixed(2)} dollars. Open nearby gas prices` : "Open cheap gas prices near you"}>
         <View style={styles.gasPreviewIcon}><Text style={styles.gasPreviewGlyph}>⛽</Text></View>
         <View style={styles.gasPreviewCopy}><Text style={[styles.gasPreviewTitle, isLight && styles.gasPreviewTitleLight]}>Cheap gas near you</Text><Text style={styles.gasPreviewSubtitle}>Tap to compare reported station prices</Text></View>
-        {lowestGasPrice !== null ? <View style={styles.gasPreviewPriceBlock}><Text style={styles.gasPreviewPrice}>${lowestGasPrice.toFixed(2)}</Text><Text style={styles.gasPreviewPriceLabel}>lowest nearby</Text></View> : null}
+        {lowestGasPrice !== null ? <View style={styles.gasPreviewPriceBlock}><Text style={styles.gasPreviewPrice}>${lowestGasPrice.toFixed(2)}</Text><Text style={styles.gasPreviewPriceLabel}>last found</Text></View> : null}
         <Text style={[styles.gasPreviewChevron, isLight && styles.gasPreviewChevronLight]}>›</Text>
       </TouchableOpacity>
       <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
