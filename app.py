@@ -10156,6 +10156,13 @@ def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
+class GoogleApiError(RuntimeError):
+    def __init__(self, category: str, status_code: int = 0):
+        super().__init__(category)
+        self.category = category
+        self.status_code = status_code
+
+
 def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout: float = 8) -> dict[str, object]:
     request_headers = {
         "User-Agent": "FairFares Mobile/1.0",
@@ -10167,8 +10174,23 @@ def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str
     # urllib for the Places API POST. In particular, a provider-side reset must
     # raise inside this handler so callers can return controlled JSON instead
     # of letting the public proxy synthesize an opaque 502 response.
-    response = requests.post(url, json=payload, headers=request_headers, timeout=timeout)
-    response.raise_for_status()
+    try:
+        response = requests.post(url, json=payload, headers=request_headers, timeout=timeout)
+    except requests.Timeout as exc:
+        raise GoogleApiError("timeout") from exc
+    except requests.ConnectionError as exc:
+        raise GoogleApiError("connection") from exc
+    if not response.ok:
+        status_code = int(response.status_code or 0)
+        if status_code in {401, 403}:
+            category = "authorization"
+        elif status_code == 429:
+            category = "quota"
+        elif 400 <= status_code < 500:
+            category = "request"
+        else:
+            category = "provider"
+        raise GoogleApiError(category, status_code)
     result = response.json()
     if not isinstance(result, dict):
         raise ValueError("Google API returned a non-object JSON response")
@@ -35321,6 +35343,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         radius_miles = max(1.0, min(radius_miles, 25.0))
         try:
             result = google_nearby_gas_prices(lat, lng, radius_miles, fuel)
+        except GoogleApiError as exc:
+            print(f"Google gas prices provider error: {exc.category} ({exc.status_code or 'network'})")
+            self.send_json(
+                {
+                    "ok": False,
+                    "configured": True,
+                    "stations": [],
+                    "providerError": exc.category,
+                    "providerStatus": exc.status_code,
+                    "error": "Nearby fuel prices are temporarily unavailable.",
+                },
+                # Cloudflare replaces origin 502 bodies with an opaque error
+                # page. Failed Dependency preserves the actionable JSON body.
+                424,
+                {"Cache-Control": "private, no-store"},
+            )
+            return
         except urllib.error.HTTPError as exc:
             print(f"Google gas prices HTTP error: {exc.code}")
             self.send_json(

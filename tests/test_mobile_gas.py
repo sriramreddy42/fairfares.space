@@ -28,8 +28,23 @@ class MobileGasPriceTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["stations"], [])
 
+    def test_endpoint_preserves_safe_google_failure_category(self):
+        handler = self.make_handler()
+        parsed = urllib.parse.urlparse(
+            "/api/mobile/gas-prices?lat=39.7392&lng=-104.9903&radiusMiles=10&fuel=regular"
+        )
+        with patch.object(app, "api_rate_limit_retry_after", return_value=0), patch.object(
+            app, "google_nearby_gas_prices", side_effect=app.GoogleApiError("authorization", 403)
+        ):
+            handler.api_mobile_gas_prices(parsed)
+        payload, status = handler.send_json.call_args.args[:2]
+        self.assertEqual(status, 424)
+        self.assertEqual(payload["providerError"], "authorization")
+        self.assertEqual(payload["providerStatus"], 403)
+
     def test_google_post_uses_bounded_requests_transport(self):
         response = unittest.mock.Mock()
+        response.ok = True
         response.json.return_value = {"places": []}
         with patch.object(app.requests, "post", return_value=response) as post:
             result = app.google_api_post_json(
@@ -39,7 +54,6 @@ class MobileGasPriceTests(unittest.TestCase):
                 timeout=3.5,
             )
         self.assertEqual(result, {"places": []})
-        response.raise_for_status.assert_called_once_with()
         self.assertEqual(post.call_args.kwargs["timeout"], 3.5)
         self.assertEqual(post.call_args.kwargs["json"]["includedTypes"], ["gas_station"])
 
