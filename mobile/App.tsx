@@ -2435,12 +2435,12 @@ function FairFaresApp() {
   return (
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView
-      style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f0f2f5" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
+      style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#e9edf2" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
       edges={activeTab === "messenger" && bottomTabsHidden ? ["top", "right", "left"] : ["top", "right", "bottom", "left"]}
     >
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
-        backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#ffffff" : "#052017") : effectiveColorScheme === "light" ? "#f0f2f5" : "#0f0f10"}
+        backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#e9edf2" : "#052017") : effectiveColorScheme === "light" ? "#e9edf2" : "#0f0f10"}
         translucent={false}
       />
       <CriticalBrandAssetPreloader />
@@ -3321,7 +3321,7 @@ const styles = StyleSheet.create({
   },
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   chittiSafe: { backgroundColor: "#052017" },
-  chittiSafeLight: { backgroundColor: "#ffffff" },
+  chittiSafeLight: { backgroundColor: "#e9edf2" },
   chittiThreadSafe: { backgroundColor: "#C4D9CE" },
   appContent: { flex: 1 },
   criticalAssetPreloader: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", left: -10, top: -10 },

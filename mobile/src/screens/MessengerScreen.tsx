@@ -6316,7 +6316,7 @@ function SendIcon() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#03100f", paddingHorizontal: theme.spacing.md, paddingTop: theme.spacing.md, position: "relative", overflow: "hidden" },
-  screenLight: { backgroundColor: "#ffffff" },
+  screenLight: { backgroundColor: "#e9edf2" },
   screenAndroid: { paddingTop: 10 },
   chittiBackdrop: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
   chittiBackdropLight: { opacity: 0.06 },
@@ -6919,7 +6919,7 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   listLight: { marginHorizontal: -16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(15,23,42,0.07)" },
   listContent: { paddingBottom: 88 },
-  listContentLight: { backgroundColor: "#ffffff" },
+  listContentLight: { backgroundColor: "#e9edf2" },
   loadMoreLetters: { alignSelf: "center", borderWidth: 1, borderColor: theme.colors.warning, borderRadius: theme.radius.pill, paddingHorizontal: 22, paddingVertical: 11, marginTop: 8, marginBottom: 12 },
   loadMoreLettersText: { color: theme.colors.warning, fontWeight: "800", fontSize: 14 },
   chatRow: { minHeight: 76, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, marginBottom: 6, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.14)", borderRadius: 18, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2, overflow: "hidden" },
