@@ -195,7 +195,7 @@ export function GasStationsScreen({ onBack }: Props) {
           </TouchableOpacity>
         ))}
         <Text style={styles.googleAttribution}>Station information and prices: Google Maps</Text>
-        <Text style={styles.disclaimer}>Prices may be delayed and should be confirmed at the pump. Results cover up to 20 nearby stations and are ordered by reported price, then distance.</Text>
+        <Text style={styles.disclaimer}>Prices may be delayed and should be confirmed at the pump. Results cover up to 10 nearby stations and are ordered by reported price, then distance.</Text>
       </ScrollView>
     </View>
   );

@@ -15682,7 +15682,10 @@ def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: fl
     radius_miles = max(1.0, min(float(radius_miles or 10), 25.0))
     payload = {
         "includedTypes": ["gas_station"],
-        "maxResultCount": 20,
+        # Fuel options are one of the heavier Places payloads. Ten nearby
+        # stations keeps the request inside the mobile origin response budget
+        # while still providing a useful price comparison.
+        "maxResultCount": 10,
         "rankPreference": "DISTANCE",
         "locationRestriction": {
             "circle": {
@@ -15701,7 +15704,7 @@ def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: fl
         {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
         # Keep this below the public origin's idle-response window. A slow
         # provider must yield a controlled JSON error rather than a proxy 502.
-        timeout=5,
+        timeout=3.5,
     )
     stations = [
         station for station in (
