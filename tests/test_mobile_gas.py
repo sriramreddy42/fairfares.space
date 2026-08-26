@@ -100,6 +100,21 @@ class MobileGasPriceTests(unittest.TestCase):
         headers = request.call_args.args[2]
         self.assertIn("places.fuelOptions", headers["X-Goog-FieldMask"])
 
+    def test_nearby_search_tries_maps_key_after_places_key_is_rejected(self):
+        with patch.dict(
+            os.environ,
+            {"GOOGLE_PLACES_API_KEY": "places-key", "GOOGLE_MAPS_API_KEY": "maps-key"},
+        ), patch.object(
+            app,
+            "google_api_post_json",
+            side_effect=[app.GoogleApiError("authorization", 403), {"places": []}],
+        ) as request:
+            result = app.google_nearby_gas_prices(39.7392, -104.9903, 10, "regular")
+        self.assertEqual(result["stations"], [])
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[2]["X-Goog-Api-Key"], "places-key")
+        self.assertEqual(request.call_args_list[1].args[2]["X-Goog-Api-Key"], "maps-key")
+
     def test_twenty_five_mile_search_does_not_silently_shrink_radius(self):
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_api_post_json", return_value={"places": []}) as request:
             app.google_nearby_gas_prices(39.7392, -104.9903, 25, "regular")

@@ -15700,10 +15700,16 @@ def normalize_google_gas_station(place: object, latitude: float, longitude: floa
 
 
 def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: float, fuel: str) -> dict[str, object]:
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    api_keys: list[str] = []
+    for candidate in (
+        os.environ.get("GOOGLE_PLACES_API_KEY", "").strip(),
+        os.environ.get("GOOGLE_MAPS_API_KEY", "").strip(),
+    ):
+        if candidate and candidate not in api_keys:
+            api_keys.append(candidate)
     fuel_key = fuel.lower() if fuel.lower() in GAS_FUEL_TYPES else "regular"
     google_fuel_type = GAS_FUEL_TYPES[fuel_key]
-    if not api_key:
+    if not api_keys:
         return {"configured": False, "stations": [], "fuel": fuel_key, "source": "google-places"}
     radius_miles = max(1.0, min(float(radius_miles or 10), 25.0))
     payload = {
@@ -15724,14 +15730,26 @@ def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: fl
         "places.id", "places.displayName", "places.formattedAddress", "places.location",
         "places.fuelOptions", "places.googleMapsUri",
     ])
-    response = google_api_post_json(
-        "https://places.googleapis.com/v1/places:searchNearby",
-        payload,
-        {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
-        # Keep this below the public origin's idle-response window. A slow
-        # provider must yield a controlled JSON error rather than a proxy 502.
-        timeout=3.5,
-    )
+    response: dict[str, object] | None = None
+    last_error: GoogleApiError | None = None
+    for api_key in api_keys:
+        try:
+            response = google_api_post_json(
+                "https://places.googleapis.com/v1/places:searchNearby",
+                payload,
+                {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
+                # Keep this below the public origin's idle-response window. A
+                # slow provider must yield a controlled response. Authorization
+                # failures return immediately, allowing the alternate key.
+                timeout=3.0,
+            )
+            break
+        except GoogleApiError as exc:
+            last_error = exc
+            if exc.category != "authorization":
+                raise
+    if response is None:
+        raise last_error or GoogleApiError("authorization", 403)
     stations = [
         station for station in (
             normalize_google_gas_station(place, latitude, longitude, google_fuel_type)
