@@ -15699,7 +15699,9 @@ def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: fl
         "https://places.googleapis.com/v1/places:searchNearby",
         payload,
         {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
-        timeout=10,
+        # Keep this below the public origin's idle-response window. A slow
+        # provider must yield a controlled JSON error rather than a proxy 502.
+        timeout=5,
     )
     stations = [
         station for station in (
@@ -35383,7 +35385,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"https://maps.googleapis.com/maps/api/staticmap?{urllib.parse.urlencode(map_params)}",
                 headers={"User-Agent": "FairFares Mobile/1.0"},
             )
-            with urllib.request.urlopen(request, timeout=10) as response:
+            with urllib.request.urlopen(request, timeout=5) as response:
                 image = response.read()
                 content_type = response.headers.get("Content-Type", "image/png")
             self.send_response(200)
