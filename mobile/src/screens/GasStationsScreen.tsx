@@ -7,6 +7,36 @@ import { GasFuelType, GasStation } from "../types";
 type Props = { onBack: () => void };
 type Coordinates = { latitude: number; longitude: number };
 
+async function currentLocationWithTimeout(timeoutMs = 15_000) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("location-timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function resolveDeviceCoordinates(): Promise<Coordinates> {
+  let permission = await Location.getForegroundPermissionsAsync();
+  if (!permission.granted && permission.canAskAgain) permission = await Location.requestForegroundPermissionsAsync();
+  if (!permission.granted) throw new Error("Allow location access in Settings to compare fuel prices near you.");
+
+  const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
+  if (!servicesEnabled) throw new Error("Turn on Location Services, then try again.");
+
+  // A recent cached fix makes repeat visits immediate. Request a live fix when
+  // the cache is absent, while allowing enough time for a cold GPS start.
+  const recent = await Location.getLastKnownPositionAsync({ maxAge: 15 * 60_000, requiredAccuracy: 5000 }).catch(() => null);
+  const location = recent || await currentLocationWithTimeout().catch(() => null);
+  if (!location) throw new Error("We couldn't determine your location. Move near a window, check Location Services, and try again.");
+  return { latitude: location.coords.latitude, longitude: location.coords.longitude };
+}
+
 const fuelOptions: Array<{ key: GasFuelType; label: string }> = [
   { key: "regular", label: "Regular" },
   { key: "midgrade", label: "Midgrade" },
@@ -58,13 +88,7 @@ export function GasStationsScreen({ onBack }: Props) {
     try {
       let coordinates = position;
       if (!coordinates || refresh) {
-        let permission = await Location.getForegroundPermissionsAsync();
-        if (!permission.granted && permission.canAskAgain) permission = await Location.requestForegroundPermissionsAsync();
-        if (!permission.granted) throw new Error("Allow location access to compare fuel prices near you.");
-        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-          .catch(() => Location.getLastKnownPositionAsync({ maxAge: 120_000, requiredAccuracy: 2000 }));
-        if (!location) throw new Error("Your current location is not available yet. Please try again.");
-        coordinates = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+        coordinates = await resolveDeviceCoordinates();
         setPosition(coordinates);
       }
       const result = await getNearbyGasPrices(coordinates.latitude, coordinates.longitude, 10, nextFuel);
