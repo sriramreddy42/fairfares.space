@@ -8,7 +8,7 @@ function adaptiveColor(light: string, dark: string, androidRole: string) {
 
 export const theme = {
   colors: {
-    bg: adaptiveColor("#e9edf2", "#0f0f10", "?android:attr/colorBackground"),
+    bg: adaptiveColor("#f3f4f6", "#0f0f10", "?android:attr/colorBackground"),
     panel: adaptiveColor("rgba(255,255,255,0.92)", "rgba(24,24,25,0.92)", "?android:attr/colorBackgroundFloating"),
     panel2: adaptiveColor("rgba(240,242,245,0.90)", "rgba(36,36,37,0.90)", "?android:attr/colorBackgroundFloating"),
     line: adaptiveColor("#dddfe2", "#343436", "?android:attr/colorControlNormal"),
