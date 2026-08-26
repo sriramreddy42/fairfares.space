@@ -1,11 +1,48 @@
 import os
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 import app
 
 
 class MobileGasPriceTests(unittest.TestCase):
+    def make_handler(self):
+        handler = object.__new__(app.FairFaresHandler)
+        handler.headers = {}
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.send_json = unittest.mock.Mock()
+        return handler
+
+    def test_endpoint_converts_provider_failure_to_json(self):
+        handler = self.make_handler()
+        parsed = urllib.parse.urlparse(
+            "/api/mobile/gas-prices?lat=39.7392&lng=-104.9903&radiusMiles=10&fuel=regular"
+        )
+        with patch.object(app, "api_rate_limit_retry_after", return_value=0), patch.object(
+            app, "google_nearby_gas_prices", side_effect=app.requests.ConnectionError("provider reset")
+        ):
+            handler.api_mobile_gas_prices(parsed)
+        payload, status = handler.send_json.call_args.args[:2]
+        self.assertEqual(status, 502)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["stations"], [])
+
+    def test_google_post_uses_bounded_requests_transport(self):
+        response = unittest.mock.Mock()
+        response.json.return_value = {"places": []}
+        with patch.object(app.requests, "post", return_value=response) as post:
+            result = app.google_api_post_json(
+                "https://places.googleapis.com/v1/places:searchNearby",
+                {"includedTypes": ["gas_station"]},
+                {"X-Goog-Api-Key": "test-key"},
+                timeout=3.5,
+            )
+        self.assertEqual(result, {"places": []})
+        response.raise_for_status.assert_called_once_with()
+        self.assertEqual(post.call_args.kwargs["timeout"], 3.5)
+        self.assertEqual(post.call_args.kwargs["json"]["includedTypes"], ["gas_station"])
+
     def test_normalizes_requested_fuel_price_and_distance(self):
         station = app.normalize_google_gas_station(
             {

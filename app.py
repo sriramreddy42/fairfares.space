@@ -35,6 +35,8 @@ from pathlib import Path
 from string import Template
 from zoneinfo import ZoneInfo
 
+import requests
+
 try:
     import boto3
     from botocore.config import Config as BotoConfig
@@ -10154,21 +10156,23 @@ def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
-def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout: int = 8) -> dict[str, object]:
+def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout: float = 8) -> dict[str, object]:
     request_headers = {
         "User-Agent": "FairFares Mobile/1.0",
         "Content-Type": "application/json",
         "Accept": "application/json",
         **headers,
     }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
-        headers=request_headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+    # requests handles production TLS/proxy connections more reliably than
+    # urllib for the Places API POST. In particular, a provider-side reset must
+    # raise inside this handler so callers can return controlled JSON instead
+    # of letting the public proxy synthesize an opaque 502 response.
+    response = requests.post(url, json=payload, headers=request_headers, timeout=timeout)
+    response.raise_for_status()
+    result = response.json()
+    if not isinstance(result, dict):
+        raise ValueError("Google API returned a non-object JSON response")
+    return result
 
 
 def explorer_photo_url(photo_reference: str) -> str:
