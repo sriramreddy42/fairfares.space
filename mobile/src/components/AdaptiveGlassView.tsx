@@ -20,11 +20,12 @@ type Props = {
   tintColor?: string;
   fallbackColor?: string;
   intensity?: number;
+  blurTint?: "light" | "dark";
   interactive?: boolean;
   onLayout?: (event: LayoutChangeEvent) => void;
 };
 
-export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fallbackColor = "rgba(20,22,21,0.94)", intensity = 58, interactive = false, onLayout }: Props) {
+export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fallbackColor = "rgba(20,22,21,0.94)", intensity = 58, blurTint = "dark", interactive = false, onLayout }: Props) {
   const [reduceTransparency, setReduceTransparency] = useState(false);
 
   useEffect(() => {
@@ -45,5 +46,5 @@ export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fall
   if (reduceTransparency) {
     return <View style={[style, { backgroundColor: fallbackColor }]} onLayout={onLayout}>{children}</View>;
   }
-  return <BlurView style={style} intensity={intensity} tint="dark" experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined} onLayout={onLayout}>{children}</BlurView>;
+  return <BlurView style={style} intensity={intensity} tint={blurTint} experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined} onLayout={onLayout}>{children}</BlurView>;
 }

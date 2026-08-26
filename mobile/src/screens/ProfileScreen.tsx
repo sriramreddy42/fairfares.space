@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
@@ -24,6 +24,8 @@ type Props = {
   onOpenStaffPickup?: () => void;
   openProfileDetails?: boolean;
   onProfileDetailsOpened?: () => void;
+  appearancePreference: "system" | "dark" | "light";
+  onAppearanceChange: (preference: "system" | "dark" | "light") => void;
 };
 
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
@@ -49,8 +51,11 @@ export function ProfileScreen({
   onOpenMessenger,
   onOpenStaffPickup,
   openProfileDetails = false,
-  onProfileDetailsOpened
+  onProfileDetailsOpened,
+  appearancePreference,
+  onAppearanceChange
 }: Props) {
+  const isLight = useColorScheme() === "light";
   const user = data?.user;
   const layout = useResponsiveLayout();
   const [name, setName] = useState(user?.name || "");
@@ -378,7 +383,7 @@ export function ProfileScreen({
       </View>
 
       {!user ? (
-        <View style={styles.card}>
+        <View style={[styles.card, isLight && styles.flatLightCard]}>
           <Text style={styles.cardTitle}>Login to personalize FairFares</Text>
           <Text style={styles.cardCopy}>Messaging, profile photos, listings, ride requests, and carpool tools need an account.</Text>
           <TouchableOpacity style={styles.primaryButton} onPress={onLogin}>
@@ -386,7 +391,7 @@ export function ProfileScreen({
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={styles.card}>
+        <View style={[styles.card, isLight && styles.flatLightCard]}>
           <TouchableOpacity
             style={styles.profileDetailsHeader}
             onPress={() => setProfileDetailsOpen((current) => !current)}
@@ -429,8 +434,33 @@ export function ProfileScreen({
         </View>
       )}
 
+      <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
+        <View>
+          <Text style={styles.cardTitle}>Appearance</Text>
+          <Text style={styles.cardCopy}>Choose how FairFares looks on this device.</Text>
+        </View>
+        <View style={styles.appearanceOptions} accessibilityRole="radiogroup">
+          {(["system", "dark", "light"] as const).map((preference) => {
+            const selected = appearancePreference === preference;
+            return (
+              <TouchableOpacity
+                key={preference}
+                style={[styles.appearanceOption, selected && styles.appearanceOptionSelected]}
+                onPress={() => onAppearanceChange(preference)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                accessibilityLabel={`${preference === "system" ? "System default" : preference} appearance`}
+              >
+                <Text style={styles.appearanceGlyph}>{preference === "system" ? "◐" : preference === "dark" ? "☾" : "☀"}</Text>
+                <Text style={[styles.appearanceLabel, selected && styles.appearanceLabelSelected]}>{preference === "system" ? "System" : preference === "dark" ? "Dark" : "Light"}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
       {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
-        <TouchableOpacity key={title} style={styles.menuRow} onPress={onPress}>
+        <TouchableOpacity key={title} style={[styles.menuRow, isLight && styles.flatLightCard]} onPress={onPress}>
           <View style={[styles.menuIconCircle, danger && styles.menuDangerIconCircle]}>
             {icon ? (
               <Image source={icon} style={[styles.menuIcon, fullColor && styles.menuIconFullColor]} resizeMode="contain" />
@@ -564,12 +594,20 @@ const styles = StyleSheet.create({
   selector: { backgroundColor: theme.colors.panel2, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   selectorText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
   card: { ...theme.depth.card, padding: 14, gap: 8 },
+  flatLightCard: { borderColor: "rgba(255,255,255,0.72)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.92)", shadowColor: "#101828", shadowOpacity: 0.13, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
   cardTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
   profileDetailsHeader: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   profileDetailsHeaderCopy: { flex: 1, minWidth: 0 },
   profileDetailsSummary: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
   profileDetailsChevron: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 },
   cardCopy: { color: theme.colors.muted, ...theme.typography.body },
+  appearanceCard: { ...theme.depth.card, padding: 14, gap: 12 },
+  appearanceOptions: { flexDirection: "row", gap: 8, padding: 4, borderRadius: theme.radius.pill, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  appearanceOption: { flex: 1, minHeight: 45, borderRadius: theme.radius.pill, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 8 },
+  appearanceOptionSelected: { backgroundColor: theme.colors.brand },
+  appearanceGlyph: { color: theme.colors.soft, fontSize: 17, fontWeight: "800" },
+  appearanceLabel: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
+  appearanceLabelSelected: { color: "#06291e" },
   label: { color: theme.colors.muted, fontWeight: "700", textTransform: "uppercase", fontSize: 10, letterSpacing: 0.5 },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15 },
   securityNote: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "600", backgroundColor: "rgba(37,99,235,0.12)", borderRadius: theme.radius.md, padding: 10 },
@@ -577,7 +615,7 @@ const styles = StyleSheet.create({
   privacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.line },
   privacyCopy: { flex: 1 },
   primaryButton: { flex: 1, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
-  primaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
+  primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   secondaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   disabled: { opacity: 0.7 },

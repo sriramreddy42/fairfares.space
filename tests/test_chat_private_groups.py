@@ -283,11 +283,17 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         with app.db() as con:
             con.execute(
                 """INSERT INTO chat_communities
-                   (public_id, kind, name, description, area_label, visibility)
-                   VALUES ('FFG-LEGACY-PUBLIC', 'GROUP', 'Legacy public group', 'Compatible with 0.1.6', 'Denver, CO', 'PUBLIC')"""
+                   (public_id, kind, name, description, area_label, visibility, photo_url)
+                   VALUES ('FFG-LEGACY-PUBLIC', 'GROUP', 'Legacy public group', 'Compatible with 0.1.6', 'Denver, CO', 'PUBLIC', '/uploads/groups/legacy.jpg')"""
             )
         token = app.public_chat_group_invite_token("FFG-LEGACY-PUBLIC")
         self.assertGreaterEqual(len(token), 24)
+        with app.db() as con:
+            share_group = app.chat_group_share_row(con, token)
+        self.assertIsNotNone(share_group)
+        self.assertEqual(share_group["name"], "Legacy public group")
+        self.assertEqual(share_group["description"], "Compatible with 0.1.6")
+        self.assertEqual(share_group["photo_url"], "/uploads/groups/legacy.jpg")
         preview, error = app.preview_chat_group_invite(token, self.member)
         self.assertFalse(error)
         self.assertEqual(preview["id"], "FFG-LEGACY-PUBLIC")

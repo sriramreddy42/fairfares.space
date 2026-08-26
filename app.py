@@ -75,7 +75,7 @@ OUTBOX_DIR = DATA_DIR / "outbox"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 SESSION_COOKIE = "fairfares_session"
-TERMS_VERSION = "2026-08-10"
+TERMS_VERSION = "2026-08-25"
 PRIVACY_VERSION = "2026-08-10"
 COMMUNITY_GUIDELINES_VERSION = "2026-08-10"
 
@@ -119,7 +119,7 @@ MAX_CHAT_FILE_BYTES = 8_000_000
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
 # Attachment descriptors include a small end-to-end encrypted chat preview.
 # Keep accepting the original compact envelopes while leaving enough room for
-# newer clients to embed a sharper 15 KB thumbnail after encryption/base64.
+# newer clients to embed a sharper 18 KB thumbnail after encryption/base64.
 MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS = 40_000
 CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
@@ -10154,6 +10154,23 @@ def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
+def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout: int = 8) -> dict[str, object]:
+    request_headers = {
+        "User-Agent": "FairFares Mobile/1.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        **headers,
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        headers=request_headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+
 def explorer_photo_url(photo_reference: str) -> str:
     if not photo_reference:
         return ""
@@ -15597,6 +15614,113 @@ def distance_miles_between(lat1: float, lng1: float, lat2: float, lng2: float) -
     return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+GAS_FUEL_TYPES = {
+    "regular": "REGULAR_UNLEADED",
+    "midgrade": "MIDGRADE",
+    "premium": "PREMIUM",
+    "diesel": "DIESEL",
+    "e85": "E85",
+}
+
+
+def google_money_value(value: object) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        units = int(value.get("units") or 0)
+        nanos = int(value.get("nanos") or 0)
+    except (TypeError, ValueError):
+        return None
+    price = units + nanos / 1_000_000_000
+    return round(price, 3) if price > 0 else None
+
+
+def normalize_google_gas_station(place: object, latitude: float, longitude: float, fuel_type: str) -> dict[str, object] | None:
+    if not isinstance(place, dict):
+        return None
+    location = place.get("location") if isinstance(place.get("location"), dict) else {}
+    try:
+        station_lat = float(location.get("latitude") or 0)
+        station_lng = float(location.get("longitude") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not station_lat or not station_lng:
+        return None
+    display_name = place.get("displayName") if isinstance(place.get("displayName"), dict) else {}
+    fuel_options = place.get("fuelOptions") if isinstance(place.get("fuelOptions"), dict) else {}
+    matching_price: dict[str, object] | None = None
+    for entry in fuel_options.get("fuelPrices") or []:
+        if isinstance(entry, dict) and str(entry.get("type") or "").upper() == fuel_type:
+            matching_price = entry
+            break
+    price = google_money_value(matching_price.get("price") if matching_price else None)
+    currency = ""
+    if matching_price and isinstance(matching_price.get("price"), dict):
+        currency = str(matching_price["price"].get("currencyCode") or "").upper()
+    station_id = clean_text_value(place.get("id"), 180)
+    return {
+        "id": station_id,
+        "name": clean_text_value(display_name.get("text"), 140) or "Gas station",
+        "address": clean_text_value(place.get("formattedAddress"), 240),
+        "latitude": station_lat,
+        "longitude": station_lng,
+        "distanceMiles": round(distance_miles_between(latitude, longitude, station_lat, station_lng), 1),
+        "price": price,
+        "currency": currency or "USD",
+        "fuelType": fuel_type,
+        "updatedAt": clean_text_value(matching_price.get("updateTime") if matching_price else "", 80),
+        "googleMapsUri": clean_text_value(place.get("googleMapsUri"), 600),
+    }
+
+
+def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: float, fuel: str) -> dict[str, object]:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    fuel_key = fuel.lower() if fuel.lower() in GAS_FUEL_TYPES else "regular"
+    google_fuel_type = GAS_FUEL_TYPES[fuel_key]
+    if not api_key:
+        return {"configured": False, "stations": [], "fuel": fuel_key, "source": "google-places"}
+    radius_miles = max(1.0, min(float(radius_miles or 10), 25.0))
+    payload = {
+        "includedTypes": ["gas_station"],
+        "maxResultCount": 20,
+        "rankPreference": "DISTANCE",
+        "locationRestriction": {
+            "circle": {
+                "center": {"latitude": latitude, "longitude": longitude},
+                "radius": min(50_000.0, radius_miles * 1609.344),
+            }
+        },
+    }
+    field_mask = ",".join([
+        "places.id", "places.displayName", "places.formattedAddress", "places.location",
+        "places.fuelOptions", "places.googleMapsUri",
+    ])
+    response = google_api_post_json(
+        "https://places.googleapis.com/v1/places:searchNearby",
+        payload,
+        {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
+        timeout=10,
+    )
+    stations = [
+        station for station in (
+            normalize_google_gas_station(place, latitude, longitude, google_fuel_type)
+            for place in response.get("places") or []
+        ) if station
+    ]
+    stations.sort(key=lambda item: (
+        item.get("price") is None,
+        float(item.get("price") or 9999),
+        float(item.get("distanceMiles") or 9999),
+    ))
+    return {
+        "configured": True,
+        "stations": stations,
+        "fuel": fuel_key,
+        "source": "google-places",
+        "fetchedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+
+
 def accommodation_post_search_point(row: sqlite3.Row | dict[str, object]) -> tuple[float, float, bool]:
     """Return coordinates safe for location filtering.
 
@@ -18731,6 +18855,32 @@ def public_chat_group_id_from_invite(token: str) -> str:
     return clean_text_value(public_id, 100)
 
 
+def chat_group_share_row(con: sqlite3.Connection, token: str) -> sqlite3.Row | None:
+    """Resolve either a signed public token or a stored private invitation."""
+    public_id = public_chat_group_id_from_invite(token)
+    if public_id:
+        return con.execute(
+            """SELECT communities.*,
+                      (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+               FROM chat_communities communities
+               WHERE communities.public_id = ? AND communities.visibility = 'PUBLIC'
+               LIMIT 1""",
+            (public_id,),
+        ).fetchone()
+    invite = con.execute(
+        """SELECT communities.*, invites.revoked_at, invites.expires_at,
+                  (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
+           FROM chat_group_invites invites
+           JOIN chat_communities communities ON communities.id = invites.community_id
+           WHERE invites.token_hash = ? LIMIT 1""",
+        (chat_group_invite_hash(token),),
+    ).fetchone()
+    invite_expiry = parse_sql_datetime(row_value(invite, "expires_at")) if invite else None
+    if not invite or row_value(invite, "revoked_at") or not invite_expiry or invite_expiry <= datetime.utcnow():
+        return None
+    return invite
+
+
 def chat_group_member_role(con: sqlite3.Connection, community_id: int, user_id: int) -> str:
     row = con.execute(
         "SELECT role FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
@@ -21391,6 +21541,16 @@ def app_only_open_script(deep_link: str) -> str:
     return f"""<script>(function(){{var app={json.dumps(deep_link)},ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;var fallback=setTimeout(function(){{if(!document.hidden)location.replace(store)}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.replace(app)}})()</script>"""
 
 
+def android_chitthi_invite_intent(invite_query: str) -> str:
+    """Create an Android App Link intent using the verified canonical host."""
+    android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+    return (
+        f"intent://www.fairfare.space/chitthi/invite?{invite_query}#Intent;"
+        "scheme=https;package=com.fairfares.mobile;"
+        f"S.browser_fallback_url={urllib.parse.quote(android_store, safe='')};end"
+    )
+
+
 def share_card_image_bytes(value: str, max_bytes: int = 6_000_000) -> bytes:
     raw_value = (value or "").strip()
     if raw_value.startswith("r2://"):
@@ -21461,6 +21621,19 @@ def share_card_fit_text(draw, value: str, font, max_width: int) -> str:
     return text[:low].rstrip() + suffix
 
 
+def share_card_wrap_text(draw, value: str, font, max_width: int, max_lines: int = 2) -> list[str]:
+    words = " ".join(str(value or "").split()).split()
+    lines: list[str] = []
+    while words and len(lines) < max(1, max_lines):
+        line = words.pop(0)
+        while words and draw.textbbox((0, 0), f"{line} {words[0]}", font=font)[2] <= max_width:
+            line = f"{line} {words.pop(0)}"
+        lines.append(line)
+    if words and lines:
+        lines[-1] = share_card_fit_text(draw, f"{lines[-1]}…", font, max_width)
+    return lines
+
+
 def branded_share_card(
     primary_image: str,
     title: str,
@@ -21474,15 +21647,24 @@ def branded_share_card(
         return b""
     canvas = Image.new("RGB", (1200, 630), "#071b18")
     primary_bytes = share_card_image_bytes(primary_image)
+    has_primary_image = bool(primary_bytes)
     try:
-        primary = Image.open(io.BytesIO(primary_bytes)).convert("RGB") if primary_bytes else Image.new("RGB", (650, 630), "#152f29")
-        primary = ImageOps.fit(primary, (650, 630), method=Image.Resampling.LANCZOS)
+        source_image = Image.open(io.BytesIO(primary_bytes)).convert("RGB") if primary_bytes else Image.new("RGB", (650, 630), "#152f29")
+        if chitthi and has_primary_image:
+            # Group photos and flyers are identity, not decorative cover art.
+            # Keep the entire image visible instead of center-cropping faces,
+            # logos, text, or portrait posters out of the social preview.
+            primary = Image.new("RGB", (650, 630), "#102923")
+            fitted = ImageOps.contain(source_image, (610, 510), method=Image.Resampling.LANCZOS)
+            primary.paste(fitted, ((650 - fitted.width) // 2, 96 + (510 - fitted.height) // 2))
+        else:
+            primary = ImageOps.fit(source_image, (650, 630), method=Image.Resampling.LANCZOS)
     except (OSError, ValueError):
         primary = Image.new("RGB", (650, 630), "#152f29")
     canvas.paste(primary, (0, 0))
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    draw.rectangle((0, 0, 650, 630), fill=(2, 14, 12, 28))
+    draw.rectangle((0, 0, 650, 630), fill=(2, 14, 12, 12 if chitthi and has_primary_image else 28))
     draw.rectangle((650, 0, 1200, 630), fill=(7, 27, 24, 255))
     draw.line((650, 0, 650, 630), fill=(71, 218, 161, 210), width=4)
     canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
@@ -21500,7 +21682,7 @@ def branded_share_card(
         mascot_bytes = share_card_image_bytes("/static/img/chitthi-mascot.png")
         try:
             wordmark = Image.open(io.BytesIO(wordmark_bytes)).convert("RGBA")
-            wordmark.thumbnail((290, 100), Image.Resampling.LANCZOS)
+            wordmark.thumbnail((240, 72), Image.Resampling.LANCZOS)
             canvas.alpha_composite(wordmark, (28, 22))
         except (OSError, ValueError):
             pass
@@ -21520,19 +21702,44 @@ def branded_share_card(
     detail_font = share_card_font(22, True)
     cta_font = share_card_font(21, True)
     text_width = 490
-    safe_title = share_card_fit_text(draw, safe_title, title_font, text_width)
-    safe_subtitle = share_card_fit_text(draw, safe_subtitle, subtitle_font, text_width)
     eyebrow = "CHITTHI GROUP" if chitthi else "FAIRFARES CARPOOL" if kind == "carpool" else "FAIRFARES HOUSING"
     draw.text((686, 116), eyebrow, font=eyebrow_font, fill="#50dfa8")
-    draw.text((686, 164), safe_title, font=title_font, fill="#ffffff")
-    draw.text((686, 228), safe_subtitle, font=subtitle_font, fill="#c3d3cf")
-    y = 290
-    for detail in details[:4]:
-        safe_detail = share_card_fit_text(draw, clean_text_value(detail, 90), detail_font, 455)
-        if safe_detail:
+    if chitthi:
+        title_lines = share_card_wrap_text(draw, safe_title, share_card_font(35, True), text_width, 2)
+        y = 162
+        for line in title_lines:
+            draw.text((686, y), line, font=share_card_font(35, True), fill="#ffffff")
+            y += 42
+        draw.text((686, y + 4), share_card_fit_text(draw, safe_subtitle, subtitle_font, text_width), font=subtitle_font, fill="#c3d3cf")
+        y += 58
+        if details:
+            member_text = share_card_fit_text(draw, clean_text_value(details[0], 90), detail_font, 455)
             draw.ellipse((688, y + 8, 700, y + 20), fill="#50dfa8")
-            draw.text((718, y), safe_detail, font=detail_font, fill="#ffffff")
-            y += 48
+            draw.text((718, y), member_text, font=detail_font, fill="#ffffff")
+            y += 45
+        if len(details) > 1:
+            description_font = share_card_font(20)
+            description_lines = share_card_wrap_text(draw, clean_text_value(details[1], 150), description_font, 455, 2)
+            draw.ellipse((688, y + 8, 700, y + 20), fill="#50dfa8")
+            for index, line in enumerate(description_lines):
+                draw.text((718, y + index * 28), line, font=description_font, fill="#ffffff")
+            y += max(42, len(description_lines) * 28 + 10)
+        if len(details) > 2 and y < 500:
+            safe_detail = share_card_fit_text(draw, clean_text_value(details[2], 90), share_card_font(19, True), 455)
+            draw.ellipse((688, y + 7, 700, y + 19), fill="#50dfa8")
+            draw.text((718, y), safe_detail, font=share_card_font(19, True), fill="#ffffff")
+    else:
+        safe_title = share_card_fit_text(draw, safe_title, title_font, text_width)
+        safe_subtitle = share_card_fit_text(draw, safe_subtitle, subtitle_font, text_width)
+        draw.text((686, 164), safe_title, font=title_font, fill="#ffffff")
+        draw.text((686, 228), safe_subtitle, font=subtitle_font, fill="#c3d3cf")
+        y = 290
+        for detail in details[:4]:
+            safe_detail = share_card_fit_text(draw, clean_text_value(detail, 90), detail_font, 455)
+            if safe_detail:
+                draw.ellipse((688, y + 8, 700, y + 20), fill="#50dfa8")
+                draw.text((718, y), safe_detail, font=detail_font, fill="#ffffff")
+                y += 48
     draw.rounded_rectangle((686, 532, 1155, 590), radius=28, fill="#50dfa8")
     draw.text((720, 548), "Open this card in FairFares  →", font=cta_font, fill="#06241c")
     output = io.BytesIO()
@@ -23063,6 +23270,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/reverse-geocode":
             self.api_mobile_reverse_geocode(parsed)
             return
+        if parsed.path == "/api/mobile/gas-prices":
+            self.api_mobile_gas_prices(parsed)
+            return
+        if parsed.path == "/api/mobile/gas-map":
+            self.api_mobile_gas_map(parsed)
+            return
         if parsed.path == "/api/mobile/ride-map":
             self.api_mobile_ride_map(parsed)
             return
@@ -23714,7 +23927,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def community_join_url(self, public_id: str) -> str:
         token = public_chat_group_invite_token(public_id)
-        return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
+        # Version the public URL when share-card metadata changes. Messaging
+        # clients cache previews by exact URL and otherwise keep the old generic
+        # card long after the group resolver has been corrected.
+        return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}&preview=2"
 
     def community_invite_url(self, token: str) -> str:
         return f"{schema_origin()}/chitthi/invite?group_invite={urllib.parse.quote(token)}"
@@ -23800,16 +24016,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             elif kind == "group":
                 row = None
                 if token and len(token) >= 24:
-                    row = con.execute(
-                        """SELECT communities.*, invites.revoked_at, invites.expires_at,
-                                  (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
-                           FROM chat_group_invites invites JOIN chat_communities communities ON communities.id = invites.community_id
-                           WHERE invites.token_hash = ? LIMIT 1""",
-                        (chat_group_invite_hash(token),),
-                    ).fetchone()
-                    expiry = parse_sql_datetime(row_value(row, "expires_at")) if row else None
-                    if not row or row_value(row, "revoked_at") or not expiry or expiry <= datetime.utcnow():
-                        row = None
+                    row = chat_group_share_row(con, token)
                 elif public_id:
                     row = con.execute(
                         """SELECT communities.*,
@@ -23819,7 +24026,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     ).fetchone()
                 if row:
                     primary_image = row_value(row, "photo_url")
-                    title = f"Join {row_value(row, 'name') or 'this group'} on Chitthi"
+                    title = row_value(row, "name") or "Chitthi group"
                     count = int(row_value(row, "member_count") or 0)
                     subtitle = row_value(row, "area_label") or "Chitthi by FairFares"
                     details = (
@@ -23848,17 +24055,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         group = None
         with db() as con:
             if token and len(token) >= 24:
-                invite = con.execute(
-                    """SELECT communities.*, invites.revoked_at, invites.expires_at,
-                              (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
-                       FROM chat_group_invites invites
-                       JOIN chat_communities communities ON communities.id = invites.community_id
-                       WHERE invites.token_hash = ? LIMIT 1""",
-                    (chat_group_invite_hash(token),),
-                ).fetchone()
-                invite_expiry = parse_sql_datetime(row_value(invite, "expires_at")) if invite else None
-                if invite and not row_value(invite, "revoked_at") and invite_expiry and invite_expiry > datetime.utcnow():
-                    group = invite
+                group = chat_group_share_row(con, token)
             elif community_id:
                 group = con.execute(
                     """SELECT communities.*,
@@ -23886,15 +24083,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # simply follow the normal apex-to-www redirect back to this page.
         app_invite_token = token or public_chat_group_invite_token(community_id)
         app_invite_query = urllib.parse.urlencode({"group_invite": app_invite_token})
-        universal_app_link = f"https://fairfare.space/chitthi/invite?{app_invite_query}"
+        universal_app_link = f"https://www.fairfare.space/chitthi/invite?{app_invite_query}"
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         group_query = app_invite_query
-        android_app_link = (
-            f"intent://group?{group_query}#Intent;scheme=fairfares;"
-            "package=com.fairfares.mobile;"
-            f"S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
-        )
+        android_app_link = android_chitthi_invite_intent(group_query)
         escaped_image = html.escape(share_image, quote=True)
         # Use the official high-contrast lockup here as well as inside the generated
         # preview card so the landing page and social preview have identical branding.
@@ -23913,7 +24106,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else ""
         )
         body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"robots\" content=\"noindex,nofollow\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{escaped_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_image}\"><meta property=\"og:image:type\" content=\"image/png\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(group_name + ' Chitthi group preview', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_image}\"></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a id=\"open-chitthi-app\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install or update FairFares</a></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var link=document.getElementById('open-chitthi-app');if(link)link.href={json.dumps(android_app_link)}}}}})()</script></body></html>"""
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a id=\"open-chitthi-app\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a id=\"install-fairfares\" href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install or update FairFares</a></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var link=document.getElementById('open-chitthi-app'),install=document.getElementById('install-fairfares');if(link)link.href={json.dumps(android_app_link)};if(install)install.href={json.dumps(android_store_url)}}}}})()</script></body></html>"""
         self.send_text(
             body,
             "text/html; charset=utf-8",
@@ -34638,7 +34831,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """
                             INSERT INTO mobile_notification_preferences
                             (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
-                            VALUES (?, 1, 1, 1, 1, 1, 0, CURRENT_TIMESTAMP)
+                            VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
                             ON CONFLICT(user_id) DO UPDATE SET
                                 chitthi_enabled = 1,
                                 carpool_enabled = 1,
@@ -34648,6 +34841,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                                 updated_at = CURRENT_TIMESTAMP
                             """,
                             (current_user_id,),
+                        )
+                        con.execute(
+                            """
+                            UPDATE users
+                            SET promo_push_opt_in = COALESCE((
+                                SELECT marketing_enabled
+                                FROM mobile_notification_preferences
+                                WHERE user_id = ?
+                            ), promo_push_opt_in)
+                            WHERE id = ?
+                            """,
+                            (current_user_id, current_user_id),
                         )
         response = {"ok": True, "enabled": enabled}
         if already_current:
@@ -34710,8 +34915,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute(
                 """UPDATE users SET consented_at = ?, terms_version = ?, privacy_version = ?,
-                          community_guidelines_version = ? WHERE id = ?""",
+                          community_guidelines_version = ?, promo_push_opt_in = 1 WHERE id = ?""",
                 (consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
+            )
+            con.execute(
+                """
+                INSERT INTO mobile_notification_preferences
+                (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
+                VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    marketing_enabled = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id,),
             )
             updated = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_json({"ok": True, "user": mobile_user_payload(updated)})
@@ -35068,6 +35284,117 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
             }
         )
+
+    def api_mobile_gas_prices(self, parsed: urllib.parse.ParseResult) -> None:
+        identity = self.request_rate_limit_identity()
+        retry_after = max(
+            api_rate_limit_retry_after("gas-price-read", identity, 12, 60),
+            api_rate_limit_retry_after("gas-price-read:ip", "ip:" + self.client_ip(), 80, 60),
+        )
+        if retry_after:
+            self.send_json({"ok": False, "retryable": True, "error": "Too many fuel-price requests. Please wait a moment."}, 429, {"Retry-After": str(retry_after)})
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            lat = float(params.get("lat", params.get("latitude", [""]))[0] or 0)
+            lng = float(params.get("lng", params.get("longitude", [""]))[0] or 0)
+            radius_miles = float(params.get("radius", params.get("radiusMiles", ["10"]))[0] or 10)
+        except (TypeError, ValueError):
+            self.send_json({"ok": False, "error": "Valid latitude, longitude, and radius are required."}, 400)
+            return
+        if lat < -90 or lat > 90 or lng < -180 or lng > 180 or (lat == 0 and lng == 0):
+            self.send_json({"ok": False, "error": "Latitude or longitude is out of range."}, 400)
+            return
+        fuel = clean_text_value((params.get("fuel", ["regular"])[0] or "regular"), 20).lower()
+        if fuel not in GAS_FUEL_TYPES:
+            self.send_json({"ok": False, "error": "Unsupported fuel type."}, 400)
+            return
+        radius_miles = max(1.0, min(radius_miles, 25.0))
+        try:
+            result = google_nearby_gas_prices(lat, lng, radius_miles, fuel)
+        except urllib.error.HTTPError as exc:
+            print(f"Google gas prices HTTP error: {exc.code}")
+            self.send_json(
+                {"ok": False, "configured": True, "stations": [], "error": "Nearby fuel prices are temporarily unavailable."},
+                502,
+            )
+            return
+        except Exception as exc:
+            print(f"Google gas prices error: {type(exc).__name__}: {exc}")
+            self.send_json(
+                {"ok": False, "configured": True, "stations": [], "error": "Nearby fuel prices are temporarily unavailable."},
+                502,
+            )
+            return
+        self.send_json(
+            {
+                "ok": True,
+                **result,
+                "center": {"latitude": lat, "longitude": lng},
+                "radiusMiles": radius_miles,
+            },
+            headers={"Cache-Control": "private, no-store"},
+        )
+
+    def api_mobile_gas_map(self, parsed: urllib.parse.ParseResult) -> None:
+        identity = self.request_rate_limit_identity()
+        retry_after = max(
+            api_rate_limit_retry_after("gas-map-read", identity, 30, 60),
+            api_rate_limit_retry_after("gas-map-read:ip", "ip:" + self.client_ip(), 160, 60),
+        )
+        if retry_after:
+            self.send_json({"ok": False, "retryable": True, "error": "Too many map requests. Please wait a moment."}, 429, {"Retry-After": str(retry_after)})
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            lat = float(params.get("lat", [""])[0] or 0)
+            lng = float(params.get("lng", [""])[0] or 0)
+        except (TypeError, ValueError):
+            self.send_json({"ok": False, "error": "Valid map coordinates are required."}, 400)
+            return
+        if lat < -90 or lat > 90 or lng < -180 or lng > 180 or (lat == 0 and lng == 0):
+            self.send_json({"ok": False, "error": "Map coordinates are out of range."}, 400)
+            return
+        station_points: list[str] = []
+        for raw_point in clean_text_value((params.get("stations", [""])[0] or ""), 1200).split(";")[:20]:
+            try:
+                point_lat, point_lng = (float(part.strip()) for part in raw_point.split(",", 1))
+            except (TypeError, ValueError):
+                continue
+            if -90 <= point_lat <= 90 and -180 <= point_lng <= 180:
+                station_points.append(f"{point_lat:.5f},{point_lng:.5f}")
+        maps_key = os.environ.get("GOOGLE_STATIC_MAPS_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+        if not maps_key:
+            self.send_json({"ok": False, "error": "Google map is not configured."}, 503)
+            return
+        map_params: list[tuple[str, str]] = [
+            ("size", "640x360"),
+            ("scale", "2"),
+            ("maptype", "roadmap"),
+            ("markers", f"color:blue|size:mid|label:Y|{lat:.5f},{lng:.5f}"),
+        ]
+        if station_points:
+            map_params.append(("markers", "color:green|size:mid|" + "|".join(station_points)))
+        else:
+            map_params.extend([("center", f"{lat:.5f},{lng:.5f}"), ("zoom", "12")])
+        map_params.append(("key", maps_key))
+        try:
+            request = urllib.request.Request(
+                f"https://maps.googleapis.com/maps/api/staticmap?{urllib.parse.urlencode(map_params)}",
+                headers={"User-Agent": "FairFares Mobile/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                image = response.read()
+                content_type = response.headers.get("Content-Type", "image/png")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type if content_type.startswith("image/") else "image/png")
+            self.send_header("Content-Length", str(len(image)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.end_headers()
+            self.wfile.write(image)
+        except Exception as exc:
+            print(f"Google gas map error: {type(exc).__name__}: {exc}")
+            self.send_json({"ok": False, "error": "Google map is temporarily unavailable."}, 502)
 
     def api_mobile_ride_map(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)

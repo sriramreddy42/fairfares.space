@@ -127,6 +127,8 @@ export type ChatMessage = {
     kind?: "IMAGE" | "VIDEO" | "FILE";
     decryptedDataUrl?: string;
     thumbnailDataUrl?: string;
+    imageWidth?: number;
+    imageHeight?: number;
     encryptedKeyPayload?: string;
     caption?: string;
     mediaGroupId?: string;
@@ -641,4 +643,33 @@ export type HousingActivityPost = {
   categoryLabel: string;
   location: string;
   rent: string;
+};
+
+export type GasFuelType = "regular" | "midgrade" | "premium" | "diesel" | "e85";
+
+export type GasStation = {
+  id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  distanceMiles: number;
+  price: number | null;
+  currency: string;
+  fuelType: string;
+  updatedAt: string;
+  googleMapsUri: string;
+};
+
+export type GasPriceResponse = {
+  ok: boolean;
+  configured: boolean;
+  stations: GasStation[];
+  fuel: GasFuelType;
+  source: string;
+  fetchedAt?: string;
+  cache?: string;
+  center: { latitude: number; longitude: number };
+  radiusMiles: number;
+  error?: string;
 };

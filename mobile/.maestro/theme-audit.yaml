@@ -1,0 +1,47 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Popular topics"
+    timeout: 15000
+- takeScreenshot: fairfares-audit-ask
+- tapOn: Housing
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-housing
+- tapOn: Activity
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-activity
+- tapOn: Ask
+- waitForAnimationToEnd
+- swipe:
+    start: 50%, 30%
+    end: 50%, 85%
+    duration: 500
+- swipe:
+    start: 50%, 30%
+    end: 50%, 85%
+    duration: 500
+- tapOn:
+    point: 38%, 36%
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-carpool
+- tapOn: Ask
+- waitForAnimationToEnd
+- swipe:
+    start: 50%, 30%
+    end: 50%, 85%
+    duration: 500
+- swipe:
+    start: 50%, 30%
+    end: 50%, 85%
+    duration: 500
+- tapOn:
+    point: 85%, 36%
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-rentals
+- tapOn: Chitthi
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-chitthi
+- tapOn: Account
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-audit-account

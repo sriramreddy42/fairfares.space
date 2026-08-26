@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { BlurView } from "expo-blur";
-import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -22,6 +22,7 @@ type Props = {
 };
 
 export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, height, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
+  const isLight = useColorScheme() === "light";
   const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
   const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
@@ -37,7 +38,8 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
       ? "Details first"
       : "Coming soon";
   return (
-    <TouchableOpacity style={[styles.card, width ? { width, marginRight: 0 } : null, height ? { height } : null]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
+    <View style={[styles.cardShell, isLight && styles.cardShellLight, width ? { width, marginRight: 0 } : null, height ? { height } : null]}>
+    <TouchableOpacity style={[styles.card, isLight && styles.cardLight]} activeOpacity={0.9} onPress={() => onOpen?.(post)}>
       <View style={[styles.imageWrap, compact && styles.imageWrapCompact]}>
         {imageUrl ? (
           <Image source={{ uri: imageUrl }} style={styles.image} />
@@ -66,8 +68,8 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
         {post.posterName ? <Text style={styles.poster} numberOfLines={1}>Posted by {post.posterName}</Text> : null}
         <View style={styles.pillRow}>
           {post.distanceMiles !== null ? (
-            <Text numberOfLines={1} style={[styles.distance, compact && styles.distanceCompact]}>
-              {post.distanceMiles} mi{distanceLabel ? ` from ${distanceLabel}` : " away"}
+            <Text numberOfLines={1} style={[styles.distance, isLight && styles.distanceLight, compact && styles.distanceCompact]}>
+              ⌖ {post.distanceMiles} mi{distanceLabel ? ` from ${distanceLabel}` : " away"}
             </Text>
           ) : null}
         </View>
@@ -93,11 +95,11 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
         ) : null}
       </View>
       {!post.sample ? (
-        <View style={styles.inlineMessageCard}>
+        <View style={[styles.inlineMessageCard, isLight && styles.inlineMessageCardLight]}>
           <BlurView
             pointerEvents="none"
-            tint="dark"
-            intensity={38}
+          tint={isLight ? "light" : "dark"}
+          intensity={isLight ? 8 : 38}
             experimentalBlurMethod="dimezisBlurView"
             style={StyleSheet.absoluteFill}
           />
@@ -123,12 +125,12 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
                   <Image source={appAssets.chittiMascot} style={styles.inlineMessageMascot} resizeMode="contain" />
                 </View>
                 <View style={styles.inlineMessageHeadingCopy}>
-                  <Text style={styles.inlineMessageTitle}>Message lister</Text>
+                  <Text style={[styles.inlineMessageTitle, isLight && styles.inlineMessageTitleLight]}>Message lister</Text>
                   <Text style={styles.inlineMessageHint}>Start a private Chitthi</Text>
                 </View>
               </View>
-              <View style={[styles.inlineMessageRow, sending && styles.inlineMessageRowBusy]}>
-                <TextInput value={draft} onChangeText={setDraft} style={styles.inlineMessageInput} placeholder="Write a message" placeholderTextColor="#667085" editable={!sending} returnKeyType="send" onSubmitEditing={() => { if (draft.trim() && onSendMessage) void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }} />
+              <View style={[styles.inlineMessageRow, isLight && styles.inlineMessageRowLight, sending && styles.inlineMessageRowBusy]}>
+                <TextInput value={draft} onChangeText={setDraft} style={[styles.inlineMessageInput, isLight && styles.inlineMessageInputLight]} placeholder="Write a message" placeholderTextColor="#667085" editable={!sending} returnKeyType="send" onSubmitEditing={() => { if (draft.trim() && onSendMessage) void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }} />
                 <TouchableOpacity style={[styles.inlineSend, (sending || !draft.trim()) && styles.inlineSendDisabled]} disabled={sending || !draft.trim() || !onSendMessage} onPress={() => { if (!onSendMessage) return; void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.inlineSendText}>Send</Text>}</TouchableOpacity>
               </View>
             </>
@@ -136,25 +138,40 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
         </View>
       ) : null}
     </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
+  cardShell: {
     width: 286,
+    marginRight: theme.spacing.md,
+    alignSelf: "flex-start",
+    borderRadius: theme.radius.lg
+  },
+  cardShellLight: {
+    shadowColor: "#1c2735",
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 7
+  },
+  card: {
+    width: "100%",
+    height: "100%",
     backgroundColor: theme.colors.panel,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.line,
     overflow: "hidden",
-    marginRight: theme.spacing.md,
     alignSelf: "flex-start"
   },
+  cardLight: { backgroundColor: "rgba(255,255,255,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", borderRadius: 22 },
   imageWrap: {
     height: 148,
     backgroundColor: theme.colors.panel2
   },
-  imageWrapCompact: { height: 130 },
+  imageWrapCompact: { height: 178 },
   image: {
     width: "100%",
     height: "100%"
@@ -163,7 +180,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#202a25",
+    backgroundColor: theme.colors.panel2,
     gap: 5,
     paddingHorizontal: 14
   },
@@ -243,6 +260,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900"
   },
+  distanceLight: {
+    color: "#087a55",
+    backgroundColor: "rgba(214,248,233,0.96)",
+    borderWidth: 1,
+    borderColor: "rgba(15,157,105,0.28)",
+    fontWeight: "900"
+  },
   distanceCompact: { paddingHorizontal: 7, paddingVertical: 4, fontSize: 11, maxWidth: "100%" },
   footer: {
     borderTopWidth: 1,
@@ -291,6 +315,7 @@ const styles = StyleSheet.create({
   respondDisabled: { borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
   respondTextDisabled: { color: theme.colors.muted, fontWeight: "600" },
   inlineMessageCard: { minHeight: 94, borderTopWidth: 1, borderTopColor: "rgba(117,217,173,0.38)", paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, gap: 10, justifyContent: "center", backgroundColor: "rgba(18,42,33,0.7)", overflow: "hidden" },
+  inlineMessageCardLight: { backgroundColor: "rgba(248,250,252,0.88)", borderTopColor: "rgba(148,163,184,0.22)" },
   inlineMessageGlassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1, backgroundColor: "rgba(255,255,255,0.3)" },
   inlineMessageGlassGlow: { position: "absolute", width: 110, height: 110, borderRadius: 55, top: -72, right: -24, backgroundColor: "rgba(55,213,154,0.12)" },
   inlineMessageHeading: { flexDirection: "row", alignItems: "center", gap: 7 },
@@ -298,10 +323,13 @@ const styles = StyleSheet.create({
   inlineMessageMascot: { width: 24, height: 24 },
   inlineMessageHeadingCopy: { flex: 1, minWidth: 0 },
   inlineMessageTitle: { color: theme.colors.text, fontSize: 12, lineHeight: 15, fontWeight: "900" },
+  inlineMessageTitleLight: { color: "#17202d" },
   inlineMessageHint: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, fontWeight: "700" },
   inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.08)" },
+  inlineMessageRowLight: { borderColor: "rgba(148,163,184,0.34)", backgroundColor: "rgba(255,255,255,0.90)" },
   inlineMessageRowBusy: { opacity: 0.8 },
   inlineMessageInput: { flex: 1, minWidth: 0, height: 34, color: theme.colors.text, paddingHorizontal: 0, paddingVertical: 6, fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  inlineMessageInputLight: { color: "#17202d" },
   inlineSend: { height: 34, minWidth: 59, borderRadius: 17, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
   inlineSendDisabled: { backgroundColor: "#3A5742", opacity: 0.62 },
   inlineSendText: { color: "#0C1A10", fontSize: 12, fontWeight: "900" },

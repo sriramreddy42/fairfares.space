@@ -9,12 +9,12 @@ import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Appearance, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getMobileNotificationPreferences, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, updateMobileNotificationPreferences } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -34,6 +34,7 @@ import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServicesScreen } from "./src/screens/ServicesScreen";
 import { StaffPickupScreen } from "./src/screens/StaffPickupScreen";
 import { CommunityScreen } from "./src/screens/CommunityScreen";
+import { GasStationsScreen } from "./src/screens/GasStationsScreen";
 
 declare const process: {
   env: {
@@ -75,7 +76,8 @@ const CRITICAL_BRAND_IMAGE_SOURCES = [
 const REVIEW_PROMPT_DELAY_MS = 180_000;
 const REVIEW_PROMPT_READY_GRACE_MS = 5 * 60_000;
 const reviewPromptStorageKey = (userId: number | string) => `fairfares.mobile.review-prompt.v1.${userId}`;
-const promotionalPromptStorageKey = (userId: number | string) => `fairfares.mobile.promotional-prompt.v1.${userId}`;
+const APPEARANCE_STORAGE_KEY = "fairfares.mobile.appearance.v1";
+type AppearancePreference = "system" | "dark" | "light";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -237,8 +239,28 @@ export default function App() {
 
 function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const systemColorScheme = useColorScheme();
+  const [appearancePreference, setAppearancePreference] = useState<AppearancePreference>("system");
+  const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("community");
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(APPEARANCE_STORAGE_KEY).then((saved) => {
+      if (!active) return;
+      const preference: AppearancePreference = saved === "light" || saved === "dark" ? saved : "system";
+      Appearance.setColorScheme(preference === "system" ? null : preference);
+      setAppearancePreference(preference);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  function changeAppearance(preference: AppearancePreference) {
+    Appearance.setColorScheme(preference === "system" ? null : preference);
+    setAppearancePreference(preference);
+    void AsyncStorage.setItem(APPEARANCE_STORAGE_KEY, preference);
+  }
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
@@ -273,6 +295,7 @@ function FairFaresApp() {
   const [sentCardOwnerUserId, setSentCardOwnerUserId] = useState(0);
   const [pendingGroupInvite, setPendingGroupInvite] = useState("");
   const [linkedHousingPost, setLinkedHousingPost] = useState<HousingPost | null>(null);
+  const [housingDetailReturnTab, setHousingDetailReturnTab] = useState<TabKey | null>(null);
   const [linkedCommunityPostId, setLinkedCommunityPostId] = useState("");
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
@@ -368,7 +391,6 @@ function FairFaresApp() {
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
   const notificationPermissionPromptShownRef = useRef(false);
-  const promotionalPromptRunningRef = useRef(false);
   const listingIntent: ListingIntent = listingForm.roommateIntent
     ? "need_roommates"
     : listingForm.postMode === "HAVE_PLACE"
@@ -462,46 +484,6 @@ function FairFaresApp() {
     }
   }
 
-  async function offerPromotionalNotifications() {
-    const userId = Number(data?.user?.id || 0);
-    if (Platform.OS === "web" || !userId || data?.user?.promotionalNotificationsEnabled || promotionalPromptRunningRef.current) return;
-    promotionalPromptRunningRef.current = true;
-    try {
-      const storageKey = promotionalPromptStorageKey(userId);
-      const handled = await AsyncStorage.getItem(storageKey).catch(() => null);
-      if (handled) return;
-      Alert.alert(
-        "Get FairFares opportunities",
-        "Rental, housing, and carpool updates.",
-        [
-          {
-            text: "Not now",
-            style: "cancel",
-            onPress: () => void AsyncStorage.setItem(storageKey, "dismissed")
-          },
-          {
-            text: "Turn On",
-            onPress: () => void (async () => {
-              try {
-                const current = await getMobileNotificationPreferences();
-                await updateMobileNotificationPreferences({ ...current.preferences, marketing: true });
-                await AsyncStorage.setItem(storageKey, "enabled");
-                setData((value) => value?.user ? {
-                  ...value,
-                  user: { ...value.user, promotionalNotificationsEnabled: true }
-                } : value);
-              } catch (error) {
-                Alert.alert("FairFares opportunities", error instanceof Error ? error.message : "Unable to enable opportunities right now.");
-              }
-            })()
-          }
-        ]
-      );
-    } finally {
-      promotionalPromptRunningRef.current = false;
-    }
-  }
-
   async function unregisterNotificationsForLogout() {
     if (Platform.OS !== "web") {
       await Notifications.setBadgeCountAsync(0).catch(() => false);
@@ -584,9 +566,7 @@ function FairFaresApp() {
   }, [data?.housing, cars]);
 
   useEffect(() => {
-    if (data?.user) void (async () => {
-      if (await enableMobileNotifications(true)) await offerPromotionalNotifications();
-    })();
+    if (data?.user) void enableMobileNotifications(true);
   }, [data?.user?.id]);
 
   useEffect(() => {
@@ -2156,45 +2136,57 @@ function FairFaresApp() {
       <StaffPickupScreen onClose={() => setStaffPickupOpen(false)} />
     ) : activeTab === "messenger" ? (
       null
+    ) : activeTab === "gas" ? (
+      <GasStationsScreen onBack={() => setActiveTab("community")} />
     ) : activeTab === "community" ? (
       <CommunityScreen
         user={data?.user || null}
         city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
+        cars={cars}
         onRequireLogin={() => setLoginOpen(true)}
         onOpenHousing={(postId = "") => {
+          if (postId) {
+            const openResolvedListing = (post: HousingPost) => {
+              setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+              setHousingDetailReturnTab("community");
+              setLinkedHousingPost(post);
+              setActiveTab("housing");
+            };
+            const existing = visiblePosts.find((post) => post.id === postId);
+            if (existing) {
+              openResolvedListing(existing);
+              return;
+            }
+            void getHousingListing(postId).then((post) => {
+              if (!post) {
+                Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
+                return;
+              }
+              openResolvedListing(post);
+            }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+            return;
+          }
           setSelectedNeed("need_place");
           setHousingWelcomeFocusKey((value) => value + 1);
           setActiveTab("housing");
-          if (!postId) return;
-          const existing = visiblePosts.find((post) => post.id === postId);
-          if (existing) {
-            setLinkedHousingPost(existing);
-            return;
-          }
-          void getHousingListing(postId).then((post) => {
-            if (!post) {
-              Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
-              return;
-            }
-            setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
-            setLinkedHousingPost(post);
-          }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
         }}
         onCreateHousingPost={(intent) => {
-          setActiveTab("housing");
           postNeed(intent);
         }}
         onOpenRides={() => {
+          setRentalFocusKey(0);
           setSelectedNeed("ride_need");
           setCarpoolFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
         onOpenRentalCars={() => {
+          setCarpoolFocusKey(0);
           setSelectedService("cars");
           setSelectedNeed("rental_cars");
           setRentalFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
+        onOpenGas={() => setActiveTab("gas")}
         onOpenCommunity={(communityId) => {
           setPendingPost(null);
           setPendingRide(null);
@@ -2264,6 +2256,8 @@ function FairFaresApp() {
         }}
         onOpenMessenger={() => setActiveTab("messenger")}
         onOpenStaffPickup={() => setStaffPickupOpen(true)}
+        appearancePreference={appearancePreference}
+        onAppearanceChange={changeAppearance}
       />
     ) : activeTab === "services" ? (
       <ServicesScreen
@@ -2338,6 +2332,10 @@ function FairFaresApp() {
         linkedHousingPost={linkedHousingPost}
         linkedCarpoolRide={linkedCarpoolRide}
         onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
+        onHousingDetailClosed={() => {
+          if (housingDetailReturnTab) setActiveTab(housingDetailReturnTab);
+          setHousingDetailReturnTab(null);
+        }}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
@@ -2393,6 +2391,10 @@ function FairFaresApp() {
         linkedHousingPost={linkedHousingPost}
         linkedCarpoolRide={linkedCarpoolRide}
         onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
+        onHousingDetailClosed={() => {
+          if (housingDetailReturnTab) setActiveTab(housingDetailReturnTab);
+          setHousingDetailReturnTab(null);
+        }}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
@@ -2432,10 +2434,14 @@ function FairFaresApp() {
   return (
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView
-      style={[styles.safe, activeTab === "messenger" && styles.chittiSafe]}
+      style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f0f2f5" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
       edges={activeTab === "messenger" && bottomTabsHidden ? ["top", "right", "left"] : ["top", "right", "bottom", "left"]}
     >
-      <StatusBar style="light" backgroundColor={activeTab === "messenger" ? "#052017" : theme.colors.bg} translucent={false} />
+      <StatusBar
+        style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
+        backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#ffffff" : "#052017") : effectiveColorScheme === "light" ? "#f0f2f5" : "#0f0f10"}
+        translucent={false}
+      />
       <CriticalBrandAssetPreloader />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
         {loading ? (
@@ -2453,7 +2459,7 @@ function FairFaresApp() {
         />
       </Animated.View>
       {launchVisible ? (
-        <Animated.View pointerEvents="none" style={[styles.launchOverlay, { opacity: launchOpacity }]}>
+        <Animated.View pointerEvents="none" style={styles.launchOverlay}>
           <Image
             source={require("./assets/launch-cityscape-v2.jpg")}
             style={styles.launchBackdrop}
@@ -3314,6 +3320,8 @@ const styles = StyleSheet.create({
   },
   safe: { flex: 1, backgroundColor: theme.colors.bg },
   chittiSafe: { backgroundColor: "#052017" },
+  chittiSafeLight: { backgroundColor: "#ffffff" },
+  chittiThreadSafe: { backgroundColor: "#C4D9CE" },
   appContent: { flex: 1 },
   criticalAssetPreloader: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", left: -10, top: -10 },
   criticalAssetImage: { width: 1, height: 1 },
@@ -3367,8 +3375,8 @@ const styles = StyleSheet.create({
   reviewPromptSubmit: { width: "100%", minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center" },
   reviewPromptDismiss: { width: "100%", minHeight: 44, alignItems: "center", justifyContent: "center" },
   reviewPromptDismissText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
-  launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.bg, overflow: "hidden" },
-  launchBackdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.82 },
+  launchOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000, alignItems: "center", justifyContent: "center", backgroundColor: "#020817", overflow: "hidden" },
+  launchBackdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.88 },
   launchBackdropShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(1,8,23,0.18)" },
   launchBrand: { position: "absolute", width: "100%", maxWidth: 360, paddingHorizontal: 12, alignItems: "center", gap: 12, zIndex: 1 },
   launchBrandPortrait: { top: "25%" },
@@ -3382,8 +3390,8 @@ const styles = StyleSheet.create({
   launchCar: { width: "100%", height: "100%" },
   launchSpinner: { position: "absolute", bottom: "4%", zIndex: 3 },
   launchTaglineGroup: { alignItems: "center", gap: 7 },
-  launchTagline: { color: theme.colors.soft, fontSize: 15, fontWeight: "900", letterSpacing: 0.7 },
-  launchPromise: { color: theme.colors.text, fontSize: 16, fontWeight: "900", letterSpacing: 0.35 },
+  launchTagline: { color: "#e8eef8", fontSize: 15, fontWeight: "900", letterSpacing: 0.7 },
+  launchPromise: { color: "#ffffff", fontSize: 16, fontWeight: "900", letterSpacing: 0.35 },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },

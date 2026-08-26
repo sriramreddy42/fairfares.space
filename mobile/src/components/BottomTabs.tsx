@@ -1,5 +1,5 @@
 import React, { useRef } from "react";
-import { Animated, Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { FairFaresUser } from "../types";
@@ -10,9 +10,9 @@ import {
   useResponsiveLayout,
 } from "../utils/layout";
 
-export type TabKey = "home" | "housing" | "community" | "services" | "activity" | "messenger" | "profile";
+export type TabKey = "home" | "housing" | "community" | "gas" | "services" | "activity" | "messenger" | "profile";
 
-type VisibleTabKey = Exclude<TabKey, "housing">;
+type VisibleTabKey = Exclude<TabKey, "housing" | "gas">;
 
 type NavigationItem = {
   key: VisibleTabKey;
@@ -40,11 +40,14 @@ type Props = {
 };
 
 function visibleActiveTab(active: TabKey): VisibleTabKey {
-  return active === "housing" ? "home" : active;
+  if (active === "housing") return "home";
+  if (active === "gas") return "community";
+  return active;
 }
 
 export function BottomTabs({ active, unreadCount, user, onChange, hidden = false }: Props) {
   const layout = useResponsiveLayout();
+  const colorScheme = useColorScheme();
   const housingScale = useRef(new Animated.Value(1)).current;
 
   if (hidden) return null;
@@ -55,19 +58,22 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
     <View
       style={[
         styles.card,
+        colorScheme === "light" && styles.cardLight,
         { bottom: layout.navBottomInset },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
-          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
+          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN },
+        colorScheme === "light" && { left: 0, right: 0, bottom: 0, width: undefined, borderRadius: 0 }
       ]}
       accessibilityRole="tablist"
     >
-      <View pointerEvents="none" style={styles.glassClip}>
+      <View pointerEvents="none" style={[styles.glassClip, colorScheme === "light" && styles.glassClipLight]}>
         <AdaptiveGlassView
           style={StyleSheet.absoluteFill}
           intensity={72}
-          tintColor="rgba(24,29,27,0.72)"
-          fallbackColor="rgba(20,21,21,0.94)"
+          tintColor={colorScheme === "light" ? "rgba(255,255,255,0.94)" : "rgba(24,29,27,0.72)"}
+          fallbackColor={colorScheme === "light" ? "#ffffff" : "rgba(20,21,21,0.94)"}
+          blurTint={colorScheme === "light" ? "light" : "dark"}
         />
         <View style={styles.glassTint} />
         <View style={styles.glassTopHighlight} />
@@ -117,7 +123,9 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                         styles.icon,
                         { width: item.width, height: item.height },
                         item.key !== "messenger" && isSelected && styles.selectedIcon,
-                        !isSelected && styles.unselectedIcon,
+                        item.key !== "messenger" && !isSelected && styles.unselectedIcon,
+                        item.key === "messenger" && !isSelected && styles.unselectedFullColorIcon,
+                        item.key !== "messenger" && { tintColor: isSelected ? "#1877f2" : colorScheme === "light" ? "#65676b" : "#aaaab0" },
                       ]}
                     />
                   )}
@@ -145,14 +153,15 @@ const styles = StyleSheet.create({
     height: 70,
     borderRadius: 35,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    backgroundColor: "transparent",
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.panel,
     shadowColor: "#000000",
     shadowOpacity: 0.42,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
     elevation: 14,
   },
+  cardLight: { borderWidth: 0, borderRadius: 0, shadowOpacity: 0.12, shadowRadius: 8, elevation: 5 },
   glassClip: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 35,
@@ -161,11 +170,12 @@ const styles = StyleSheet.create({
     // the underlying scroll view invalidates. Paint the stable material color
     // immediately so launch never exposes page content through an empty glass
     // surface; the native effect then enhances this base when ready.
-    backgroundColor: "rgba(20,21,21,0.94)",
+    backgroundColor: theme.colors.panel,
   },
+  glassClipLight: { borderRadius: 0 },
   glassTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(11,15,14,0.44)",
+    backgroundColor: "transparent",
   },
   glassTopHighlight: {
     position: "absolute",
@@ -173,7 +183,7 @@ const styles = StyleSheet.create({
     left: 22,
     right: 22,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(255,255,255,0.34)",
+    backgroundColor: theme.colors.line,
   },
   glassBottomShade: {
     position: "absolute",
@@ -182,7 +192,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     height: 20,
     borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.14)",
+    backgroundColor: "transparent",
   },
   itemsRow: {
     flex: 1,
@@ -214,10 +224,10 @@ const styles = StyleSheet.create({
   },
   selectedItem: {
     borderRadius: 20,
-    backgroundColor: "#111715",
+    backgroundColor: theme.colors.panel2,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(236,190,103,0.72)",
-    shadowColor: "#F0C671",
+    borderColor: theme.colors.blue,
+    shadowColor: theme.colors.blue,
     shadowOpacity: 0.2,
     shadowRadius: 9,
     shadowOffset: { width: 0, height: 0 },
@@ -236,7 +246,7 @@ const styles = StyleSheet.create({
     borderRadius: 27,
     backgroundColor: theme.colors.brand,
     borderWidth: 3,
-    borderColor: "#111715",
+    borderColor: theme.colors.panel,
     shadowColor: theme.colors.brand,
     shadowOpacity: 0.34,
     shadowRadius: 10,
@@ -252,7 +262,7 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
   glyph: {
-    color: "rgba(255,255,255,0.68)",
+    color: theme.colors.muted,
     fontSize: 19,
     fontWeight: "900",
     width: 27,
@@ -261,7 +271,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.42)",
+    borderColor: theme.colors.line,
   },
   centerGlyph: {
     width: 36,
@@ -274,15 +284,15 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   selectedGlyph: {
-    color: "#F0C671",
-    borderColor: "#F0C671",
+    color: theme.colors.blue,
+    borderColor: theme.colors.blue,
   },
   selectedCenterGlyph: {
     color: "#06291e",
     borderColor: "transparent",
   },
   selectedIcon: {
-    tintColor: "#F0C671",
+    tintColor: theme.colors.blue,
   },
   profileAvatar: {
     width: 28,
@@ -290,11 +300,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.45)",
+    borderColor: theme.colors.line,
     opacity: 0.78,
   },
   selectedProfileAvatar: {
-    borderColor: "#F0C671",
+    borderColor: theme.colors.blue,
     opacity: 1,
   },
   profileAvatarImage: {
@@ -302,10 +312,12 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   unselectedIcon: {
-    opacity: 0.68,
+    opacity: 1,
+    tintColor: theme.colors.muted,
   },
+  unselectedFullColorIcon: { opacity: 0.82 },
   label: {
-    color: "#A8A8A8",
+    color: theme.colors.muted,
     fontSize: 9.5,
     lineHeight: 12,
     fontWeight: "800",
@@ -313,10 +325,10 @@ const styles = StyleSheet.create({
   },
   centerLabel: {
     marginTop: 0,
-    color: "#D8FFF0",
+    color: theme.colors.brand,
   },
   selectedLabel: {
-    color: "#FFFFFF",
+    color: theme.colors.blue,
   },
   badge: {
     position: "absolute",

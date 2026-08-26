@@ -1,0 +1,15 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Popular topics"
+    timeout: 15000
+- tapOn: Chitthi
+- extendedWaitUntil:
+    visible: "Search people, groups, or city"
+    timeout: 15000
+- takeScreenshot: fairfares-chitthi-light-inbox
+- tapOn:
+    point: 50%, 34%
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-chitthi-light-thread

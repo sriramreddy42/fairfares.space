@@ -1,0 +1,8 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- tapOn: Account
+- waitForAnimationToEnd
+- tapOn:
+    point: 50%, 40%
+- waitForAnimationToEnd

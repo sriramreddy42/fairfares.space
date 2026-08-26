@@ -1,0 +1,6 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- tapOn: Housing
+- waitForAnimationToEnd
+- takeScreenshot: fairfares-housing-card-check

@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
-  ActivityIndicator, Alert, Image, Linking, Modal, Platform, RefreshControl, ScrollView, Share,
-  StyleSheet, Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, Share,
+  StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View,
 } from "react-native";
 import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
@@ -12,7 +12,7 @@ import {
   updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { Community, CommunityPost, FairFaresUser } from "../types";
+import { Car, Community, CommunityPost, FairFaresUser } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -21,11 +21,13 @@ import { useResponsiveLayout } from "../utils/layout";
 type Props = {
   user: FairFaresUser | null;
   city: string;
+  cars: Car[];
   onRequireLogin: () => void;
   onOpenHousing: (postId?: string) => void;
   onCreateHousingPost: (intent: "need_place" | "need_roommates" | "have_place") => void;
   onOpenRides: () => void;
   onOpenRentalCars: () => void;
+  onOpenGas: () => void;
   onOpenCommunity: (communityId: string) => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   initialPostId?: string;
@@ -44,7 +46,7 @@ const housingQuickLinks = [
   { intent: "need_roommates", icon: "👥", title: "Need roommates", accent: "#398bff", background: "#091827" },
   { intent: "have_place", icon: "⌂", title: "I have a place", accent: "#ff7b16", background: "#21160d" },
 ] as const;
-const communityHeroPoster = require("../../assets/ask-community-hero-v3.png");
+const communityHeroPoster = require("../../assets/ask-community-logo-transparent.png");
 const types: Array<{ value: CommunityPost["type"]; label: string }> = [
   { value: "QUESTION", label: "Ask a question" }, { value: "REQUEST", label: "Request help" },
   { value: "RECOMMENDATION", label: "Recommend" }, { value: "UPDATE", label: "Share update" },
@@ -68,6 +70,18 @@ const emptyDetails = { budget: "", moveInDate: "", preference: "", rent: "", ava
 
 function absoluteUrl(value: string) {
   return absoluteAssetUrl(value);
+}
+
+function monthlyRentalRange(price: number | string) {
+  const daily = Math.round(Number(price || 0));
+  const dailyLow = Math.max(25, daily - 5);
+  const dailyHigh = Math.max(dailyLow, daily + 5);
+  const discountedDailyLow = Math.max(1, Math.round(dailyLow * 0.7));
+  const discountedDailyHigh = Math.max(discountedDailyLow, Math.round(dailyHigh * 0.7));
+  return {
+    dailyLow: discountedDailyLow,
+    dailyHigh: discountedDailyHigh,
+  };
 }
 
 function relativeTime(value: string) {
@@ -155,7 +169,7 @@ function SharedLinkCard({ url }: { url: string }) {
   const destinationUrl = preview?.url || url;
   return (
     <TouchableOpacity
-      style={styles.linkCard}
+      style={[styles.linkCard, { backgroundColor: theme.colors.panel2, borderColor: theme.colors.line }]}
       activeOpacity={0.84}
       onPress={(event) => { event.stopPropagation(); void Linking.openURL(destinationUrl); }}
       accessibilityRole="link"
@@ -179,8 +193,9 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenCommunity, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenGas, onOpenCommunity, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
+  const isLight = useColorScheme() === "light";
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [nationalPosts, setNationalPosts] = useState<CommunityPost[]>([]);
   const [groups, setGroups] = useState<Community[]>([]);
@@ -195,6 +210,8 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   const [appliedQuery, setAppliedQuery] = useState("");
   const [selectedGroup, setSelectedGroup] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const pullOffset = useRef(new Animated.Value(0)).current;
+  const heroEntrance = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -212,6 +229,11 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   const fallbackNationalOffset = useRef(0);
   const manualFeedCity = useRef(false);
   const feedCityStorageKey = `fairfares.ask.feed-city.${Number(user?.id || 0) || "guest"}`;
+  const lowestRental = useMemo(() => cars.reduce<Car | null>((lowest, car) => {
+    const price = Number(car.daily_price);
+    if (!Number.isFinite(price) || price <= 0 || !car.image_url) return lowest;
+    return !lowest || price < Number(lowest.daily_price) ? car : lowest;
+  }, null), [cars]);
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -260,6 +282,23 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   }, [appliedQuery, category, city, groupSuggestionCity, selectedGroup, user?.id]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (loading) {
+      heroEntrance.setValue(0);
+      return;
+    }
+    const animation = Animated.spring(heroEntrance, {
+      toValue: 1,
+      damping: 18,
+      stiffness: 105,
+      mass: 0.9,
+      restDisplacementThreshold: 0.5,
+      restSpeedThreshold: 0.5,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [heroEntrance, loading]);
   useEffect(() => {
     let cancelled = false;
     void AsyncStorage.getItem(feedCityStorageKey).then((storedCity) => {
@@ -493,11 +532,11 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   };
 
   const renderCommunitySuggestions = () => suggestedCommunities.length ? (
-    <View style={styles.inlineCommunities}>
+    <View style={[styles.inlineCommunities, isLight && styles.inlineCommunitiesLight]}>
       <View style={styles.inlineCommunityHead}><View><Text style={styles.inlineCommunityEyebrow}>NEAR {groupSuggestionCity.split(",", 1)[0].toUpperCase()}</Text><Text style={styles.inlineCommunityTitle}>Join communities</Text></View><View style={styles.inlineCommunitySwipe}><Text style={styles.inlineCommunitySwipeText}>Swipe</Text><Text style={styles.inlineCommunitySwipeArrow}>→</Text></View></View>
       <Text style={styles.inlineCommunityBody}>Connect with local members and conversations near you.</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.inlineCommunityRail}>
-        {suggestedCommunities.map((group) => <View key={group.id} style={styles.inlineCommunityCard}><UserAvatar photoUrl={group.photoUrl} style={styles.inlineCommunityPhoto} imageStyle={styles.inlineCommunityPhotoImage} fallback={<Text style={styles.inlineCommunityPhotoGlyph}>🏘️</Text>} /><Text style={styles.inlineCommunityName} numberOfLines={2}>{group.name}</Text><Text style={styles.inlineCommunityMeta} numberOfLines={1}>{group.area || group.suggestionCity || groupSuggestionCity}</Text><Text style={styles.inlineCommunityMembers}>{group.memberCount} members</Text><TouchableOpacity style={[styles.inlineJoinButton, group.joined && styles.inlineJoinedButton]} disabled={Boolean(groupBusyId)} accessibilityRole="button" accessibilityLabel={`${group.joined ? "Open" : "Join"} ${group.name}`} onPress={() => void joinSuggestedCommunity(group)}><Text style={[styles.inlineJoinText, group.joined && styles.inlineJoinedText]}>{groupBusyId === group.id ? "…" : group.joined ? "Open" : "Join"}</Text></TouchableOpacity></View>)}
+        {suggestedCommunities.map((group) => <View key={group.id} style={[styles.inlineCommunityCard, isLight && styles.inlineCommunityCardLight]}><UserAvatar photoUrl={group.photoUrl} style={styles.inlineCommunityPhoto} imageStyle={styles.inlineCommunityPhotoImage} fallback={<Text style={styles.inlineCommunityPhotoGlyph}>🏘️</Text>} /><Text style={styles.inlineCommunityName} numberOfLines={2}>{group.name}</Text><Text style={styles.inlineCommunityMeta} numberOfLines={1}>{group.area || group.suggestionCity || groupSuggestionCity}</Text><Text style={styles.inlineCommunityMembers}>{group.memberCount} members</Text><TouchableOpacity style={[styles.inlineJoinButton, group.joined && styles.inlineJoinedButton]} disabled={Boolean(groupBusyId)} accessibilityRole="button" accessibilityLabel={`${group.joined ? "Open" : "Join"} ${group.name}`} onPress={() => void joinSuggestedCommunity(group)}><Text style={[styles.inlineJoinText, group.joined && styles.inlineJoinedText]}>{groupBusyId === group.id ? "…" : group.joined ? "Open" : "Join"}</Text></TouchableOpacity></View>)}
       </ScrollView>
     </View>
   ) : null;
@@ -505,7 +544,7 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
   const communityInsertIndex = Math.min(3, posts.length - 1);
 
   const renderPost = (post: CommunityPost) => (
-    <TouchableOpacity key={post.id} activeOpacity={0.92} style={styles.postCard} onPress={() => void openDetail(post)} accessible={false}>
+    <TouchableOpacity key={post.id} activeOpacity={0.92} style={[styles.postCard, isLight && styles.postCardLight]} onPress={() => void openDetail(post)} accessible={false}>
       <View style={styles.postHead}>
         <UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} />
         <View style={styles.postAuthor}><Text style={[styles.author, styles.postAuthorSoft]}>{post.author.name}</Text><Text style={styles.meta}>{post.community?.name || [post.area, post.city].filter(Boolean).join(" · ") || "FairFares Community"} · {relativeTime(post.createdAt)}</Text></View>
@@ -527,27 +566,73 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
     </TouchableOpacity>
   );
 
+  const renderLowestRental = () => lowestRental ? (
+    <TouchableOpacity
+      key={`rental-${lowestRental.id}`}
+      style={styles.rentalFeatureCard}
+      activeOpacity={0.9}
+      onPress={onOpenRentalCars}
+      accessibilityRole="button"
+      accessibilityLabel={`Lowest-priced monthly rental car, ${lowestRental.name}, ${monthlyRentalRange(lowestRental.daily_price).dailyLow} to ${monthlyRentalRange(lowestRental.daily_price).dailyHigh} dollars per day after the monthly discount. View rental cars`}
+    >
+      <Image source={{ uri: absoluteUrl(lowestRental.image_url) }} style={styles.rentalFeatureImage} resizeMode="cover" />
+      <View style={styles.rentalFeatureContent}>
+        <View style={styles.rentalFeatureTopline}><Text style={styles.rentalFeatureEyebrow}>LOWEST CAR RENTAL</Text><Text style={styles.rentalFeatureBadge}>CAR RENTAL</Text></View>
+        <Text style={styles.rentalFeatureTitle} numberOfLines={1}>{lowestRental.name || `${lowestRental.brand} ${lowestRental.model}`}</Text>
+        <Text style={styles.rentalFeatureLocation} numberOfLines={1}>{lowestRental.location || "Available in the USA"}</Text>
+        <View style={styles.rentalFeatureBottom}>
+          <View style={styles.rentalFeaturePricing}><Text style={styles.rentalFeaturePrice}>${monthlyRentalRange(lowestRental.daily_price).dailyLow}–${monthlyRentalRange(lowestRental.daily_price).dailyHigh}<Text style={styles.rentalFeaturePerDay}> / day</Text></Text><Text style={styles.rentalFeatureDiscountedDaily}>30% monthly-rate discount applied</Text></View>
+          <View style={styles.rentalFeatureAction}><Text style={styles.rentalFeatureActionText}>View rental</Text><Text style={styles.rentalFeatureArrow}>›</Text></View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  ) : null;
+
   return <View style={styles.screen}>
-    <ScrollView contentContainerStyle={[styles.content, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]} refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}>
-      <View style={styles.heroPosterFrame} accessibilityLabel="Ask Community. Trusted local answers from people who know your city. Local people, helpful answers, safe and private."><Image source={communityHeroPoster} style={styles.heroPoster} resizeMode="cover" /></View>
-      <View style={styles.quickComposer}>
+    <Animated.ScrollView
+      contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
+      alwaysBounceVertical
+      scrollEventThrottle={16}
+      onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: pullOffset } } }], { useNativeDriver: true })}
+      refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}
+    >
+      <Animated.View
+        style={[styles.heroPosterFrame, {
+          opacity: heroEntrance.interpolate({ inputRange: [0, 0.45, 1], outputRange: [0.25, 0.9, 1] }),
+          transform: [{
+            translateY: pullOffset.interpolate({ inputRange: [-140, 0], outputRange: [54, 0], extrapolate: "clamp" })
+          }, {
+            translateY: heroEntrance.interpolate({ inputRange: [0, 1], outputRange: [64, 0] })
+          }]
+        }]}
+        accessibilityLabel="Ask Community"
+      >
+        <Image source={communityHeroPoster} style={styles.heroPoster} resizeMode="contain" />
+      </Animated.View>
+      <View style={[styles.quickComposer, isLight && styles.quickComposerLight]}>
         <UserAvatar photoUrl={user?.profilePhotoUrl} style={styles.composerAvatar} imageStyle={styles.composerAvatarImage} />
-        <TouchableOpacity style={styles.composerPrompt} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={styles.composerPromptText}>Write something…</Text></TouchableOpacity>
+        <TouchableOpacity style={[styles.composerPrompt, isLight && styles.composerPromptLight]} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={styles.composerPromptText}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>
-      <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
-      {category === "ALL" ? <View style={styles.quickLinksSection}><Text style={styles.quickLinksHeading}>Quick links</Text><View style={styles.quickLinksRow}>{housingQuickLinks.map((item) => <TouchableOpacity key={item.intent} style={[styles.quickLinkTextButton, { backgroundColor: item.background, borderColor: item.accent }]} activeOpacity={0.7} onPress={() => onCreateHousingPost(item.intent)} accessibilityRole="button" accessibilityLabel={`Create post: ${item.title}`}><Text style={[styles.quickLinkIcon, { color: item.accent }]}>{item.icon}</Text><Text style={[styles.quickLinkText, { color: item.accent }]}>{item.title}</Text><Text style={[styles.quickLinkChevron, { color: item.accent }]}>›</Text></TouchableOpacity>)}</View></View> : null}
-      <View style={styles.feedControls}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={`Change feed city. Currently ${groupSuggestionCity}`}><View><Text style={styles.relevanceTitle}>Near {groupSuggestionCity.split(",", 1)[0] || "you"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={styles.relevanceSubtitle}>{category === "ALL" ? "Current-city posts and listings · Tap to change" : categoryLabels[category]}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={styles.filterIcon}>☷</Text></TouchableOpacity></View>
+      <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="Open cheap gas prices near you">
+        <View style={styles.gasPreviewIcon}><Text style={styles.gasPreviewGlyph}>⛽</Text></View>
+        <View style={styles.gasPreviewCopy}><Text style={[styles.gasPreviewTitle, isLight && styles.gasPreviewTitleLight]}>Cheap gas near you</Text><Text style={styles.gasPreviewSubtitle}>Tap to compare reported station prices</Text></View>
+        <Text style={[styles.gasPreviewChevron, isLight && styles.gasPreviewChevronLight]}>›</Text>
+      </TouchableOpacity>
+      <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
+      {category === "ALL" ? <View style={styles.quickLinksSection}><Text style={styles.quickLinksHeading}>Quick links</Text><View style={styles.quickLinksRow}>{housingQuickLinks.map((item) => <TouchableOpacity key={item.intent} style={[styles.quickLinkTextButton, { backgroundColor: theme.colors.panel, borderColor: item.accent }, isLight && styles.quickLinkTextButtonLight]} activeOpacity={0.7} onPress={() => onCreateHousingPost(item.intent)} accessibilityRole="button" accessibilityLabel={`Create post: ${item.title}`}><Text style={[styles.quickLinkIcon, { color: item.accent }]}>{item.icon}</Text><Text style={[styles.quickLinkText, { color: item.accent }]}>{item.title}</Text><Text style={[styles.quickLinkChevron, { color: item.accent }]}>›</Text></TouchableOpacity>)}</View></View> : null}
+      <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={`Change feed city. Currently ${groupSuggestionCity}`}><View><Text style={styles.relevanceTitle}>Near {groupSuggestionCity.split(",", 1)[0] || "you"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={styles.relevanceSubtitle}>{category === "ALL" ? "Current-city posts and listings · Tap to change" : categoryLabels[category]}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={styles.filterIcon}>☷</Text></TouchableOpacity></View>
       {loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : <View style={styles.unifiedFeed}>
         {posts.map((post, index) => <React.Fragment key={post.id}>{renderPost(post)}{category === "ALL" && index === communityInsertIndex ? renderCommunitySuggestions() : null}</React.Fragment>)}
         {category === "ALL" && posts.length === 0 ? renderCommunitySuggestions() : null}
         {!posts.length ? <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View> : null}
         {!selectedGroup && nationalPosts.length ? <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across the USA</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>🇺🇸</Text></View> : null}
-        {!selectedGroup ? nationalPosts.map((post) => <React.Fragment key={`national-${post.id}`}>{renderPost(post)}</React.Fragment>) : null}
+        {!selectedGroup ? nationalPosts.map((post, index) => <React.Fragment key={`national-${post.id}`}>{renderPost(post)}{index === 2 ? renderLowestRental() : null}</React.Fragment>) : null}
+        {!selectedGroup && nationalPosts.length < 3 ? renderLowestRental() : null}
         {!posts.length && !nationalPosts.length ? <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text> : null}
         {hasMore ? <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()}><Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : "Load more conversations"}</Text></TouchableOpacity> : null}
       </View>}
-    </ScrollView>
+    </Animated.ScrollView>
 
     <Modal visible={cityPickerOpen} transparent animationType="fade" onRequestClose={() => setCityPickerOpen(false)}>
       <View style={styles.cityPickerBackdrop}><View style={styles.cityPickerCard}>
@@ -570,7 +655,7 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
         <TextInput style={styles.titleInput} value={form.title} onChangeText={(title) => setForm((current) => ({ ...current, title }))} maxLength={140} placeholder="Write a clear title" placeholderTextColor={theme.colors.muted} />
         <TextInput style={styles.bodyInput} value={form.body} onChangeText={(body) => setForm((current) => ({ ...current, body }))} multiline maxLength={3000} textAlignVertical="top" placeholder="Add details that will help people give a useful answer…" placeholderTextColor={theme.colors.muted} />
         <View style={styles.counter}><Text style={styles.counterText}>{form.body.length}/3000</Text></View>
-        <View style={styles.attachmentPanel}>
+        <View style={[styles.attachmentPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
           <View><Text style={styles.attachmentTitle}>Add to your post</Text><Text style={styles.attachmentHint}>Share a helpful link or up to 4 photos</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
           {form.images.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.images.map((image, index) => <TouchableOpacity key={index} onPress={() => setForm((current) => ({ ...current, images: current.images.filter((_, target) => target !== index) }))}><Image source={{ uri: image }} style={styles.previewImage} /><View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
@@ -578,18 +663,18 @@ export function CommunityScreen({ user, city, onRequireLogin, onOpenHousing, onC
         </View>
         <TextInput style={styles.input} value={form.area} onChangeText={(area) => setForm((current) => ({ ...current, area }))} placeholder={`Location or area · ${city}`} placeholderTextColor={theme.colors.muted} />
         {groupOptions.length ? <><Text style={styles.formLabel}>Audience</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}><TouchableOpacity style={[styles.chip, !form.communityId && styles.chipActive]} onPress={() => setForm((current) => ({ ...current, communityId: "" }))}><Text style={[styles.chipText, !form.communityId && styles.chipTextActive]}>Everyone</Text></TouchableOpacity>{groupOptions.map((group) => <TouchableOpacity key={group.id} style={[styles.chip, form.communityId === group.id && styles.chipActive]} onPress={() => setForm((current) => ({ ...current, communityId: group.id }))}><Text style={[styles.chipText, form.communityId === group.id && styles.chipTextActive]}>{group.name}</Text></TouchableOpacity>)}</ScrollView></> : null}
-        <Text style={styles.safety}>Keep personal phone numbers, exact home addresses, and sensitive documents out of public posts.</Text>
+        <Text style={[styles.safety, { backgroundColor: theme.colors.panel2 }]}>Keep personal phone numbers, exact home addresses, and sensitive documents out of public posts.</Text>
       </ScrollView></View>
     </Modal>
 
     <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)}>
-      <View style={styles.modal}><View style={styles.modalHead}><TouchableOpacity onPress={() => setDetail(null)}><Text style={styles.cancel}>Close</Text></TouchableOpacity><Text style={styles.modalTitle}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
-      <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled">{detail ? <>
+      <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}><View style={styles.modalHead}><TouchableOpacity onPress={() => setDetail(null)}><Text style={styles.cancel}>Close</Text></TouchableOpacity><Text style={styles.modalTitle}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
+      <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
         {renderPost(detail)}
         <Text style={styles.answersTitle}>{detail.answerCount} {detail.answerCount === 1 ? "comment" : "comments"}</Text>
         {detail.answers?.map((item) => <View key={item.id} style={[styles.answerCard, item.accepted && styles.acceptedCard]}><View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View><Text style={styles.answerBody}>{item.body}</Text><View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, async (reaction) => { if (!user) return onRequireLogin(); const result = await reactToCommunityContent({ answerId: item.id }, reaction); setDetail((current) => current ? { ...current, answers: current.answers?.map((answerItem) => answerItem.id === item.id ? { ...answerItem, reactionCount: result.count, viewerReaction: result.reaction } : answerItem) } : current); })}{detail.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View></View>)}
         {detail.canAnswer && user ? <View style={styles.answerComposer}><TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder="Write a comment…" placeholderTextColor={theme.colors.muted} /><TouchableOpacity style={[styles.sendAnswer, !answer.trim() && styles.disabled]} disabled={!answer.trim() || detailBusy} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity></View> : detail.canAnswer ? <TouchableOpacity style={styles.signInAnswer} onPress={onRequireLogin}><Text style={styles.signInAnswerTitle}>Sign in to comment</Text><Text style={styles.signInAnswerBody}>Join the conversation with your FairFares account.</Text></TouchableOpacity> : <Text style={styles.locked}>This discussion is closed to new comments.</Text>}
-      </> : null}{detailBusy && !detail?.answers ? <ActivityIndicator color={theme.colors.brand} /> : null}</ScrollView></View>
+      </> : null}{detailBusy && !detail?.answers ? <ActivityIndicator color={theme.colors.brand} /> : null}</ScrollView></KeyboardAvoidingView>
     </Modal>
   </View>;
 }
@@ -601,12 +686,31 @@ const styles = StyleSheet.create({
   postAuthorSoft: { fontWeight: "700" }, postTitleSoft: { fontWeight: "700" }, postBadgeSoft: { fontWeight: "600" },
   screen: { flex: 1, backgroundColor: theme.colors.bg }, content: { width: "100%", alignSelf: "center", padding: 12, gap: 12 },
   quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "800", letterSpacing: .8 }, nationalTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800", marginTop: 2 }, nationalBody: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, nationalIcon: { fontSize: 22 }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
+  gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
+  gasPreviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.06)", shadowColor: "#14251f", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
+  gasPreviewIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,202,147,0.16)" }, gasPreviewGlyph: { fontSize: 22 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },
+  rentalFeatureCard: { minHeight: 220, borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#796029", backgroundColor: theme.colors.panel, shadowColor: "#000", shadowOpacity: .18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  rentalFeatureImage: { width: "100%", height: 142, backgroundColor: theme.colors.panel2 },
+  rentalFeatureContent: { paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
+  rentalFeatureTopline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  rentalFeatureEyebrow: { color: "#e8b743", fontSize: 9, fontWeight: "900", letterSpacing: .8 },
+  rentalFeatureBadge: { color: "#f1c75c", backgroundColor: "#302711", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, fontSize: 8, fontWeight: "900" },
+  rentalFeatureTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 24, fontWeight: "800" },
+  rentalFeatureLocation: { color: theme.colors.muted, fontSize: 11 },
+  rentalFeatureBottom: { marginTop: 3, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  rentalFeaturePricing: { flex: 1, minWidth: 0, gap: 2 },
+  rentalFeaturePrice: { color: "#68d78f", fontSize: 20, fontWeight: "900" },
+  rentalFeaturePerDay: { color: theme.colors.muted, fontSize: 11, fontWeight: "700" },
+  rentalFeatureDiscountedDaily: { color: "#b6c4be", fontSize: 9, lineHeight: 12, fontWeight: "700" },
+  rentalFeatureAction: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: "#796029" },
+  rentalFeatureActionText: { color: "#f1d27f", fontSize: 11, fontWeight: "800" },
+  rentalFeatureArrow: { color: "#f1d27f", fontSize: 20, lineHeight: 21 },
   cityPickerBackdrop: { flex: 1, justifyContent: "center", padding: 18, backgroundColor: "rgba(0,0,0,.72)" }, cityPickerCard: { maxHeight: "78%", gap: 12, padding: 18, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, cityPickerHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }, cityPickerTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800" }, cityPickerSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 4 }, cityPickerClose: { color: theme.colors.soft, fontSize: 28, lineHeight: 28 }, cityPickerInput: { minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: "#386753", backgroundColor: theme.colors.panel2, color: theme.colors.text, paddingHorizontal: 14, fontSize: 15 }, cityPickerLoader: { marginVertical: 4 }, cityPickerResults: { maxHeight: 250 }, cityPickerOption: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 4 }, cityPickerOptionText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" }, cityPickerOptionArrow: { color: theme.colors.brand, fontSize: 23 }, cityPickerUseTyped: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "#173b2d" }, cityPickerUseTypedText: { color: "#a9f2d2", fontWeight: "800" }, currentLocationButton: { minHeight: 44, alignItems: "center", justifyContent: "center" }, currentLocationText: { color: theme.colors.brand, fontWeight: "800" },
-  housingSearchAction: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: "#2c6b55", backgroundColor: "#10291f" }, housingSearchIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, housingSearchIconText: { color: "#06291e", fontSize: 28, lineHeight: 31, fontWeight: "800" }, housingSearchCopy: { flex: 1 }, housingSearchTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, housingSearchBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 }, housingSearchArrow: { color: theme.colors.brand, fontSize: 30, fontWeight: "300" },
-  currentLocationCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: "#315348", backgroundColor: "#171d1b" }, currentLocationPin: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#21372f" }, currentLocationPinText: { color: theme.colors.brand, fontSize: 25, lineHeight: 28, fontWeight: "800" }, currentLocationCopy: { flex: 1 }, currentLocationEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .8 }, currentLocationCity: { color: theme.colors.text, fontSize: 15, fontWeight: "900", marginTop: 2 }, currentLocationArea: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 }, currentLocationArrow: { color: theme.colors.brand, fontSize: 28, lineHeight: 30, fontWeight: "300" },
-  inlineCommunities: { marginVertical: 8, paddingVertical: 12, gap: 7, borderRadius: 15, borderWidth: 1, borderColor: "#383838", backgroundColor: "#181818", overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .7 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, minHeight: 28, borderRadius: 999, backgroundColor: "#292929" }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 9, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 18, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, paddingHorizontal: 12 }, inlineCommunityRail: { paddingHorizontal: 12, gap: 8 }, inlineCommunityCard: { width: 124, minHeight: 153, padding: 9, borderRadius: 13, borderWidth: 1, borderColor: "#3a3a3a", backgroundColor: "#202020", alignItems: "center" }, inlineCommunityPhoto: { width: 46, height: 46, borderRadius: 23, marginBottom: 6, backgroundColor: "#2b2b2b" }, inlineCommunityPhotoImage: { borderRadius: 23 }, inlineCommunityPhotoGlyph: { fontSize: 22 }, inlineCommunityName: { color: theme.colors.text, fontSize: 11, lineHeight: 13, fontWeight: "900", minHeight: 26, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 8, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: "#a8b5af", fontSize: 8, fontWeight: "700", marginTop: 2, marginBottom: 6 }, inlineJoinButton: { width: "100%", minHeight: 28, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 10 }, inlineJoinedButton: { borderWidth: 1, borderColor: "#505050", backgroundColor: "#292929" }, inlineJoinText: { color: "#06291e", fontSize: 10, fontWeight: "900" }, inlineJoinedText: { color: "#e8e8e8" },
+  housingSearchAction: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, housingSearchIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, housingSearchIconText: { color: "#06291e", fontSize: 28, lineHeight: 31, fontWeight: "800" }, housingSearchCopy: { flex: 1 }, housingSearchTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, housingSearchBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 }, housingSearchArrow: { color: theme.colors.brand, fontSize: 30, fontWeight: "300" },
+  currentLocationCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, currentLocationPin: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 }, currentLocationPinText: { color: theme.colors.brand, fontSize: 25, lineHeight: 28, fontWeight: "800" }, currentLocationCopy: { flex: 1 }, currentLocationEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .8 }, currentLocationCity: { color: theme.colors.text, fontSize: 15, fontWeight: "900", marginTop: 2 }, currentLocationArea: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 }, currentLocationArrow: { color: theme.colors.brand, fontSize: 28, lineHeight: 30, fontWeight: "300" },
+  inlineCommunities: { marginVertical: 10, paddingVertical: 16, gap: 9, borderRadius: 19, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: .8 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, minHeight: 31, borderRadius: 999, backgroundColor: theme.colors.panel2 }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 20, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16 }, inlineCommunityRail: { paddingHorizontal: 16, gap: 10 }, inlineCommunityCard: { width: 140, minHeight: 170, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, alignItems: "center" }, inlineCommunityPhoto: { width: 54, height: 54, borderRadius: 27, marginBottom: 7, backgroundColor: theme.colors.panel }, inlineCommunityPhotoImage: { borderRadius: 27 }, inlineCommunityPhotoGlyph: { fontSize: 25 }, inlineCommunityName: { color: theme.colors.text, fontSize: 12, lineHeight: 14, fontWeight: "900", minHeight: 28, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 9, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: theme.colors.muted, fontSize: 9, fontWeight: "700", marginTop: 2, marginBottom: 7 }, inlineJoinButton: { width: "100%", minHeight: 31, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 11 }, inlineJoinedButton: { borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, inlineJoinText: { color: "#06291e", fontSize: 11, fontWeight: "900" }, inlineJoinedText: { color: theme.colors.text },
   hero: { minHeight: 136, gap: 11, padding: 16, paddingTop: 23, backgroundColor: "#071e1b", borderWidth: 1, borderColor: "#17604e", borderRadius: 28, overflow: "hidden" }, heroTop: { width: "100%", flexDirection: "row", alignItems: "center", gap: 12 }, heroMark: { width: 92, height: 70, justifyContent: "center" }, askBadge: { width: 82, height: 55, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#ef3e42", transform: [{ rotate: "-5deg" }], shadowColor: "#000", shadowOpacity: .25, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } }, askBadgeText: { color: "#fff", fontSize: 29, fontStyle: "italic", fontWeight: "900" }, chatBubbles: { position: "absolute", right: 0, top: -5 }, chatBubbleBlue: { color: "#e8fff7", backgroundColor: "#16a878", borderRadius: 14, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 9 }, chatBubbleGold: { alignSelf: "flex-end", marginTop: -1, color: "#fff7d1", backgroundColor: "#f0a800", borderRadius: 9, overflow: "hidden", paddingHorizontal: 5, fontSize: 7 }, heroCopy: { flex: 1 }, communityTag: { alignSelf: "flex-start", minWidth: 150, height: 43, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 13, backgroundColor: "#fff5cf", borderWidth: 2, borderColor: "#e9aa20", borderRadius: 10, transform: [{ rotate: "-2deg" }], shadowColor: "#000", shadowOpacity: .22, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }, communityTagTail: { position: "absolute", left: -5, bottom: -4, width: 12, height: 12, backgroundColor: "#fff5cf", borderLeftWidth: 2, borderBottomWidth: 2, borderColor: "#e9aa20", transform: [{ rotate: "-20deg" }] }, communityTagDot: { position: "absolute", right: 6, color: "#e9aa20", fontSize: 7 }, heroCommunity: { color: "#082b62", fontSize: 24, lineHeight: 30, fontFamily: Platform.select({ ios: "Bradley Hand", android: "cursive", default: "serif" }), fontWeight: "700", letterSpacing: -0.4 }, eyebrow: { ...theme.typography.eyebrow, color: "#72d9ae" }, title: { color: "#fff", fontSize: 31, lineHeight: 36, fontWeight: "800" }, subtitle: { width: "100%", color: "#f2faf7", fontSize: 14, lineHeight: 20, marginTop: 2, paddingHorizontal: 4 }, askButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center" }, askButtonText: { color: "#06291e", fontWeight: "800", fontSize: 14 },
-  heroPosterFrame: { width: "100%", aspectRatio: 1400 / 623, borderRadius: 25, overflow: "hidden", backgroundColor: "#020b18" }, heroPoster: { ...StyleSheet.absoluteFillObject, width: undefined, height: undefined },
+  heroPosterFrame: { width: "100%", height: 78, alignItems: "center", justifyContent: "center" }, heroPoster: { width: "58%", height: 68 },
   topicGrid: { flexDirection: "row", justifyContent: "space-between", gap: 6, paddingTop: 8 }, topicCard: { minHeight: 88, borderRadius: 16, padding: 7, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,.45)" }, topicSelected: { borderColor: theme.colors.brand, transform: [{ scale: 0.98 }] }, topicImage: { width: 38, height: 38, marginBottom: 2 }, topicTitle: { color: "#11181b", fontWeight: "900", fontSize: 12 }, topicSubtitle: { color: "#627078", fontSize: 9, marginTop: 2, textAlign: "center" }, tipCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 13, borderRadius: 22, paddingHorizontal: 17, backgroundColor: "#0d4038", borderWidth: 1, borderColor: "#25685b" }, tipIcon: { fontSize: 25 }, tipTitle: { color: "#fff", fontWeight: "900", fontSize: 16 }, tipBody: { color: "#a9cfc5", fontSize: 12, lineHeight: 18, marginTop: 3 }, tipArrow: { color: "#fff", fontSize: 38, fontWeight: "300" },
   quickLinksSection: { gap: 7 }, quickLinksHeading: { color: theme.colors.text, fontSize: 13, fontWeight: "900" }, quickLinksRow: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 7 }, quickLinkTextButton: { flex: 1, minWidth: 0, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, paddingHorizontal: 6, borderRadius: 14, borderWidth: 1 }, quickLinkIcon: { fontSize: 15, lineHeight: 18, fontWeight: "900" }, quickLinkText: { flexShrink: 1, fontSize: 10, lineHeight: 14, fontWeight: "800", textAlign: "center" }, quickLinkChevron: { fontSize: 20, lineHeight: 21, fontWeight: "600", marginTop: -1 }, quickLinkDivider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: theme.colors.line },
   needGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 }, needOption: { width: "48%", minHeight: 76, flexDirection: "row", alignItems: "center", gap: 9, padding: 12, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, needIcon: { fontSize: 22 }, needText: { flex: 1, color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
@@ -623,4 +727,13 @@ const styles = StyleSheet.create({
   detailContent: { padding: 14, gap: 14, paddingBottom: 45 }, answersTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800", marginTop: 6 }, answerCard: { backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, gap: 11 }, acceptedCard: { borderColor: theme.colors.brand, backgroundColor: "#11271e" }, answerAvatar: { width: 36, height: 36, borderRadius: 12, backgroundColor: theme.colors.panel2 }, accepted: { color: "#7ee2b8", fontSize: 12, fontWeight: "800" }, answerBody: { color: theme.colors.soft, lineHeight: 21 }, answerActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, answerAction: { color: theme.colors.muted, fontWeight: "700", fontSize: 12 }, acceptAction: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, answerComposer: { backgroundColor: theme.colors.panel, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, padding: 12, gap: 10 }, answerInput: { minHeight: 75, color: theme.colors.text, fontSize: 14, textAlignVertical: "top" }, sendAnswer: { alignSelf: "flex-end", backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10 }, sendAnswerText: { color: "#06291e", fontWeight: "800" }, locked: { color: theme.colors.muted, textAlign: "center", padding: 18 },
   signInAnswer: { backgroundColor: "#10291f", borderWidth: 1, borderColor: "#315945", borderRadius: 18, padding: 18, alignItems: "center", gap: 4 }, signInAnswerTitle: { color: "#9be8c7", fontSize: 16, fontWeight: "800" }, signInAnswerBody: { color: theme.colors.muted, fontSize: 12, textAlign: "center" },
   groupCreate: { backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 20, padding: 15, gap: 12 }, discoverGroup: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 16, padding: 14 }, joined: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, joinButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 9 }, joinButtonText: { color: "#06291e", fontWeight: "800" },
+  contentLight: { gap: 9 },
+  quickComposerLight: { borderColor: "rgba(255,255,255,0.72)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.90)", shadowColor: "#101828", shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
+  composerPromptLight: { borderColor: "rgba(255,255,255,0.62)", backgroundColor: "rgba(240,242,245,0.86)" },
+  quickLinkTextButtonLight: { borderColor: "rgba(255,255,255,0.66)", backgroundColor: "rgba(255,255,255,0.90)", shadowColor: "#101828", shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  topicCardLight: { borderColor: "rgba(255,255,255,0.64)", shadowColor: "#101828", shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+  feedControlsLight: { borderBottomColor: "#e4e6eb" },
+  postCardLight: { marginHorizontal: 0, borderColor: "rgba(255,255,255,0.74)", borderRadius: 20, backgroundColor: "rgba(255,255,255,0.92)", shadowColor: "#101828", shadowOpacity: 0.14, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 6, paddingHorizontal: 16 },
+  inlineCommunitiesLight: { marginHorizontal: 0, borderColor: "rgba(255,255,255,0.72)", borderRadius: 20, backgroundColor: "rgba(255,255,255,0.90)", shadowColor: "#101828", shadowOpacity: 0.13, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
+  inlineCommunityCardLight: { borderColor: "rgba(255,255,255,0.62)", backgroundColor: "rgba(240,242,245,0.84)", shadowColor: "#101828", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
 });

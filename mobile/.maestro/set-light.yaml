@@ -1,0 +1,7 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- tapOn: Account
+- waitForAnimationToEnd
+- tapOn: Light
+- waitForAnimationToEnd

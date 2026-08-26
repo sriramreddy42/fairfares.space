@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useColorScheme,
   View
 } from "react-native";
 import {
@@ -838,6 +839,7 @@ export function ServicesScreen({
 }
 
 function ServiceSection({ title, tiles, compact }: { title: string; tiles: ServiceTile[]; compact?: boolean }) {
+  const isLight = useColorScheme() === "light";
   return (
     <View style={styles.serviceSection}>
       <Text style={styles.serviceSectionTitle}>{title}</Text>
@@ -845,7 +847,7 @@ function ServiceSection({ title, tiles, compact }: { title: string; tiles: Servi
         {tiles.map((tile) => (
           <TouchableOpacity
             key={tile.label}
-            style={[styles.serviceTile, compact && styles.compactServiceTile]}
+            style={[styles.serviceTile, isLight && styles.serviceTileLight, compact && styles.compactServiceTile]}
             onPress={tile.onPress}
             disabled={!tile.onPress}
             activeOpacity={0.78}
@@ -855,17 +857,19 @@ function ServiceSection({ title, tiles, compact }: { title: string; tiles: Servi
                 <Text style={styles.tileBadgeText}>{tile.badge}</Text>
               </View>
             ) : null}
-            {tile.profilePhotoUrl ? (
-              <UserAvatar
-                photoUrl={tile.profilePhotoUrl}
-                style={[styles.serviceTileProfileAvatar, compact && styles.compactTileIcon]}
-                imageStyle={styles.serviceTileProfileAvatarImage}
-              />
-            ) : tile.icon ? (
-              <Image source={tile.icon} style={[styles.serviceTileIcon, compact && styles.compactTileIcon]} resizeMode="contain" />
-            ) : (
-              <Text style={[styles.serviceTileEmoji, compact && styles.compactTileEmoji]}>{tile.emoji}</Text>
-            )}
+            <View style={[styles.tileIconWell, isLight && styles.tileIconWellLight]}>
+              {tile.profilePhotoUrl ? (
+                <UserAvatar
+                  photoUrl={tile.profilePhotoUrl}
+                  style={[styles.serviceTileProfileAvatar, compact && styles.compactTileIcon]}
+                  imageStyle={styles.serviceTileProfileAvatarImage}
+                />
+              ) : tile.icon ? (
+                <Image source={tile.icon} style={[styles.serviceTileIcon, compact && styles.compactTileIcon, compact && isLight && styles.compactTileIconLight]} resizeMode="contain" />
+              ) : (
+                <Text style={[styles.serviceTileEmoji, compact && styles.compactTileEmoji]}>{tile.emoji}</Text>
+              )}
+            </View>
             <Text style={styles.serviceTileLabel} numberOfLines={1}>{tile.label}</Text>
           </TouchableOpacity>
         ))}
@@ -1018,30 +1022,36 @@ const styles = StyleSheet.create({
   serviceTile: {
     width: "48%",
     minHeight: 104,
-    borderRadius: theme.radius.md,
+    borderRadius: 18,
     backgroundColor: theme.colors.panel,
     borderWidth: 1,
-    borderColor: theme.colors.line,
+    borderColor: "rgba(255,255,255,0.10)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
     paddingTop: 16,
     paddingBottom: 12,
-    position: "relative"
+    position: "relative",
+    shadowColor: "#000000",
+    shadowOpacity: 0.28,
+    shadowRadius: 13,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 7
   },
+  serviceTileLight: { backgroundColor: "#ffffff", borderColor: "#e1e5e8", shadowColor: "#19362e", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
   compactServiceTile: {
     minHeight: 96
   },
   serviceTileIcon: {
     width: 38,
-    height: 38,
-    marginBottom: 10
+    height: 38
   },
+  tileIconWell: { width: 54, height: 54, borderRadius: 18, alignItems: "center", justifyContent: "center", marginBottom: 9, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)" },
+  tileIconWellLight: { backgroundColor: "#f4f7f6", borderColor: "#e4ebe8", shadowColor: "#24473b", shadowOpacity: 0.08, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   serviceTileProfileAvatar: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    marginBottom: 10,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(236,190,103,0.72)",
@@ -1052,16 +1062,14 @@ const styles = StyleSheet.create({
   },
   compactTileIcon: {
     width: 36,
-    height: 36,
-    marginBottom: 12
+    height: 36
   },
+  compactTileIconLight: { tintColor: "#176b4a" },
   serviceTileEmoji: {
-    fontSize: 30,
-    marginBottom: 14
+    fontSize: 30
   },
   compactTileEmoji: {
-    fontSize: 27,
-    marginBottom: 12
+    fontSize: 27
   },
   serviceTileLabel: {
     color: theme.colors.soft,
@@ -1074,12 +1082,17 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     minWidth: 44,
     minHeight: 27,
-    borderRadius: 5,
+    borderRadius: 9,
     backgroundColor: "#ff2d16",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 7,
-    zIndex: 2
+    zIndex: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4
   },
   greenTileBadge: {
     backgroundColor: theme.colors.brand
@@ -1109,9 +1122,10 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   sectionDivider: {
-    height: 4,
-    marginHorizontal: -theme.spacing.md,
-    backgroundColor: "#242424"
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 0,
+    marginVertical: 4,
+    backgroundColor: theme.colors.line
   },
   backButton: {
     alignSelf: "flex-start",

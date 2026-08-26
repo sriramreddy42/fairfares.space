@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
-import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -221,6 +221,7 @@ function ActivityIcon({ kind, color }: { kind: "route" | "items" | "riders" | "l
 }
 
 export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
+  const isLight = useColorScheme() === "light";
   const { width: windowWidth } = useWindowDimensions();
   const layout = useResponsiveLayout();
   const [rides, setRides] = useState<RidePost[]>([]);
@@ -553,7 +554,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         ))}
         </ScrollView>
       ) : (
-        <TouchableOpacity style={styles.emptyTripCard} onPress={handleReserveRide}>
+        <TouchableOpacity style={[styles.emptyTripCard, isLight && styles.flatLightCard]} onPress={handleReserveRide}>
           <View style={styles.emptyTripText}>
             <Text style={styles.emptyTitle}>You have no upcoming trips</Text>
             <Text style={styles.emptyCopy}>Reserve your ride →</Text>
@@ -565,7 +566,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       )}
 
       {upcomingBookings.slice(0, 2).map((booking) => (
-        <TouchableOpacity key={`booking-${booking.id}`} style={styles.bookingCard} onPress={onOpenServices}>
+        <TouchableOpacity key={`booking-${booking.id}`} style={[styles.bookingCard, isLight && styles.flatLightCard]} onPress={onOpenServices}>
           <Text style={styles.cardTitle}>{booking.carName || "Rental car booking"}</Text>
           <Text style={styles.cardMeta}>{compactDate(booking.pickupDate, booking.pickupTime)} · {booking.pickupLocation}</Text>
           <Text style={styles.moneyText}>{booking.totalLabel || money(booking.total)}</Text>
@@ -596,7 +597,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         <Text style={styles.sectionTitle}>Carpool</Text>
         <Text style={styles.sectionMeta}>{driverListedRides.length} listings · {pendingRiderRequests.length} requests</Text>
       </View>
-      <View style={styles.carpoolHub}>
+      <View style={[styles.carpoolHub, isLight && styles.carpoolHubLight]}>
         <View style={styles.carpoolSummaryRow}>
           <View style={styles.carpoolSummaryPill}>
             <View style={[styles.summaryIconCircle, styles.summaryIconRoute]}><ActivityIcon kind="route" color="#ffffff" /></View>
@@ -795,6 +796,7 @@ const styles = StyleSheet.create({
   primaryPill: { alignSelf: "flex-start", backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 20, paddingVertical: 12 },
   primaryPillText: { color: "#fff", ...theme.typography.button },
   emptyTripCard: { minHeight: 112, backgroundColor: theme.colors.panel, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: theme.spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.md },
+  flatLightCard: { borderColor: "rgba(255,255,255,0.72)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.92)", shadowColor: "#101828", shadowOpacity: 0.13, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
   emptyTripText: { flex: 1, minWidth: 0 },
   emptyTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
   emptyCopy: { color: theme.colors.muted, fontSize: 13, fontWeight: "600", marginTop: 3 },
@@ -863,6 +865,7 @@ const styles = StyleSheet.create({
   driverCard: { backgroundColor: "#111827", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(59,130,246,0.55)", padding: theme.spacing.md, gap: theme.spacing.sm },
   requestCard: { backgroundColor: "#132018", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(34,197,94,0.45)", padding: theme.spacing.md, gap: theme.spacing.sm },
   carpoolHub: { ...theme.depth.card, padding: theme.spacing.md, gap: 12 },
+  carpoolHubLight: { borderColor: "rgba(255,255,255,0.72)", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.92)", shadowColor: "#101828", shadowOpacity: 0.14, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
   carpoolHubHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: theme.spacing.md },
   carpoolHubIntro: { flex: 1, minWidth: 0 },
   carpoolHubTitle: { color: theme.colors.text, ...theme.typography.sectionTitle },
@@ -871,7 +874,7 @@ const styles = StyleSheet.create({
   carpoolCountText: { color: theme.colors.green, fontSize: 25, fontWeight: "900" },
   carpoolCountLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
   carpoolSummaryRow: { flexDirection: "row", gap: theme.spacing.sm },
-  carpoolSummaryPill: { flex: 1, minWidth: 0, minHeight: 60, flexDirection: "row", alignItems: "center", gap: 7, backgroundColor: "#0b152a", borderRadius: 14, borderWidth: 1, borderColor: "rgba(65,84,122,0.34)", paddingHorizontal: 8, paddingVertical: 7 },
+  carpoolSummaryPill: { flex: 1, minWidth: 0, minHeight: 60, flexDirection: "row", alignItems: "center", gap: 7, backgroundColor: theme.colors.panel2, borderRadius: 14, borderWidth: 0, paddingHorizontal: 8, paddingVertical: 7 },
   summaryIconCircle: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
   summaryIconRoute: { backgroundColor: "#31228d" },
   summaryIconItems: { backgroundColor: "#123ea1" },
@@ -893,7 +896,7 @@ const styles = StyleSheet.create({
   routeLine: { position: "absolute", width: 14, height: 2, borderRadius: 1 },
   routeLineOne: { left: 5, top: 15, transform: [{ rotate: "-38deg" }] },
   routeLineTwo: { left: 18, top: 11, transform: [{ rotate: "29deg" }] },
-  carpoolRequestRow: { backgroundColor: "#09162c", borderRadius: 15, borderWidth: 1, borderLeftWidth: 3, borderColor: "rgba(48,77,123,0.58)", borderLeftColor: "#19b775", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
+  carpoolRequestRow: { backgroundColor: theme.colors.panel2, borderRadius: 15, borderWidth: 0, borderLeftWidth: 3, borderLeftColor: "#19b775", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
   requestCarCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(11,112,72,0.45)", alignItems: "center", justifyContent: "center", marginTop: 18 },
   carIconCanvas: { width: 28, height: 23, position: "relative" },
   carIconRoof: { position: "absolute", left: 7, top: 2, width: 17, height: 10, borderWidth: 2, borderColor: "#2ff29a", borderBottomWidth: 0, borderTopLeftRadius: 6, borderTopRightRadius: 6 },
@@ -906,15 +909,15 @@ const styles = StyleSheet.create({
   matchedListingText: { color: "#6ee7b7", fontSize: 11, lineHeight: 15, fontWeight: "400" },
   requestSide: { flexBasis: "100%", minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 1 },
   requestDateRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  requestDateText: { color: "#c7cfdf", fontWeight: "400", fontSize: 11 },
-  moreGlyph: { color: "#b7c0d1", fontSize: 19, marginLeft: 3 },
-  iconMetricPill: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(30,41,59,0.9)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 5 },
+  requestDateText: { color: theme.colors.muted, fontWeight: "400", fontSize: 11 },
+  moreGlyph: { color: theme.colors.muted, fontSize: 19, marginLeft: 3 },
+  iconMetricPill: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.colors.panel, borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 5 },
   iconMetricText: { color: theme.colors.text, fontWeight: "500", fontSize: 11 },
-  carpoolListingRow: { backgroundColor: "#09162c", borderRadius: 15, borderWidth: 1, borderLeftWidth: 3, borderColor: "rgba(48,77,123,0.58)", borderLeftColor: "#7653f6", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
+  carpoolListingRow: { backgroundColor: theme.colors.panel2, borderRadius: 15, borderWidth: 0, borderLeftWidth: 3, borderLeftColor: "#7653f6", padding: 9, flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 9 },
   listingRouteCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#30218c", alignItems: "center", justifyContent: "center", marginTop: 18 },
   listingBadge: { alignSelf: "flex-start", color: "#ddd6fe", backgroundColor: "rgba(109,70,230,0.5)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 3, overflow: "hidden", fontWeight: "500", fontSize: 10 },
   carpoolMiniMeta: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, fontWeight: "400" },
-  carpoolEmpty: { backgroundColor: "rgba(15,23,42,0.9)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 12 },
+  carpoolEmpty: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 0, paddingHorizontal: 14, paddingVertical: 12 },
   primarySmallPill: { minHeight: 34, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 5 },
   primarySmallPillText: { color: "#fff", fontWeight: "500", fontSize: 12 },
   chitthiButtonIcon: { width: 17, height: 17, tintColor: "#fff" },

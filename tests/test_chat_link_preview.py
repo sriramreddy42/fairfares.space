@@ -14,14 +14,21 @@ class ChatLinkPreviewTest(unittest.TestCase):
     def test_chitthi_share_links_use_verified_public_app_link_domain(self):
         handler = object.__new__(app.FairFaresHandler)
         with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://www.fairfare.space"}):
-            self.assertEqual(
-                handler.community_join_url("FFG-TEST"),
-                "https://www.fairfare.space/chitthi/group?community_id=FFG-TEST",
-            )
+            public_join_url = handler.community_join_url("FFG-TEST")
+            self.assertTrue(public_join_url.startswith("https://www.fairfare.space/chitthi/invite?group_invite=public."))
+            self.assertTrue(public_join_url.endswith("&preview=2"))
             self.assertEqual(
                 handler.community_invite_url("private-token"),
                 "https://www.fairfare.space/chitthi/invite?group_invite=private-token",
             )
+
+    def test_android_chitthi_invite_uses_verified_www_app_link_and_play_fallback(self):
+        intent = app.android_chitthi_invite_intent("group_invite=private-token")
+        self.assertTrue(intent.startswith("intent://www.fairfare.space/chitthi/invite?group_invite=private-token"))
+        self.assertIn("scheme=https", intent)
+        self.assertIn("package=com.fairfares.mobile", intent)
+        self.assertIn("play.google.com", intent)
+        self.assertNotIn("intent://group", intent)
 
     def test_metadata_parser_prefers_open_graph_content(self):
         parser = app.ChatLinkMetadataParser()

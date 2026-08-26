@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, GasFuelType, GasPriceResponse, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
@@ -590,6 +590,31 @@ export async function reverseGeocodeRideLocation(latitude: number, longitude: nu
   const params = new URLSearchParams({ lat: String(latitude), lng: String(longitude) });
   const payload = await request<{ ok: boolean; label: string }>(`/api/mobile/reverse-geocode?${params.toString()}`);
   return payload.label || "";
+}
+
+export async function getNearbyGasPrices(latitude: number, longitude: number, radiusMiles = 10, fuel: GasFuelType = "regular") {
+  // A roughly 110 m location cell is precise enough to discover nearby fuel
+  // while avoiding exact device coordinates in request URLs and server logs.
+  const coarseLatitude = Math.round(latitude * 1000) / 1000;
+  const coarseLongitude = Math.round(longitude * 1000) / 1000;
+  const params = new URLSearchParams({
+    lat: String(coarseLatitude),
+    lng: String(coarseLongitude),
+    radiusMiles: String(radiusMiles),
+    fuel,
+  });
+  return request<GasPriceResponse>(`/api/mobile/gas-prices?${params.toString()}`);
+}
+
+export function nearbyGasMapUrl(latitude: number, longitude: number, stations: Array<{ latitude: number; longitude: number }>) {
+  const coarseLatitude = Math.round(latitude * 1000) / 1000;
+  const coarseLongitude = Math.round(longitude * 1000) / 1000;
+  const params = new URLSearchParams({
+    lat: String(coarseLatitude),
+    lng: String(coarseLongitude),
+    stations: stations.slice(0, 20).map((station) => `${station.latitude.toFixed(5)},${station.longitude.toFixed(5)}`).join(";"),
+  });
+  return `${currentApiBase()}/api/mobile/gas-map?${params.toString()}`;
 }
 
 export function rideMapUrl(
@@ -2312,7 +2337,7 @@ export async function findChatPeopleByContactHashes(phoneHashes: string[]) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ phoneHashes })
-  });
+  }, { attempts: 3 });
 }
 
 export async function openChatWithPerson(targetUserId: number) {
