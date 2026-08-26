@@ -103,6 +103,7 @@ export function GasStationsScreen({ onBack }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [configured, setConfigured] = useState(true);
   const [error, setError] = useState("");
+  const [showingCached, setShowingCached] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
   const requestGeneration = useRef(0);
 
@@ -111,7 +112,9 @@ export function GasStationsScreen({ onBack }: Props) {
     requestGeneration.current = generation;
     refresh ? setRefreshing(true) : setLoading(true);
     setError("");
+    setShowingCached(false);
     setMapFailed(false);
+    let restoredCache = false;
     try {
       if (!refresh) {
         const cached = await readGasCache(nextFuel);
@@ -120,6 +123,8 @@ export function GasStationsScreen({ onBack }: Props) {
           setPosition(cached.center);
           setConfigured(cached.configured);
           setStations(cached.stations || []);
+          setShowingCached(true);
+          restoredCache = true;
         }
       }
       // Entering Cheap Gas is an explicit user request, so always acquire the
@@ -131,11 +136,14 @@ export function GasStationsScreen({ onBack }: Props) {
       await writeGasCache(nextFuel, result).catch(() => undefined);
       setConfigured(result.configured);
       setStations(result.stations || []);
+      setShowingCached(false);
     } catch (cause) {
       if (requestGeneration.current !== generation) return;
-      setStations([]);
+      if (!restoredCache) setStations([]);
       const message = cause instanceof Error ? cause.message : "Nearby fuel prices are temporarily unavailable.";
-      setError(message.includes("HTTP 404")
+      setError(restoredCache
+        ? "Fresh prices could not be loaded. Showing the last successful results from this device."
+        : message.includes("HTTP 404")
         ? "Nearby fuel prices are being activated. Please try again shortly."
         : message);
     } finally {
@@ -183,7 +191,7 @@ export function GasStationsScreen({ onBack }: Props) {
         {loading ? <View style={styles.state}><ActivityIndicator color="#18b981" /><Text style={styles.muted}>Checking nearby stations…</Text></View> : null}
         {!loading && (!configured || error) ? (
           <View style={[styles.notice, isLight ? styles.cardLight : styles.cardDark]}>
-            <Text style={[styles.noticeTitle, isLight ? styles.darkText : styles.lightText]}>Prices unavailable right now</Text>
+            <Text style={[styles.noticeTitle, isLight ? styles.darkText : styles.lightText]}>{showingCached ? "Showing saved prices" : "Prices unavailable right now"}</Text>
             <Text style={styles.muted}>{configured ? error : "Fuel-price service is being configured. You can still open nearby stations in Maps."}</Text>
             <TouchableOpacity style={styles.retryButton} onPress={() => void load(true)}><Text style={styles.retryText}>Try again</Text></TouchableOpacity>
           </View>
