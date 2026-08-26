@@ -6124,9 +6124,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       </Modal>
 
       {!signedIn ? (
-        <View style={styles.loginGate}>
-          <Text style={styles.loginTitle}>Login required to message</Text>
-          <Text style={styles.loginCopy}>People can browse listings, but messages and group joins require a FairFares account.</Text>
+        <View style={[styles.loginGate, isLight && styles.loginGateLight]}>
+          <Text style={[styles.loginTitle, isLight && styles.loginTitleLight]}>Login required to message</Text>
+          <Text style={[styles.loginCopy, isLight && styles.loginCopyLight]}>People can browse listings, but messages and group joins require a FairFares account.</Text>
           <TouchableOpacity style={styles.loginButton} onPress={onRequireLogin}>
             <Text style={styles.loginButtonText}>Login / Sign up</Text>
           </TouchableOpacity>
@@ -6178,12 +6178,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         onEndReached={() => { if ((tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
         ListHeaderComponent={<>
         {tab === "All" && !feedbackCardDismissed ? (
-          <TouchableOpacity style={styles.feedbackChatCard} onPress={() => void openFeedbackChat()} disabled={loading}>
+          <TouchableOpacity style={[styles.feedbackChatCard, isLight && styles.feedbackChatCardLight]} onPress={() => void openFeedbackChat()} disabled={loading}>
             <View style={styles.feedbackChatAvatar}><Text style={styles.feedbackChatAvatarText}>SR</Text></View>
             <View style={styles.chatCopy}>
-              <Text style={styles.feedbackChatEyebrow}>ISSUES &amp; SUGGESTIONS</Text>
-              <Text style={styles.feedbackChatName}>Sriram Reddy Bandari</Text>
-              <Text style={styles.feedbackChatCopy} numberOfLines={1}>Share an issue or suggestion with FairFares.</Text>
+              <Text style={[styles.feedbackChatEyebrow, isLight && styles.feedbackChatEyebrowLight]}>ISSUES &amp; SUGGESTIONS</Text>
+              <Text style={[styles.feedbackChatName, isLight && styles.feedbackChatNameLight]}>Sriram Reddy Bandari</Text>
+              <Text style={[styles.feedbackChatCopy, isLight && styles.feedbackChatCopyLight]} numberOfLines={1}>Share an issue or suggestion with FairFares.</Text>
             </View>
             <Text style={styles.feedbackChatArrow}>›</Text>
             <TouchableOpacity
@@ -6245,26 +6245,26 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         {suggestedCommunities.length ? (
-          <View style={styles.groupSuggestionsSection}>
+          <View style={[styles.groupSuggestionsSection, isLight && styles.groupSuggestionsSectionLight]}>
             <View style={styles.groupSuggestionsHeader}>
               <View style={styles.groupSuggestionsCopy}>
-                <Text style={styles.groupSuggestionsTitle}>Suggested groups</Text>
-                <Text style={styles.groupSuggestionsSubtitle}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
+                <Text style={[styles.groupSuggestionsTitle, isLight && styles.groupSuggestionsTitleLight]}>Suggested groups</Text>
+                <Text style={[styles.groupSuggestionsSubtitle, isLight && styles.groupSuggestionsSubtitleLight]}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
               </View>
               <TouchableOpacity
-                style={styles.groupSuggestionsDismiss}
+                style={[styles.groupSuggestionsDismiss, isLight && styles.groupSuggestionsDismissLight]}
                 accessibilityLabel="Dismiss suggested groups"
                 onPress={() => setGroupSuggestionsDismissed(true)}
               >
-                <Text style={styles.groupSuggestionsDismissText}>×</Text>
+                <Text style={[styles.groupSuggestionsDismissText, isLight && styles.groupSuggestionsDismissTextLight]}>×</Text>
               </TouchableOpacity>
             </View>
             {suggestedCommunities.map((community) => (
-              <View key={`suggested-${community.id}`} style={styles.suggestedGroupRow}>
+              <View key={`suggested-${community.id}`} style={[styles.suggestedGroupRow, isLight && styles.suggestedGroupRowLight]}>
                 <View style={[styles.avatar, styles.groupAvatar]}><InitialsAvatar photoUrl={community.photoUrl} label={community.name} imageStyle={styles.avatarImage} textStyle={styles.avatarText} /></View>
                 <View style={styles.chatCopy}>
-                  <Text style={styles.chatName}>{community.name}</Text>
-                  <Text style={styles.chatLast} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
+                  <Text style={[styles.chatName, isLight && styles.chatNameLight]}>{community.name}</Text>
+                  <Text style={[styles.chatLast, isLight && styles.chatLastLight]} numberOfLines={1}>{community.description || community.area || "Public FairFares group"}</Text>
                 </View>
                 <TouchableOpacity style={styles.suggestedJoinButton} onPress={() => void openCommunityThread(community)} accessibilityLabel={`Join ${community.name}`}><Text style={styles.suggestedJoinText}>Join</Text></TouchableOpacity>
               </View>
@@ -6404,8 +6404,11 @@ const styles = StyleSheet.create({
   activeTabText: { color: "#fff", fontWeight: "700" },
   activeTabTextLight: { color: "#176b4a" },
   loginGate: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10 },
+  loginGateLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.08)", shadowColor: "#15251f", shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
   loginTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" },
+  loginTitleLight: { color: "#111827" },
   loginCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
+  loginCopyLight: { color: "#667085" },
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
   loginButtonText: { color: theme.colors.text, fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
@@ -7030,22 +7033,32 @@ const styles = StyleSheet.create({
   letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
   letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 },
   feedbackChatCard: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10, paddingLeft: 13, paddingRight: 28, paddingVertical: 9, borderRadius: 20, borderWidth: 1, borderColor: "rgba(239,189,104,0.72)", backgroundColor: "rgba(27,62,44,0.94)", position: "relative" },
+  feedbackChatCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.07)", shadowColor: "#15251f", shadowOpacity: 0.09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
   feedbackChatAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#D6A95F", borderWidth: 2, borderColor: "#F4D99E" },
   feedbackChatAvatarText: { color: "#173A2A", fontSize: 14, fontWeight: "800" },
   feedbackChatEyebrow: { color: "#efbd68", fontSize: 9, letterSpacing: 0.9, fontWeight: "800", marginBottom: 2 },
+  feedbackChatEyebrowLight: { color: "#9a6700" },
   feedbackChatName: { color: "#fff8e8", fontSize: 15, fontWeight: "700" },
+  feedbackChatNameLight: { color: "#111827" },
   feedbackChatCopy: { color: "#c4cec7", fontSize: 11.5, lineHeight: 15, marginTop: 2 },
+  feedbackChatCopyLight: { color: "#667085" },
   feedbackChatArrow: { color: "#efbd68", fontSize: 25, fontWeight: "300" },
   feedbackChatDismiss: { position: "absolute", top: 3, right: 5, width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(2,18,13,0.58)", zIndex: 3 },
   feedbackChatDismissText: { color: "#f4d99e", fontSize: 18, lineHeight: 21, fontWeight: "500" },
   groupSuggestionsSection: { marginBottom: 12, padding: 10, borderRadius: 20, borderWidth: 1, borderColor: "rgba(219,180,107,0.22)", backgroundColor: "rgba(7,24,22,0.74)", gap: 7 },
+  groupSuggestionsSectionLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.07)", shadowColor: "#15251f", shadowOpacity: 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
   groupSuggestionsHeader: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 3 },
   groupSuggestionsCopy: { flex: 1, minWidth: 0 },
   groupSuggestionsTitle: { color: "#efbd68", fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
+  groupSuggestionsTitleLight: { color: "#147a58" },
   groupSuggestionsSubtitle: { color: "#9eaaa2", fontSize: 10.5, marginTop: 2 },
+  groupSuggestionsSubtitleLight: { color: "#667085" },
   groupSuggestionsDismiss: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.06)" },
+  groupSuggestionsDismissLight: { backgroundColor: "#f1f3f5" },
   groupSuggestionsDismissText: { color: "#cbd2cd", fontSize: 20, lineHeight: 23 },
+  groupSuggestionsDismissTextLight: { color: "#667085" },
   suggestedGroupRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 15, backgroundColor: "rgba(20,51,40,0.72)" },
+  suggestedGroupRowLight: { backgroundColor: "#f5f7f9", borderWidth: 1, borderColor: "rgba(15,23,42,0.05)" },
   suggestedJoinButton: { minWidth: 48, height: 30, paddingHorizontal: 10, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#1b8551" },
   suggestedJoinText: { color: "#fff", fontSize: 11, fontWeight: "800" }
 });
