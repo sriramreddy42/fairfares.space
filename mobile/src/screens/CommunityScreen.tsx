@@ -229,6 +229,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const [guestIdentity, setGuestIdentity] = useState("");
   const [guestRemaining, setGuestRemaining] = useState(6);
   const [guestBenefitsOpen, setGuestBenefitsOpen] = useState(false);
+  const pendingGuestAuth = useRef<"signup" | "login" | "">("");
   const [form, setForm] = useState({ type: "QUESTION" as CommunityPost["type"], category: "GENERAL" as CommunityPost["category"], title: "", body: "", area: "", linkUrl: "", communityId: "", images: [] as string[], details: { ...emptyDetails }, expiresInDays: 45 });
   const [publishing, setPublishing] = useState(false);
   const [groupBusyId, setGroupBusyId] = useState("");
@@ -532,6 +533,25 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     { text: "Delete", style: "destructive", onPress: async () => { try { await deleteCommunityPost(post.id); setPosts((current) => current.filter((item) => item.id !== post.id)); setNationalPosts((current) => current.filter((item) => item.id !== post.id)); setDetail(null); } catch (error) { Alert.alert("Could not delete", message(error)); } } },
   ]);
 
+  const beginGuestAuth = (mode: "signup" | "login") => {
+    pendingGuestAuth.current = mode;
+    setGuestBenefitsOpen(false);
+    if (Platform.OS !== "ios") {
+      setDetail(null);
+      setTimeout(() => {
+        pendingGuestAuth.current = "";
+        mode === "signup" ? onRequireSignup() : onRequireLogin();
+      }, 550);
+    }
+  };
+
+  const finishGuestAuth = () => {
+    if (!pendingGuestAuth.current) return;
+    const mode = pendingGuestAuth.current;
+    pendingGuestAuth.current = "";
+    setTimeout(() => mode === "signup" ? onRequireSignup() : onRequireLogin(), 80);
+  };
+
   const completedStatus = (post: CommunityPost): CommunityPost["fulfillmentStatus"] => post.category === "HAVE_PLACE" ? "FILLED" : post.category === "CARPOOL_RIDE" ? "ARRANGED" : post.category === "NEED_PLACE" || post.category === "NEED_ROOMMATE" ? "FOUND" : "RESOLVED";
   const managePost = (post: CommunityPost) => Alert.alert("Manage post", "Choose an action.", [
     { text: post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now() ? "Renew for 45 days" : post.fulfillmentStatus === "OPEN" ? `Mark ${completedStatus(post).toLowerCase()}` : "Reopen post", onPress: async () => { try { const expired = Boolean(post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now()); const status = expired || post.fulfillmentStatus !== "OPEN" ? "OPEN" : completedStatus(post); await updateCommunityPostStatus(post.id, status); mutatePost(post.id, (value) => ({ ...value, fulfillmentStatus: status, canAnswer: status === "OPEN", expiresAt: expired ? new Date(Date.now() + 45 * 86400000).toISOString() : value.expiresAt })); } catch (error) { Alert.alert("Status not changed", message(error)); } } },
@@ -743,7 +763,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       </ScrollView></View>
     </Modal>
 
-    <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)}>
+    <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={finishGuestAuth}>
       <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}><View style={styles.modalHead}><TouchableOpacity onPress={() => setDetail(null)}><Text style={styles.cancel}>Close</Text></TouchableOpacity><Text style={styles.modalTitle}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
       <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
         {renderPost(detail)}
@@ -752,7 +772,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         {detail.canAnswer && !answerReplyTarget ? <View style={styles.answerComposer}>{!user ? <View style={styles.guestAllowance}><Text style={styles.guestAllowanceName}>{guestIdentity || "Guest"}</Text><Text style={styles.guestAllowanceCount}>{guestRemaining} of 6 guest messages left</Text></View> : null}<TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder="Write a comment…" placeholderTextColor={theme.colors.muted} editable={Boolean(user || guestRemaining > 0)} /><TouchableOpacity style={[styles.sendAnswer, (!answer.trim() || (!user && guestRemaining <= 0)) && styles.disabled]} disabled={!answer.trim() || detailBusy || (!user && guestRemaining <= 0)} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity>{!user ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}</View> : !detail.canAnswer ? <Text style={styles.locked}>This discussion is closed to new comments.</Text> : null}
       </> : null}{detailBusy && !detail?.answers ? <ActivityIndicator color={theme.colors.brand} /> : null}</ScrollView></KeyboardAvoidingView>
     </Modal>
-    <Modal visible={guestBenefitsOpen} transparent animationType="fade" onRequestClose={() => setGuestBenefitsOpen(false)}>
+    <Modal visible={guestBenefitsOpen} transparent animationType="fade" onRequestClose={() => setGuestBenefitsOpen(false)} onDismiss={() => { if (pendingGuestAuth.current && Platform.OS === "ios") setDetail(null); }}>
       <View style={styles.guestBenefitsBackdrop}><View style={styles.guestBenefitsCard}>
         <TouchableOpacity style={styles.guestBenefitsClose} onPress={() => setGuestBenefitsOpen(false)} accessibilityLabel="Close"><Text style={styles.guestBenefitsCloseText}>×</Text></TouchableOpacity>
         <Text style={styles.guestBenefitsEyebrow}>KEEP THE CONVERSATION GOING</Text>
@@ -761,8 +781,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>💬</Text><View><Text style={styles.guestBenefitTitle}>Unlimited community comments and replies</Text><Text style={styles.guestBenefitBody}>Keep talking with posters and local members.</Text></View></View>
         <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>🏠</Text><View><Text style={styles.guestBenefitTitle}>List your property or find a home</Text><Text style={styles.guestBenefitBody}>Post a place, request housing, or find roommates.</Text></View></View>
         <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>🚗</Text><View><Text style={styles.guestBenefitTitle}>Cheap car rentals and shared rides</Text><Text style={styles.guestBenefitBody}>Find affordable cars and carpools near you.</Text></View></View>
-        <TouchableOpacity style={styles.guestBenefitsPrimary} onPress={() => { setGuestBenefitsOpen(false); setDetail(null); setTimeout(onRequireSignup, 350); }}><Text style={styles.guestBenefitsPrimaryText}>Create free account</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.guestBenefitsSecondary} onPress={() => { setGuestBenefitsOpen(false); setDetail(null); setTimeout(onRequireLogin, 350); }}><Text style={styles.guestBenefitsSecondaryText}>Already registered? Log in</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.guestBenefitsPrimary} onPress={() => beginGuestAuth("signup")}><Text style={styles.guestBenefitsPrimaryText}>Create free account</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.guestBenefitsSecondary} onPress={() => beginGuestAuth("login")}><Text style={styles.guestBenefitsSecondaryText}>Already registered? Log in</Text></TouchableOpacity>
       </View></View>
     </Modal>
   </View>;
