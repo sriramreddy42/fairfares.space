@@ -29,10 +29,13 @@ async function resolveDeviceCoordinates(): Promise<Coordinates> {
   const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
   if (!servicesEnabled) throw new Error("Turn on Location Services, then try again.");
 
-  // A recent cached fix makes repeat visits immediate. Request a live fix when
-  // the cache is absent, while allowing enough time for a cold GPS start.
-  const recent = await Location.getLastKnownPositionAsync({ maxAge: 15 * 60_000, requiredAccuracy: 5000 }).catch(() => null);
-  const location = recent || await currentLocationWithTimeout().catch(() => null);
+  // Gas prices must follow the device, never the independently selected Ask
+  // feed city. Always request a fresh GPS fix first. A tightly bounded native
+  // last-known fix is only a cold-start fallback and cannot come from the feed
+  // city picker (which stores labels, not device coordinates).
+  const live = await currentLocationWithTimeout().catch(() => null);
+  const recent = live ? null : await Location.getLastKnownPositionAsync({ maxAge: 2 * 60_000, requiredAccuracy: 1000 }).catch(() => null);
+  const location = live || recent;
   if (!location) throw new Error("We couldn't determine your location. Move near a window, check Location Services, and try again.");
   return { latitude: location.coords.latitude, longitude: location.coords.longitude };
 }
