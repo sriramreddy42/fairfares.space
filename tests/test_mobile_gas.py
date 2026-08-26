@@ -57,6 +57,22 @@ class MobileGasPriceTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["timeout"], 3.5)
         self.assertEqual(post.call_args.kwargs["json"]["includedTypes"], ["gas_station"])
 
+    def test_google_post_extracts_safe_permission_reason(self):
+        response = unittest.mock.Mock()
+        response.ok = False
+        response.status_code = 403
+        response.json.return_value = {
+            "error": {
+                "status": "PERMISSION_DENIED",
+                "details": [{"reason": "API_KEY_SERVICE_BLOCKED"}],
+            }
+        }
+        with patch.object(app.requests, "post", return_value=response):
+            with self.assertRaises(app.GoogleApiError) as raised:
+                app.google_api_post_json("https://example.invalid", {}, {}, timeout=1)
+        self.assertEqual(raised.exception.category, "authorization")
+        self.assertEqual(raised.exception.reason, "API_KEY_SERVICE_BLOCKED")
+
     def test_normalizes_requested_fuel_price_and_distance(self):
         station = app.normalize_google_gas_station(
             {

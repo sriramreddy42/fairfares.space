@@ -10157,10 +10157,11 @@ def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
 
 
 class GoogleApiError(RuntimeError):
-    def __init__(self, category: str, status_code: int = 0):
+    def __init__(self, category: str, status_code: int = 0, reason: str = ""):
         super().__init__(category)
         self.category = category
         self.status_code = status_code
+        self.reason = clean_text_value(reason, 80)
 
 
 def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str, str], timeout: float = 8) -> dict[str, object]:
@@ -10182,6 +10183,22 @@ def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str
         raise GoogleApiError("connection") from exc
     if not response.ok:
         status_code = int(response.status_code or 0)
+        reason = ""
+        try:
+            error_payload = response.json()
+            error = error_payload.get("error") if isinstance(error_payload, dict) else {}
+            details = error.get("details") if isinstance(error, dict) else []
+            for detail in details if isinstance(details, list) else []:
+                if not isinstance(detail, dict):
+                    continue
+                metadata = detail.get("metadata") if isinstance(detail.get("metadata"), dict) else {}
+                reason = str(detail.get("reason") or metadata.get("reason") or "").strip()
+                if reason:
+                    break
+            if not reason and isinstance(error, dict):
+                reason = str(error.get("status") or "").strip()
+        except (TypeError, ValueError, requests.JSONDecodeError):
+            reason = ""
         if status_code in {401, 403}:
             category = "authorization"
         elif status_code == 429:
@@ -10190,7 +10207,7 @@ def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str
             category = "request"
         else:
             category = "provider"
-        raise GoogleApiError(category, status_code)
+        raise GoogleApiError(category, status_code, reason)
     result = response.json()
     if not isinstance(result, dict):
         raise ValueError("Google API returned a non-object JSON response")
@@ -35370,6 +35387,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "stations": [],
                     "providerError": exc.category,
                     "providerStatus": exc.status_code,
+                    "providerReason": exc.reason,
                     "error": "Nearby fuel prices are temporarily unavailable.",
                 },
                 # Cloudflare replaces origin 502 bodies with an opaque error
