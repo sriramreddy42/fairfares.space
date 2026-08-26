@@ -2144,6 +2144,7 @@ function FairFaresApp() {
         city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
         cars={cars}
         onRequireLogin={() => setLoginOpen(true)}
+        onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
         onOpenHousing={(postId = "") => {
           if (postId) {
             const openResolvedListing = (post: HousingPost) => {

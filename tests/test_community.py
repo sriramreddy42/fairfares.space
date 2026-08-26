@@ -73,6 +73,18 @@ class CommunityFeatureTest(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def guest_request(self, method, path, guest_token, payload=None):
+        data = json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}{path}", data=data,
+            headers={"Content-Type": "application/json", "X-FairFares-Guest-Token": guest_token}, method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
     def create_post(self, token="owner-token", **updates):
         payload = {
             "type": "QUESTION", "category": "HOUSING", "title": "Where is good housing near Dayton?",
@@ -93,6 +105,39 @@ class CommunityFeatureTest(unittest.TestCase):
         status, rejected = self.create_post(token="")
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
+
+    def test_guest_identity_allows_six_comments_then_requires_signup(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        status, session = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-installation-guest-0001"})
+        self.assertEqual(status, 201)
+        self.assertTrue(session["guestId"].startswith("Guest "))
+        self.assertEqual(session["remaining"], 6)
+        token = session["token"]
+        first_answer_id = ""
+        for index in range(6):
+            status, answered = self.guest_request("POST", "/api/mobile/community/answer", token, {"postId": post_id, "body": f"Guest message number {index + 1}"})
+            self.assertEqual(status, 201)
+            self.assertEqual(answered["guestRemaining"], 5 - index)
+            first_answer_id = first_answer_id or answered["answerId"]
+        status, limited = self.guest_request("POST", "/api/mobile/community/answer", token, {"postId": post_id, "body": "Seventh guest message"})
+        self.assertEqual(status, 403)
+        self.assertTrue(limited["guestLimitReached"])
+        self.assertEqual(limited["remaining"], 0)
+
+        status, reply = self.request("POST", "/api/mobile/community/answer", "owner-token", {"postId": post_id, "body": "Thanks — replying here so you can see it.", "parentAnswerId": first_answer_id})
+        self.assertEqual(status, 201)
+        _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}")
+        answers = detail["posts"][0]["answers"]
+        self.assertEqual(answers[-1]["parentAnswerId"], first_answer_id)
+        self.assertEqual(answers[-1]["body"], "Thanks — replying here so you can see it.")
+        guest_names = {answer["author"]["name"] for answer in answers[:-1]}
+        self.assertEqual(guest_names, {session["guestId"]})
+
+        status, resumed = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-installation-guest-0001"})
+        self.assertEqual(status, 200)
+        self.assertEqual(resumed["guestId"], session["guestId"])
+        self.assertEqual(resumed["remaining"], 0)
 
     def test_layered_feed_returns_local_first_and_active_public_usa_fallback(self):
         _, local = self.create_post(title="Dayton neighborhood advice", city="Dayton, OH")

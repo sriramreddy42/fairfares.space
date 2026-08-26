@@ -64,6 +64,8 @@ const API_CANDIDATES = uniqueUrls(
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
+const COMMUNITY_GUEST_TOKEN_KEY = "fairfares.mobile.communityGuestToken";
+const COMMUNITY_GUEST_INSTALLATION_KEY = "fairfares.mobile.communityGuestInstallation";
 const API_REQUEST_TIMEOUT_MS = 10000;
 const REMOTE_API_REQUEST_TIMEOUT_MS = 30000;
 
@@ -82,6 +84,7 @@ function browserStorage() {
 }
 
 let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+let communityGuestToken = browserStorage()?.getItem(COMMUNITY_GUEST_TOKEN_KEY) || "";
 let authTokenGeneration = authToken ? 1 : 0;
 let activeApiBase = API_URL;
 
@@ -947,7 +950,50 @@ export async function updateCommunityPostStatus(postId: string, status: Communit
 }
 
 export async function answerCommunityPost(postId: string, body: string, parentAnswerId = "") {
-  return communityPostRequest<{ ok: boolean; answerId: string; conversationId?: string }>("/api/mobile/community/answer", { postId, body, parentAnswerId });
+  let guest: CommunityGuestSession | null = null;
+  if (!authToken) guest = await ensureCommunityGuestSession();
+  const result = await request<{ ok: boolean; answerId: string; conversationId?: string; guestRemaining?: number }>("/api/mobile/community/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
+    body: JSON.stringify({ postId, body, parentAnswerId })
+  });
+  return { ...result, guestId: guest?.guestId || "" };
+}
+
+export type CommunityGuestSession = { ok: boolean; token: string; guestId: string; remaining: number; registered?: boolean };
+
+async function guestStorageGet(key: string) {
+  if (Platform.OS === "web") return browserStorage()?.getItem(key) || "";
+  try { return await SecureStore.getItemAsync(key) || ""; }
+  catch { return await AsyncStorage.getItem(key) || ""; }
+}
+
+async function guestStorageSet(key: string, value: string) {
+  if (Platform.OS === "web") { browserStorage()?.setItem(key, value); return; }
+  try { await SecureStore.setItemAsync(key, value); }
+  catch { await AsyncStorage.setItem(key, value); }
+}
+
+function newGuestInstallationId() {
+  return `${Date.now().toString(36)}-${Array.from({ length: 5 }, () => Math.random().toString(36).slice(2)).join("")}`;
+}
+
+export async function ensureCommunityGuestSession(): Promise<CommunityGuestSession> {
+  if (authToken) return { ok: true, token: "", guestId: "", remaining: 0, registered: true };
+  if (!communityGuestToken) communityGuestToken = await guestStorageGet(COMMUNITY_GUEST_TOKEN_KEY);
+  let installationId = await guestStorageGet(COMMUNITY_GUEST_INSTALLATION_KEY);
+  if (!installationId) {
+    installationId = newGuestInstallationId();
+    await guestStorageSet(COMMUNITY_GUEST_INSTALLATION_KEY, installationId);
+  }
+  // Asking the server for the same installation rotates an expired/lost token
+  // while preserving the lifetime six-message allowance.
+  const session = await request<CommunityGuestSession>("/api/mobile/community/guest-session", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ installationId })
+  });
+  communityGuestToken = session.token || communityGuestToken;
+  if (communityGuestToken) await guestStorageSet(COMMUNITY_GUEST_TOKEN_KEY, communityGuestToken);
+  return { ...session, token: communityGuestToken };
 }
 
 export async function reactToCommunityContent(target: { postId?: string; answerId?: string }, reaction = "HELPFUL") {

@@ -3222,6 +3222,13 @@ for _rate_limited_marketplace_path in (
 ):
     API_WRITE_RATE_LIMITS[_rate_limited_marketplace_path] = ("marketplace-write", 30, 60)
 
+for _rate_limited_community_path in (
+    "/api/mobile/community", "/api/mobile/community/guest-session",
+    "/api/mobile/community/answer", "/api/mobile/community/react",
+    "/api/mobile/community/save", "/api/mobile/community/report",
+):
+    API_WRITE_RATE_LIMITS[_rate_limited_community_path] = ("community-write", 40, 60)
+
 # Active trips can legitimately publish location more often than other
 # marketplace mutations, so they must not share the smaller creation bucket.
 API_WRITE_RATE_LIMITS["/api/mobile/rides/driver-location"] = ("ride-location", 180, 60)
@@ -7283,6 +7290,17 @@ def init_db() -> None:
                 FOREIGN KEY(post_id) REFERENCES ask_community_posts(id),
                 FOREIGN KEY(author_id) REFERENCES users(id),
                 FOREIGN KEY(parent_answer_id) REFERENCES ask_community_answers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ask_community_guest_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT NOT NULL UNIQUE,
+                installation_hash TEXT NOT NULL UNIQUE,
+                user_id INTEGER NOT NULL UNIQUE,
+                messages_used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS ask_community_reactions (
@@ -23679,6 +23697,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/community": self.api_mobile_create_community_post,
+            "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
             "/api/mobile/community/answer": self.api_mobile_create_community_answer,
             "/api/mobile/community/react": self.api_mobile_react_community,
             "/api/mobile/community/save": self.api_mobile_save_community_post,
@@ -23940,6 +23959,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if user and should_touch:
             touch_session_last_seen_best_effort(authenticated_session_token)
         return user
+
+    def current_community_guest(self) -> sqlite3.Row | None:
+        token = clean_text_value(self.headers.get("X-FairFares-Guest-Token"), 256)
+        if not token:
+            return None
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with db() as con:
+            return con.execute(
+                """SELECT guest.*, users.name, users.guest_account
+                   FROM ask_community_guest_sessions guest
+                   JOIN users ON users.id = guest.user_id
+                   WHERE guest.token_hash = ? AND users.guest_account = 1""",
+                (token_hash,),
+            ).fetchone()
 
     def send_html(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
@@ -37026,9 +37059,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_create_community_answer(self) -> None:
         user = self.current_user()
-        if not user:
-            self.send_json({"ok": False, "error": "Login is required to answer."}, 401)
+        guest = None if user else self.current_community_guest()
+        if not user and not guest:
+            self.send_json({"ok": False, "error": "A guest session or login is required to answer."}, 401)
             return
+        author_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
         payload = self.read_json_body()
         post_public_id = clean_text_value(payload.get("postId"), 80)
         body = clean_multiline_text_value(payload.get("body"), 1800)
@@ -37045,10 +37080,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not post:
                 self.send_json({"ok": False, "error": "This post is unavailable or closed."}, 404)
                 return
-            if row_value(post, "community_id") and not chat_group_member_role(con, int(post["community_id"]), int(user["id"])):
+            if row_value(post, "community_id") and (not user or not chat_group_member_role(con, int(post["community_id"]), author_id)):
                 self.send_json({"ok": False, "error": "Join this group before answering."}, 403)
                 return
-            recent_answers = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_answers WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (int(user["id"]),)).fetchone()["count"])
+            if guest and int(row_value(guest, "messages_used") or 0) >= 6:
+                self.send_json({"ok": False, "error": "Create a free account for unlimited community comments and replies.", "guestLimitReached": True, "remaining": 0}, 403)
+                return
+            recent_answers = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_answers WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (author_id,)).fetchone()["count"])
             if recent_answers >= 30:
                 self.send_json({"ok": False, "error": "You have reached the hourly answer limit. Please try again later."}, 429)
                 return
@@ -37060,33 +37098,67 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     return
                 parent_id = int(parent["id"])
             answer_id = community_public_id("FFA")
-            con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), int(user["id"]), parent_id, body, now, now))
+            con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), author_id, parent_id, body, now, now))
+            if guest:
+                con.execute("UPDATE ask_community_guest_sessions SET messages_used = messages_used + 1, updated_at = ? WHERE id = ?", (now, int(guest["id"])))
             notify_user_id = int(post["author_id"] or 0)
             notify_title = str(post["title"] or "Community question")
-            if notify_user_id and notify_user_id != int(user["id"]):
-                conversation, _ = get_or_create_person_conversation(con, user, notify_user_id)
+            notification_user = user or con.execute("SELECT * FROM users WHERE id = ?", (author_id,)).fetchone()
+            if notify_user_id and notify_user_id != author_id:
+                conversation, _ = get_or_create_person_conversation(con, notification_user, notify_user_id)
                 if conversation:
                     owner = con.execute("SELECT name FROM users WHERE id = ?", (notify_user_id,)).fetchone()
                     chat_message = save_chat_message(
                         con,
                         int(conversation["id"]),
-                        user,
+                        notification_user,
                         body,
                         client_message_id=f"community-answer-{answer_id}",
                         context={
                             "type": "COMMUNITY",
                             "id": post_public_id,
                             "title": notify_title,
-                            "subtitle": "New comment on your Ask Community post",
+                            "subtitle": "Guest comment · Reply publicly in Ask so the guest can see it" if guest else "New comment on your Ask Community post",
                             "ownerUserId": str(notify_user_id),
                             "ownerName": str(row_value(owner, "name") or "FairFares member"),
                         },
                     )
                     chitthi_conversation_public_id = str(row_value(conversation, "public_id") or "")
-                    self.notify_chat_recipients(con, conversation, user, chat_message)
-        if notify_user_id and notify_user_id != int(user["id"]) and not chitthi_conversation_public_id:
-            send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or 'A FairFares member'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
-        self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id}, 201)
+                    self.notify_chat_recipients(con, conversation, notification_user, chat_message)
+        if notify_user_id and notify_user_id != author_id and not chitthi_conversation_public_id:
+            send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
+        remaining = max(0, 5 - int(row_value(guest, "messages_used") or 0)) if guest else None
+        self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id, "guestRemaining": remaining}, 201)
+
+    def api_mobile_community_guest_session(self) -> None:
+        if self.current_user():
+            self.send_json({"ok": True, "registered": True, "remaining": None})
+            return
+        payload = self.read_json_body()
+        installation_id = clean_text_value(payload.get("installationId"), 160)
+        if len(installation_id) < 16:
+            self.send_json({"ok": False, "error": "This device could not create a guest identity."}, 400)
+            return
+        installation_hash = hashlib.sha256(installation_id.encode("utf-8")).hexdigest()
+        with db() as con:
+            existing = con.execute("SELECT * FROM ask_community_guest_sessions WHERE installation_hash = ?", (installation_hash,)).fetchone()
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            if existing:
+                con.execute("UPDATE ask_community_guest_sessions SET token_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (token_hash, int(existing["id"])))
+                user_id = int(existing["user_id"])
+                self.send_json({"ok": True, "token": token, "guestId": f"Guest {user_id:04d}", "remaining": max(0, 6 - int(existing["messages_used"] or 0))})
+                return
+            internal_id = secrets.token_hex(12)
+            cursor = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account, is_verified) VALUES ('Guest', ?, ?, 'CUSTOMER', 1, 0)",
+                (f"guest-{internal_id}@guest.invalid", secrets.token_hex(32)),
+            )
+            user_id = int(cursor.lastrowid)
+            guest_name = f"Guest {user_id:04d}"
+            con.execute("UPDATE users SET name = ? WHERE id = ?", (guest_name, user_id))
+            con.execute("INSERT INTO ask_community_guest_sessions (token_hash, installation_hash, user_id) VALUES (?, ?, ?)", (token_hash, installation_hash, user_id))
+        self.send_json({"ok": True, "token": token, "guestId": guest_name, "remaining": 6}, 201)
 
     def api_mobile_react_community(self) -> None:
         user = self.current_user()
