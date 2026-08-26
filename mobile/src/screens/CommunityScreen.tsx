@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
-  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
+  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getNearbyGasPrices, joinChatCommunity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
@@ -205,6 +205,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousin
   const [cityOptions, setCityOptions] = useState<string[]>([]);
   const [cityOptionsLoading, setCityOptionsLoading] = useState(false);
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
+  const [lowestGasPrice, setLowestGasPrice] = useState<number | null>(null);
   const [category, setCategory] = useState<string>("ALL");
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
@@ -337,6 +338,28 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousin
     })();
     return () => { cancelled = true; };
   }, [city, locationRefreshKey, user?.id]);
+  useEffect(() => {
+    let cancelled = false;
+    if (Platform.OS === "web") return () => { cancelled = true; };
+    void (async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted || cancelled) return;
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+          .catch(() => Location.getLastKnownPositionAsync({ maxAge: 2 * 60 * 1000, requiredAccuracy: 1000 }));
+        if (!position || cancelled) return;
+        const result = await getNearbyGasPrices(position.coords.latitude, position.coords.longitude, 10, "regular");
+        if (cancelled) return;
+        const prices = (result.stations || [])
+          .map((station) => Number(station.price))
+          .filter((price) => Number.isFinite(price) && price > 0);
+        setLowestGasPrice(prices.length ? Math.min(...prices) : null);
+      } catch {
+        if (!cancelled) setLowestGasPrice(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [locationRefreshKey, user?.id]);
   useEffect(() => {
     if (!cityPickerOpen || cityDraft.trim().length < 2) { setCityOptions([]); return; }
     let cancelled = false;
@@ -614,9 +637,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onOpenHousin
         <TouchableOpacity style={[styles.composerPrompt, isLight && styles.composerPromptLight]} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={styles.composerPromptText}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>
-      <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="Open cheap gas prices near you">
+      <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel={lowestGasPrice !== null ? `Cheapest reported regular gas nearby is ${lowestGasPrice.toFixed(2)} dollars. Open nearby gas prices` : "Open cheap gas prices near you"}>
         <View style={styles.gasPreviewIcon}><Text style={styles.gasPreviewGlyph}>⛽</Text></View>
         <View style={styles.gasPreviewCopy}><Text style={[styles.gasPreviewTitle, isLight && styles.gasPreviewTitleLight]}>Cheap gas near you</Text><Text style={styles.gasPreviewSubtitle}>Tap to compare reported station prices</Text></View>
+        {lowestGasPrice !== null ? <View style={styles.gasPreviewPriceBlock}><Text style={styles.gasPreviewPrice}>${lowestGasPrice.toFixed(2)}</Text><Text style={styles.gasPreviewPriceLabel}>lowest nearby</Text></View> : null}
         <Text style={[styles.gasPreviewChevron, isLight && styles.gasPreviewChevronLight]}>›</Text>
       </TouchableOpacity>
       <View><View style={styles.sectionRow}><Text style={styles.sectionTitle}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
@@ -688,7 +712,7 @@ const styles = StyleSheet.create({
   quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "800", letterSpacing: .8 }, nationalTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800", marginTop: 2 }, nationalBody: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, nationalIcon: { fontSize: 22 }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
   gasPreviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.06)", shadowColor: "#14251f", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
-  gasPreviewIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,202,147,0.16)" }, gasPreviewGlyph: { fontSize: 22 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },
+  gasPreviewIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,202,147,0.16)" }, gasPreviewGlyph: { fontSize: 22 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewPriceBlock: { alignItems: "flex-end", marginLeft: 6 }, gasPreviewPrice: { color: "#16b981", fontSize: 17, fontWeight: "900", letterSpacing: -0.3 }, gasPreviewPriceLabel: { color: theme.colors.muted, fontSize: 8, fontWeight: "600", marginTop: 1 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },
   rentalFeatureCard: { minHeight: 220, borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#796029", backgroundColor: theme.colors.panel, shadowColor: "#000", shadowOpacity: .18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   rentalFeatureImage: { width: "100%", height: 142, backgroundColor: theme.colors.panel2 },
   rentalFeatureContent: { paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
