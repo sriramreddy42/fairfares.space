@@ -1,0 +1,11 @@
+appId: com.fairfares.mobile
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Open cheap gas prices near you"
+    timeout: 15000
+- tapOn: "Open cheap gas prices near you"
+- extendedWaitUntil:
+    visible: "Last reported nearby prices"
+    timeout: 15000
+- takeScreenshot: fairfares-audit-gas

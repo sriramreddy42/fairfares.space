@@ -48,12 +48,35 @@ function priceLabel(station: GasStation) {
   return station.price == null ? "No price" : `$${station.price.toFixed(2)}`;
 }
 
-function directionsUrl(station: GasStation) {
-  if (station.googleMapsUri) return station.googleMapsUri;
+async function openMapUrl(nativeUrl: string, fallbackUrl: string) {
+  try {
+    if (await Linking.canOpenURL(nativeUrl)) {
+      await Linking.openURL(nativeUrl);
+      return;
+    }
+  } catch {
+    // Continue to the universal HTTPS fallback.
+  }
+  await Linking.openURL(fallbackUrl);
+}
+
+async function openStationDirections(station: GasStation) {
   const destination = `${station.latitude},${station.longitude}`;
-  return Platform.OS === "ios"
-    ? `http://maps.apple.com/?daddr=${destination}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+  const name = encodeURIComponent(station.name || "Gas station");
+  const fallback = station.googleMapsUri || `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+  const nativeUrl = Platform.OS === "ios"
+    ? `maps://?daddr=${destination}&q=${name}`
+    : `geo:${destination}?q=${destination}(${name})`;
+  await openMapUrl(nativeUrl, fallback);
+}
+
+async function openNearbyGasMaps(position: Coordinates | null) {
+  const center = position ? `${position.latitude},${position.longitude}` : "";
+  const fallback = `https://www.google.com/maps/search/?api=1&query=gas+stations${center ? `&center=${center}` : ""}`;
+  const nativeUrl = Platform.OS === "ios"
+    ? `maps://?q=gas%20stations${center ? `&ll=${center}` : ""}`
+    : `geo:${center || "0,0"}?q=gas%20stations`;
+  await openMapUrl(nativeUrl, fallback);
 }
 
 function freshnessLabel(value: string) {
@@ -98,7 +121,10 @@ export function GasStationsScreen({ onBack }: Props) {
     } catch (cause) {
       if (requestGeneration.current !== generation) return;
       setStations([]);
-      setError(cause instanceof Error ? cause.message : "Nearby fuel prices are temporarily unavailable.");
+      const message = cause instanceof Error ? cause.message : "Nearby fuel prices are temporarily unavailable.";
+      setError(message.includes("HTTP 404")
+        ? "Nearby fuel prices are being activated. Please try again shortly."
+        : message);
     } finally {
       if (requestGeneration.current !== generation) return;
       setLoading(false);
@@ -135,7 +161,7 @@ export function GasStationsScreen({ onBack }: Props) {
       </View>
 
       {mapUrl && !mapFailed ? (
-        <TouchableOpacity style={[styles.mapFrame, isLight && styles.cardShadow]} activeOpacity={0.9} onPress={() => void Linking.openURL("https://www.google.com/maps/search/gas+stations/")} accessibilityRole="imagebutton" accessibilityLabel="Open nearby gas stations in Google Maps">
+        <TouchableOpacity style={[styles.mapFrame, isLight && styles.cardShadow]} activeOpacity={0.9} onPress={() => void openNearbyGasMaps(position)} accessibilityRole="imagebutton" accessibilityLabel={Platform.OS === "ios" ? "Open nearby gas stations in Apple Maps" : "Open nearby gas stations in Maps"}>
           <Image source={{ uri: mapUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setMapFailed(true)} />
         </TouchableOpacity>
       ) : <View style={[styles.mapFrame, styles.mapLoading]}>{loading ? <ActivityIndicator color="#18b981" /> : <><Text style={styles.mapEmptyGlyph}>⛽</Text><Text style={styles.mapEmptyTitle}>{mapFailed ? "Map preview unavailable" : "Location needed for the map"}</Text><Text style={styles.mapEmptyBody}>{mapFailed ? "Station results and directions remain available below." : "Turn on location access, then try again."}</Text></>}</View>}
@@ -153,7 +179,7 @@ export function GasStationsScreen({ onBack }: Props) {
           <View style={[styles.notice, isLight ? styles.cardLight : styles.cardDark]}><Text style={[styles.noticeTitle, isLight ? styles.darkText : styles.lightText]}>No reported prices nearby</Text><Text style={styles.muted}>Try another fuel grade or refresh. Google does not report a price for every station.</Text></View>
         ) : null}
         {stations.map((station) => (
-          <TouchableOpacity key={`row-${station.id || station.googleMapsUri}`} activeOpacity={0.78} onPress={() => void Linking.openURL(directionsUrl(station))} style={[styles.stationCard, isLight ? styles.cardLight : styles.cardDark, isLight && styles.cardShadow]}>
+          <TouchableOpacity key={`row-${station.id || station.googleMapsUri}`} activeOpacity={0.78} onPress={() => void openStationDirections(station)} accessibilityRole="button" accessibilityLabel={`Open directions to ${station.name}`} style={[styles.stationCard, isLight ? styles.cardLight : styles.cardDark, isLight && styles.cardShadow]}>
             <View style={[styles.stationIcon, station.id === lowestId && styles.stationIconLowest]}><Text style={styles.stationGlyph}>⛽</Text></View>
             <View style={styles.stationCopy}>
               <Text numberOfLines={1} style={[styles.stationName, isLight ? styles.darkText : styles.lightText]}>{station.name}</Text>
