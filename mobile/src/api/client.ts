@@ -906,12 +906,12 @@ export async function getCommunityFeed(filters: CommunityFeedFilters = {}) {
   if (filters.localOffset !== undefined) params.set("localOffset", String(Math.max(0, filters.localOffset)));
   if (filters.nationalOffset !== undefined) params.set("nationalOffset", String(Math.max(0, filters.nationalOffset)));
   params.set("limit", String(Math.max(1, Math.min(50, filters.limit || 30))));
-  const payload = await request<{ ok: boolean; posts: CommunityPost[]; sections?: { local: CommunityFeedSection; national: CommunityFeedSection }; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`);
+  const payload = await request<{ ok: boolean; posts: CommunityPost[]; sections?: { local: CommunityFeedSection; national: CommunityFeedSection }; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`, communityGuestToken ? { headers: { "X-FairFares-Guest-Token": communityGuestToken } } : undefined);
   return payload;
 }
 
 export async function getCommunityPost(postId: string) {
-  const payload = await request<{ ok: boolean; posts: CommunityPost[] }>(`/api/mobile/community?postId=${encodeURIComponent(postId)}&limit=1`);
+  const payload = await request<{ ok: boolean; posts: CommunityPost[] }>(`/api/mobile/community?postId=${encodeURIComponent(postId)}&limit=1`, communityGuestToken ? { headers: { "X-FairFares-Guest-Token": communityGuestToken } } : undefined);
   return payload.posts[0] || null;
 }
 
@@ -997,7 +997,12 @@ export async function ensureCommunityGuestSession(): Promise<CommunityGuestSessi
 }
 
 export async function reactToCommunityContent(target: { postId?: string; answerId?: string }, reaction = "HELPFUL") {
-  return communityPostRequest<{ ok: boolean; active: boolean; reaction: string; count: number; counts: Record<string, number> }>("/api/mobile/community/react", { ...target, reaction });
+  if (!authToken) await ensureCommunityGuestSession();
+  return request<{ ok: boolean; active: boolean; reaction: string; count: number; counts: Record<string, number> }>("/api/mobile/community/react", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
+    body: JSON.stringify({ ...target, reaction })
+  });
 }
 
 export async function saveCommunityPost(postId: string) {

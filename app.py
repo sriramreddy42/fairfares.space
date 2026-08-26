@@ -36927,7 +36927,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
         sync_housing_into_community()
         user = self.current_user()
-        viewer_id = int(row_value(user, "id") or 0) if user else 0
+        guest = None if user else self.current_community_guest()
+        viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
         params = urllib.parse.parse_qs(parsed.query)
         post_public_id = clean_text_value((params.get("postId") or [""])[0], 80)
         city = clean_text_value((params.get("city") or [""])[0], 120)
@@ -37162,9 +37163,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_react_community(self) -> None:
         user = self.current_user()
-        if not user:
-            self.send_json({"ok": False, "error": "Login is required to react."}, 401)
+        guest = None if user else self.current_community_guest()
+        if not user and not guest:
+            self.send_json({"ok": False, "error": "A guest session or login is required to react."}, 401)
             return
+        user_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
         payload = self.read_json_body()
         post_public_id = clean_text_value(payload.get("postId"), 80)
         answer_public_id = clean_text_value(payload.get("answerId"), 80)
@@ -37182,7 +37185,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not target_id:
                 self.send_json({"ok": False, "error": "The content is unavailable."}, 404)
                 return
-            existing = con.execute(f"SELECT id, reaction FROM ask_community_reactions WHERE {target_column} = ? AND user_id = ?", (target_id, int(user["id"]))).fetchone()
+            existing = con.execute(f"SELECT id, reaction FROM ask_community_reactions WHERE {target_column} = ? AND user_id = ?", (target_id, user_id)).fetchone()
             if existing and existing["reaction"] == reaction:
                 con.execute("DELETE FROM ask_community_reactions WHERE id = ?", (int(existing["id"]),))
                 active = False
@@ -37190,7 +37193,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE ask_community_reactions SET reaction = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?", (reaction, int(existing["id"])))
                 active = True
             else:
-                con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, int(user["id"]), reaction))
+                con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, user_id, reaction))
                 active = True
             reaction_rows = con.execute(f"SELECT reaction, COUNT(*) AS count FROM ask_community_reactions WHERE {target_column} = ? GROUP BY reaction", (target_id,)).fetchall()
             counts = {str(row["reaction"]): int(row["count"] or 0) for row in reaction_rows}

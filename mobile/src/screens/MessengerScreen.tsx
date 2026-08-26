@@ -6335,7 +6335,7 @@ const styles = StyleSheet.create({
   wallpaperGlowTwo: { bottom: 90, left: -130 },
   wallpaperPattern: { position: "absolute", top: "47%", left: -20, color: "rgba(27,86,63,0.075)", fontSize: 25, letterSpacing: 13, transform: [{ rotate: "-12deg" }] },
   header: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 6 },
-  headerLight: { backgroundColor: "#ffffff", marginHorizontal: -16, marginTop: -16, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 7, minHeight: 76, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.06)" },
+  headerLight: { backgroundColor: "#f3f4f6", marginHorizontal: -16, marginTop: -16, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 7, minHeight: 76, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.06)" },
   eyebrow: { color: theme.colors.muted, fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
   title: { color: theme.colors.text, ...theme.typography.screenTitle },
   chatBrandWrap: { flex: 1, minWidth: 0, height: 48, alignItems: "center", justifyContent: "center", overflow: "hidden" },

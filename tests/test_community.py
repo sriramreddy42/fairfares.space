@@ -114,6 +114,12 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertTrue(session["guestId"].startswith("Guest "))
         self.assertEqual(session["remaining"], 6)
         token = session["token"]
+        status, guest_like = self.guest_request("POST", "/api/mobile/community/react", token, {"postId": post_id, "reaction": "LIKE"})
+        self.assertEqual((status, guest_like["active"], guest_like["reaction"], guest_like["count"]), (200, True, "LIKE", 1))
+        status, guest_detail = self.guest_request("GET", f"/api/mobile/community?postId={post_id}", token)
+        self.assertEqual((status, guest_detail["posts"][0]["viewerReaction"]), (200, "LIKE"))
+        status, guest_unlike = self.guest_request("POST", "/api/mobile/community/react", token, {"postId": post_id, "reaction": "LIKE"})
+        self.assertEqual((status, guest_unlike["active"], guest_unlike["count"]), (200, False, 0))
         first_answer_id = ""
         for index in range(6):
             status, answered = self.guest_request("POST", "/api/mobile/community/answer", token, {"postId": post_id, "body": f"Guest message number {index + 1}"})
