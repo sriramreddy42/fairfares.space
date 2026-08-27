@@ -2427,9 +2427,10 @@ export type MobileSocialAuthPayload = {
 };
 
 export async function mobileSocialLogin(provider: "google" | "apple", identityToken: string, name = "", consentAccepted = false) {
+  if (!communityGuestToken) communityGuestToken = await guestStorageGet(COMMUNITY_GUEST_TOKEN_KEY);
   const payload = await request<MobileSocialAuthPayload>("/api/mobile/auth/oauth", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
     body: JSON.stringify({ provider, identityToken, name, consentAccepted, consentUiPresented: true })
   });
   if (payload.token) await setAuthToken(payload.token);
@@ -2447,11 +2448,12 @@ export async function completeSocialPhone(continuationToken: string, phone: stri
 }
 
 export async function mobileSignup(name: string, email: string, phone: string, password: string, countryCode = "", consentAccepted = false) {
+  if (!communityGuestToken) communityGuestToken = await guestStorageGet(COMMUNITY_GUEST_TOKEN_KEY);
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
       body: JSON.stringify({ name, email, phone, countryCode, password, consentAccepted })
     }
   );

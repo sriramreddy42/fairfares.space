@@ -516,7 +516,6 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       if (replyThreadId) setExpandedReplyThreads((current) => new Set([...current, replyThreadId]));
       if (!user && typeof result.guestRemaining === "number") {
         setGuestRemaining(result.guestRemaining);
-        if (result.guestRemaining === 0) setGuestBenefitsOpen(true);
       }
       setDetail(await getCommunityPost(detail.id));
       await load(true);
@@ -663,8 +662,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     <View style={styles.inlineReplyComposer}>
       <View style={styles.replyingTo}><Text style={styles.replyingToText}>Replying to {answerReplyTarget.name}</Text><TouchableOpacity onPress={() => { setAnswerReplyTarget(null); setAnswer(""); }}><Text style={styles.replyingToClose}>×</Text></TouchableOpacity></View>
       {!user ? <Text style={styles.inlineGuestAllowance}>{guestRemaining} of 6 guest messages left</Text> : null}
-      <TextInput autoFocus style={styles.inlineReplyInput} value={answer} onChangeText={setAnswer} multiline placeholder="Write a reply…" placeholderTextColor={theme.colors.muted} editable={Boolean(user || guestRemaining > 0)} />
-      <TouchableOpacity style={[styles.inlineReplySend, (!answer.trim() || (!user && guestRemaining <= 0)) && styles.disabled]} disabled={!answer.trim() || detailBusy || (!user && guestRemaining <= 0)} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Reply"}</Text></TouchableOpacity>
+      <TextInput autoFocus style={styles.inlineReplyInput} value={answer} onChangeText={setAnswer} multiline placeholder={guestRemaining > 0 || user ? "Write a reply…" : "Write your reply, then sign up to post…"} placeholderTextColor={theme.colors.muted} editable />
+      <TouchableOpacity style={[styles.inlineReplySend, !answer.trim() && styles.disabled]} disabled={!answer.trim() || detailBusy} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Reply"}</Text></TouchableOpacity>
       {!user && guestRemaining <= 0 ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}
     </View>
   ) : null;
@@ -770,7 +769,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         {renderPost(detail)}
         <Text style={styles.answersTitle}>{detail.answerCount} {detail.answerCount === 1 ? "comment" : "comments"}</Text>
         {detail.answers?.filter((item) => !item.parentAnswerId).map((item) => renderAnswer(item, detail.answers?.filter((reply) => reply.parentAnswerId === item.id) || []))}
-        {detail.canAnswer && !answerReplyTarget ? <View style={styles.answerComposer}>{!user ? <View style={styles.guestAllowance}><Text style={styles.guestAllowanceName}>{guestIdentity || "Guest"}</Text><Text style={styles.guestAllowanceCount}>{guestRemaining} of 6 guest messages left</Text></View> : null}<TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder="Write a comment…" placeholderTextColor={theme.colors.muted} editable={Boolean(user || guestRemaining > 0)} /><TouchableOpacity style={[styles.sendAnswer, (!answer.trim() || (!user && guestRemaining <= 0)) && styles.disabled]} disabled={!answer.trim() || detailBusy || (!user && guestRemaining <= 0)} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity>{!user ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}</View> : !detail.canAnswer ? <Text style={styles.locked}>This discussion is closed to new comments.</Text> : null}
+        {detail.canAnswer && !answerReplyTarget ? <View style={styles.answerComposer}>{!user ? <View style={styles.guestAllowance}><Text style={styles.guestAllowanceName}>{guestIdentity || "Guest"}</Text><Text style={styles.guestAllowanceCount}>{guestRemaining} of 6 guest messages left</Text></View> : null}<TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder={guestRemaining > 0 || user ? "Write a comment…" : "Write your comment, then sign up to post…"} placeholderTextColor={theme.colors.muted} editable /><TouchableOpacity style={[styles.sendAnswer, !answer.trim() && styles.disabled]} disabled={!answer.trim() || detailBusy} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity>{!user ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}</View> : !detail.canAnswer ? <Text style={styles.locked}>This discussion is closed to new comments.</Text> : null}
       </> : null}{detailBusy && !detail?.answers ? <ActivityIndicator color={theme.colors.brand} /> : null}</ScrollView>
       {guestBenefitsOpen ? <View style={styles.guestBenefitsBackdrop}>
         <View style={styles.guestBenefitsCard}>

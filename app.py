@@ -34426,6 +34426,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_social_auth(self) -> None:
         payload = self.read_json_body()
+        community_guest = self.current_community_guest()
         consented, consented_at = consent_values(payload)
         consent_ui_presented = payload.get("consentUiPresented") is True
         legacy_consent_grace = legacy_social_consent_grace_active() and not consent_ui_presented
@@ -34479,6 +34480,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                                 "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ? WHERE id = ?",
                                 (display_name, consented_at, TERMS_VERSION if consented else None, PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None, user_id),
                             )
+                    elif community_guest:
+                        user_id = int(community_guest["user_id"])
+                        con.execute(
+                            """UPDATE users
+                               SET name = ?, email = ?, guest_account = 0, is_verified = 1,
+                                   verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?,
+                                   privacy_version = ?, community_guidelines_version = ?
+                               WHERE id = ? AND guest_account = 1""",
+                            (display_name, email, consented_at, TERMS_VERSION if consented else None,
+                             PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None,
+                             user_id),
+                        )
+                        con.execute("DELETE FROM ask_community_guest_sessions WHERE user_id = ?", (user_id,))
                     else:
                         con.execute(
                             "INSERT INTO users (name, email, password_hash, is_verified, verified_at, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
@@ -34755,6 +34769,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_signup(self) -> None:
         payload = self.read_json_body()
+        community_guest = self.current_community_guest()
         action_key = auth_action_rate_limit_key(self.client_ip(), "mobile-signup")
         retry_after = auth_action_retry_after(action_key)
         if retry_after:
@@ -34798,7 +34813,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if phone_owner and (not existing_email_user or int(phone_owner["id"]) != int(existing_email_user["id"])) and not int(row_value(phone_owner, "guest_account") or 0):
                     self.send_json({"ok": False, "error": "An account with that phone number already exists. Log in or recover that account."}, 409)
                     return
-                guest = existing_email_user or (phone_owner if phone_owner and int(row_value(phone_owner, "guest_account") or 0) else None)
+                claimed_guest = None
+                if community_guest:
+                    claimed_guest = con.execute(
+                        "SELECT * FROM users WHERE id = ? AND guest_account = 1",
+                        (int(community_guest["user_id"]),),
+                    ).fetchone()
+                guest = claimed_guest or existing_email_user or (phone_owner if phone_owner and int(row_value(phone_owner, "guest_account") or 0) else None)
                 if guest:
                     con.execute(
                         """UPDATE users
@@ -34809,6 +34830,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         (name, email, stored_phone, hash_password(password), 1, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, int(guest["id"])),
                     )
                     user_id = int(guest["id"])
+                    if claimed_guest:
+                        # Community answers and reactions already reference this
+                        # user row, so upgrading it preserves the guest's full
+                        # history under their registered name and profile.
+                        con.execute("DELETE FROM ask_community_guest_sessions WHERE user_id = ?", (user_id,))
                 else:
                     con.execute(
                         "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",

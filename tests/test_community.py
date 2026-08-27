@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 import app
 
@@ -144,6 +145,65 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(resumed["guestId"], session["guestId"])
         self.assertEqual(resumed["remaining"], 0)
+
+    def test_signup_claims_guest_identity_and_preserves_comments(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, session = self.request(
+            "POST",
+            "/api/mobile/community/guest-session",
+            payload={"installationId": "test-installation-guest-claim-0001"},
+        )
+        guest_token = session["token"]
+        status, answered = self.guest_request(
+            "POST",
+            "/api/mobile/community/answer",
+            guest_token,
+            {"postId": post_id, "body": "Please preserve this guest comment."},
+        )
+        self.assertEqual(status, 201)
+        with app.db() as con:
+            original = con.execute(
+                "SELECT author_id FROM ask_community_answers WHERE public_id = ?",
+                (answered["answerId"],),
+            ).fetchone()
+            guest_user_id = int(original["author_id"])
+
+        with mock.patch.object(
+            app,
+            "send_activation_email",
+            return_value=(Path(self.temp_dir.name) / "guest-claim-activation.txt", "sent through test provider"),
+        ):
+            status, signup = self.guest_request(
+                "POST",
+                "/api/mobile/signup",
+                guest_token,
+                {
+                    "name": "Claimed Community Member",
+                    "email": "claimed-community@example.com",
+                    "phone": "+1 720 555 0188",
+                    "password": "CommunityPassword123!",
+                    "consentAccepted": True,
+                },
+            )
+        self.assertEqual(status, 201)
+        self.assertTrue(signup["activationRequired"])
+        with app.db() as con:
+            claimed = con.execute("SELECT * FROM users WHERE id = ?", (guest_user_id,)).fetchone()
+            answer = con.execute(
+                "SELECT author_id FROM ask_community_answers WHERE public_id = ?",
+                (answered["answerId"],),
+            ).fetchone()
+            guest_session = con.execute(
+                "SELECT id FROM ask_community_guest_sessions WHERE user_id = ?",
+                (guest_user_id,),
+            ).fetchone()
+        self.assertEqual(claimed["name"], "Claimed Community Member")
+        self.assertEqual(int(claimed["guest_account"]), 0)
+        self.assertEqual(int(answer["author_id"]), guest_user_id)
+        self.assertIsNone(guest_session)
+        _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}")
+        self.assertEqual(detail["posts"][0]["answers"][0]["author"]["name"], "Claimed Community Member")
 
     def test_layered_feed_returns_local_first_and_active_public_usa_fallback(self):
         _, local = self.create_post(title="Dayton neighborhood advice", city="Dayton, OH")
