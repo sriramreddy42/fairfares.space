@@ -2680,8 +2680,20 @@ export function HousingScreen({
     const mapOriginLng = selectedDriverOffer?.originLng ?? rideForm.originLng;
     const mapDestinationLat = selectedDriverOffer?.destinationLat ?? rideForm.destinationLat;
     const mapDestinationLng = selectedDriverOffer?.destinationLng ?? rideForm.destinationLng;
-    const nativeMapPoints = [mapOriginLat, mapOriginLng, mapDestinationLat, mapDestinationLng]
-      .every((value) => typeof value === "number" && Number.isFinite(value))
+    const validRideMapPoint = (latitude: unknown, longitude: unknown) =>
+      typeof latitude === "number"
+      && Number.isFinite(latitude)
+      && latitude >= -90
+      && latitude <= 90
+      && typeof longitude === "number"
+      && Number.isFinite(longitude)
+      && longitude >= -180
+      && longitude <= 180
+      // A missing geocode has historically been serialized as 0,0. Rendering
+      // it makes Apple Maps frame the Gulf of Guinea as an empty blue map.
+      && !(Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001);
+    const nativeMapPoints = validRideMapPoint(mapOriginLat, mapOriginLng)
+      && validRideMapPoint(mapDestinationLat, mapDestinationLng)
       ? {
           origin: { latitude: mapOriginLat as number, longitude: mapOriginLng as number },
           destination: { latitude: mapDestinationLat as number, longitude: mapDestinationLng as number }
@@ -5260,18 +5272,18 @@ const styles = StyleSheet.create({
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
   rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
   rideMapBackButton: { position: "absolute", top: 34, left: 22, width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
-  rideMapBackText: { color: theme.colors.text, fontSize: 34, lineHeight: 36 },
+  rideMapBackText: { color: "#f7f7f8", fontSize: 34, lineHeight: 36 },
   rideMapRouteLine: { position: "absolute", left: "24%", right: "18%", top: "31%", height: 6, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.90)", transform: [{ rotate: "42deg" }] },
   rideMapCarDot: { position: "absolute", width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.text, borderWidth: 5, borderColor: theme.colors.green },
   rideMapPickupLabel: { position: "absolute", top: 78, left: 82, right: 80, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
   rideMapDestinationLabel: { position: "absolute", bottom: 78, right: 28, left: 120, backgroundColor: "rgba(0,0,0,0.76)", borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
-  rideMapLabelText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  rideMapLabelText: { color: "#f7f7f8", fontSize: 14, fontWeight: "900" },
   rideMapOpenButton: { position: "absolute", right: 16, top: 34, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
-  rideMapOpenButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  rideMapOpenButtonText: { color: "#f7f7f8", fontSize: 12, fontWeight: "900" },
   rideChoiceSheet: { maxHeight: "76%", backgroundColor: "#151515", borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   rideChoiceSheetContent: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 86, gap: 12 },
-  rideChoiceTitle: { color: theme.colors.text, textAlign: "center", fontSize: 26, fontWeight: "900" },
-  rideDriverNotify: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideChoiceTitle: { color: "#f7f7f8", textAlign: "center", fontSize: 26, fontWeight: "900" },
+  rideDriverNotify: { color: "#b6bac0", textAlign: "center", fontSize: 12, lineHeight: 17, fontWeight: "700" },
   rideChoiceLifecycle: {
     borderRadius: 14,
     borderWidth: 1,
@@ -5281,10 +5293,10 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     gap: 7
   },
-  rideChoiceLifecycleTitle: { color: theme.colors.text, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
+  rideChoiceLifecycleTitle: { color: "#f7f7f8", fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.8 },
   rideChoiceLifecycleSteps: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   rideChoiceLifecyclePill: {
-    color: theme.colors.soft,
+    color: "#c7c9cc",
     borderRadius: theme.radius.pill,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
@@ -5324,16 +5336,16 @@ const styles = StyleSheet.create({
     borderColor: "rgba(62,145,255,0.58)",
     backgroundColor: "rgba(39,112,245,0.20)"
   },
-  rideChoiceRouteBadgeText: { color: theme.colors.text, fontSize: 11, fontWeight: "800" },
+  rideChoiceRouteBadgeText: { color: "#f7f7f8", fontSize: 11, fontWeight: "800" },
   rideChoiceCopy: { flex: 1, minWidth: 0 },
-  rideChoiceName: { color: theme.colors.text, fontSize: 16, fontWeight: "800", lineHeight: 20 },
-  rideChoiceUserTrip: { color: theme.colors.soft, fontSize: 12, marginTop: 4, lineHeight: 16 },
+  rideChoiceName: { color: "#f7f7f8", fontSize: 16, fontWeight: "800", lineHeight: 20 },
+  rideChoiceUserTrip: { color: "#c7c9cc", fontSize: 12, marginTop: 4, lineHeight: 16 },
   rideChoiceLister: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 4, lineHeight: 16 },
-  rideChoiceSeats: { color: theme.colors.soft, fontSize: 14 },
-  rideChoiceMeta: { color: theme.colors.muted, fontSize: 12, marginTop: 5, lineHeight: 16 },
+  rideChoiceSeats: { color: "#c7c9cc", fontSize: 14 },
+  rideChoiceMeta: { color: "#b6bac0", fontSize: 12, marginTop: 5, lineHeight: 16 },
   rideChoiceChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
   rideChoiceChip: {
-    color: theme.colors.soft,
+    color: "#c7c9cc",
     fontSize: 10,
     fontWeight: "800",
     overflow: "hidden",
@@ -5358,9 +5370,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 5
   },
-  rideChoiceSmallButtonText: { color: theme.colors.text, fontSize: 10, fontWeight: "800" },
-  rideChoiceRequestButton: { backgroundColor: theme.colors.text, borderColor: theme.colors.text, paddingHorizontal: 13 },
-  rideChoiceRequestButtonText: { color: theme.colors.bg, fontSize: 11, fontWeight: "900" },
+  rideChoiceSmallButtonText: { color: "#f7f7f8", fontSize: 10, fontWeight: "800" },
+  rideChoiceRequestButton: { backgroundColor: "#f7f7f8", borderColor: "#f7f7f8", paddingHorizontal: 13 },
+  rideChoiceRequestButtonText: { color: "#111214", fontSize: 11, fontWeight: "900" },
   rideChoiceChatButton: { borderColor: "rgba(66,143,255,0.38)", backgroundColor: "rgba(26,78,169,0.18)" },
   rideChoiceChatIcon: { width: 18, height: 15 },
   rideChoiceContribution: { alignItems: "flex-end", gap: 1 },
@@ -5369,7 +5381,7 @@ const styles = StyleSheet.create({
   rideChoiceAvailabilityDotExpired: { backgroundColor: "#f45380" },
   rideChoicePrice: { color: theme.colors.green, fontSize: 17, fontWeight: "900" },
   rideChoicePriceExpired: { color: "#f77ca1" },
-  rideChoicePriceMeta: { color: theme.colors.muted, fontSize: 9, fontWeight: "800", textTransform: "uppercase" },
+  rideChoicePriceMeta: { color: "#aeb2b8", fontSize: 9, fontWeight: "800", textTransform: "uppercase" },
   rideChoiceExpiredMeta: { color: "#fecaca" },
   rideNoOffersCard: {
     borderRadius: 18,
@@ -5380,14 +5392,14 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     gap: 6
   },
-  rideNoOffersTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
-  rideNoOffersCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
-  ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, backgroundColor: theme.colors.panel2, paddingHorizontal: 12 },
-  ridePaymentIcon: { color: theme.colors.text, fontSize: 22 },
-  ridePaymentArrow: { color: theme.colors.soft, fontSize: 28 },
+  rideNoOffersTitle: { color: "#f7f7f8", fontSize: 18, fontWeight: "900" },
+  rideNoOffersCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  ridePaymentRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 12 },
+  ridePaymentIcon: { color: "#f7f7f8", fontSize: 22 },
+  ridePaymentArrow: { color: "#c7c9cc", fontSize: 28 },
   rideInlineChatButton: { minHeight: 38, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.08)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: 9 },
   rideInlineChatIcon: { width: 20, height: 20 },
-  rideInlineChatText: { color: theme.colors.text, fontSize: 11, fontWeight: "900" },
+  rideInlineChatText: { color: "#f7f7f8", fontSize: 11, fontWeight: "900" },
   rideIssueButton: {
     minHeight: 64,
     flexDirection: "row",
@@ -5411,11 +5423,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900"
   },
-  rideIssueTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
-  rideIssueCopy: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
-  rideIssueArrow: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
+  rideIssueTitle: { color: "#f7f7f8", fontSize: 13, fontWeight: "800" },
+  rideIssueCopy: { color: "#b6bac0", fontSize: 11, lineHeight: 15, marginTop: 2 },
+  rideIssueArrow: { color: "#c7c9cc", fontSize: 25, lineHeight: 28 },
   rideRequestStatus: { backgroundColor: "rgba(34,197,94,0.13)", borderWidth: 1, borderColor: "rgba(34,197,94,0.35)", borderRadius: 14, padding: 12 },
   rideRequestStatusText: { color: theme.colors.green, fontSize: 13, lineHeight: 18, fontWeight: "900" },
-  rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: theme.colors.text, alignItems: "center", justifyContent: "center" },
-  rideChoiceButtonText: { color: theme.colors.bg, fontSize: 18, fontWeight: "900" },
+  rideChoiceButton: { flex: 1, minHeight: 58, borderRadius: 12, backgroundColor: "#f7f7f8", alignItems: "center", justifyContent: "center" },
+  rideChoiceButtonText: { color: "#111214", fontSize: 18, fontWeight: "900" },
 });
