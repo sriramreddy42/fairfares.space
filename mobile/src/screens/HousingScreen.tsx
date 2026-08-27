@@ -645,6 +645,7 @@ export function HousingScreen({
   const [rideActivityRows, setRideActivityRows] = useState<RidePost[]>([]);
   const [rideActivityBusy, setRideActivityBusy] = useState(false);
   const [rideBusy, setRideBusy] = useState(false);
+  const [ridePlanBusy, setRidePlanBusy] = useState(false);
   const [ridePosted, setRidePosted] = useState(false);
   const [editingRideId, setEditingRideId] = useState("");
   const [rideListingSuccess, setRideListingSuccess] = useState<RidePost | null>(null);
@@ -1621,6 +1622,7 @@ export function HousingScreen({
           rideForm.destination.trim() === selectedRideSuggestionRef.current))
     );
     setRideBusy(true);
+    setRidePlanBusy(true);
     try {
       let originPoint: RidePlaceSuggestion | undefined;
       const originAlreadyPicked = Boolean(
@@ -1713,6 +1715,7 @@ export function HousingScreen({
       }
     } finally {
       setRideBusy(false);
+      setRidePlanBusy(false);
       ridePlanSubmittingRef.current = false;
     }
   }
@@ -2745,7 +2748,7 @@ export function HousingScreen({
                       updateRideForm("origin", text);
                     }}
                     placeholder={listingRide ? "Starting point" : "Pickup location"}
-                    placeholderTextColor={theme.colors.muted}
+                    placeholderTextColor="#9da1a8"
                     style={[styles.rideRouteInput, rideFocusedField === "origin" && styles.rideRouteInputActive]}
                   />
                   <TextInput
@@ -2758,7 +2761,7 @@ export function HousingScreen({
                     }}
                     onSubmitEditing={() => void planRideRoute()}
                     placeholder={listingRide ? "Where are you going?" : "Where to?"}
-                    placeholderTextColor={theme.colors.muted}
+                    placeholderTextColor="#9da1a8"
                     style={[styles.rideRouteInput, rideFocusedField === "destination" && styles.rideRouteInputActive]}
                   />
                 </View>
@@ -3037,7 +3040,7 @@ export function HousingScreen({
               </ScrollView>
             </View>
           )}
-          {ridePlannerStage === "plan" && rideBusy && !listingRide ? (
+          {ridePlannerStage === "plan" && ridePlanBusy && !listingRide ? (
             <BlurView
               tint="dark"
               intensity={38}
@@ -3045,7 +3048,7 @@ export function HousingScreen({
               style={styles.rideSearchLoadingOverlay}
             >
               <View style={styles.rideSearchLoadingCard}>
-                <ActivityIndicator size="large" color={theme.colors.text} />
+                <ActivityIndicator size="large" color="#f7f7f8" />
                 <Text style={styles.rideSearchLoadingTitle}>Finding rides</Text>
                 <Text style={styles.rideSearchLoadingCopy}>Checking routes and nearby listings for {rideForm.destination || "your destination"}…</Text>
                 <Image source={appAssets.rideEarnLoading} style={styles.rideSearchLoadingPromo} resizeMode="contain" />
@@ -5160,22 +5163,22 @@ const styles = StyleSheet.create({
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
   ridePlannerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
   ridePlannerBack: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
-  ridePlannerBackText: { color: theme.colors.text, fontSize: 32, lineHeight: 34, fontWeight: "500" },
-  ridePlannerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
+  ridePlannerBackText: { color: "#f7f7f8", fontSize: 32, lineHeight: 34, fontWeight: "500" },
+  ridePlannerTitle: { color: "#f7f7f8", fontSize: 24, fontWeight: "900" },
   ridePlannerPillRow: { flexDirection: "row", gap: 10 },
   ridePlannerPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
-  ridePlannerPillText: { color: theme.colors.soft, fontWeight: "900", fontSize: 15 },
-  ridePlannerOwnerHint: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
-  rideRouteInputCard: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: theme.colors.soft, borderRadius: 14, padding: 10, gap: 10 },
+  ridePlannerPillText: { color: "#202124", fontWeight: "900", fontSize: 15 },
+  ridePlannerOwnerHint: { color: "#c7c9cc", fontSize: 14, lineHeight: 20, fontWeight: "800" },
+  rideRouteInputCard: { flexDirection: "row", alignItems: "center", borderWidth: 2, borderColor: "#35383d", borderRadius: 14, padding: 10, gap: 10 },
   rideRouteRail: { width: 18, alignItems: "center" },
-  rideRouteDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: theme.colors.text },
-  rideRouteRailLine: { width: 3, height: 42, backgroundColor: theme.colors.muted },
-  rideRouteSquare: { width: 12, height: 12, backgroundColor: theme.colors.text },
+  rideRouteDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#f7f7f8" },
+  rideRouteRailLine: { width: 3, height: 42, backgroundColor: "#8d9299" },
+  rideRouteSquare: { width: 12, height: 12, backgroundColor: "#f7f7f8" },
   rideRouteInputs: { flex: 1, gap: 2 },
-  rideRouteInput: { minHeight: 44, color: theme.colors.text, fontSize: 18, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.10)", paddingHorizontal: 0 },
+  rideRouteInput: { minHeight: 44, color: "#f7f7f8", fontSize: 18, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.14)", paddingHorizontal: 0 },
   rideRouteInputActive: { borderBottomColor: theme.colors.blue },
   rideRoutePlus: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
-  rideRoutePlusText: { color: theme.colors.text, fontSize: 28, lineHeight: 30 },
+  rideRoutePlusText: { color: "#202124", fontSize: 28, lineHeight: 30 },
   rideTypePrompt: {
     borderRadius: 18,
     borderWidth: 1,
@@ -5231,27 +5234,27 @@ const styles = StyleSheet.create({
   rideSavedRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
   rideSavedRowCompact: { flexDirection: "row" },
   rideSavedItem: { flex: 1, minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12 },
-  rideSavedIcon: { color: theme.colors.soft, fontSize: 22 },
-  rideSavedTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  rideSavedMeta: { color: theme.colors.muted, fontSize: 14 },
-  rideSuggestionList: { borderTopWidth: 1, borderTopColor: theme.colors.line },
-  rideSuggestionHelp: { color: theme.colors.muted, fontSize: 14, paddingVertical: 12, fontWeight: "800" },
+  rideSavedIcon: { color: "#c7c9cc", fontSize: 22 },
+  rideSavedTitle: { color: "#f7f7f8", fontSize: 16, fontWeight: "900" },
+  rideSavedMeta: { color: "#9da1a8", fontSize: 14 },
+  rideSuggestionList: { borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.16)" },
+  rideSuggestionHelp: { color: "#9da1a8", fontSize: 14, paddingVertical: 12, fontWeight: "800" },
   rideSuggestionRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
   rideSuggestionDistance: { width: 56, alignItems: "center" },
-  rideSuggestionIcon: { color: theme.colors.soft, fontSize: 22 },
-  rideSuggestionMiles: { color: theme.colors.muted, fontSize: 12, marginTop: 2 },
+  rideSuggestionIcon: { color: "#c7c9cc", fontSize: 22 },
+  rideSuggestionMiles: { color: "#9da1a8", fontSize: 12, marginTop: 2 },
   rideSuggestionCopy: { flex: 1, minWidth: 0 },
-  rideSuggestionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
-  rideSuggestionMeta: { color: theme.colors.muted, fontSize: 14, marginTop: 2 },
+  rideSuggestionTitle: { color: "#f7f7f8", fontSize: 17, fontWeight: "900" },
+  rideSuggestionMeta: { color: "#9da1a8", fontSize: 14, marginTop: 2 },
   rideUtilityRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
-  rideUtilityIcon: { color: theme.colors.soft, fontSize: 22, width: 42, textAlign: "center" },
-  rideUtilityText: { color: theme.colors.soft, fontSize: 16, fontWeight: "900" },
+  rideUtilityIcon: { color: "#c7c9cc", fontSize: 22, width: 42, textAlign: "center" },
+  rideUtilityText: { color: "#f0f1f2", fontSize: 16, fontWeight: "900" },
   ridePlannerSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 58, alignItems: "center", justifyContent: "center", marginTop: 4 },
   ridePlannerSearchText: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   rideSearchLoadingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "rgba(8,8,9,0.22)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
   rideSearchLoadingCard: { width: "100%", maxWidth: 378, paddingHorizontal: 12, paddingVertical: 20, alignItems: "center", gap: 10 },
-  rideSearchLoadingTitle: { color: theme.colors.text, ...theme.typography.sectionTitle, marginTop: 4 },
-  rideSearchLoadingCopy: { color: theme.colors.muted, ...theme.typography.body, textAlign: "center" },
+  rideSearchLoadingTitle: { color: "#f7f7f8", ...theme.typography.sectionTitle, marginTop: 4 },
+  rideSearchLoadingCopy: { color: "#b6bac0", ...theme.typography.body, textAlign: "center" },
   rideSearchLoadingPromo: { width: 354, height: 237, maxWidth: "100%", borderRadius: theme.radius.sm, marginTop: 6 },
   rideChoiceScreen: { flex: 1, backgroundColor: "#111" },
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
