@@ -234,6 +234,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const [publishing, setPublishing] = useState(false);
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
+  const reactionRequests = useRef(new Set<string>());
   const groupLoadGeneration = useRef(0);
   const feedLoadGeneration = useRef(0);
   const fallbackNationalOffset = useRef(0);
@@ -458,6 +459,9 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   };
 
   const reactPost = async (post: CommunityPost, reaction: string) => {
+    const requestKey = `post-${post.id}`;
+    if (reactionRequests.current.has(requestKey)) return;
+    reactionRequests.current.add(requestKey);
     const previousReaction = post.viewerReaction;
     const selecting = previousReaction !== reaction;
     mutatePost(post.id, (value) => ({ ...value, reacted: selecting, viewerReaction: selecting ? reaction : "" }));
@@ -467,10 +471,13 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     } catch (error) {
       mutatePost(post.id, (value) => ({ ...value, reacted: Boolean(previousReaction), viewerReaction: previousReaction }));
       Alert.alert("Reaction not saved", message(error));
-    }
+    } finally { reactionRequests.current.delete(requestKey); }
   };
 
   const reactAnswer = async (answerItem: CommunityAnswer, reaction: string) => {
+    const requestKey = `answer-${answerItem.id}`;
+    if (reactionRequests.current.has(requestKey)) return;
+    reactionRequests.current.add(requestKey);
     const previousReaction = answerItem.viewerReaction;
     const selecting = previousReaction !== reaction;
     setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, viewerReaction: selecting ? reaction : "" } : item) } : current);
@@ -480,14 +487,20 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     } catch (error) {
       setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, viewerReaction: previousReaction } : item) } : current);
       Alert.alert("Reaction not saved", message(error));
-    }
+    } finally { reactionRequests.current.delete(requestKey); }
   };
 
-  const reactionPicker = (target: string, viewerReaction: string, count: number, onReact: (reaction: string) => void, iconOnly = false) => {
+  const reactionPicker = (target: string, viewerReaction: string, count: number, counts: Record<string, number> | undefined, onReact: (reaction: string) => void, iconOnly = false) => {
     const selected = reactionOptions.find((option) => option.value === viewerReaction);
+    const visibleReactionEmojis = reactionOptions
+      .filter((option) => Number(counts?.[option.value] || 0) > 0)
+      .sort((left, right) => Number(counts?.[right.value] || 0) - Number(counts?.[left.value] || 0))
+      .slice(0, 3)
+      .map((option) => option.emoji)
+      .join("");
     return <View style={styles.reactionControl}>
       {expandedReactionTarget === target ? <View style={styles.reactionTray}>{reactionOptions.map((option) => <TouchableOpacity key={option.value} style={styles.reactionChoice} onPress={(event) => { event.stopPropagation(); setExpandedReactionTarget(""); onReact(option.value); }} accessibilityLabel={`${option.label} reaction`}><Text style={styles.reactionChoiceEmoji}>{option.emoji}</Text></TouchableOpacity>)}</View> : null}
-      <TouchableOpacity style={[styles.reactionSummary, iconOnly && styles.reactionSummaryIconOnly, selected && styles.reactionSummaryActive]} onPress={(event) => { event.stopPropagation(); setExpandedReactionTarget((current) => current === target ? "" : target); }} accessibilityLabel={`Open reactions${count ? `, ${count} reactions` : ""}`}><Text style={styles.reactionSummaryEmoji}>{selected?.emoji || "👍"}</Text>{!iconOnly ? <Text style={[styles.reactionSummaryText, selected && styles.reactionSummaryTextActive]}>{selected?.label || "Like"}</Text> : null}{count ? <Text style={styles.reactionTotal}>{count}</Text> : null}</TouchableOpacity>
+      <TouchableOpacity style={[styles.reactionSummary, iconOnly && styles.reactionSummaryIconOnly, selected && styles.reactionSummaryActive]} onPress={(event) => { event.stopPropagation(); if (selected) { setExpandedReactionTarget(""); onReact(selected.value); return; } setExpandedReactionTarget((current) => current === target ? "" : target); }} onLongPress={() => setExpandedReactionTarget(target)} delayLongPress={250} accessibilityLabel={selected ? `Remove ${selected.label} reaction${count ? `, ${count} reactions` : ""}` : `Open reactions${count ? `, ${count} reactions` : ""}`}><Text style={styles.reactionSummaryEmoji}>{selected?.emoji || visibleReactionEmojis || "👍"}</Text>{!iconOnly ? <Text style={[styles.reactionSummaryText, selected && styles.reactionSummaryTextActive]}>{selected?.label || "Like"}</Text> : null}{count ? <Text style={styles.reactionTotal}>{count}</Text> : null}</TouchableOpacity>
     </View>
   };
 
@@ -660,7 +673,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionOptions.map((option) => { const count = option.value === "LIKE" ? (post.reactionCounts?.LIKE || 0) + (post.reactionCounts?.HELPFUL || 0) : post.reactionCounts?.[option.value] || 0; return count ? <Text key={option.value} style={styles.activityText}>{count} {option.emoji} {option.label}</Text> : null; })}</View></View> : null}
       <View style={[styles.postActions, isLight && styles.postActionsLight]}>
-        {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, (reaction) => void reactPost(post, reaction), true)}
+        {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction), true)}
         <TouchableOpacity style={styles.footerCommentAction} onPress={() => void openDetail(post)} accessibilityLabel={`${post.answerCount} comments`}><Text style={styles.footerIcon}>◯</Text>{post.answerCount ? <Text style={styles.footerCommentCount}>{post.answerCount}</Text> : null}</TouchableOpacity>
         <TouchableOpacity style={styles.footerIconAction} onPress={(event) => { event.stopPropagation(); void Share.share({ title: post.title, message: `${post.title}\nhttps://www.fairfare.space/community/${post.id}` }); }} accessibilityLabel="Share"><Text style={styles.footerShareIcon}>↗</Text></TouchableOpacity>
         {post.sourceKind === "HOUSING" && post.sourceId ? <TouchableOpacity style={styles.viewListingButton} onPress={(event) => { event.stopPropagation(); onOpenHousing(post.sourceId); }} accessibilityRole="button" accessibilityLabel={`View housing details: ${post.title}`}><Text style={styles.viewListingIcon}>⌂</Text><Text style={styles.viewListingButtonText}>More details</Text><Text style={styles.viewListingArrow}>›</Text></TouchableOpacity> : null}
@@ -708,7 +721,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     return <View key={item.id} style={[styles.inlineReply, depth > 1 && styles.inlineReplyNested]}>
       <View style={styles.inlineReplyHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></View>
       <Text style={styles.inlineReplyBody}>{item.body}</Text>
-      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
+      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
       {visibleReplies.length ? <View style={[styles.inlineReplies, depth < 2 ? styles.inlineRepliesNested : styles.inlineRepliesDeep]}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, depth + 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
     </View>;
@@ -723,7 +736,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     <View key={item.id} style={[styles.answerCard, item.accepted && styles.acceptedCard]}>
       <View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
       <Text style={styles.answerBody}>{item.body}</Text>
-      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
+      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
       {replies.length ? <View style={styles.inlineReplies}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
     </View>

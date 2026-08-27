@@ -12277,6 +12277,13 @@ def community_answer_rows(post_id: int, viewer_id: int = 0) -> list[sqlite3.Row]
             SELECT answers.*, users.name AS author_name, users.profile_photo_url AS author_photo,
                    (SELECT public_id FROM ask_community_answers parent WHERE parent.id = answers.parent_answer_id) AS parent_answer_public_id,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id) AS reaction_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'LIKE') AS reaction_like_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'LOVE') AS reaction_love_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'CARE') AS reaction_care_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'HAHA') AS reaction_haha_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'WOW') AS reaction_wow_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'SAD') AS reaction_sad_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'ANGRY') AS reaction_angry_count,
                    (SELECT reaction FROM ask_community_reactions mine WHERE mine.answer_id = answers.id AND mine.user_id = ? LIMIT 1) AS viewer_reaction
             FROM ask_community_answers answers
             JOIN users ON users.id = answers.author_id
@@ -12296,6 +12303,15 @@ def community_answer_payload(row: sqlite3.Row, accepted_answer_id: int = 0, view
         "parentAnswerId": str(row_value(row, "parent_answer_public_id") or ""),
         "author": {"id": author_id, "name": str(row_value(row, "author_name") or "FairFares member"), "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id)},
         "reactionCount": int(row_value(row, "reaction_count") or 0),
+        "reactionCounts": {
+            "LIKE": int(row_value(row, "reaction_like_count") or 0),
+            "LOVE": int(row_value(row, "reaction_love_count") or 0),
+            "CARE": int(row_value(row, "reaction_care_count") or 0),
+            "HAHA": int(row_value(row, "reaction_haha_count") or 0),
+            "WOW": int(row_value(row, "reaction_wow_count") or 0),
+            "SAD": int(row_value(row, "reaction_sad_count") or 0),
+            "ANGRY": int(row_value(row, "reaction_angry_count") or 0),
+        },
         "viewerReaction": str(row_value(row, "viewer_reaction") or ""),
         "accepted": int(row_value(row, "id") or 0) == accepted_answer_id,
         "canEdit": bool(viewer_id and viewer_id == author_id),
@@ -37148,7 +37164,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             "type": "COMMUNITY",
                             "id": post_public_id,
                             "title": notify_title,
-                            "subtitle": "Guest comment · Reply publicly in Ask so the guest can see it" if guest else "New comment on your Ask Community post",
+                            "subtitle": "New comment on your Ask Community post",
                             "ownerUserId": str(notify_user_id),
                             "ownerName": str(row_value(owner, "name") or "FairFares member"),
                         },

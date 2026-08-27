@@ -127,6 +127,17 @@ class CommunityFeatureTest(unittest.TestCase):
             self.assertEqual(status, 201)
             self.assertEqual(answered["guestRemaining"], 5 - index)
             first_answer_id = first_answer_id or answered["answerId"]
+            self.assertTrue(answered["conversationId"])
+            with app.db() as con:
+                guest_user = con.execute("SELECT id FROM users WHERE name = ?", (session["guestId"],)).fetchone()
+                guest_message = con.execute(
+                    "SELECT * FROM chat_messages WHERE client_message_id = ?",
+                    (f"community-answer-{answered['answerId']}",),
+                ).fetchone()
+                self.assertIsNotNone(guest_message)
+                self.assertEqual(int(guest_message["sender_id"]), int(guest_user["id"]))
+                self.assertEqual(guest_message["context_type"], "COMMUNITY")
+                self.assertEqual(guest_message["context_public_id"], post_id)
         status, limited = self.guest_request("POST", "/api/mobile/community/answer", token, {"postId": post_id, "body": "Seventh guest message"})
         self.assertEqual(status, 403)
         self.assertTrue(limited["guestLimitReached"])
@@ -392,6 +403,8 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertIn("Brookville", feed_post["latestAnswer"]["body"])
         status, loved = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "LOVE"})
         self.assertEqual((status, loved["active"], loved["reaction"]), (200, True, "LOVE"))
+        _, detail_with_love = self.request("GET", f"/api/mobile/community?postId={post_id}", "owner-token")
+        self.assertEqual(detail_with_love["posts"][0]["answers"][0]["reactionCounts"]["LOVE"], 1)
         status, reacted = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "HELPFUL"})
         self.assertEqual((status, reacted["active"], reacted["count"]), (200, True, 1))
         _, unreacted = self.request("POST", "/api/mobile/community/react", "owner-token", {"answerId": answer_id, "reaction": "HELPFUL"})
