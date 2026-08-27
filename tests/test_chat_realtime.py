@@ -288,6 +288,70 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_group_mention_notifies_muted_target_without_waking_other_muted_members(self):
+        with app.db() as con:
+            con.execute("INSERT INTO chat_communities (public_id, kind, name) VALUES ('GROUP-MENTION', 'GROUP', 'Mention Group')")
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+                [(community_id, self.sender_id), (community_id, self.recipient_id), (community_id, self.outsider_id)],
+            )
+            con.execute(
+                "UPDATE chat_conversations SET conversation_type = 'GROUP', community_id = ?, subject = 'Mention Group' WHERE id = ?",
+                (community_id, self.conversation_id),
+            )
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id, muted_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (self.conversation_id, self.outsider_id))
+            con.execute("UPDATE chat_participants SET muted_at = CURRENT_TIMESTAMP WHERE conversation_id = ? AND user_id = ?", (self.conversation_id, self.recipient_id))
+            con.executemany(
+                "INSERT INTO mobile_push_tokens (user_id, token, platform, enabled) VALUES (?, ?, 'ios', 1)",
+                [(self.recipient_id, "ExponentPushToken[mention-target]"), (self.outsider_id, "ExponentPushToken[muted-other]")],
+            )
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "🔒 End-to-end encrypted message", "mention-1")
+            con.execute("INSERT INTO chat_message_mentions (message_id, user_id) VALUES (?, ?)", (int(message["id"]), self.recipient_id))
+            handler = object.__new__(QuietHandler)
+            handler.public_origin = lambda: "https://fairfares.test"
+            with patch.object(app, "enqueue_mobile_pushes") as enqueue:
+                handler.notify_chat_recipients(con, conversation, sender, message)
+
+        enqueue.assert_called_once()
+        recipients, _title, body, payload = enqueue.call_args.args
+        self.assertEqual(recipients, [(self.recipient_id, "ExponentPushToken[mention-target]")])
+        self.assertEqual(body, "Mentioned you in a group message")
+        self.assertTrue(payload["isMention"])
+        self.assertEqual(payload["conversationName"], "Mention Group")
+
+    def test_group_mention_rejects_user_outside_conversation(self):
+        with app.db() as con:
+            con.execute("INSERT INTO chat_communities (public_id, kind, name) VALUES ('GROUP-MENTION-VALIDATION', 'GROUP', 'Mention Validation')")
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
+                [(community_id, self.sender_id), (community_id, self.recipient_id)],
+            )
+            con.execute(
+                "UPDATE chat_conversations SET conversation_type = 'GROUP', community_id = ?, subject = 'Mention Validation' WHERE id = ?",
+                (community_id, self.conversation_id),
+            )
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/e2ee/messages",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "envelopes": [], "mentionedUserIds": [self.outsider_id]}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer sender-token", "Content-Type": "application/json"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=3)
+            self.assertEqual(error.exception.code, 409)
+            payload = json.loads(error.exception.read().decode("utf-8"))
+            self.assertIn("no longer in this group", payload["message"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_contact_discovery_matches_every_verified_member_with_an_exact_saved_number(self):
         with app.db() as con:
             con.execute(

@@ -2189,6 +2189,7 @@ def cleanup_deleted_chitthi_messages(*, force: bool = True, limit: int | None = 
                 # Avoid leaving a surviving reply pointing at a removed row.
                 con.execute("UPDATE chat_messages SET reply_to_message_id = NULL WHERE reply_to_message_id = ?", (message_id,))
                 con.execute("DELETE FROM chat_message_reactions WHERE message_id = ?", (message_id,))
+                con.execute("DELETE FROM chat_message_mentions WHERE message_id = ?", (message_id,))
                 con.execute("DELETE FROM chat_attachment_download_receipts WHERE message_id = ?", (message_id,))
                 con.execute("DELETE FROM chat_attachment_device_receipts WHERE message_id = ?", (message_id,))
                 con.execute("DELETE FROM chat_message_envelopes WHERE message_id = ?", (message_id,))
@@ -6539,6 +6540,15 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_message_mentions (
+                message_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(message_id, user_id),
+                FOREIGN KEY(message_id) REFERENCES chat_messages(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_key_backups (
                 user_id INTEGER PRIMARY KEY,
                 encrypted_payload TEXT NOT NULL,
@@ -7783,6 +7793,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reports_status ON ask_community_reports(status, created_at DESC)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_reports_one_per_target ON ask_community_reports(COALESCE(post_id, 0), COALESCE(answer_id, 0), reporter_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_reactions_message ON chat_message_reactions(message_id, emoji)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_mentions_user ON chat_message_mentions(user_id, message_id DESC)")
         con.execute(
             """
             UPDATE chat_conversations
@@ -25613,6 +25624,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "active": active})
 
     def notify_chat_recipients(self, con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, message: sqlite3.Row) -> None:
+        mentioned_user_ids = {
+            int(row["user_id"])
+            for row in con.execute(
+                "SELECT user_id FROM chat_message_mentions WHERE message_id = ?",
+                (int(row_value(message, "id") or 0),),
+            ).fetchall()
+        }
         recipients = con.execute(
             """
             SELECT users.*, participants.muted_at AS chat_muted_at
@@ -25637,7 +25655,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             recipient_id = int(row_value(recipient, "id") or 0)
             preference = con.execute("SELECT chitthi_enabled FROM mobile_notification_preferences WHERE user_id = ?", (recipient_id,)).fetchone() if recipient_id else None
             chitthi_enabled = preference is None or bool(int(row_value(preference, "chitthi_enabled") or 0))
-            if not row_value(recipient, "chat_muted_at") and recipient_id and chitthi_enabled:
+            is_mention = recipient_id in mentioned_user_ids
+            # Personal mentions bypass only a group-level mute. Account-wide
+            # Chitthi preferences and device notification settings still win.
+            if (not row_value(recipient, "chat_muted_at") or is_mention) and recipient_id and chitthi_enabled:
                 unread_badge = int(con.execute(
                     """
                     SELECT COUNT(*) AS unread_count
@@ -25670,6 +25691,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
                         "nativeGroupEnrichment": int(row_value(token_row, "notification_schema") or 0) >= 3,
                         "badge": unread_badge,
+                        "isMention": is_mention,
                     }))
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
@@ -25708,13 +25730,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
             for token, encrypted_preview in push_jobs:
                 recipient_user_id = int(encrypted_preview.get("recipientUserId") or 0)
+                is_mention = bool(encrypted_preview.get("isMention"))
                 enqueue_mobile_pushes(
                     [(recipient_user_id, token)],
                     push_title,
-                    push_body,
+                    "Mentioned you in a group message" if is_mention else push_body,
                     {
                         **common_data,
                         **encrypted_preview,
+                        **({"mentionText": "Mentioned you in a group message"} if is_mention else {}),
                         **({
                             "communicationRecipients": [
                                 participant
@@ -26157,6 +26181,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         conversation_public_id = (form.get("conversationId") or "").strip()
         context_post_id = clean_text_value(form.get("contextPostId"), 80)
         envelopes = form.get("envelopes") if isinstance(form.get("envelopes"), list) else []
+        raw_mention_ids = form.get("mentionedUserIds") if isinstance(form.get("mentionedUserIds"), list) else []
+        mention_ids = sorted({int(float_from_value(value) or 0) for value in raw_mention_ids if int(float_from_value(value) or 0) > 0})[:20]
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
             if not conversation:
@@ -26167,6 +26193,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # Encrypted group sends must use current community membership
                 # for envelope validation and notification recipient selection.
                 sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
+            if mention_ids:
+                if not community_id:
+                    self.send_json({"ok": False, "message": "Mentions are available only in group chats."}, 400)
+                    return
+                placeholders = ",".join("?" for _ in mention_ids)
+                valid_mention_ids = {
+                    int(row["user_id"])
+                    for row in con.execute(
+                        f"SELECT user_id FROM chat_participants WHERE conversation_id = ? AND user_id IN ({placeholders}) AND user_id != ?",
+                        (int(conversation["id"]), *mention_ids, int(user["id"])),
+                    ).fetchall()
+                }
+                if valid_mention_ids != set(mention_ids):
+                    self.send_json({"ok": False, "message": "One or more mentioned members are no longer in this group."}, 409)
+                    return
             block_error = chat_conversation_block_error(con, conversation, int(user["id"]))
             if block_error:
                 self.send_json({"ok": False, "message": block_error}, 403)
@@ -26185,6 +26226,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not message:
                 self.send_json({"ok": False, "message": error}, 409)
                 return
+            for mentioned_user_id in mention_ids:
+                con.execute(
+                    "INSERT OR IGNORE INTO chat_message_mentions (message_id, user_id) VALUES (?, ?)",
+                    (int(message["id"]), mentioned_user_id),
+                )
             if context_post_id:
                 # The client may label a message with a listing only when that
                 # listing is the server-verified context of this conversation.

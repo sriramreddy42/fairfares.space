@@ -101,6 +101,7 @@ type Props = {
   pendingRide: RidePost | null;
   pendingGroupInvite?: string;
   notificationConversationId?: string;
+  notificationMessageId?: number;
   onRequireLogin: () => void;
   onRequireSignup?: () => void;
   onClearPendingPost?: () => void;
@@ -274,6 +275,11 @@ function chatSortTimestamp(value: string) {
   const normalized = value && !value.includes("T") ? value.replace(" ", "T") + "Z" : value;
   const time = new Date(normalized).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+function containsExactMention(text: string, memberName: string) {
+  const escapedName = memberName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)@${escapedName}(?=$|\\s|[.,!?;:])`, "u").test(text);
 }
 
 function recentChatConversations(conversations: ChatConversation[]) {
@@ -1494,7 +1500,7 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
   </View>;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -1529,6 +1535,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const prependScrollSettleRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const latestScrollFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const replyHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationTargetHandledRef = useRef("");
   const replyKeyboardFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingOlderMessagesRef = useRef(false);
   const messagesUserDraggingRef = useRef(false);
@@ -1675,6 +1682,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [chatOptionsOpen, setChatOptionsOpen] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
+  const [mentionedUserIds, setMentionedUserIds] = useState<number[]>([]);
   const [groupMemberSearch, setGroupMemberSearch] = useState("");
   const [groupDetailsEditing, setGroupDetailsEditing] = useState(false);
   const [groupDetailsSaving, setGroupDetailsSaving] = useState(false);
@@ -1760,9 +1768,34 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     [communities, activeConversation?.communityId]
   );
   const activeGroupPhotoUrl = chatPhotoUrl(activeGroup?.photoUrl || activeConversation?.otherPhotoUrl);
+  const mentionMatch = activeConversation?.communityId ? messageText.match(/(?:^|\s)@([^@\n]*)$/) : null;
+  const mentionQuery = mentionMatch?.[1]?.toLowerCase() || "";
+  const mentionSuggestions = mentionMatch ? groupMembers
+    .filter((member) => !member.isCurrentUser && (!mentionQuery || member.name.toLowerCase().includes(mentionQuery)))
+    .slice(0, 6) : [];
   useEffect(() => {
     setGroupDetailsEditing(false);
+    setMentionedUserIds([]);
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) {
+      setGroupMembers([]);
+      return;
+    }
+    let cancelled = false;
+    void getChatGroupMembers(communityId).then((response) => {
+      if (!cancelled) setGroupMembers(response.members || []);
+    }).catch(() => {
+      if (!cancelled) setGroupMembers([]);
+    });
+    return () => { cancelled = true; };
   }, [activeConversation?.communityId]);
+
+  function selectMention(member: ChatGroupMember) {
+    if (!mentionMatch) return;
+    const start = Number(mentionMatch.index || 0) + (mentionMatch[0].startsWith(" ") ? 1 : 0);
+    setMessageText(`${messageText.slice(0, start)}@${member.name} `);
+    setMentionedUserIds((current) => current.includes(member.id) ? current : [...current, member.id]);
+  }
   const filteredGroupMembers = useMemo(() => {
     const query = groupMemberSearch.trim().toLowerCase();
     const roleRank: Record<ChatGroupMember["role"], number> = { OWNER: 0, ADMIN: 1, MEMBER: 2 };
@@ -2461,7 +2494,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
           const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys);
           await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
-          const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId, false, item.replyToMessageId || 0);
+          const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId, false, item.replyToMessageId || 0, "", item.mentionedUserIds || []);
           await removeEncryptedOutboxItem(userId, item.clientMessageId);
           if (activeConversationId === item.conversationId) {
             setMessages((current) => {
@@ -2727,7 +2760,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       activateThreadConversation(notificationConversationId);
       showCachedThreadMessages(notificationConversationId, cachedMessages);
     });
-    void getChatMessages(notificationConversationId)
+    // Center notification opens around the referenced message instead of only
+    // fetching the newest page. `before` is exclusive, so +1 includes it.
+    void getChatMessages(notificationConversationId, notificationMessageId ? Number(notificationMessageId) + 1 : 0)
       .then(async (payload) => {
         if (cancelled) return;
         if (activeConversationIdRef.current && activeConversationIdRef.current !== notificationConversationId) return;
@@ -2741,16 +2776,40 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setHydratedConversationId(notificationConversationId);
         updateMessagePagination(payload);
         setConversations((current) => current.map((item) => item.id === notificationConversationId ? { ...item, unread: 0 } : item));
-        onClearNotificationConversation?.();
       })
       .catch((error) => {
-        if (!cancelled) Alert.alert("Could not open Chitthi", error instanceof Error ? error.message : "Please try again.");
+        if (!cancelled) {
+          Alert.alert("Could not open Chitthi", error instanceof Error ? error.message : "Please try again.");
+          onClearNotificationConversation?.();
+        }
       })
       .finally(() => {
         if (!cancelled) setThreadLoading(false);
       });
     return () => { cancelled = true; };
-  }, [currentUserId, notificationConversationId, signedIn]);
+  }, [currentUserId, notificationConversationId, notificationMessageId, signedIn]);
+
+  useEffect(() => {
+    if (!notificationConversationId) notificationTargetHandledRef.current = "";
+  }, [notificationConversationId]);
+
+  useEffect(() => {
+    if (!notificationConversationId || !signedIn) return;
+    if (activeConversationId !== notificationConversationId || hydratedConversationId !== notificationConversationId) return;
+    const targetMessageId = Number(notificationMessageId || 0);
+    const targetKey = `${notificationConversationId}:${targetMessageId}`;
+    if (notificationTargetHandledRef.current === targetKey) return;
+    notificationTargetHandledRef.current = targetKey;
+    if (targetMessageId) {
+      const targetExists = messages.some((message) => Number(message.id) === targetMessageId && !message.deletedAt);
+      if (targetExists) {
+        requestAnimationFrame(() => jumpToRepliedMessage(targetMessageId));
+      } else {
+        Alert.alert("Message unavailable", "This message may have been deleted or is no longer available.");
+      }
+    }
+    onClearNotificationConversation?.();
+  }, [activeConversationId, hydratedConversationId, messages, notificationConversationId, notificationMessageId, signedIn]);
 
   useEffect(() => {
     if (pendingPost) {
@@ -2916,6 +2975,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function handleMessageTextChange(value: string) {
     setMessageText(value);
+    setMentionedUserIds((current) => current.filter((userId) => {
+      const member = groupMembers.find((item) => item.id === userId);
+      return Boolean(member && value.includes(`@${member.name}`));
+    }));
     if (!activeConversationId || editingMessageId) return;
     const conversationId = activeConversationId;
     const publishTyping = (nextTyping: boolean) => {
@@ -3280,6 +3343,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   async function sendMessage() {
     const cleanMessage = messageText.trim();
+    const mentionIdsSnapshot = mentionedUserIds.filter((userId) => {
+      const member = groupMembers.find((item) => item.id === userId);
+      return Boolean(member && containsExactMention(cleanMessage, member.name));
+    });
     const startedFromCardContext = Boolean(pendingPost || pendingRide);
     const cardMessageContext = {
       postId: pendingPost?.id,
@@ -3782,7 +3849,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const envelopes = encryptForDevices(encryptedText, identity, keyPayload.keys, cleanMessage);
           pendingIdentity = identity;
           pendingEnvelopes = envelopes;
-          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "");
+          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "", mentionIdsSnapshot);
           ensureSendContext();
           const sentMessage: ChatMessage = {
             ...response.message,
@@ -3830,6 +3897,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             createdAt,
             envelopes: pendingEnvelopes,
             replyToMessageId,
+            mentionedUserIds: mentionIdsSnapshot,
             attempts: 0,
             lastAttemptAt: ""
           };
@@ -3846,6 +3914,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return;
       }
       setMessageText("");
+      setMentionedUserIds([]);
       if (!queuedOffline) {
         try {
           void refreshMessenger({ showLoader: false, showError: false });
@@ -6088,6 +6157,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.composerDock}>
+          {mentionSuggestions.length ? <View style={styles.mentionPicker} accessibilityLabel="Group mention suggestions">
+            {mentionSuggestions.map((member) => <TouchableOpacity key={`mention-${member.id}`} style={styles.mentionRow} onPress={() => selectMention(member)} accessibilityLabel={`Mention ${member.name}`}>
+              <View style={styles.mentionAvatar}><InitialsAvatar photoUrl={member.photoUrl} label={member.name} imageStyle={styles.avatarImage} textStyle={styles.mentionAvatarText} /></View>
+              <View style={styles.mentionCopy}><Text style={styles.mentionName}>{member.name}</Text><Text style={styles.mentionRole}>{member.role.toLowerCase()}</Text></View>
+            </TouchableOpacity>)}
+          </View> : null}
           {privateReplyContext ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{`Private reply · ${privateReplyContext.groupName}`}</Text><Text style={styles.replyComposerText} numberOfLines={2}>{`${privateReplyContext.senderName}: ${privateReplyContext.text}`}</Text></View><TouchableOpacity onPress={() => setPrivateReplyContext(null)} accessibilityLabel="Cancel private reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
           {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{replyingTo.mine ? "You" : replyingTo.senderName}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyMediaKind(replyingTo) || shareableMessageText({ ...replyingTo, senderName: "" }) || "Message"}</Text></View>{replyMediaKind(replyingTo) ? <ReplyMediaPreview message={replyingTo} /> : null}<TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
           <View style={styles.composer}>
@@ -6560,12 +6635,12 @@ const styles = StyleSheet.create({
   loginCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20 },
   loginCopyLight: { color: "#667085" },
   loginButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10 },
-  loginButtonText: { color: theme.colors.text, fontWeight: "900" },
+  loginButtonText: { color: "#ffffff", fontWeight: "900" },
   groupComposer: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 10, marginBottom: theme.spacing.md },
   groupPhotoPicker: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, padding: 10 },
   groupPhotoImage: { width: 56, height: 56, borderRadius: 28 },
   groupPhotoPlaceholder: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#17386c", borderWidth: 1, borderColor: theme.colors.blue },
-  groupPhotoPlaceholderText: { color: theme.colors.text, fontSize: 24, fontWeight: "600" },
+  groupPhotoPlaceholderText: { color: "#ffffff", fontSize: 24, fontWeight: "600" },
   groupPhotoCopy: { flex: 1, gap: 2 },
   groupPeoplePicker: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 10 },
   groupPeoplePickerIcon: { color: theme.colors.blue, fontSize: 26, fontWeight: "600" },
@@ -6579,7 +6654,7 @@ const styles = StyleSheet.create({
   multiline: { minHeight: 82, paddingTop: 13, textAlignVertical: "top" },
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 13, alignItems: "center" },
   disabledButton: { opacity: 0.45 },
-  primaryButtonText: { color: theme.colors.text, ...theme.typography.button },
+  primaryButtonText: { color: "#ffffff", ...theme.typography.button },
   threadHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(76,114,97,0.30)", backgroundColor: "#C4D9CE", overflow: "hidden" },
   backButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   backIcon: { width: 24, height: 24, justifyContent: "center" },
@@ -6912,6 +6987,13 @@ const styles = StyleSheet.create({
   pollAddOptionText: { color: "#118A55", fontSize: 13, fontWeight: "800" },
   pollSettingsCard: { backgroundColor: "#FFF", borderRadius: 12, borderWidth: 1, borderColor: "#DDE0DC", paddingHorizontal: 13, marginTop: 8 },
   composerInput: { flex: 1, color: "#18342A", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#B6CABD", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
+  mentionPicker: { marginHorizontal: 10, marginBottom: 6, maxHeight: 264, overflow: "hidden", borderRadius: 16, borderWidth: 1, borderColor: "rgba(37,118,83,.24)", backgroundColor: "#FFFFFF", shadowColor: "#000", shadowOpacity: .16, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
+  mentionRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(23,61,49,.12)" },
+  mentionAvatar: { width: 34, height: 34, borderRadius: 17, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#1E7654" },
+  mentionAvatarText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  mentionCopy: { flex: 1 },
+  mentionName: { color: "#173D31", fontSize: 14, fontWeight: "800" },
+  mentionRole: { color: "#718078", fontSize: 10, textTransform: "capitalize", marginTop: 1 },
   composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center" },
   composerSendText: { color: "#FFF9ED", fontSize: 18, fontWeight: "900" },
   sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },

@@ -3450,26 +3450,28 @@ export function HousingScreen({
         </View>
 
         <View style={[styles.stickySearch, isLight && styles.stickySearchLight, searchIsScrolled && styles.stickySearchRaised, isLight && searchIsScrolled && styles.stickySearchRaisedLight]}>
-          <BlurView
-            pointerEvents="none"
-            tint={isLight ? "light" : "dark"}
-            intensity={searchIsScrolled ? 62 : 18}
-            experimentalBlurMethod="dimezisBlurView"
-            style={styles.stickySearchBlur}
-          />
-          {searchIsScrolled ? (
+          {Platform.OS === "ios" ? (
+            <BlurView
+              pointerEvents="none"
+              tint={isLight ? "light" : "dark"}
+              intensity={searchIsScrolled ? 62 : 18}
+              style={styles.stickySearchBlur}
+            />
+          ) : null}
+          {Platform.OS === "ios" && searchIsScrolled ? (
             <BlurView
               pointerEvents="none"
               tint={isLight ? "light" : "dark"}
               intensity={34}
-              experimentalBlurMethod="dimezisBlurView"
               style={styles.stickySearchUnderBlur}
             />
           ) : null}
           <TouchableOpacity style={[styles.searchBar, isLight && styles.searchBarLight]} onPress={mode === "ride" ? openRidePlanner : onOpenSearch}>
             <Image source={appAssets.search} style={styles.searchIcon} resizeMode="contain" />
             <Text style={[styles.searchText, isLight && styles.searchTextLight]} numberOfLines={1}>{searchBarText}</Text>
-            <Text style={[styles.later, isLight && styles.laterLight]}>Search</Text>
+            <View style={[styles.searchAction, isLight && styles.searchActionLight]}>
+              <Text style={[styles.searchActionText, isLight && styles.searchActionTextLight]}>Search</Text>
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -3491,7 +3493,6 @@ export function HousingScreen({
           style={StyleSheet.absoluteFill}
         />
         <View pointerEvents="none" style={styles.welcomeGlassHighlight} />
-        <View pointerEvents="none" style={styles.welcomeGlassGlow} />
         <ScrollView
           ref={homeStoryScrollRef}
           horizontal
@@ -3696,11 +3697,11 @@ export function HousingScreen({
         </>
       ) : null}
       <View style={styles.rentalSectionHeader}>
-        <View>
+        <View style={styles.rentalSectionCopy}>
           <Text style={styles.rentalSectionEyebrow}>FairFares car rentals</Text>
           <Text style={styles.rentalSectionTitle}>Book confidently. Pay less.</Text>
         </View>
-        <TouchableOpacity style={styles.rentalSectionAction} onPress={() => setMode("cheapCars")}>
+        <TouchableOpacity style={styles.rentalSectionAction} onPress={() => setMode("cheapCars")} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="View rental cars">
           <Text style={styles.rentalSectionActionText}>View cars</Text>
           <Text style={styles.rentalSectionArrow}>→</Text>
         </TouchableOpacity>
@@ -4057,13 +4058,15 @@ const styles = StyleSheet.create({
   stickySearchRaisedLight: { borderBottomColor: "rgba(15,23,42,0.06)", shadowOpacity: 0.06, elevation: 2 },
   stickySearchBlur: { ...StyleSheet.absoluteFillObject },
   stickySearchUnderBlur: { position: "absolute", left: 0, right: 0, bottom: -16, height: 18, opacity: 0.72 },
-  searchBar: { backgroundColor: "#222522", borderWidth: 1, borderColor: "rgba(239,189,104,0.4)", borderRadius: 22, minHeight: 52, paddingLeft: 15, paddingRight: 6, flexDirection: "row", alignItems: "center", gap: 10, overflow: "hidden", shadowColor: "#efbd68", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
-  searchBarLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.07)", shadowColor: "#14251f", shadowOpacity: 0.09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  searchBar: { backgroundColor: "#222522", borderWidth: 1, borderColor: "rgba(239,189,104,0.4)", borderRadius: 26, minHeight: 52, paddingLeft: 15, paddingRight: 6, flexDirection: "row", alignItems: "center", gap: 10, shadowColor: "#efbd68", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  searchBarLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.07)", shadowColor: "#14251f", shadowOpacity: 0.09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: Platform.OS === "android" ? 0 : 3 },
   searchIcon: { width: 23, height: 23 },
   searchText: { color: "#ffffff", flex: 1, fontSize: 15, fontWeight: "800" },
   searchTextLight: { color: "#344054", fontWeight: "600" },
-  later: { color: "#f4dfb7", backgroundColor: "rgba(239,189,104,0.18)", borderWidth: 1, borderColor: "rgba(239,189,104,0.3)", borderRadius: 17, paddingHorizontal: 14, paddingVertical: 9, fontWeight: "800", fontSize: 12, overflow: "hidden" },
-  laterLight: { color: "#063f2f", backgroundColor: "#43d3a2", borderColor: "#43d3a2" },
+  searchAction: { minWidth: 88, minHeight: 40, backgroundColor: "rgba(239,189,104,0.18)", borderWidth: 1, borderColor: "rgba(239,189,104,0.3)", borderRadius: 20, paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
+  searchActionLight: { backgroundColor: "#43d3a2", borderColor: "#43d3a2" },
+  searchActionText: { color: "#f4dfb7", fontWeight: "800", fontSize: 12 },
+  searchActionTextLight: { color: "#063f2f" },
   segmentHouseIcon: { width: 20, height: 20, alignItems: "center", justifyContent: "flex-end" },
   segmentHouseRoof: {
     position: "absolute",
@@ -4236,10 +4239,9 @@ const styles = StyleSheet.create({
   cityExperienceModalTitle: { color: "#10231c", fontSize: 22, lineHeight: 27, fontWeight: "800", marginTop: 2 },
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
-  welcome: { minHeight: 132, borderWidth: 1, borderColor: "rgba(55,213,154,0.84)", borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "rgba(12,42,32,0.76)", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden", shadowColor: "#37d59a", shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
-  welcomeLight: { backgroundColor: "rgba(255,255,255,0.90)", borderColor: "rgba(255,255,255,0.72)", borderRadius: 20, shadowColor: "#101828", shadowOpacity: 0.13, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
+  welcome: { minHeight: 132, borderWidth: 1, borderColor: "rgba(55,213,154,0.84)", borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "rgba(12,42,32,0.76)", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden", shadowColor: "#37d59a", shadowOpacity: Platform.OS === "android" ? 0 : 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 6 },
+  welcomeLight: { backgroundColor: "rgba(255,255,255,0.90)", borderColor: "rgba(215,220,225,0.92)", borderRadius: 20, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.13, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 5 },
   welcomeGlassHighlight: { position: "absolute", top: 1, left: 18, right: 18, height: 1, backgroundColor: "rgba(255,255,255,0.34)", borderRadius: 1 },
-  welcomeGlassGlow: { position: "absolute", width: 180, height: 180, borderRadius: 90, top: -118, right: -42, backgroundColor: "rgba(93,238,181,0.11)" },
   welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
   welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
   welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
@@ -4293,17 +4295,18 @@ const styles = StyleSheet.create({
     height: "100%"
   },
   rentalSectionHeader: {
-    alignItems: "flex-end",
+    alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: theme.spacing.sm,
     gap: 12
   },
+  rentalSectionCopy: { flex: 1, minWidth: 0 },
   rentalSectionEyebrow: { color: theme.colors.accent, fontSize: 11, lineHeight: 14, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
-  rentalSectionTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700" },
-  rentalSectionAction: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.09)", borderColor: "rgba(255,255,255,0.16)", borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 6, minHeight: 42, paddingHorizontal: 13 },
-  rentalSectionActionText: { color: theme.colors.text, fontSize: 12, fontWeight: "800" },
-  rentalSectionArrow: { color: "#6ee7b7", fontSize: 20, lineHeight: 21, fontWeight: "500" },
+  rentalSectionTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700", flexShrink: 1 },
+  rentalSectionAction: { alignItems: "center", justifyContent: "center", backgroundColor: "#117a58", borderColor: "#0d684b", borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 5, minHeight: 44, minWidth: 104, paddingHorizontal: 15, shadowColor: "#0b5b42", shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
+  rentalSectionActionText: { color: "#ffffff", fontSize: 12, fontWeight: "900" },
+  rentalSectionArrow: { color: "#ffffff", fontSize: 18, lineHeight: 20, fontWeight: "700" },
   rentalCarouselShell: {
     width: "100%",
     borderRadius: 18,
@@ -4392,7 +4395,7 @@ const styles = StyleSheet.create({
   carRateNoteTitle: { color: theme.colors.text, fontWeight: "900" },
   carRateNoteText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
   carSearchButton: { backgroundColor: "rgba(79,124,255,0.68)", borderWidth: 1, borderColor: "rgba(143,174,255,0.34)", borderRadius: theme.radius.pill, minHeight: 48, alignItems: "center", justifyContent: "center" },
-  carSearchButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
+  carSearchButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 15 },
   carList: { gap: theme.spacing.md },
   carMiniCard: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   carMiniCardLight: {
@@ -4486,8 +4489,8 @@ const styles = StyleSheet.create({
   detailImageNextText: { color: "#ffffff", fontSize: 36, lineHeight: 38, fontWeight: "500", marginTop: -3 },
   detailImageFallback: { width: "100%", minHeight: 190, borderRadius: theme.radius.md, backgroundColor: "#202a25", alignItems: "center", justifyContent: "center", padding: 22, gap: 8 },
   detailImageFallbackIcon: { fontSize: 38, lineHeight: 42 },
-  detailImageFallbackTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "900", textAlign: "center" },
-  detailImageFallbackCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center", maxWidth: 420 },
+  detailImageFallbackTitle: { color: "#ffffff", fontSize: 22, lineHeight: 27, fontWeight: "900", textAlign: "center" },
+  detailImageFallbackCopy: { color: "#c7d0cb", fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center", maxWidth: 420 },
   detailTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "700" },
   detailMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "600" },
   detailDescriptionCard: { backgroundColor: "rgba(255,255,255,0.045)", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, gap: 8 },
@@ -4517,7 +4520,7 @@ const styles = StyleSheet.create({
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageSent: { backgroundColor: theme.colors.green },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
-  detailMessageText: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
+  detailMessageText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
   detailScrollHint: { position: "absolute", bottom: 10, alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(9,13,18,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   detailScrollHintText: { color: "#fff", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -7 },
   detailPhotoBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 50, elevation: 50, backgroundColor: "rgba(0,0,0,0.96)", paddingTop: Platform.OS === "ios" ? 54 : 24, paddingBottom: Platform.OS === "ios" ? 34 : 18, paddingHorizontal: 10 },
@@ -4790,7 +4793,7 @@ const styles = StyleSheet.create({
   rideSafetyRowBody: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   rideServiceActionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideServicePlanButton: { flex: 1, marginTop: 2, minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
-  rideServicePlanButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideServicePlanButtonText: { color: "#ffffff", fontSize: 15, fontWeight: "900" },
   rideServiceChatButton: { minWidth: 94, minHeight: 48, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.06)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 10 },
   rideServiceChatIcon: { width: 24, height: 24 },
   rideServiceChatText: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
@@ -4914,7 +4917,7 @@ const styles = StyleSheet.create({
   rideFactGreen: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 6, overflow: "hidden", fontSize: 12, fontWeight: "900" },
   rideSmall: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
   rideRequestButton: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  rideRequestButtonText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideRequestButtonText: { color: "#ffffff", fontSize: 15, fontWeight: "900" },
   rideHeroActionRow: { flexDirection: "row", gap: 10 },
   rideHeroOwnerButton: {
     flex: 1,

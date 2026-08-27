@@ -299,6 +299,7 @@ function FairFaresApp() {
   const [linkedCommunityPostId, setLinkedCommunityPostId] = useState("");
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
+  const [notificationMessageId, setNotificationMessageId] = useState(0);
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerEditId, setRideOwnerEditId] = useState("");
@@ -740,6 +741,7 @@ function FairFaresApp() {
       const type = String(response?.notification.request.content.data?.type || "");
       if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
         setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
+        setNotificationMessageId(Number(response?.notification.request.content.data?.messageId || 0));
         setPendingPost(null);
         setPendingRide(null);
         setActiveTab("messenger");
@@ -785,6 +787,10 @@ function FairFaresApp() {
       .catch(() => undefined);
     return () => responseSubscription.remove();
   }, []);
+
+  useEffect(() => {
+    if (notificationConversationId && data && !data.user) setLoginOpen(true);
+  }, [data, notificationConversationId]);
 
   useEffect(() => {
     Animated.parallel([
@@ -858,9 +864,11 @@ function FairFaresApp() {
   useEffect(() => {
     // Messenger owns tab visibility while it is active. Resetting here when
     // entering Chitthi can run after the thread's hide callback and expose the
-    // global navbar over the composer.
-    if (activeTab !== "messenger") setBottomTabsHidden(false);
-  }, [activeTab]);
+    // global navbar over the composer. Include the visibility flag so a late
+    // callback from an unmounting thread cannot leave other screens without
+    // navigation.
+    if (activeTab !== "messenger" && bottomTabsHidden) setBottomTabsHidden(false);
+  }, [activeTab, bottomTabsHidden]);
 
   useEffect(() => {
     function handleAppUrl(url: string | null) {
@@ -2114,12 +2122,16 @@ function FairFaresApp() {
       pendingRide={pendingRide}
       pendingGroupInvite={pendingGroupInvite}
       notificationConversationId={notificationConversationId}
+      notificationMessageId={notificationMessageId}
       onRequireLogin={() => setLoginOpen(true)}
       onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
       onClearPendingPost={() => setPendingPost(null)}
       onClearPendingRide={() => setPendingRide(null)}
       onClearPendingGroupInvite={() => setPendingGroupInvite("")}
-      onClearNotificationConversation={() => setNotificationConversationId("")}
+      onClearNotificationConversation={() => {
+        setNotificationConversationId("");
+        setNotificationMessageId(0);
+      }}
       onThreadModeChange={(active) => {
         if (activeTab === "messenger") setBottomTabsHidden(active);
       }}
@@ -2138,7 +2150,10 @@ function FairFaresApp() {
     ) : activeTab === "messenger" ? (
       null
     ) : activeTab === "gas" ? (
-      <GasStationsScreen onBack={() => setActiveTab("community")} />
+      <GasStationsScreen
+        onBack={() => setActiveTab("community")}
+        fallbackCity={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
+      />
     ) : activeTab === "community" ? (
       <CommunityScreen
         user={data?.user || null}
@@ -2442,7 +2457,7 @@ function FairFaresApp() {
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
         backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10"}
-        translucent={false}
+        translucent={activeTab === "messenger" && bottomTabsHidden}
       />
       <CriticalBrandAssetPreloader />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>
@@ -3522,7 +3537,7 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   searchPrimaryButton: { backgroundColor: "rgba(79,124,255,0.68)", borderWidth: 1, borderColor: "rgba(143,174,255,0.34)" },
   disabledButton: { opacity: 0.65 },
-  primaryButtonText: { color: theme.colors.text, fontWeight: "900", fontSize: 15 },
+  primaryButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 15 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },
   secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

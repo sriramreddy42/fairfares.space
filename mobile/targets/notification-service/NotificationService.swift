@@ -78,6 +78,9 @@ final class NotificationService: UNNotificationServiceExtension {
         if let preview = decryptPreview(payload), !preview.isEmpty {
             resolvedBody = preview
             logger.notice("Decrypted notification preview successfully")
+        } else if boolValue(payload["isMention"]) {
+            resolvedBody = "Mentioned you in a group message"
+            logger.notice("Mention preview unavailable; using mention fallback")
         } else if isEncryptedPlaceholder(content.body) {
             resolvedBody = "New Chitthi letter"
             logger.notice("Preview unavailable; using encrypted-message fallback")
@@ -138,6 +141,10 @@ final class NotificationService: UNNotificationServiceExtension {
         let canonicalBody = content.body
         let canonicalThreadIdentifier = content.threadIdentifier
         let canonicalTargetContentIdentifier = content.targetContentIdentifier
+        // Intent enrichment may return newly constructed notification content.
+        // Keep the original routing payload so a tap still reaches the exact
+        // conversation and message after iOS applies communication styling.
+        let canonicalUserInfo = content.userInfo
         let senderHandle = INPersonHandle(value: senderId, type: .unknown)
         let normalizedAvatarData = avatarData ?? initialsAvatarData(for: avatarFallbackName)
         let communicationImage = normalizedAvatarData.map(INImage.init(imageData:))
@@ -182,6 +189,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 normalized.body = canonicalBody
                 normalized.threadIdentifier = canonicalThreadIdentifier
                 normalized.targetContentIdentifier = canonicalTargetContentIdentifier
+                normalized.userInfo = canonicalUserInfo
                 self.logger.notice("Communication notification rendering completed")
                 self.deliver(normalized)
             } catch {

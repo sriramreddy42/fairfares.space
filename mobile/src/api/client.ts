@@ -1314,10 +1314,10 @@ export async function getChatEncryptedPreviewEnvelopes(messageIds: number[], dev
   return request<{ ok: boolean; envelopes: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }> }>(`/api/chat/e2ee/preview-envelopes?${params.toString()}`);
 }
 
-export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0, contextPostId = "") {
+export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0, contextPostId = "", mentionedUserIds: number[] = []) {
   return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId, contextPostId })
+    body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId, contextPostId, mentionedUserIds })
   });
 }
 

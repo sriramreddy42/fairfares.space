@@ -20,6 +20,7 @@ export type EncryptedOutboxItem = {
   lastAttemptAt: string;
   relayedAt?: string;
   replyToMessageId?: number;
+  mentionedUserIds?: number[];
 };
 
 const outboxKey = (userId: number) => `fairfares.chitthi.encrypted-outbox.${userId}`;

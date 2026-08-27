@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { BlurView } from "expo-blur";
-import { ActivityIndicator, Image, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -104,7 +104,6 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
             style={StyleSheet.absoluteFill}
           />
           <View pointerEvents="none" style={styles.inlineMessageGlassHighlight} />
-          <View pointerEvents="none" style={styles.inlineMessageGlassGlow} />
           {ownListing ? (
             <View style={styles.ownListingRow}>
               <View style={styles.ownListingCheck}><Text style={styles.ownListingCheckText}>✓</Text></View>
@@ -130,7 +129,9 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
                 </View>
               </View>
               <View style={[styles.inlineMessageRow, isLight && styles.inlineMessageRowLight, sending && styles.inlineMessageRowBusy]}>
-                <TextInput value={draft} onChangeText={setDraft} style={[styles.inlineMessageInput, isLight && styles.inlineMessageInputLight]} placeholder="Write a message" placeholderTextColor="#667085" editable={!sending} returnKeyType="send" onSubmitEditing={() => { if (draft.trim() && onSendMessage) void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }} />
+                <View style={styles.inlineMessageInputClip}>
+                  <TextInput value={draft} onChangeText={setDraft} style={[styles.inlineMessageInput, isLight && styles.inlineMessageInputLight]} placeholder="Write a message" placeholderTextColor="#667085" editable={!sending} returnKeyType="send" onSubmitEditing={() => { if (draft.trim() && onSendMessage) void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }} />
+                </View>
                 <TouchableOpacity style={[styles.inlineSend, (sending || !draft.trim()) && styles.inlineSendDisabled]} disabled={sending || !draft.trim() || !onSendMessage} onPress={() => { if (!onSendMessage) return; void (async () => { setSending(true); try { await onSendMessage(post, draft.trim()); } finally { setSending(false); } })(); }}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.inlineSendText}>Send</Text>}</TouchableOpacity>
               </View>
             </>
@@ -151,10 +152,10 @@ const styles = StyleSheet.create({
   },
   cardShellLight: {
     shadowColor: "#1c2735",
-    shadowOpacity: 0.16,
+    shadowOpacity: Platform.OS === "android" ? 0 : 0.16,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 9 },
-    elevation: 7
+    elevation: Platform.OS === "android" ? 0 : 7
   },
   card: {
     width: "100%",
@@ -317,20 +318,20 @@ const styles = StyleSheet.create({
   inlineMessageCard: { minHeight: 94, borderTopWidth: 1, borderTopColor: "rgba(117,217,173,0.38)", paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12, gap: 10, justifyContent: "center", backgroundColor: "rgba(18,42,33,0.7)", overflow: "hidden" },
   inlineMessageCardLight: { backgroundColor: "rgba(248,250,252,0.88)", borderTopColor: "rgba(148,163,184,0.22)" },
   inlineMessageGlassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1, backgroundColor: "rgba(255,255,255,0.3)" },
-  inlineMessageGlassGlow: { position: "absolute", width: 110, height: 110, borderRadius: 55, top: -72, right: -24, backgroundColor: "rgba(55,213,154,0.12)" },
   inlineMessageHeading: { flexDirection: "row", alignItems: "center", gap: 7 },
-  inlineMessageMascotWrap: { width: 29, height: 29, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#10281C", borderWidth: 1, borderColor: "rgba(210,167,89,0.42)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  inlineMessageMascotWrap: { width: 29, height: 29, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#10281C", borderWidth: 1, borderColor: "rgba(210,167,89,0.42)", shadowColor: "#000", shadowOpacity: Platform.OS === "android" ? 0 : 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 }, elevation: Platform.OS === "android" ? 0 : 3 },
   inlineMessageMascot: { width: 24, height: 24 },
   inlineMessageHeadingCopy: { flex: 1, minWidth: 0 },
   inlineMessageTitle: { color: theme.colors.text, fontSize: 12, lineHeight: 15, fontWeight: "900" },
   inlineMessageTitleLight: { color: "#17202d" },
   inlineMessageHint: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, fontWeight: "700" },
-  inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.08)" },
+  inlineMessageRow: { height: 40, flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 12, paddingRight: 3, paddingVertical: 3, borderRadius: 20, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" },
   inlineMessageRowLight: { borderColor: "rgba(148,163,184,0.34)", backgroundColor: "rgba(255,255,255,0.90)" },
   inlineMessageRowBusy: { opacity: 0.8 },
-  inlineMessageInput: { flex: 1, minWidth: 0, height: 34, color: theme.colors.text, paddingHorizontal: 0, paddingVertical: 6, fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  inlineMessageInputClip: { flex: 1, minWidth: 0, height: 34, overflow: "hidden" },
+  inlineMessageInput: { width: "100%", height: 34, color: theme.colors.text, paddingHorizontal: 0, paddingVertical: 6, fontSize: 12, lineHeight: 16, fontWeight: "600" },
   inlineMessageInputLight: { color: "#17202d" },
-  inlineSend: { height: 34, minWidth: 59, borderRadius: 17, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
+  inlineSend: { width: 59, height: 34, flexShrink: 0, borderRadius: 17, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center" },
   inlineSendDisabled: { backgroundColor: "#3A5742", opacity: 0.62 },
   inlineSendText: { color: "#0C1A10", fontSize: 12, fontWeight: "900" },
   sentHeading: { minHeight: 29, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 1 },

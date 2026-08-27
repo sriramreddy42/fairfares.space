@@ -2,7 +2,7 @@ import { DynamicColorIOS, Platform, PlatformColor } from "react-native";
 
 function adaptiveColor(light: string, dark: string, androidRole: string) {
   if (Platform.OS === "ios") return DynamicColorIOS({ light, dark });
-  if (Platform.OS === "android") return PlatformColor(androidRole);
+  if (Platform.OS === "android") return PlatformColor(androidRole.replace("?android:attr/", "?attr/"));
   return dark;
 }
 
@@ -44,8 +44,8 @@ export const theme = {
     eyebrow: { fontSize: 11, lineHeight: 15, fontWeight: "700" as const, letterSpacing: 0.7, textTransform: "uppercase" as const }
   },
   depth: {
-    card: { backgroundColor: adaptiveColor("rgba(255,255,255,0.92)", "rgba(24,24,25,0.92)", "?android:attr/colorBackgroundFloating"), borderColor: adaptiveColor("rgba(255,255,255,0.72)", "rgba(255,255,255,0.10)", "?android:attr/colorControlNormal"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: 0.14, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
-    raised: { backgroundColor: adaptiveColor("rgba(255,255,255,0.86)", "rgba(36,36,37,0.90)", "?android:attr/colorBackgroundFloating"), borderColor: adaptiveColor("rgba(255,255,255,0.68)", "rgba(255,255,255,0.12)", "?android:attr/colorControlNormal"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: 0.11, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+    card: { backgroundColor: adaptiveColor("rgba(255,255,255,0.92)", "rgba(24,24,25,0.92)", "?android:attr/colorBackgroundFloating"), borderColor: adaptiveColor("rgba(255,255,255,0.72)", "rgba(255,255,255,0.10)", "?android:attr/colorControlNormal"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.14, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 6 },
+    raised: { backgroundColor: adaptiveColor("rgba(255,255,255,0.86)", "rgba(36,36,37,0.90)", "?android:attr/colorBackgroundFloating"), borderColor: adaptiveColor("rgba(255,255,255,0.68)", "rgba(255,255,255,0.12)", "?android:attr/colorControlNormal"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.11, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: Platform.OS === "android" ? 0 : 4 },
     input: { backgroundColor: adaptiveColor("rgba(255,255,255,0.78)", "rgba(36,36,37,0.86)", "?android:attr/colorBackgroundFloating"), borderColor: adaptiveColor("rgba(255,255,255,0.62)", "rgba(255,255,255,0.10)", "?android:attr/colorControlNormal"), borderWidth: 1, borderRadius: 18 }
   }
 };
