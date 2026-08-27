@@ -1884,7 +1884,7 @@ export function HousingScreen({
               <TextInput
                 style={styles.rideOwnerInput}
                 placeholder="Vehicle make/model, e.g. Toyota Camry"
-                placeholderTextColor={theme.colors.muted}
+                placeholderTextColor="#8f949b"
                 value={rideDriverDraft.vehicleMakeModel || ""}
                 onChangeText={(value) => updateRideDriverDraft("vehicleMakeModel", value)}
               />
@@ -1892,14 +1892,14 @@ export function HousingScreen({
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="Year"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   value={rideDriverDraft.vehicleYear || ""}
                   onChangeText={(value) => updateRideDriverDraft("vehicleYear", value)}
                 />
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="Color"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   value={rideDriverDraft.vehicleColor || ""}
                   onChangeText={(value) => updateRideDriverDraft("vehicleColor", value)}
                 />
@@ -1908,7 +1908,7 @@ export function HousingScreen({
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="Plate"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   autoCapitalize="characters"
                   value={rideDriverDraft.licensePlate || ""}
                   onChangeText={(value) => updateRideDriverDraft("licensePlate", value)}
@@ -1916,7 +1916,7 @@ export function HousingScreen({
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="State"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   autoCapitalize="characters"
                   value={rideDriverDraft.licenseState || ""}
                   onChangeText={(value) => updateRideDriverDraft("licenseState", value)}
@@ -1926,14 +1926,14 @@ export function HousingScreen({
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="Insurance provider"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   value={rideDriverDraft.insuranceProvider || ""}
                   onChangeText={(value) => updateRideDriverDraft("insuranceProvider", value)}
                 />
                 <TextInput
                   style={[styles.rideOwnerInput, styles.rideOwnerHalfInput]}
                   placeholder="Policy last 4"
-                  placeholderTextColor={theme.colors.muted}
+                  placeholderTextColor="#8f949b"
                   keyboardType="number-pad"
                   value={rideDriverDraft.insurancePolicyLast4 || ""}
                   onChangeText={(value) => updateRideDriverDraft("insurancePolicyLast4", value)}
@@ -2811,7 +2811,7 @@ export function HousingScreen({
                       <TextInput
                         style={styles.rideTripInput}
                         placeholder="4"
-                        placeholderTextColor={theme.colors.muted}
+                        placeholderTextColor="#8f949b"
                         keyboardType="number-pad"
                         value={rideForm.seats}
                         onChangeText={(value) => updateRideForm("seats", value)}
@@ -2822,7 +2822,7 @@ export function HousingScreen({
                       <TextInput
                         style={styles.rideTripInput}
                         placeholder="Optional $"
-                        placeholderTextColor={theme.colors.muted}
+                        placeholderTextColor="#8f949b"
                         keyboardType="number-pad"
                         value={rideForm.contributionPerSeat}
                         onChangeText={(value) => updateRideForm("contributionPerSeat", value)}
@@ -2835,7 +2835,7 @@ export function HousingScreen({
                       <TextInput
                         style={styles.rideTripInput}
                         placeholder="1 small bag"
-                        placeholderTextColor={theme.colors.muted}
+                        placeholderTextColor="#8f949b"
                         value={rideForm.luggage}
                         onChangeText={(value) => updateRideForm("luggage", value)}
                       />
@@ -4986,8 +4986,8 @@ const styles = StyleSheet.create({
   rideOwnerContent: { width: "100%", maxWidth: 920, alignSelf: "center", paddingHorizontal: 14, paddingBottom: 40, gap: 11 },
   rideOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   rideOwnerHeaderCopy: { flex: 1, minWidth: 0 },
-  rideOwnerEyebrow: { color: theme.colors.accent, fontSize: 10, fontWeight: "600", textTransform: "uppercase", letterSpacing: 1 },
-  rideOwnerTitle: { color: theme.colors.text, fontSize: 24, lineHeight: 28, fontWeight: "600" },
+  rideOwnerEyebrow: { color: "#fb7185", fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
+  rideOwnerTitle: { color: "#f7f7f8", fontSize: 24, lineHeight: 28, fontWeight: "800" },
   rideOwnerHero: {
     borderRadius: 18,
     borderWidth: 1,
@@ -5010,8 +5010,8 @@ const styles = StyleSheet.create({
   carpoolIconWheelLeft: { left: 6 },
   carpoolIconWheelRight: { right: 1 },
   rideOwnerHeroCopy: { flex: 1, minWidth: 0 },
-  rideOwnerHeroTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "600" },
-  rideOwnerHeroText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500", marginTop: 3 },
+  rideOwnerHeroTitle: { color: "#f7f7f8", fontSize: 18, lineHeight: 22, fontWeight: "700" },
+  rideOwnerHeroText: { color: "#b6bac0", fontSize: 12, lineHeight: 17, fontWeight: "500", marginTop: 3 },
   rideOwnerCard: {
     borderRadius: 18,
     borderWidth: 1,
@@ -5021,8 +5021,8 @@ const styles = StyleSheet.create({
     gap: 9
   },
   rideOwnerSectionHeading: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
-  rideOwnerSectionIcon: { width: 22, height: 22, tintColor: theme.colors.soft },
-  rideOwnerSectionTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "600" },
+  rideOwnerSectionIcon: { width: 22, height: 22, tintColor: "#c7c9cc" },
+  rideOwnerSectionTitle: { color: "#f7f7f8", fontSize: 17, fontWeight: "700" },
   rideOwnerInputRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideOwnerInput: {
     minHeight: 44,
@@ -5030,16 +5030,16 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.09)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
-    color: theme.colors.text,
+    color: "#f7f7f8",
     paddingHorizontal: 12,
     fontSize: 13,
     fontWeight: "500"
   },
   rideOwnerHalfInput: { flex: 1, minWidth: 145 },
-  rideOwnerFieldLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.4 },
+  rideOwnerFieldLabel: { color: "#c7c9cc", fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.4 },
   rideOwnerStatusPillActive: { borderColor: "rgba(59,130,246,0.9)", backgroundColor: "rgba(59,130,246,0.20)" },
   rideOwnerStatusPillDisabled: { opacity: 0.5 },
-  rideOwnerStatusPillText: { color: theme.colors.text, fontSize: 11, fontWeight: "600" },
+  rideOwnerStatusPillText: { color: "#e8eaed", fontSize: 11, fontWeight: "700" },
   rideOwnerPrompt: {
     borderRadius: 16,
     borderWidth: 1,
@@ -5062,7 +5062,7 @@ const styles = StyleSheet.create({
     gap: 4
   },
   rideOwnerRouteNoteTitle: { color: theme.colors.green, fontSize: 12, fontWeight: "600" },
-  rideOwnerRouteNoteText: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerRouteNoteText: { color: "#c7c9cc", fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rideOwnerListTripButton: {
     minHeight: 52,
     borderRadius: theme.radius.pill,
@@ -5072,10 +5072,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(255,255,255,0.82)"
   },
-  rideOwnerListTripText: { color: theme.colors.text, fontSize: 14, fontWeight: "600" },
+  rideOwnerListTripText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
   rideOwnerMissing: { color: "#fca5a5", fontSize: 12, lineHeight: 16, fontWeight: "600" },
   rideOwnerSaveButton: { minHeight: 44, borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center" },
-  rideOwnerSaveText: { color: theme.colors.text, fontSize: 13, fontWeight: "600" },
+  rideOwnerSaveText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   rideOwnerStep: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   rideOwnerStepNumber: {
     width: 24,
@@ -5089,10 +5089,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700"
   },
-  rideOwnerStepText: { flex: 1, color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerStepText: { flex: 1, color: "#c7c9cc", fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rideOwnerStatusWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   rideOwnerStatusPill: {
-    color: theme.colors.soft,
+    color: "#c7c9cc",
     borderRadius: theme.radius.pill,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
@@ -5105,26 +5105,26 @@ const styles = StyleSheet.create({
   },
   rideOwnerRequestCard: { borderRadius: 14, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", padding: 11, gap: 7 },
   rideOwnerRequestTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
-  rideOwnerRequestTitle: { flex: 1, color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "600" },
+  rideOwnerRequestTitle: { flex: 1, color: "#f7f7f8", fontSize: 15, lineHeight: 19, fontWeight: "700" },
   rideOwnerRequestBadge: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.13)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "700" },
   rideOwnerRequestBadgeExpired: { color: "#fecaca", backgroundColor: "rgba(239,68,68,0.18)" },
-  rideOwnerRequestRoute: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerRequestRoute: { color: "#c7c9cc", fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  rideOwnerRequestFact: { color: theme.colors.text, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "600" },
-  rideOwnerRequestMeta: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, fontWeight: "500" },
+  rideOwnerRequestFact: { color: "#f7f7f8", backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "600" },
+  rideOwnerRequestMeta: { color: "#aeb2b8", fontSize: 11, lineHeight: 16, fontWeight: "500" },
   rideOwnerPinBox: { alignSelf: "flex-start", borderRadius: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.38)", backgroundColor: "rgba(34,197,94,0.12)", paddingHorizontal: 12, paddingVertical: 8 },
   rideOwnerPinLabel: { color: theme.colors.green, fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },
-  rideOwnerPinValue: { color: theme.colors.text, fontSize: 22, fontWeight: "700", letterSpacing: 3 },
+  rideOwnerPinValue: { color: "#f7f7f8", fontSize: 22, fontWeight: "700", letterSpacing: 3 },
   rideOwnerRequestActionRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   rideOwnerAcceptButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: theme.colors.blue, justifyContent: "center", paddingHorizontal: 14 },
   rideOwnerDeclineButton: { minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(239,68,68,0.88)", justifyContent: "center", paddingHorizontal: 14 },
   rideOwnerActionText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   rideOwnerChatButton: { alignSelf: "flex-start", minHeight: 38, borderRadius: theme.radius.pill, backgroundColor: "rgba(59,130,246,0.18)", borderWidth: 1, borderColor: "rgba(59,130,246,0.42)", flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11 },
   rideOwnerChatIcon: { width: 22, height: 22 },
-  rideOwnerChatText: { color: theme.colors.text, fontSize: 12, fontWeight: "600" },
+  rideOwnerChatText: { color: "#f7f7f8", fontSize: 12, fontWeight: "600" },
   rideOwnerEmpty: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(0,0,0,0.16)", padding: 12, gap: 4 },
-  rideOwnerEmptyTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "600" },
-  rideOwnerEmptyText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "500" },
+  rideOwnerEmptyTitle: { color: "#f7f7f8", fontSize: 15, fontWeight: "700" },
+  rideOwnerEmptyText: { color: "#aeb2b8", fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rentalOwnerScreen: { flex: 1, backgroundColor: "#101010" },
   rentalOwnerContent: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 72, gap: 16 },
   rentalOwnerHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -5159,17 +5159,17 @@ const styles = StyleSheet.create({
   rideListingSuccessIcon: { width: 70, height: 70, borderRadius: 35, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,197,94,0.18)", borderWidth: 2, borderColor: theme.colors.green },
   rideListingSuccessCheck: { color: theme.colors.green, fontSize: 38, lineHeight: 43, fontWeight: "900" },
   rideListingSuccessEyebrow: { color: theme.colors.green, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.4, marginTop: 2 },
-  rideListingSuccessTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
-  rideListingSuccessRoute: { color: theme.colors.soft, fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center" },
+  rideListingSuccessTitle: { color: "#f7f7f8", fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
+  rideListingSuccessRoute: { color: "#c7c9cc", fontSize: 16, lineHeight: 22, fontWeight: "800", textAlign: "center" },
   rideListingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
-  rideListingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
-  rideListingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
+  rideListingSuccessFact: { color: "#f7f7f8", fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 10, paddingVertical: 6 },
+  rideListingSuccessCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
   rideListingSuccessShare: { width: "100%", minHeight: 50, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
-  rideListingSuccessShareText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
+  rideListingSuccessShareText: { color: "#f7f7f8", fontSize: 15, fontWeight: "900" },
   rideListingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
-  rideListingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  rideListingSuccessPrimaryText: { color: "#102017", fontSize: 16, fontWeight: "900" },
   rideListingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
-  rideListingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
+  rideListingSuccessSecondaryText: { color: "#d5d7da", fontSize: 15, fontWeight: "900" },
   ridePlannerScreen: { flex: 1, backgroundColor: "#111" },
   ridePlannerContent: { paddingTop: 26, paddingHorizontal: 20, paddingBottom: 40, gap: 16 },
   ridePlannerHandle: { alignSelf: "center", width: 54, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.20)", marginBottom: 2 },
@@ -5199,8 +5199,8 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 9
   },
-  rideTypePromptTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  rideTypePromptCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  rideTypePromptTitle: { color: "#f7f7f8", fontSize: 16, fontWeight: "900" },
+  rideTypePromptCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 18, fontWeight: "700" },
   rideTypePromptGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   rideTypePromptChip: {
     flexGrow: 1,
@@ -5212,12 +5212,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 9
   },
-  rideTypePromptChipActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  rideTypePromptChipActive: { backgroundColor: "#f7f7f8", borderColor: "#f7f7f8" },
   rideTypePromptChipDisabled: { opacity: 0.52 },
-  rideTypePromptChipTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
-  rideTypePromptChipTitleActive: { color: theme.colors.bg },
-  rideTypePromptChipMeta: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "900" },
-  rideTypePromptChipMetaActive: { color: theme.colors.bg },
+  rideTypePromptChipTitle: { color: "#f7f7f8", fontSize: 13, fontWeight: "900" },
+  rideTypePromptChipTitleActive: { color: "#111214" },
+  rideTypePromptChipMeta: { color: "#aeb2b8", fontSize: 11, marginTop: 3, fontWeight: "800" },
+  rideTypePromptChipMetaActive: { color: "#34373b" },
   rideTripDetails: {
     borderRadius: 18,
     borderWidth: 1,
@@ -5226,19 +5226,19 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10
   },
-  rideTripDetailsTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  rideTripHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "800" },
+  rideTripDetailsTitle: { color: "#f7f7f8", fontSize: 16, fontWeight: "900" },
+  rideTripHint: { color: "#b6bac0", fontSize: 12, lineHeight: 17, fontWeight: "700" },
   rideTripDetailsRow: { flexDirection: "row", gap: 10 },
   rideTripField: { flex: 1, minWidth: 0, gap: 5 },
   rideTripFieldFull: { width: "100%", gap: 5 },
-  rideTripLabel: { color: theme.colors.soft, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
+  rideTripLabel: { color: "#c7c9cc", fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.4 },
   rideTripInput: {
     minHeight: 46,
     borderRadius: 14,
     backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
-    color: theme.colors.text,
+    color: "#f7f7f8",
     paddingHorizontal: 12,
     fontSize: 14,
     fontWeight: "900"
@@ -5262,7 +5262,7 @@ const styles = StyleSheet.create({
   rideUtilityIcon: { color: "#c7c9cc", fontSize: 22, width: 42, textAlign: "center" },
   rideUtilityText: { color: "#f0f1f2", fontSize: 16, fontWeight: "900" },
   ridePlannerSearchButton: { backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, minHeight: 58, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  ridePlannerSearchText: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
+  ridePlannerSearchText: { color: "#ffffff", fontSize: 17, fontWeight: "900" },
   rideSearchLoadingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "rgba(8,8,9,0.22)", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
   rideSearchLoadingCard: { width: "100%", maxWidth: 378, paddingHorizontal: 12, paddingVertical: 20, alignItems: "center", gap: 10 },
   rideSearchLoadingTitle: { color: "#f7f7f8", ...theme.typography.sectionTitle, marginTop: 4 },
