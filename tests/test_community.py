@@ -134,11 +134,15 @@ class CommunityFeatureTest(unittest.TestCase):
 
         status, reply = self.request("POST", "/api/mobile/community/answer", "owner-token", {"postId": post_id, "body": "Thanks — replying here so you can see it.", "parentAnswerId": first_answer_id})
         self.assertEqual(status, 201)
+        status, nested_reply = self.request("POST", "/api/mobile/community/answer", "owner-token", {"postId": post_id, "body": "This reply is nested under the previous reply.", "parentAnswerId": reply["answerId"]})
+        self.assertEqual(status, 201)
         _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}")
         answers = detail["posts"][0]["answers"]
-        self.assertEqual(answers[-1]["parentAnswerId"], first_answer_id)
-        self.assertEqual(answers[-1]["body"], "Thanks — replying here so you can see it.")
-        guest_names = {answer["author"]["name"] for answer in answers[:-1]}
+        self.assertEqual(answers[-2]["parentAnswerId"], first_answer_id)
+        self.assertEqual(answers[-2]["body"], "Thanks — replying here so you can see it.")
+        self.assertEqual(answers[-1]["parentAnswerId"], reply["answerId"])
+        self.assertEqual(answers[-1]["body"], "This reply is nested under the previous reply.")
+        guest_names = {answer["author"]["name"] for answer in answers[:-2]}
         self.assertEqual(guest_names, {session["guestId"]})
 
         status, inbox = self.guest_request("GET", "/api/mobile/community/guest-inbox", token)
