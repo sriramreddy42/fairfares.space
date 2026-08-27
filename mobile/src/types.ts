@@ -197,6 +197,7 @@ export type CommunityAnswer = {
   id: string;
   body: string;
   parentAnswerId: string;
+  replyToMessageId?: number;
   author: CommunityAuthor;
   reactionCount: number;
   reactionCounts?: Record<string, number>;
@@ -238,6 +239,8 @@ export type CommunityPost = {
   sourceKind?: "HOUSING" | "";
   sourceId?: string;
   answers?: CommunityAnswer[];
+  guestConversationId?: string;
+  guestMessages?: CommunityAnswer[];
 };
 
 export type ChatGroupMember = {

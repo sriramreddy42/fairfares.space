@@ -3224,6 +3224,7 @@ for _rate_limited_marketplace_path in (
 
 for _rate_limited_community_path in (
     "/api/mobile/community", "/api/mobile/community/guest-session",
+    "/api/mobile/community/guest-message",
     "/api/mobile/community/answer", "/api/mobile/community/react",
     "/api/mobile/community/save", "/api/mobile/community/report",
 ):
@@ -11004,8 +11005,8 @@ def get_admin_community_posts(limit: int = 200) -> list[sqlite3.Row]:
                    (SELECT COUNT(*) FROM ask_community_answers answers WHERE answers.post_id = posts.id AND answers.status = 'PUBLISHED') AS answer_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LIKE','HELPFUL')) AS reaction_like_count,
-                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'LOVE') AS reaction_love_count,
-                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'CARE') AS reaction_care_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LOVE', 'THANKS')) AS reaction_love_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('CARE', 'SUPPORT')) AS reaction_care_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'HAHA') AS reaction_haha_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'WOW') AS reaction_wow_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'SAD') AS reaction_sad_count,
@@ -12187,8 +12188,15 @@ def community_post_rows(
                    (SELECT users_latest.name FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_name,
                    (SELECT users_latest.profile_photo_url FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_photo,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LIKE', 'HELPFUL')) AS reaction_like_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LOVE', 'THANKS')) AS reaction_love_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('CARE', 'SUPPORT')) AS reaction_care_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'HAHA') AS reaction_haha_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'WOW') AS reaction_wow_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'SAD') AS reaction_sad_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction = 'ANGRY') AS reaction_angry_count,
                    EXISTS(SELECT 1 FROM ask_community_reactions mine WHERE mine.post_id = posts.id AND mine.user_id = ?) AS reacted,
-                   (SELECT reaction FROM ask_community_reactions mine_type WHERE mine_type.post_id = posts.id AND mine_type.user_id = ? LIMIT 1) AS viewer_reaction,
+                   (SELECT CASE mine_type.reaction WHEN 'HELPFUL' THEN 'LIKE' WHEN 'THANKS' THEN 'LOVE' WHEN 'SUPPORT' THEN 'CARE' ELSE mine_type.reaction END FROM ask_community_reactions mine_type WHERE mine_type.post_id = posts.id AND mine_type.user_id = ? LIMIT 1) AS viewer_reaction,
                    EXISTS(SELECT 1 FROM ask_community_saved_posts saved WHERE saved.post_id = posts.id AND saved.user_id = ?) AS saved,
                    (SELECT GROUP_CONCAT(image_url, char(31)) FROM (SELECT image_url FROM ask_community_post_images WHERE post_id = posts.id ORDER BY sort_order, id)) AS image_urls
             FROM ask_community_posts posts
@@ -12277,14 +12285,14 @@ def community_answer_rows(post_id: int, viewer_id: int = 0) -> list[sqlite3.Row]
             SELECT answers.*, users.name AS author_name, users.profile_photo_url AS author_photo,
                    (SELECT public_id FROM ask_community_answers parent WHERE parent.id = answers.parent_answer_id) AS parent_answer_public_id,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id) AS reaction_count,
-                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'LIKE') AS reaction_like_count,
-                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'LOVE') AS reaction_love_count,
-                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'CARE') AS reaction_care_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction IN ('LIKE', 'HELPFUL')) AS reaction_like_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction IN ('LOVE', 'THANKS')) AS reaction_love_count,
+                   (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction IN ('CARE', 'SUPPORT')) AS reaction_care_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'HAHA') AS reaction_haha_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'WOW') AS reaction_wow_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'SAD') AS reaction_sad_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction = 'ANGRY') AS reaction_angry_count,
-                   (SELECT reaction FROM ask_community_reactions mine WHERE mine.answer_id = answers.id AND mine.user_id = ? LIMIT 1) AS viewer_reaction
+                   (SELECT CASE mine.reaction WHEN 'HELPFUL' THEN 'LIKE' WHEN 'THANKS' THEN 'LOVE' WHEN 'SUPPORT' THEN 'CARE' ELSE mine.reaction END FROM ask_community_reactions mine WHERE mine.answer_id = answers.id AND mine.user_id = ? LIMIT 1) AS viewer_reaction
             FROM ask_community_answers answers
             JOIN users ON users.id = answers.author_id
             WHERE answers.post_id = ? AND answers.status = 'PUBLISHED'
@@ -23717,6 +23725,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
+            "/api/mobile/community/guest-message": self.api_mobile_community_guest_message,
             "/api/mobile/community/answer": self.api_mobile_create_community_answer,
             "/api/mobile/community/react": self.api_mobile_react_community,
             "/api/mobile/community/save": self.api_mobile_save_community_post,
@@ -37121,6 +37130,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         notify_user_id = 0
         notify_title = ""
         chitthi_conversation_public_id = ""
+        guest_usage_after = 0
         with db() as con:
             post = con.execute("SELECT * FROM ask_community_posts WHERE public_id = ? AND status = 'PUBLISHED'", (post_public_id,)).fetchone()
             if not post:
@@ -37128,9 +37138,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             if row_value(post, "community_id") and (not user or not chat_group_member_role(con, int(post["community_id"]), author_id)):
                 self.send_json({"ok": False, "error": "Join this group before answering."}, 403)
-                return
-            if guest and int(row_value(guest, "messages_used") or 0) >= 6:
-                self.send_json({"ok": False, "error": "Create a free account for unlimited community comments and replies.", "guestLimitReached": True, "remaining": 0}, 403)
                 return
             recent_answers = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_answers WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (author_id,)).fetchone()["count"])
             if recent_answers >= 30:
@@ -37143,10 +37150,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "The reply target is unavailable."}, 404)
                     return
                 parent_id = int(parent["id"])
+            if guest:
+                allowance = con.execute(
+                    """UPDATE ask_community_guest_sessions
+                       SET messages_used = messages_used + 1, updated_at = ?
+                       WHERE id = ? AND messages_used < 6""",
+                    (now, int(guest["id"])),
+                )
+                if allowance.rowcount != 1:
+                    self.send_json({"ok": False, "error": "Create a free account for unlimited community comments and replies.", "guestLimitReached": True, "remaining": 0}, 403)
+                    return
+                guest_usage_after = int(con.execute("SELECT messages_used FROM ask_community_guest_sessions WHERE id = ?", (int(guest["id"]),)).fetchone()["messages_used"])
             answer_id = community_public_id("FFA")
             con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), author_id, parent_id, body, now, now))
-            if guest:
-                con.execute("UPDATE ask_community_guest_sessions SET messages_used = messages_used + 1, updated_at = ? WHERE id = ?", (now, int(guest["id"])))
             notify_user_id = int(post["author_id"] or 0)
             notify_title = str(post["title"] or "Community question")
             notification_user = user or con.execute("SELECT * FROM users WHERE id = ?", (author_id,)).fetchone()
@@ -37173,7 +37189,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.notify_chat_recipients(con, conversation, notification_user, chat_message)
         if notify_user_id and notify_user_id != author_id and not chitthi_conversation_public_id:
             send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
-        remaining = max(0, 5 - int(row_value(guest, "messages_used") or 0)) if guest else None
+        remaining = max(0, 6 - guest_usage_after) if guest else None
         self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id, "guestRemaining": remaining}, 201)
 
     def api_mobile_community_guest_session(self) -> None:
@@ -37220,22 +37236,58 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                    JOIN ask_community_answers answers ON answers.post_id = posts.id
                    WHERE posts.status IN ('PUBLISHED', 'LOCKED')
                      AND answers.status = 'PUBLISHED'
-                     AND (answers.author_id = ? OR answers.parent_answer_id IN (
-                       SELECT own_answers.id FROM ask_community_answers own_answers
-                       WHERE own_answers.post_id = posts.id AND own_answers.author_id = ?
-                         AND own_answers.status = 'PUBLISHED'
-                     ))
+                     AND answers.author_id = ?
+                     AND answers.parent_answer_id IS NULL
                    GROUP BY posts.id, posts.public_id
                    ORDER BY activity_at DESC, posts.id DESC
                    LIMIT 12""",
-                (guest_user_id, guest_user_id),
+                (guest_user_id,),
             ).fetchall()
         threads = []
+        included_conversation_ids: set[int] = set()
         for row in rows:
             post_rows = community_post_rows(guest_user_id, post_public_id=str(row["public_id"]), limit=1)
             if not post_rows:
                 continue
             post = community_post_payload(post_rows[0], guest_user_id)
+            post_author_id = int(row_value(post_rows[0], "author_id") or 0)
+            with db() as con:
+                conversation = get_person_conversation(con, guest_user_id, post_author_id)
+                conversation_id = int(row_value(conversation, "id") or 0)
+                if not conversation_id or conversation_id in included_conversation_ids:
+                    continue
+                included_conversation_ids.add(conversation_id)
+                message_rows = con.execute(
+                    """SELECT messages.id, messages.sender_id, messages.message_text, messages.created_at, messages.reply_to_message_id,
+                              users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                       FROM chat_messages messages
+                       JOIN users ON users.id = messages.sender_id
+                       WHERE messages.conversation_id = ? AND messages.deleted_at IS NULL
+                       ORDER BY messages.id DESC LIMIT 50""",
+                    (conversation_id,),
+                ).fetchall()
+            post["guestConversationId"] = str(row_value(conversation, "public_id") or "")
+            post["guestMessages"] = [
+                {
+                    "id": str(row_value(message, "id") or ""),
+                    "body": str(row_value(message, "message_text") or ""),
+                    "parentAnswerId": "",
+                    "author": {
+                        "id": int(row_value(message, "sender_id") or 0),
+                        "name": str(row_value(message, "sender_name") or "FairFares member"),
+                        "photoUrl": avatar_delivery_path(row_value(message, "sender_photo_url"), int(row_value(message, "sender_id") or 0)),
+                    },
+                    "reactionCount": 0,
+                    "reactionCounts": {},
+                    "viewerReaction": "",
+                    "accepted": False,
+                    "canEdit": int(row_value(message, "sender_id") or 0) == guest_user_id,
+                    "createdAt": str(row_value(message, "created_at") or ""),
+                    "updatedAt": str(row_value(message, "created_at") or ""),
+                    "replyToMessageId": int(row_value(message, "reply_to_message_id") or 0),
+                }
+                for message in reversed(message_rows)
+            ]
             accepted_id = int(row_value(post_rows[0], "accepted_answer_id") or 0)
             answer_rows = community_answer_rows(int(row["id"]), guest_user_id)
             own_root_ids = {
@@ -37244,11 +37296,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if int(row_value(answer, "author_id") or 0) == guest_user_id
                 and not int(row_value(answer, "parent_answer_id") or 0)
             }
-            relevant_answers = [
-                answer for answer in answer_rows
-                if int(row_value(answer, "author_id") or 0) == guest_user_id
-                or int(row_value(answer, "parent_answer_id") or 0) in own_root_ids
-            ]
+            # Build a private branch between this guest and the post lister.
+            # Replies authored by a third guest—even on the same public post or
+            # beneath this guest's root comment—must never appear in Chitthi.
+            private_author_ids = {guest_user_id, post_author_id}
+            relevant_ids = set(own_root_ids)
+            relevant_answers = []
+            for answer in answer_rows:
+                answer_id = int(row_value(answer, "id") or 0)
+                parent_id = int(row_value(answer, "parent_answer_id") or 0)
+                author_id = int(row_value(answer, "author_id") or 0)
+                if answer_id in own_root_ids or (parent_id in relevant_ids and author_id in private_author_ids):
+                    relevant_ids.add(answer_id)
+                    relevant_answers.append(answer)
             post["answers"] = [
                 community_answer_payload(answer, accepted_id, guest_user_id)
                 for answer in relevant_answers[-20:]
@@ -37257,9 +37317,63 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({
             "ok": True,
             "guestId": row_value(guest, "name") or f"Guest {guest_user_id:04d}",
+            "guestUserId": guest_user_id,
             "remaining": max(0, 6 - int(row_value(guest, "messages_used") or 0)),
             "threads": threads,
         })
+
+    def api_mobile_community_guest_message(self) -> None:
+        guest = self.current_community_guest()
+        if not guest:
+            self.send_json({"ok": False, "error": "A guest session is required."}, 401)
+            return
+        payload = self.read_json_body()
+        conversation_public_id = clean_text_value(payload.get("conversationId"), 80)
+        body = clean_multiline_text_value(payload.get("body"), 1800)
+        reply_to_message_id = int(float_from_value(payload.get("replyToMessageId")) or 0)
+        if len(body) < 1:
+            self.send_json({"ok": False, "error": "Write a message before sending."}, 400)
+            return
+        guest_user_id = int(row_value(guest, "user_id") or 0)
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with db() as con:
+            allowance = con.execute(
+                """UPDATE ask_community_guest_sessions
+                   SET messages_used = messages_used + 1, updated_at = ?
+                   WHERE id = ? AND messages_used < 6""",
+                (now, int(guest["id"])),
+            )
+            if allowance.rowcount != 1:
+                self.send_json({"ok": False, "error": "Create a free account for unlimited Chitthi messages.", "guestLimitReached": True, "remaining": 0}, 403)
+                return
+            conversation = con.execute(
+                """SELECT conversations.* FROM chat_conversations conversations
+                   JOIN chat_participants participant ON participant.conversation_id = conversations.id AND participant.user_id = ?
+                   WHERE conversations.public_id = ? AND conversations.status = 'ACTIVE'
+                     AND conversations.community_id IS NULL
+                     AND (SELECT COUNT(*) FROM chat_participants members WHERE members.conversation_id = conversations.id) = 2
+                   LIMIT 1""",
+                (guest_user_id, conversation_public_id),
+            ).fetchone()
+            if not conversation:
+                con.execute("UPDATE ask_community_guest_sessions SET messages_used = MAX(0, messages_used - 1) WHERE id = ?", (int(guest["id"]),))
+                self.send_json({"ok": False, "error": "This private conversation is unavailable."}, 404)
+                return
+            if reply_to_message_id:
+                reply_target = con.execute(
+                    "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL",
+                    (reply_to_message_id, int(conversation["id"])),
+                ).fetchone()
+                if not reply_target:
+                    con.execute("UPDATE ask_community_guest_sessions SET messages_used = MAX(0, messages_used - 1) WHERE id = ?", (int(guest["id"]),))
+                    self.send_json({"ok": False, "error": "The replied-to message is unavailable."}, 404)
+                    return
+            guest_user = con.execute("SELECT * FROM users WHERE id = ? AND guest_account = 1", (guest_user_id,)).fetchone()
+            message = save_chat_message(con, int(conversation["id"]), guest_user, body, client_message_id=f"guest-chat-{secrets.token_hex(12)}", reply_to_message_id=reply_to_message_id)
+            self.notify_chat_recipients(con, conversation, guest_user, message)
+            current_usage = int(con.execute("SELECT messages_used FROM ask_community_guest_sessions WHERE id = ?", (int(guest["id"]),)).fetchone()["messages_used"])
+        remaining = max(0, 6 - current_usage)
+        self.send_json({"ok": True, "messageId": int(row_value(message, "id") or 0), "guestRemaining": remaining}, 201)
 
     def api_mobile_react_community(self) -> None:
         user = self.current_user()
@@ -37286,19 +37400,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "The content is unavailable."}, 404)
                 return
             existing = con.execute(f"SELECT id, reaction FROM ask_community_reactions WHERE {target_column} = ? AND user_id = ?", (target_id, user_id)).fetchone()
-            if existing and existing["reaction"] == reaction:
+            reaction_aliases = {"HELPFUL": "LIKE", "THANKS": "LOVE", "SUPPORT": "CARE"}
+            normalized_reaction = reaction_aliases.get(reaction, reaction)
+            existing_reaction = reaction_aliases.get(str(row_value(existing, "reaction") or ""), str(row_value(existing, "reaction") or ""))
+            if existing and existing_reaction == normalized_reaction:
                 con.execute("DELETE FROM ask_community_reactions WHERE id = ?", (int(existing["id"]),))
                 active = False
             elif existing:
-                con.execute("UPDATE ask_community_reactions SET reaction = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?", (reaction, int(existing["id"])))
+                con.execute("UPDATE ask_community_reactions SET reaction = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?", (normalized_reaction, int(existing["id"])))
                 active = True
             else:
-                con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, user_id, reaction))
+                con.execute(f"INSERT INTO ask_community_reactions ({target_column}, user_id, reaction) VALUES (?, ?, ?)", (target_id, user_id, normalized_reaction))
                 active = True
             reaction_rows = con.execute(f"SELECT reaction, COUNT(*) AS count FROM ask_community_reactions WHERE {target_column} = ? GROUP BY reaction", (target_id,)).fetchall()
-            counts = {str(row["reaction"]): int(row["count"] or 0) for row in reaction_rows}
+            counts: dict[str, int] = {}
+            for row in reaction_rows:
+                key = reaction_aliases.get(str(row["reaction"]), str(row["reaction"]))
+                counts[key] = counts.get(key, 0) + int(row["count"] or 0)
             count = sum(counts.values())
-        self.send_json({"ok": True, "active": active, "reaction": reaction if active else "", "count": count, "counts": counts})
+        self.send_json({"ok": True, "active": active, "reaction": normalized_reaction if active else "", "count": count, "counts": counts})
 
     def api_mobile_save_community_post(self) -> None:
         user = self.current_user()

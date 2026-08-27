@@ -459,18 +459,36 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     setDetail((current) => current?.id === id ? update(current) : current);
   };
 
+  const optimisticReaction = <T extends { viewerReaction: string; reactionCount: number; reactionCounts?: Record<string, number> }>(item: T, reaction: string): T => {
+    const previous = item.viewerReaction;
+    const selecting = previous !== reaction;
+    const counts = { ...(item.reactionCounts || {}) };
+    if (previous) counts[previous] = Math.max(0, Number(counts[previous] || 0) - 1);
+    if (selecting) counts[reaction] = Number(counts[reaction] || 0) + 1;
+    return {
+      ...item,
+      viewerReaction: selecting ? reaction : "",
+      reactionCount: Math.max(0, Number(item.reactionCount || 0) + (previous ? -1 : 0) + (selecting ? 1 : 0)),
+      reactionCounts: counts,
+    };
+  };
+
   const reactPost = async (post: CommunityPost, reaction: string) => {
     const requestKey = `post-${post.id}`;
     if (reactionRequests.current.has(requestKey)) return;
     reactionRequests.current.add(requestKey);
     const previousReaction = post.viewerReaction;
-    const selecting = previousReaction !== reaction;
-    mutatePost(post.id, (value) => ({ ...value, reacted: selecting, viewerReaction: selecting ? reaction : "" }));
+    const previousReactionCount = post.reactionCount;
+    const previousReactionCounts = post.reactionCounts;
+    mutatePost(post.id, (value) => {
+      const optimistic = optimisticReaction(value, reaction);
+      return { ...optimistic, reacted: Boolean(optimistic.viewerReaction) };
+    });
     try {
       const result = await reactToCommunityContent({ postId: post.id }, reaction);
       mutatePost(post.id, (value) => ({ ...value, reacted: result.active, viewerReaction: result.reaction, reactionCount: result.count, reactionCounts: result.counts }));
     } catch (error) {
-      mutatePost(post.id, (value) => ({ ...value, reacted: Boolean(previousReaction), viewerReaction: previousReaction }));
+      mutatePost(post.id, (value) => ({ ...value, reacted: Boolean(previousReaction), viewerReaction: previousReaction, reactionCount: previousReactionCount, reactionCounts: previousReactionCounts }));
       Alert.alert("Reaction not saved", message(error));
     } finally { reactionRequests.current.delete(requestKey); }
   };
@@ -480,28 +498,67 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     if (reactionRequests.current.has(requestKey)) return;
     reactionRequests.current.add(requestKey);
     const previousReaction = answerItem.viewerReaction;
-    const selecting = previousReaction !== reaction;
-    setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, viewerReaction: selecting ? reaction : "" } : item) } : current);
+    const previousReactionCount = answerItem.reactionCount;
+    const previousReactionCounts = answerItem.reactionCounts;
+    setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? optimisticReaction(item, reaction) : item) } : current);
     try {
       const result = await reactToCommunityContent({ answerId: answerItem.id }, reaction);
       setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, reactionCount: result.count, viewerReaction: result.reaction, reactionCounts: result.counts } : item) } : current);
     } catch (error) {
-      setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, viewerReaction: previousReaction } : item) } : current);
+      setDetail((current) => current ? { ...current, answers: current.answers?.map((item) => item.id === answerItem.id ? { ...item, viewerReaction: previousReaction, reactionCount: previousReactionCount, reactionCounts: previousReactionCounts } : item) } : current);
       Alert.alert("Reaction not saved", message(error));
     } finally { reactionRequests.current.delete(requestKey); }
   };
 
+  const normalizedReactionCount = (counts: Record<string, number> | undefined, reaction: string) => {
+    if (reaction === "LIKE") return Number(counts?.LIKE || 0) + Number(counts?.HELPFUL || 0);
+    if (reaction === "LOVE") return Number(counts?.LOVE || 0) + Number(counts?.THANKS || 0);
+    if (reaction === "CARE") return Number(counts?.CARE || 0) + Number(counts?.SUPPORT || 0);
+    return Number(counts?.[reaction] || 0);
+  };
+
+  const reactionBreakdown = (counts: Record<string, number> | undefined, total: number, viewerReaction = "") => {
+    const detailed = reactionOptions
+      .map((option) => ({ ...option, count: normalizedReactionCount(counts, option.value) }))
+      .filter((option) => option.count > 0);
+    if (detailed.length || total <= 0) return detailed;
+    // Older deployed API responses contain only `reactionCount`. Keep the
+    // Admin-style summary visible until those servers return per-emoji counts.
+    const fallback = reactionOptions.find((option) => option.value === viewerReaction) || reactionOptions[0];
+    return [{ ...fallback, count: total }];
+  };
+
+  const reactionStats = (counts: Record<string, number> | undefined, total: number, viewerReaction = "") => total > 0 ? (
+    <View style={styles.answerReactionStats}>
+      {reactionBreakdown(counts, total, viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}
+    </View>
+  ) : null;
+
   const reactionPicker = (target: string, viewerReaction: string, count: number, counts: Record<string, number> | undefined, onReact: (reaction: string) => void, iconOnly = false) => {
     const selected = reactionOptions.find((option) => option.value === viewerReaction);
-    const visibleReactionEmojis = reactionOptions
-      .filter((option) => Number(counts?.[option.value] || 0) > 0)
-      .sort((left, right) => Number(counts?.[right.value] || 0) - Number(counts?.[left.value] || 0))
-      .slice(0, 3)
-      .map((option) => option.emoji)
-      .join("");
     return <View style={styles.reactionControl}>
-      {expandedReactionTarget === target ? <View style={styles.reactionTray}>{reactionOptions.map((option) => <TouchableOpacity key={option.value} style={styles.reactionChoice} onPress={(event) => { event.stopPropagation(); setExpandedReactionTarget(""); onReact(option.value); }} accessibilityLabel={`${option.label} reaction`}><Text style={styles.reactionChoiceEmoji}>{option.emoji}</Text></TouchableOpacity>)}</View> : null}
-      <TouchableOpacity style={[styles.reactionSummary, iconOnly && styles.reactionSummaryIconOnly]} onPress={(event) => { event.stopPropagation(); if (reactionLongPressTarget.current === target) { reactionLongPressTarget.current = ""; return; } setExpandedReactionTarget(""); onReact(selected?.value || "LIKE"); }} onLongPress={() => { reactionLongPressTarget.current = target; setExpandedReactionTarget(target); }} delayLongPress={250} accessibilityLabel={selected ? `Remove ${selected.label} reaction${count ? `, ${count} reactions` : ""}` : `Like${count ? `, ${count} reactions` : ""}. Press and hold for more reactions`}><Text style={styles.reactionSummaryEmoji}>{selected?.emoji || visibleReactionEmojis || "👍"}</Text>{!iconOnly ? <Text style={[styles.reactionSummaryText, selected && styles.reactionSummaryTextActive]}>{selected?.label || "Like"}</Text> : null}{count ? <Text style={styles.reactionTotal}>{count}</Text> : null}</TouchableOpacity>
+      {expandedReactionTarget === target ? <View style={styles.reactionTray}>{reactionOptions.map((option) => <TouchableOpacity key={option.value} style={styles.reactionChoice} onPress={(event) => { event.stopPropagation(); reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); onReact(option.value); }} accessibilityLabel={`${option.label} reaction`}><Text style={styles.reactionChoiceEmoji}>{option.emoji}</Text></TouchableOpacity>)}</View> : null}
+      <TouchableOpacity
+        style={[styles.reactionSummary, iconOnly && styles.reactionSummaryIconOnly]}
+        onPress={(event) => {
+          event.stopPropagation();
+          if (reactionLongPressTarget.current === target) {
+            reactionLongPressTarget.current = "";
+            return;
+          }
+          setExpandedReactionTarget("");
+          onReact(selected?.value || "LIKE");
+        }}
+        onLongPress={(event) => {
+          event.stopPropagation();
+          reactionLongPressTarget.current = target;
+          setExpandedReactionTarget(target);
+        }}
+        delayLongPress={250}
+        accessibilityLabel={`${selected?.label || "Like"}${count ? `, ${count} reactions` : ""}. Double tap to react; long press for more reactions`}
+        accessibilityHint="Long press to choose a different reaction"
+        accessibilityState={{ expanded: expandedReactionTarget === target }}
+      ><Text style={styles.reactionSummaryEmoji}>{selected?.emoji || "👍"}</Text>{!iconOnly ? <Text style={[styles.reactionSummaryText, selected && styles.reactionSummaryTextActive]}>{selected?.label || "Like"}</Text> : null}{count ? <Text style={styles.reactionTotal}>{count}</Text> : null}</TouchableOpacity>
     </View>
   };
 
@@ -672,7 +729,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       {Object.keys(post.details || {}).length ? <View style={styles.detailFacts}>{Object.entries(post.details).filter(([, value]) => value).slice(0, 6).map(([key, value]) => <View key={key} style={styles.fact}><Text style={styles.factLabel}>{key.replace(/([A-Z])/g, " $1")}</Text><Text style={styles.factValue}>{value}</Text></View>)}</View> : null}
       {renderPostImages(post.images)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
-      {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionOptions.map((option) => { const count = option.value === "LIKE" ? (post.reactionCounts?.LIKE || 0) + (post.reactionCounts?.HELPFUL || 0) : post.reactionCounts?.[option.value] || 0; return count ? <Text key={option.value} style={styles.activityText}>{count} {option.emoji} {option.label}</Text> : null; })}</View></View> : null}
+      {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
       <View style={[styles.postActions, isLight && styles.postActionsLight]}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction), true)}
         <TouchableOpacity style={styles.footerCommentAction} onPress={() => void openDetail(post)} accessibilityLabel={`${post.answerCount} comments`}><Text style={styles.footerIcon}>◯</Text>{post.answerCount ? <Text style={styles.footerCommentCount}>{post.answerCount}</Text> : null}</TouchableOpacity>
@@ -722,6 +779,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     return <View key={item.id} style={[styles.inlineReply, depth > 1 && styles.inlineReplyNested]}>
       <View style={styles.inlineReplyHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></View>
       <Text style={styles.inlineReplyBody}>{item.body}</Text>
+      {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
       <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
       {visibleReplies.length ? <View style={[styles.inlineReplies, depth < 2 ? styles.inlineRepliesNested : styles.inlineRepliesDeep]}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, depth + 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
@@ -737,6 +795,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     <View key={item.id} style={[styles.answerCard, item.accepted && styles.acceptedCard]}>
       <View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
       <Text style={styles.answerBody}>{item.body}</Text>
+      {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
       <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
       {replies.length ? <View style={styles.inlineReplies}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
@@ -745,7 +804,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   };
 
   return <View style={styles.screen}>
-    {expandedReactionTarget && !detail ? <Pressable style={styles.reactionDismissLayer} onPress={() => setExpandedReactionTarget("")} accessibilityLabel="Close reactions" /> : null}
+    {expandedReactionTarget && !detail ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}
     <Animated.ScrollView
       contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
       alwaysBounceVertical
@@ -826,7 +885,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     </Modal>
 
     <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={finishGuestAuth}>
-      <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}>{expandedReactionTarget ? <Pressable style={styles.reactionDismissLayer} onPress={() => setExpandedReactionTarget("")} accessibilityLabel="Close reactions" /> : null}<View style={styles.modalHead}><TouchableOpacity onPress={() => setDetail(null)}><Text style={styles.cancel}>Close</Text></TouchableOpacity><Text style={styles.modalTitle}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
+      <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}>{expandedReactionTarget ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}<View style={styles.modalHead}><TouchableOpacity onPress={() => setDetail(null)}><Text style={styles.cancel}>Close</Text></TouchableOpacity><Text style={styles.modalTitle}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
       <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
         {renderPost(detail)}
         <Text style={styles.answersTitle}>{detail.answerCount} {detail.answerCount === 1 ? "comment" : "comments"}</Text>
@@ -888,8 +947,8 @@ const styles = StyleSheet.create({
   needGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 }, needOption: { width: "48%", minHeight: 76, flexDirection: "row", alignItems: "center", gap: 9, padding: 12, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, needIcon: { fontSize: 22 }, needText: { flex: 1, color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
   searchRow: { flexDirection: "row", gap: 8 }, searchInput: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, backgroundColor: theme.colors.panel, color: theme.colors.text, paddingHorizontal: 14 }, searchButton: { minHeight: 48, justifyContent: "center", paddingHorizontal: 16, borderRadius: 15, backgroundColor: theme.colors.brand }, searchButtonText: { color: "#06291e", fontWeight: "800" },
   chips: { gap: 8, paddingRight: 12 }, chip: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center", marginRight: 8, backgroundColor: theme.colors.panel }, chipActive: { backgroundColor: "#d8fff0", borderColor: "#d8fff0" }, chipText: { color: theme.colors.soft, fontWeight: "700", fontSize: 13 }, chipTextActive: { color: "#093525" }, sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, sectionTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" }, manageLink: { color: theme.colors.brand, fontWeight: "800", fontSize: 13 }, groups: { gap: 7, paddingTop: 7, paddingRight: 8 }, groupCard: { width: 96, minHeight: 78, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 14, padding: 9, gap: 3 }, groupActive: { borderColor: theme.colors.brand, backgroundColor: "#14271f" }, groupEmoji: { fontSize: 20 }, groupPhoto: { width: 24, height: 24, borderRadius: 8 }, groupName: { color: theme.colors.text, fontWeight: "800", fontSize: 11 }, groupCount: { color: theme.colors.muted, fontSize: 9 }, feedHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 }, feedHint: { color: theme.colors.muted, fontSize: 11 }, loader: { marginVertical: 50 },
-  postCard: { backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 15, gap: 12, shadowColor: "#000", shadowOpacity: .14, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, postHead: { flexDirection: "row", alignItems: "center", gap: 10 }, avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#204538" }, avatarImage: { borderRadius: 22 }, avatarInitials: { color: "#a8ecd1", fontSize: 14, fontWeight: "900" }, postAuthor: { flex: 1, minWidth: 0 }, author: { color: theme.colors.text, fontWeight: "900", fontSize: 15 }, meta: { color: theme.colors.muted, fontSize: 11, marginTop: 2 }, typeBadge: { backgroundColor: "#153a2c", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 }, typeBadgeText: { color: "#78dcb4", fontWeight: "800", fontSize: 9, letterSpacing: .4 }, postTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 25, fontWeight: "800" }, postBody: { color: theme.colors.soft, fontSize: 14, lineHeight: 21 }, imageRow: { gap: 5 }, postImage: { width: 255, height: 175, borderRadius: 12, backgroundColor: theme.colors.panel2 }, linkCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 14, padding: 9, overflow: "hidden" }, linkPreviewImage: { width: 74, height: 74, borderRadius: 10, backgroundColor: theme.colors.panel2 }, linkPreviewPlaceholder: { width: 74, height: 74, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#173b2d" }, linkPreviewPlaceholderText: { color: theme.colors.brand, fontSize: 28 }, linkContent: { flex: 1, minWidth: 0, gap: 4 }, linkLabel: { color: theme.colors.text, fontWeight: "800", fontSize: 13, lineHeight: 17 }, linkDescription: { color: theme.colors.muted, fontSize: 10, lineHeight: 14 }, linkSource: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, linkFavicon: { width: 15, height: 15, borderRadius: 3 }, linkFaviconFallback: { width: 15, height: 15, borderRadius: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#1c4938" }, linkFaviconFallbackText: { color: theme.colors.brand, fontSize: 9 }, linkUrl: { flex: 1, color: "#85caae", fontSize: 10 }, linkChevron: { color: theme.colors.brand, fontSize: 26, marginRight: 2 }, latestComment: { flexDirection: "row", alignItems: "flex-start", gap: 9 }, latestCommentAvatar: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#204538" }, latestCommentInitials: { color: "#a8ecd1", fontSize: 9, fontWeight: "900" }, latestCommentBubble: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: theme.colors.panel2, paddingHorizontal: 11, paddingVertical: 8 }, latestCommentAuthor: { color: theme.colors.text, fontSize: 11, fontWeight: "900" }, latestCommentBody: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, marginTop: 2 }, addCommentPrompt: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.line }, addCommentIcon: { color: theme.colors.brand, fontSize: 15 }, addCommentText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" }, postActions: { position: "relative", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 10, overflow: "visible" }, reactionDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 20, backgroundColor: "transparent" }, reactionControl: { position: "relative", zIndex: 30 }, reactionTray: { position: "absolute", left: 0, bottom: 40, height: 50, flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 7, borderRadius: 25, borderWidth: 1, borderColor: "#dedede", backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: .24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 24, zIndex: 50 }, reactionChoice: { width: 37, height: 42, alignItems: "center", justifyContent: "center" }, reactionChoiceEmoji: { fontSize: 24 }, reactionSummary: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 7, borderRadius: 9 }, reactionSummaryEmoji: { fontSize: 16 }, reactionSummaryText: { color: theme.colors.soft, fontSize: 11, fontWeight: "800" }, reactionSummaryTextActive: { color: theme.colors.brand }, reactionTotal: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, action: { backgroundColor: "transparent", borderRadius: 9, paddingHorizontal: 7, minHeight: 36, justifyContent: "center" }, iconAction: { width: 34, height: 34, borderRadius: 9, justifyContent: "center", alignItems: "center", backgroundColor: "transparent" }, actionActive: { backgroundColor: "#174c38" }, actionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" },
-  activitySummary: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(145,145,150,.28)", paddingTop: 8 }, activitySummaryLight: { borderTopColor: "rgba(101,103,107,.16)" }, reactionBreakdown: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }, activityText: { color: theme.colors.soft, fontSize: 10, fontWeight: "700" }, commentCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, footerIconAction: { width: 42, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center" }, footerIcon: { color: theme.colors.soft, fontSize: 23, lineHeight: 25 }, footerShareIcon: { color: theme.colors.soft, fontSize: 22, fontWeight: "500", transform: [{ rotate: "-12deg" }] },
+  postCard: { backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 15, gap: 12, shadowColor: "#000", shadowOpacity: .14, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, postHead: { flexDirection: "row", alignItems: "center", gap: 10 }, avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#204538" }, avatarImage: { borderRadius: 22 }, avatarInitials: { color: "#a8ecd1", fontSize: 14, fontWeight: "900" }, postAuthor: { flex: 1, minWidth: 0 }, author: { color: theme.colors.text, fontWeight: "900", fontSize: 15 }, meta: { color: theme.colors.muted, fontSize: 11, marginTop: 2 }, typeBadge: { backgroundColor: "#153a2c", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 }, typeBadgeText: { color: "#78dcb4", fontWeight: "800", fontSize: 9, letterSpacing: .4 }, postTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 25, fontWeight: "800" }, postBody: { color: theme.colors.soft, fontSize: 14, lineHeight: 21 }, imageRow: { gap: 5 }, postImage: { width: 255, height: 175, borderRadius: 12, backgroundColor: theme.colors.panel2 }, linkCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 14, padding: 9, overflow: "hidden" }, linkPreviewImage: { width: 74, height: 74, borderRadius: 10, backgroundColor: theme.colors.panel2 }, linkPreviewPlaceholder: { width: 74, height: 74, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#173b2d" }, linkPreviewPlaceholderText: { color: theme.colors.brand, fontSize: 28 }, linkContent: { flex: 1, minWidth: 0, gap: 4 }, linkLabel: { color: theme.colors.text, fontWeight: "800", fontSize: 13, lineHeight: 17 }, linkDescription: { color: theme.colors.muted, fontSize: 10, lineHeight: 14 }, linkSource: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, linkFavicon: { width: 15, height: 15, borderRadius: 3 }, linkFaviconFallback: { width: 15, height: 15, borderRadius: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#1c4938" }, linkFaviconFallbackText: { color: theme.colors.brand, fontSize: 9 }, linkUrl: { flex: 1, color: "#85caae", fontSize: 10 }, linkChevron: { color: theme.colors.brand, fontSize: 26, marginRight: 2 }, latestComment: { flexDirection: "row", alignItems: "flex-start", gap: 9 }, latestCommentAvatar: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#204538" }, latestCommentInitials: { color: "#a8ecd1", fontSize: 9, fontWeight: "900" }, latestCommentBubble: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: theme.colors.panel2, paddingHorizontal: 11, paddingVertical: 8 }, latestCommentAuthor: { color: theme.colors.text, fontSize: 11, fontWeight: "900" }, latestCommentBody: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, marginTop: 2 }, addCommentPrompt: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.line }, addCommentIcon: { color: theme.colors.brand, fontSize: 15 }, addCommentText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" }, postActions: { position: "relative", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 10, overflow: "visible" }, reactionDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0, backgroundColor: "transparent" }, reactionControl: { position: "relative", zIndex: 30 }, reactionTray: { position: "absolute", left: 0, bottom: 40, height: 50, flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 7, borderRadius: 25, borderWidth: 1, borderColor: "#dedede", backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: .24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 24, zIndex: 50 }, reactionChoice: { width: 37, height: 42, alignItems: "center", justifyContent: "center" }, reactionChoiceEmoji: { fontSize: 24 }, reactionSummary: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 7, borderRadius: 9 }, reactionSummaryEmoji: { fontSize: 16 }, reactionSummaryText: { color: theme.colors.soft, fontSize: 11, fontWeight: "800" }, reactionSummaryTextActive: { color: theme.colors.brand }, reactionTotal: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, action: { backgroundColor: "transparent", borderRadius: 9, paddingHorizontal: 7, minHeight: 36, justifyContent: "center" }, iconAction: { width: 34, height: 34, borderRadius: 9, justifyContent: "center", alignItems: "center", backgroundColor: "transparent" }, actionActive: { backgroundColor: "#174c38" }, actionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" },
+  activitySummary: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(145,145,150,.28)", paddingTop: 8 }, activitySummaryLight: { borderTopColor: "rgba(101,103,107,.16)" }, reactionBreakdown: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }, answerReactionStats: { minHeight: 24, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 5 }, activityText: { color: theme.colors.soft, fontSize: 10, fontWeight: "700" }, commentCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, footerIconAction: { width: 42, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center" }, footerIcon: { color: theme.colors.soft, fontSize: 23, lineHeight: 25 }, footerShareIcon: { color: theme.colors.soft, fontSize: 22, fontWeight: "500", transform: [{ rotate: "-12deg" }] },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaGridSingle: { height: 330 },

@@ -120,6 +120,7 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual((status, guest_like["active"], guest_like["reaction"], guest_like["count"]), (200, True, "LIKE", 1))
         status, guest_detail = self.guest_request("GET", f"/api/mobile/community?postId={post_id}", token)
         self.assertEqual((status, guest_detail["posts"][0]["viewerReaction"]), (200, "LIKE"))
+        self.assertEqual(guest_detail["posts"][0]["reactionCounts"]["LIKE"], 1)
         status, guest_unlike = self.guest_request("POST", "/api/mobile/community/react", token, {"postId": post_id, "reaction": "LIKE"})
         self.assertEqual((status, guest_unlike["active"], guest_unlike["count"]), (200, False, 0))
         first_answer_id = ""
@@ -146,6 +147,12 @@ class CommunityFeatureTest(unittest.TestCase):
         second_status, second_answer = self.guest_request("POST", "/api/mobile/community/answer", second_session["token"], {"postId": post_id, "body": "A different guest is interested."})
         self.assertEqual(second_status, 201)
         self.assertNotEqual(second_answer["conversationId"], first_conversation_id)
+        cross_status, cross_answer = self.guest_request(
+            "POST", "/api/mobile/community/answer", second_session["token"],
+            {"postId": post_id, "body": "A different guest replied inside the first guest branch.", "parentAnswerId": first_answer_id},
+        )
+        self.assertEqual(cross_status, 201)
+        self.assertEqual(cross_answer["conversationId"], second_answer["conversationId"])
         with app.db() as con:
             owner_conversations = con.execute(
                 """SELECT DISTINCT conversations.public_id
@@ -180,8 +187,17 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(len(inbox["threads"]), 1)
         self.assertEqual(inbox["threads"][0]["id"], post_id)
         inbox_answers = inbox["threads"][0]["answers"]
-        self.assertTrue(any(answer["body"] == "Thanks — replying here so you can see it." for answer in inbox_answers))
-        self.assertTrue(all(answer["author"]["name"] == session["guestId"] or answer["parentAnswerId"] == first_answer_id for answer in inbox_answers))
+        inbox_bodies = {answer["body"] for answer in inbox_answers}
+        self.assertIn("Thanks — replying here so you can see it.", inbox_bodies)
+        self.assertIn("This reply is nested under the previous reply.", inbox_bodies)
+        self.assertNotIn("A different guest is interested.", inbox_bodies)
+        self.assertNotIn("A different guest replied inside the first guest branch.", inbox_bodies)
+        self.assertEqual({answer["author"]["name"] for answer in inbox_answers}, {session["guestId"], "Owner"})
+
+        second_inbox_status, second_inbox = self.guest_request("GET", "/api/mobile/community/guest-inbox", second_session["token"])
+        self.assertEqual(second_inbox_status, 200)
+        self.assertEqual(len(second_inbox["threads"]), 1)
+        self.assertEqual([answer["body"] for answer in second_inbox["threads"][0]["answers"]], ["A different guest is interested."])
 
         status, resumed = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-installation-guest-0001"})
         self.assertEqual(status, 200)
@@ -246,6 +262,40 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertIsNone(guest_session)
         _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}")
         self.assertEqual(detail["posts"][0]["answers"][0]["author"]["name"], "Claimed Community Member")
+
+    def test_guest_continues_privately_in_chitthi_after_first_public_comment(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, session = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-private-chitthi-guest-0001"})
+        status, first_comment = self.guest_request("POST", "/api/mobile/community/answer", session["token"], {"postId": post_id, "body": "Is this still available?"})
+        self.assertEqual(status, 201)
+        conversation_id = first_comment["conversationId"]
+
+        status, private_reply = self.guest_request("POST", "/api/mobile/community/guest-message", session["token"], {"conversationId": conversation_id, "body": "I can move in next week."})
+        self.assertEqual(status, 201)
+        self.assertEqual(private_reply["guestRemaining"], 4)
+
+        status, linked_reply = self.guest_request("POST", "/api/mobile/community/guest-message", session["token"], {
+            "conversationId": conversation_id,
+            "body": "Replying privately to my last message.",
+            "replyToMessageId": private_reply["messageId"],
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(linked_reply["guestRemaining"], 3)
+
+        with app.db() as con:
+            public_answer_count = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_answers WHERE post_id = (SELECT id FROM ask_community_posts WHERE public_id = ?)", (post_id,)).fetchone()["count"])
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE public_id = ?", (conversation_id,)).fetchone()
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner_id,)).fetchone()
+            app.save_chat_message(con, int(conversation["id"]), owner, "Yes, it is available.")
+        self.assertEqual(public_answer_count, 1)
+
+        inbox_status, inbox = self.guest_request("GET", "/api/mobile/community/guest-inbox", session["token"])
+        self.assertEqual(inbox_status, 200)
+        self.assertEqual(inbox["threads"][0]["guestConversationId"], conversation_id)
+        guest_messages = inbox["threads"][0]["guestMessages"]
+        self.assertEqual([message["body"] for message in guest_messages], ["Is this still available?", "I can move in next week.", "Replying privately to my last message.", "Yes, it is available."])
+        self.assertEqual(guest_messages[2]["replyToMessageId"], private_reply["messageId"])
 
     def test_layered_feed_returns_local_first_and_active_public_usa_fallback(self):
         _, local = self.create_post(title="Dayton neighborhood advice", city="Dayton, OH")
@@ -437,6 +487,25 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertTrue(detail["posts"][0]["answers"][0]["accepted"])
         self.assertEqual(detail["posts"][0]["acceptedAnswerId"], answer_id)
 
+    def test_multiple_reaction_types_persist_and_reload_together(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+
+        status, liked = self.request("POST", "/api/mobile/community/react", "member-token", {"postId": post_id, "reaction": "LIKE"})
+        self.assertEqual((status, liked["active"]), (200, True))
+        status, loved = self.request("POST", "/api/mobile/community/react", "outsider-token", {"postId": post_id, "reaction": "LOVE"})
+        self.assertEqual((status, loved["active"]), (200, True))
+        status, cared = self.request("POST", "/api/mobile/community/react", "owner-token", {"postId": post_id, "reaction": "CARE"})
+        self.assertEqual((status, cared["active"]), (200, True))
+
+        _, reloaded = self.request("GET", f"/api/mobile/community?postId={post_id}", "owner-token")
+        post = reloaded["posts"][0]
+        self.assertEqual(post["reactionCount"], 3)
+        self.assertEqual(post["reactionCounts"]["LIKE"], 1)
+        self.assertEqual(post["reactionCounts"]["LOVE"], 1)
+        self.assertEqual(post["reactionCounts"]["CARE"], 1)
+        self.assertEqual(post["viewerReaction"], "CARE")
+
     def test_housing_listing_uses_the_same_comments_and_reactions(self):
         with app.db() as con:
             con.execute(
@@ -454,6 +523,7 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(housing["sourceKind"], "HOUSING")
         status, reaction = self.request("POST", "/api/mobile/community/react", "member-token", {"postId": housing["id"], "reaction": "HELPFUL"})
         self.assertEqual((status, reaction["active"], reaction["count"]), (200, True, 1))
+        self.assertEqual((reaction["reaction"], reaction["counts"]), ("LIKE", {"LIKE": 1}))
         status, comment = self.request("POST", "/api/mobile/community/answer", "member-token", {"postId": housing["id"], "body": "Is the room still available for September?"})
         self.assertEqual(status, 201)
         _, detail = self.request("GET", f"/api/mobile/community?postId={housing['id']}", "member-token")

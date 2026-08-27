@@ -66,6 +66,7 @@ import {
   removeChatGroupMember,
   sendEncryptedChatMessage,
   sendDirectEncryptedChatAttachment,
+  sendCommunityGuestMessage,
   sendChatRichMessage,
   answerCommunityPost,
   transferChatGroupOwnership,
@@ -80,7 +81,7 @@ import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { shareChitthiGroup } from "../utils/listingShare";
-import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, HousingPost, RidePost } from "../types";
+import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityAnswer, CommunityPost, HousingPost, RidePost } from "../types";
 import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
@@ -1342,12 +1343,23 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
   const isLight = useColorScheme() === "light";
   const [threads, setThreads] = useState<CommunityPost[]>([]);
   const [guestId, setGuestId] = useState("Guest");
+  const [guestUserId, setGuestUserId] = useState(0);
   const [remaining, setRemaining] = useState(6);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(true);
   const [benefitsOpen, setBenefitsOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [wallpaperOpen, setWallpaperOpen] = useState(false);
+  const [wallpaperId, setWallpaperId] = useState("midnight");
+  const [muted, setMuted] = useState(false);
+  const [actionAnswer, setActionAnswer] = useState<CommunityAnswer | null>(null);
+  const [replyingTo, setReplyingTo] = useState<CommunityAnswer | null>(null);
   const selected = threads.find((thread) => thread.id === selectedId) || null;
+  const guestConversationId = selected?.guestConversationId || selectedId;
+  const isGuestMessageMine = (answer: CommunityAnswer) => guestUserId > 0
+    ? answer.author.id === guestUserId
+    : answer.author.id !== selected?.author.id;
 
   const loadGuestLetters = async () => {
     setBusy(true);
@@ -1355,6 +1367,7 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
       const payload = await getCommunityGuestInbox();
       setThreads(payload.threads || []);
       setGuestId(payload.guestId || "Guest");
+      setGuestUserId(Number(payload.guestUserId || 0));
       setRemaining(payload.remaining);
     } catch {
       setThreads([]);
@@ -1363,17 +1376,33 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
     }
   };
   useEffect(() => { void loadGuestLetters(); }, []);
+  useEffect(() => {
+    if (!selectedId) return;
+    void Promise.all([
+      AsyncStorage.getItem(`fairfares.chitthi.guest-muted.${guestConversationId}`),
+      AsyncStorage.getItem(`fairfares.chat.wallpaper.${guestConversationId}`),
+    ]).then(([storedMuted, storedWallpaper]) => {
+      setMuted(storedMuted === "1");
+      try {
+        const stored = JSON.parse(storedWallpaper || "{}");
+        if (wallpaperChoices.some((choice) => choice.id === stored.id)) setWallpaperId(stored.id);
+      } catch { setWallpaperId("midnight"); }
+    });
+  }, [selectedId, guestConversationId]);
 
   const sendGuestReply = async () => {
     if (!selected || !draft.trim() || busy) return;
     if (remaining <= 0) { setBenefitsOpen(true); return; }
-    const ownRoot = [...(selected.answers || [])].reverse().find((answer) => !answer.parentAnswerId && answer.author.name === guestId);
-    if (!ownRoot) return;
+    if (!selected.guestConversationId) return;
     setBusy(true);
     try {
-      const result = await answerCommunityPost(selected.id, draft.trim(), ownRoot.id);
+      const result = await sendCommunityGuestMessage(selected.guestConversationId, draft.trim(), Number(replyingTo?.id || 0));
       setDraft("");
-      if (typeof result.guestRemaining === "number") setRemaining(result.guestRemaining);
+      setReplyingTo(null);
+      if (typeof result.guestRemaining === "number") {
+        setRemaining(result.guestRemaining);
+        if (result.guestRemaining <= 0) setBenefitsOpen(true);
+      }
       const payload = await getCommunityGuestInbox();
       setThreads(payload.threads || []);
       setRemaining(payload.remaining);
@@ -1386,6 +1415,8 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
     }
   };
 
+  const activeWallpaper = wallpaperChoices.find((choice) => choice.id === wallpaperId) || wallpaperChoices[0];
+
   // Keep Chitthi quiet for guests who have not received a community reply.
   // The feedback card remains the first useful action instead of showing an
   // empty state that looks like another sign-in gate.
@@ -1394,18 +1425,72 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
 
   return <View style={[styles.guestLetters, isLight && styles.guestLettersLight]}>
     {threads.map((thread) => {
-      const latestReply = [...(thread.answers || [])].reverse().find((answer) => answer.author.name !== guestId);
-      return <TouchableOpacity key={thread.id} style={[styles.guestLetterRow, isLight && styles.guestLetterRowLight]} onPress={() => setSelectedId((current) => current === thread.id ? "" : thread.id)}>
-        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={styles.guestLetterEyebrow}>REPLY FROM POST LISTER · {remaining}/6 LEFT</Text><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{thread.author.name}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latestReply?.body || thread.title}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
+      const latestAnswer = (thread.guestMessages || thread.answers || []).at(-1);
+      return <TouchableOpacity key={thread.id} style={[styles.chatRow, isLight && styles.chatRowLight]} onPress={() => setSelectedId(thread.id)} accessibilityRole="button" accessibilityLabel={`Open private chat with ${thread.author.name}. ${latestAnswer?.body || thread.title}`}>
+        <View style={styles.avatarWrap}>
+          <View style={styles.avatar}><InitialsAvatar photoUrl={thread.author.photoUrl} label={thread.author.name} imageStyle={styles.avatarImage} textStyle={styles.avatarText} /></View>
+        </View>
+        <View style={styles.chatCopy}>
+          <View style={styles.chatTitleRow}><Text style={[styles.chatName, isLight && styles.chatNameLight]} numberOfLines={1}>{thread.author.name}</Text><Text style={[styles.chatTime, isLight && styles.chatTimeLight]}>{relativeTime(latestAnswer?.createdAt || thread.updatedAt)}</Text></View>
+          <View style={styles.chatPreviewRow}><Text style={[styles.chatLast, isLight && styles.chatLastLight]} numberOfLines={1}>{latestAnswer?.body || thread.title}</Text></View>
+          <Text style={styles.chatKind}>Direct letters · Ask Community</Text>
+        </View>
       </TouchableOpacity>;
     })}
-    {selected ? <View style={[styles.guestThread, isLight && styles.guestLetterRowLight]}>
-      <View style={styles.guestThreadContext}><Text style={styles.guestLetterEyebrow}>POST</Text><Text style={[styles.guestThreadContextTitle, isLight && styles.guestLettersTitleLight]} numberOfLines={2}>{selected.title}</Text></View>
-      {(selected.answers || []).slice(-8).map((answer) => <View key={answer.id} style={[styles.guestThreadBubble, answer.author.name === guestId && styles.guestThreadBubbleMine]}><Text style={styles.guestThreadAuthor}>{answer.author.name === guestId ? "You" : answer.author.name}</Text><Text style={[styles.guestThreadBody, isLight && answer.author.name !== guestId && styles.guestLettersTitleLight]}>{answer.body}</Text></View>)}
-      <TextInput style={[styles.guestReplyInput, isLight && styles.guestReplyInputLight]} value={draft} onChangeText={setDraft} multiline placeholder={remaining > 0 ? "Write a reply…" : "Write your reply, then sign up to send…"} placeholderTextColor={theme.colors.muted} />
-      <TouchableOpacity style={[styles.guestReplySend, !draft.trim() && styles.disabledButton]} disabled={!draft.trim() || busy} onPress={() => void sendGuestReply()}><Text style={styles.guestReplySendText}>{busy ? "Sending…" : "Send reply"}</Text></TouchableOpacity>
-    </View> : null}
-    <Modal visible={benefitsOpen} transparent animationType="fade" onRequestClose={() => setBenefitsOpen(false)}><View style={styles.guestBenefitsBackdrop}><View style={[styles.guestBenefitsCard, isLight && styles.guestBenefitsCardLight]}><TouchableOpacity style={styles.guestBenefitsClose} onPress={() => setBenefitsOpen(false)}><Text style={styles.guestBenefitsCloseText}>×</Text></TouchableOpacity><Text style={styles.guestBenefitsEyebrow}>KEEP YOUR CONVERSATIONS</Text><Text style={[styles.guestBenefitsTitle, isLight && styles.guestLettersTitleLight]}>Create your free FairFares account</Text><Text style={styles.guestBenefitsBody}>Your six guest comments and replies stay with you. Sign up for unlimited Ask conversations, housing and roommate posts, affordable rentals, and shared rides.</Text><TouchableOpacity style={styles.guestBenefitsPrimary} onPress={() => { setBenefitsOpen(false); setTimeout(onRequireSignup, 100); }}><Text style={styles.guestBenefitsPrimaryText}>Create free account</Text></TouchableOpacity><TouchableOpacity onPress={() => setBenefitsOpen(false)}><Text style={styles.guestBenefitsLater}>Not now</Text></TouchableOpacity></View></View></Modal>
+    <Modal visible={Boolean(selected)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setSelectedId("")}>
+      {selected ? <View style={[styles.threadScreen, styles.guestPrivateSafeScreen]}>
+        <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: activeWallpaper.color }]}><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: activeWallpaper.accent }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: activeWallpaper.accent }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text><View style={styles.wallpaperShade} /></View>
+        <View style={styles.threadHeader}>
+          <TouchableOpacity style={styles.backButton} onPress={() => { setBenefitsOpen(false); setSelectedId(""); }} accessibilityRole="button" accessibilityLabel="Back to conversations"><BackIcon /></TouchableOpacity>
+          <View style={styles.threadAvatar}><InitialsAvatar photoUrl={selected.author.photoUrl} label={selected.author.name} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} /></View>
+          <View style={styles.threadHeaderCopy}><Text style={styles.threadHeaderTitle} numberOfLines={1}>{selected.author.name}</Text><Text style={styles.threadHeaderMeta} numberOfLines={1}>Private chat · Ask Community</Text></View>
+          <TouchableOpacity style={styles.headerAction} onPress={() => setOptionsOpen((current) => !current)} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
+        </View>
+        {optionsOpen ? <><TouchableOpacity activeOpacity={1} style={styles.chatOptionsBackdrop} onPress={() => setOptionsOpen(false)} accessibilityLabel="Close chat options" /><View style={styles.chatOptionsPanel}>
+          <TouchableOpacity style={styles.chatOptionRow} onPress={() => { const next = !muted; setMuted(next); setOptionsOpen(false); void AsyncStorage.setItem(`fairfares.chitthi.guest-muted.${guestConversationId}`, next ? "1" : "0"); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{muted ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setOptionsOpen(false); setWallpaperOpen(true); }}><Text style={styles.chatOptionIcon}>▧</Text><Text style={styles.chatOptionText}>Chat wallpaper</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setOptionsOpen(false); setBenefitsOpen(true); }}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Account and privacy</Text></TouchableOpacity>
+        </View></> : null}
+        <View style={styles.threadKeyboardViewport}>
+        <StaticKeyboardBody bottomSafeArea={Platform.OS === "ios" ? 18 : 0}>
+          <ScrollView style={styles.threadMessages} contentContainerStyle={[styles.threadMessagesContent, styles.guestPrivateMessagesContent]} keyboardShouldPersistTaps="handled">
+            <View style={[styles.messageContext, styles.theirMessageContext, styles.guestPrivateContext]}><Text style={[styles.messageContextType, styles.theirMessageContextType]}>ASK COMMUNITY POST</Text><Text style={[styles.messageContextTitle, styles.theirMessageContextTitle]}>{selected.title}</Text></View>
+            {(selected.guestMessages || selected.answers || []).slice(-50).map((answer, index, answers) => {
+              const mine = isGuestMessageMine(answer);
+              const runEnds = index === answers.length - 1 || isGuestMessageMine(answers[index + 1]) !== mine;
+              return <View key={answer.id} style={[styles.threadMessageRow, mine && styles.threadMessageRowMine, runEnds && styles.threadMessageRunEnd]}><TouchableOpacity activeOpacity={1} delayLongPress={350} onLongPress={() => setActionAnswer(answer)} style={[styles.bubble, mine ? styles.myBubble : styles.theirBubble]}>{runEnds ? <View style={[styles.bubbleTail, mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}<Text style={[styles.bubbleText, mine ? styles.myBubbleText : styles.theirBubbleText]}>{answer.body}</Text><View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(answer.createdAt)}</Text>{mine ? <Text style={styles.receiptMark}>✓✓</Text> : null}</View></TouchableOpacity></View>;
+            })}
+          </ScrollView>
+          {!draft.trim() ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>{[`Hi, ${selected.author.name.split(" ")[0] || "there"}`, `Hello, ${selected.author.name.split(" ")[0] || "there"}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => setDraft(reply)}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}</ScrollView> : null}
+          <View style={styles.composerDock}>
+            {replyingTo ? <View style={styles.replyComposerPreview}><View style={styles.replyComposerBar} /><View style={styles.replyComposerCopy}><Text style={styles.replyComposerName}>{isGuestMessageMine(replyingTo) ? "You" : replyingTo.author.name}</Text><Text style={styles.replyComposerText} numberOfLines={1}>{replyingTo.body}</Text></View><TouchableOpacity onPress={() => setReplyingTo(null)} accessibilityLabel="Cancel reply"><Text style={styles.replyComposerClose}>×</Text></TouchableOpacity></View> : null}
+            <View style={styles.composer}>
+              <TouchableOpacity style={styles.composerIcon} onPress={() => setBenefitsOpen(true)} accessibilityLabel="Sign up to add an attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.composerEmoji} onPress={() => setDraft((current) => `${current}😊`)} accessibilityLabel="Add emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
+              <TextInput style={styles.composerInput} value={draft} onChangeText={setDraft} multiline placeholder={remaining > 0 ? "Write a message…" : "Write your message, then sign up to send…"} placeholderTextColor="#a7a08d" />
+              <TouchableOpacity style={[styles.composerSend, (!draft.trim() || busy) && styles.sendDisabled]} disabled={!draft.trim() || busy} onPress={() => void sendGuestReply()} accessibilityLabel="Send message">{busy ? <Text style={styles.composerSendText}>…</Text> : <SendIcon />}</TouchableOpacity>
+            </View>
+            <Text style={styles.guestPrivateAllowance}>{remaining} of 6 guest messages left</Text>
+          </View>
+        </StaticKeyboardBody>
+        </View>
+        <Modal visible={wallpaperOpen} transparent animationType="fade" onRequestClose={() => setWallpaperOpen(false)}><Pressable style={styles.guestSettingsBackdrop} onPress={() => setWallpaperOpen(false)}><Pressable style={styles.guestWallpaperCard} onPress={(event) => event.stopPropagation()}><Text style={styles.guestWallpaperTitle}>Chat wallpaper</Text><View style={styles.guestWallpaperChoices}>{wallpaperChoices.map((choice) => <TouchableOpacity key={choice.id} style={[styles.guestWallpaperChoice, { backgroundColor: choice.color }, wallpaperId === choice.id && styles.guestWallpaperChoiceActive]} onPress={() => { setWallpaperId(choice.id); void AsyncStorage.setItem(`fairfares.chat.wallpaper.${guestConversationId}`, JSON.stringify({ id: choice.id, image: "" })); }}><View style={[styles.guestWallpaperAccent, { backgroundColor: choice.accent }]} /><Text style={styles.guestWallpaperLabel}>{choice.label}</Text></TouchableOpacity>)}</View><TouchableOpacity style={styles.guestWallpaperDone} onPress={() => setWallpaperOpen(false)}><Text style={styles.guestWallpaperDoneText}>Done</Text></TouchableOpacity></Pressable></Pressable></Modal>
+        <Modal visible={Boolean(actionAnswer)} transparent animationType="fade" onRequestClose={() => setActionAnswer(null)}><Pressable style={styles.messageActionBackdrop} onPress={() => setActionAnswer(null)}><Pressable style={styles.guestMessageActionCard} onPress={(event) => event.stopPropagation()}>{actionAnswer ? <View style={styles.messageActionSheet}><TouchableOpacity style={styles.messageActionRow} onPress={() => { setReplyingTo(actionAnswer); setActionAnswer(null); }}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity><TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionAnswer.body); setActionAnswer(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity></View> : null}</Pressable></Pressable></Modal>
+        {benefitsOpen ? <View style={styles.guestBenefitsBackdrop}>
+          <View style={styles.guestBenefitsCard}>
+            <TouchableOpacity style={styles.guestBenefitsClose} onPress={() => setBenefitsOpen(false)} accessibilityLabel="Close"><Text style={styles.guestBenefitsCloseText}>×</Text></TouchableOpacity>
+            <Text style={styles.guestBenefitsEyebrow}>KEEP THE CONVERSATION GOING</Text>
+            <Text style={styles.guestBenefitsTitle}>Create your free FairFares account</Text>
+            <Text style={styles.guestBenefitsIntro}>Register once to unlock the full community.</Text>
+            <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>💬</Text><View><Text style={styles.guestBenefitTitle}>Unlimited community comments and replies</Text><Text style={styles.guestBenefitBody}>Keep talking privately with the post lister in Chitthi.</Text></View></View>
+            <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>🏠</Text><View><Text style={styles.guestBenefitTitle}>List your property or find a home</Text><Text style={styles.guestBenefitBody}>Post a place, request housing, or find roommates.</Text></View></View>
+            <View style={styles.guestBenefit}><Text style={styles.guestBenefitIcon}>🚗</Text><View><Text style={styles.guestBenefitTitle}>Cheap car rentals and shared rides</Text><Text style={styles.guestBenefitBody}>Find affordable cars and carpools near you.</Text></View></View>
+            <TouchableOpacity style={styles.guestBenefitsPrimary} onPress={() => { setBenefitsOpen(false); setSelectedId(""); setTimeout(onRequireSignup, 100); }}><Text style={styles.guestBenefitsPrimaryText}>Create free account</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.guestBenefitsSecondary} onPress={() => setBenefitsOpen(false)}><Text style={styles.guestBenefitsSecondaryText}>Not now</Text></TouchableOpacity>
+          </View>
+        </View> : null}
+      </View> : null}
+    </Modal>
   </View>;
 }
 
@@ -5734,7 +5819,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </TouchableOpacity>
                 </Pressable>
                 <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]} accessibilityRole="button" accessibilityLabel="Close message actions">
-                  <View pointerEvents="none" style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
+                  <View pointerEvents="box-none" style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
                     {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} resolvePreview={resolveEncryptedPhotoPreview} /> : null}
                     {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} /> : null}
                     {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
@@ -7154,15 +7239,49 @@ const styles = StyleSheet.create({
   guestReplyInputLight: { color: "#17201c", backgroundColor: "#fff", borderColor: "rgba(15,23,42,.10)" },
   guestReplySend: { alignSelf: "flex-end", minHeight: 38, justifyContent: "center", borderRadius: 19, backgroundColor: "#1ec493", paddingHorizontal: 18 },
   guestReplySendText: { color: "#06291e", fontSize: 12, fontWeight: "900" },
-  guestBenefitsBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.52)", padding: 14 },
-  guestBenefitsCard: { borderRadius: 24, borderWidth: 1, borderColor: "rgba(214,169,95,.36)", backgroundColor: "#09251c", padding: 20, gap: 12 },
-  guestBenefitsCardLight: { backgroundColor: "#fff", borderColor: "rgba(15,23,42,.08)" },
-  guestBenefitsClose: { position: "absolute", right: 12, top: 10, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(128,128,128,.13)", zIndex: 2 },
-  guestBenefitsCloseText: { color: "#78817c", fontSize: 23 },
-  guestBenefitsEyebrow: { color: "#1ec493", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-  guestBenefitsTitle: { color: "#fff8e8", fontSize: 21, lineHeight: 26, fontWeight: "900", paddingRight: 35 },
-  guestBenefitsBody: { color: "#8fa097", fontSize: 13, lineHeight: 20 },
-  guestBenefitsPrimary: { minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, backgroundColor: "#1ec493" },
-  guestBenefitsPrimaryText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
-  guestBenefitsLater: { color: "#7f8d86", fontSize: 12, fontWeight: "700", textAlign: "center", paddingVertical: 5 }
+  guestPrivateSafeScreen: { paddingTop: Platform.OS === "ios" ? 48 : 10 },
+  guestPrivateWallpaper: { ...StyleSheet.absoluteFillObject, overflow: "hidden", backgroundColor: "#D9E5DD" },
+  guestPrivateGlowTop: { position: "absolute", width: 300, height: 300, borderRadius: 150, right: -145, top: 70, backgroundColor: "rgba(255,255,255,.28)" },
+  guestPrivateGlowBottom: { position: "absolute", width: 300, height: 300, borderRadius: 150, left: -160, bottom: 90, backgroundColor: "rgba(66,137,105,.10)" },
+  guestPrivateHeader: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(76,114,97,.30)", backgroundColor: "#C4D9CE" },
+  guestPrivateMessages: { flex: 1 },
+  guestPrivateMessagesContent: { flexGrow: 1, justifyContent: "flex-end" },
+  guestPrivateContext: { alignSelf: "center", width: "94%", paddingHorizontal: 13, paddingVertical: 10, marginBottom: 8, borderRadius: 14, borderLeftWidth: 4, borderLeftColor: "#D6A95F", backgroundColor: "rgba(255,248,228,.90)" },
+  guestPrivateContextTitle: { color: "#17201c", fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  guestPrivateBubble: { maxWidth: "84%", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 9, borderRadius: 15, shadowColor: "#173d31", shadowOpacity: .10, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  guestPrivateBubbleMine: { alignSelf: "flex-end", backgroundColor: "#177653", borderBottomRightRadius: 4 },
+  guestPrivateBubbleTheirs: { alignSelf: "flex-start", backgroundColor: "#FFF4DC", borderBottomLeftRadius: 4 },
+  guestPrivateMineAuthor: { color: "#efc36f" },
+  guestPrivateTheirBody: { color: "#173d31" },
+  guestPrivateComposer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(76,114,97,.22)", backgroundColor: "rgba(246,250,247,.96)" },
+  guestPrivateReplyInput: { flex: 1, minHeight: 48, maxHeight: 110, borderRadius: 24, borderWidth: 1, borderColor: "#B7CBBF", color: "#173d31", backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12, textAlignVertical: "top", fontSize: 15 },
+  guestPrivateSend: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "#1E9B70", borderWidth: 1, borderColor: "#D6A95F" },
+  guestPrivateSendText: { color: "#fff", fontSize: 23, lineHeight: 26, fontWeight: "900", marginLeft: 2 },
+  guestPrivateAllowance: { color: "#65776f", backgroundColor: "rgba(244,248,245,.98)", fontSize: 10, fontWeight: "700", textAlign: "center", paddingBottom: Platform.OS === "ios" ? 18 : 8 },
+  guestSettingsBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.48)", padding: 14 },
+  guestWallpaperCard: { borderRadius: 24, padding: 18, gap: 15, backgroundColor: "#F7F5F1", borderWidth: 1, borderColor: "#D5D0C7" },
+  guestWallpaperTitle: { color: "#1F2937", fontSize: 18, fontWeight: "900" },
+  guestWallpaperChoices: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  guestWallpaperChoice: { width: "30%", aspectRatio: .82, borderRadius: 14, overflow: "hidden", borderWidth: 2, borderColor: "transparent", justifyContent: "flex-end" },
+  guestWallpaperChoiceActive: { borderColor: "#2B8A60" },
+  guestWallpaperAccent: { position: "absolute", width: 75, height: 75, borderRadius: 38, right: -25, top: -18, opacity: .55 },
+  guestWallpaperLabel: { color: "#263A32", fontSize: 10, fontWeight: "900", padding: 8 },
+  guestWallpaperDone: { minHeight: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#2B8A60" },
+  guestWallpaperDoneText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  guestMessageActionCard: { alignSelf: "center", gap: 8, alignItems: "flex-start" },
+  guestBenefitsBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 30, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.64)" },
+  guestBenefitsCard: { paddingHorizontal: 22, paddingTop: 24, paddingBottom: 34, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, gap: 13 },
+  guestBenefitsClose: { position: "absolute", right: 17, top: 15, width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: theme.colors.panel2, zIndex: 2 },
+  guestBenefitsCloseText: { color: theme.colors.soft, fontSize: 23 },
+  guestBenefitsEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  guestBenefitsTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 28, fontWeight: "900", paddingRight: 30 },
+  guestBenefitsIntro: { color: theme.colors.muted, fontSize: 13, marginBottom: 3 },
+  guestBenefit: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 5 },
+  guestBenefitIcon: { width: 36, fontSize: 25 },
+  guestBenefitTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
+  guestBenefitBody: { maxWidth: 290, color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 },
+  guestBenefitsPrimary: { minHeight: 50, marginTop: 5, alignItems: "center", justifyContent: "center", borderRadius: 15, backgroundColor: theme.colors.brand },
+  guestBenefitsPrimaryText: { color: "#06291e", fontWeight: "900", fontSize: 15 },
+  guestBenefitsSecondary: { minHeight: 42, alignItems: "center", justifyContent: "center" },
+  guestBenefitsSecondaryText: { color: theme.colors.soft, fontWeight: "800", fontSize: 13 }
 });

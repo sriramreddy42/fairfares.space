@@ -437,7 +437,7 @@ export function ProfileScreen({
       <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
         <View>
           <Text style={styles.cardTitle}>Appearance</Text>
-          <Text style={styles.cardCopy}>Choose how FairFares looks on this device.</Text>
+          <Text style={styles.cardCopy}>{appearancePreference === "system" ? "System follows your phone’s current Light or Dark appearance." : "Choose how FairFares looks on this device."}</Text>
         </View>
         <View style={styles.appearanceOptions} accessibilityRole="radiogroup">
           {(["system", "dark", "light"] as const).map((preference) => {
