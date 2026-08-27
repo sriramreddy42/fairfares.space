@@ -9,7 +9,7 @@ import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Appearance, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
@@ -18,7 +18,7 @@ import { absoluteAssetUrl, acceptCurrentPolicies, bookRentalCar, completeSocialP
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
-import { theme } from "./src/theme";
+import { setPlatformAppearance, theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
 import { pickCompressedImages } from "./src/utils/imageUpload";
 import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
@@ -250,14 +250,14 @@ function FairFaresApp() {
     AsyncStorage.getItem(APPEARANCE_STORAGE_KEY).then((saved) => {
       if (!active) return;
       const preference: AppearancePreference = saved === "light" || saved === "dark" ? saved : "system";
-      Appearance.setColorScheme(preference === "system" ? null : preference);
+      setPlatformAppearance(preference);
       setAppearancePreference(preference);
     }).catch(() => undefined);
     return () => { active = false; };
   }, []);
 
   function changeAppearance(preference: AppearancePreference) {
-    Appearance.setColorScheme(preference === "system" ? null : preference);
+    setPlatformAppearance(preference);
     setAppearancePreference(preference);
     void AsyncStorage.setItem(APPEARANCE_STORAGE_KEY, preference);
   }
@@ -2457,7 +2457,7 @@ function FairFaresApp() {
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
         backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10"}
-        translucent={activeTab === "messenger" && bottomTabsHidden}
+        translucent
       />
       <CriticalBrandAssetPreloader />
       <Animated.View style={[styles.appContent, { opacity: contentOpacity }]}>

@@ -1,0 +1,10 @@
+<resources>
+  <color name="ff_background">#FF0F0F10</color>
+  <color name="ff_surface">#FF181819</color>
+  <color name="ff_surface_variant">#FF242425</color>
+  <color name="ff_outline">#FF343436</color>
+  <color name="ff_on_background">#FFF5F5F5</color>
+  <color name="ff_on_surface_variant">#FFAAAAB0</color>
+  <color name="ff_on_surface">#FFD7D7DA</color>
+  <color name="ff_status_bar">#FF0F0F10</color>
+</resources>

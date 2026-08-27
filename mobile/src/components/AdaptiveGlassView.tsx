@@ -46,5 +46,12 @@ export function AdaptiveGlassView({ children, style, tintColor = "#16221E", fall
   if (reduceTransparency) {
     return <View style={[style, { backgroundColor: fallbackColor }]} onLayout={onLayout}>{children}</View>;
   }
-  return <BlurView style={style} intensity={intensity} tint={blurTint} experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined} onLayout={onLayout}>{children}</BlurView>;
+  // Android's experimental BlurView samples the moving content underneath and
+  // can render as a displaced, washed-out panel while lists are settling. Use
+  // the same stable semantic material Android's own navigation surfaces use;
+  // iOS keeps native liquid glass / blur where the compositor supports it.
+  if (Platform.OS === "android") {
+    return <View style={[style, { backgroundColor: fallbackColor }]} onLayout={onLayout}>{children}</View>;
+  }
+  return <BlurView style={style} intensity={intensity} tint={blurTint} onLayout={onLayout}>{children}</BlurView>;
 }
