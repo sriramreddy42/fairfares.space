@@ -2531,6 +2531,19 @@ function FairFaresApp() {
                 ? "Sign in to message people, join groups, and manage your listings."
                 : "Create an account to post, reply, join groups, and message securely."}
             </Text>
+            <View style={styles.authModeTabs} accessibilityRole="tablist">
+              {(["login", "signup"] as const).map((mode) => (
+                <TouchableOpacity
+                  key={mode}
+                  style={[styles.authModeTab, authMode === mode && styles.authModeTabActive]}
+                  onPress={() => { setAuthMessage(""); setAuthMode(mode); }}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: authMode === mode }}
+                >
+                  <Text style={[styles.authModeTabText, authMode === mode && styles.authModeTabTextActive]}>{mode === "login" ? "Log in" : "Sign up"}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={styles.socialAuthStack}>
               {Platform.OS === "ios" ? (
                 <AppleAuthentication.AppleAuthenticationButton
@@ -2645,15 +2658,6 @@ function FairFaresApp() {
               <Text style={styles.primaryButtonText}>
                 {authBusy ? (authMode === "login" ? "Signing in..." : "Creating...") : authMode === "login" ? "Login" : "Sign up"}
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => {
-                setAuthMessage("");
-                setAuthMode(authMode === "login" ? "signup" : "login");
-              }}
-            >
-              <Text style={styles.secondaryButtonText}>{authMode === "login" ? "Need an account? Sign up" : "Already have an account? Login"}</Text>
             </TouchableOpacity>
             {authMode === "login" ? (
               <TouchableOpacity style={styles.secondaryButton} onPress={() => void Linking.openURL("https://www.fairfare.space/forgot-password")}>
@@ -3402,9 +3406,9 @@ const styles = StyleSheet.create({
   launchPromise: { color: "#ffffff", fontSize: 16, fontWeight: "900", letterSpacing: 0.35 },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
-  authModalScroll: { width: "100%", maxWidth: 560, maxHeight: "88%", alignSelf: "center" },
-  authModalCard: { backgroundColor: theme.colors.panel, borderRadius: 24, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18, gap: 10, borderWidth: 1, borderColor: theme.colors.line, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 14 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(4,9,12,0.68)", justifyContent: "center", paddingVertical: Platform.OS === "ios" ? 38 : 22, paddingHorizontal: 16 },
+  authModalScroll: { width: "100%", maxWidth: 440, maxHeight: "92%", alignSelf: "center", borderRadius: 28 },
+  authModalCard: { backgroundColor: theme.colors.panel, borderRadius: 28, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 20, gap: 11, borderWidth: 1, borderColor: "rgba(145,145,150,.25)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 28, shadowOffset: { width: 0, height: 14 }, elevation: 16 },
   authHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 10 },
   authBrandMark: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand, shadowColor: theme.colors.brand, shadowOpacity: 0.28, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   authBrandMarkText: { color: "#06291e", fontSize: 23, fontWeight: "900", fontStyle: "italic" },
@@ -3414,6 +3418,11 @@ const styles = StyleSheet.create({
   authClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   authCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 27, fontWeight: "500", marginTop: -2 },
   authIntro: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, paddingBottom: 1 },
+  authModeTabs: { flexDirection: "row", padding: 4, borderRadius: 14, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: "rgba(145,145,150,.18)" },
+  authModeTab: { flex: 1, minHeight: 38, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  authModeTabActive: { backgroundColor: theme.colors.panel, shadowColor: "#000", shadowOpacity: .12, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  authModeTabText: { color: theme.colors.muted, fontSize: 13, fontWeight: "800" },
+  authModeTabTextActive: { color: theme.colors.text },
   authInput: { minHeight: 46, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 14 },
   authPrimaryButton: { minHeight: 48, borderRadius: 15, backgroundColor: theme.colors.brand, shadowColor: theme.colors.brand, shadowOpacity: 0.22, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   modalCard: { backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },

@@ -1386,14 +1386,17 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
     }
   };
 
+  // Keep Chitthi quiet for guests who have not received a community reply.
+  // The feedback card remains the first useful action instead of showing an
+  // empty state that looks like another sign-in gate.
+  if (!busy && !threads.length) return null;
+  if (busy && !threads.length) return null;
+
   return <View style={[styles.guestLetters, isLight && styles.guestLettersLight]}>
-    <View style={styles.guestLettersHead}><View><Text style={[styles.guestLettersTitle, isLight && styles.guestLettersTitleLight]}>Your community replies</Text><Text style={styles.guestLettersSubtitle}>Replies to comments you made as {guestId}</Text></View><Text style={styles.guestLettersCount}>{remaining}/6 left</Text></View>
-    {busy && !threads.length ? <ActivityIndicator color={theme.colors.brand} /> : null}
-    {!busy && !threads.length ? <View style={styles.guestLettersEmpty}><Text style={[styles.guestLettersEmptyTitle, isLight && styles.guestLettersTitleLight]}>No replies yet</Text><Text style={styles.guestLettersSubtitle}>When someone replies to your Ask comment, it will appear here.</Text></View> : null}
     {threads.map((thread) => {
       const latest = (thread.answers || []).slice(-1)[0];
       return <TouchableOpacity key={thread.id} style={[styles.guestLetterRow, isLight && styles.guestLetterRowLight]} onPress={() => setSelectedId((current) => current === thread.id ? "" : thread.id)}>
-        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{thread.title}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latest ? `${latest.author.name}: ${latest.body}` : "Open conversation"}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
+        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={styles.guestLetterEyebrow}>COMMUNITY REPLY · {remaining}/6 LEFT</Text><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{latest?.author.name || thread.author.name}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latest?.body || thread.title}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
       </TouchableOpacity>;
     })}
     {selected ? <View style={[styles.guestThread, isLight && styles.guestLetterRowLight]}>
@@ -6193,10 +6196,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </View>
       </Modal>
 
-      {!signedIn ? (
-        <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} />
-      ) : null}
-
       {creatingGroup ? (
         <View style={styles.groupComposer}>
           <Text style={styles.sectionTitle}>Create a group</Text>
@@ -6263,6 +6262,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </TouchableOpacity>
           </TouchableOpacity>
         ) : null}
+        {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} /> : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -7125,8 +7125,8 @@ const styles = StyleSheet.create({
   suggestedGroupRowLight: { backgroundColor: "#f5f7f9", borderWidth: 1, borderColor: "rgba(15,23,42,0.05)" },
   suggestedJoinButton: { minWidth: 48, height: 30, paddingHorizontal: 10, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#1b8551" },
   suggestedJoinText: { color: "#fff", fontSize: 11, fontWeight: "800" },
-  guestLetters: { marginBottom: 12, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: "rgba(214,169,95,.28)", backgroundColor: "rgba(7,31,23,.82)", gap: 9 },
-  guestLettersLight: { backgroundColor: "#fff", borderColor: "rgba(15,23,42,.07)", shadowColor: "#15251f", shadowOpacity: .09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  guestLetters: { marginBottom: 10, gap: 8 },
+  guestLettersLight: {},
   guestLettersHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   guestLettersTitle: { color: "#fff8e8", fontSize: 16, fontWeight: "800" },
   guestLettersTitleLight: { color: "#17201c" },
@@ -7138,6 +7138,7 @@ const styles = StyleSheet.create({
   guestLetterRowLight: { backgroundColor: "#f5f7f6" },
   guestLetterIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,196,142,.16)" },
   guestLetterCopy: { flex: 1, minWidth: 0 },
+  guestLetterEyebrow: { color: "#1ec493", fontSize: 8, lineHeight: 11, fontWeight: "900", letterSpacing: .7, marginBottom: 2 },
   guestLetterName: { color: "#f8f5ea", fontSize: 14, fontWeight: "800" },
   guestLetterPreview: { color: "#8fa097", fontSize: 11, lineHeight: 15, marginTop: 3 },
   guestLetterArrow: { color: "#d6a95f", fontSize: 22 },
