@@ -2115,6 +2115,7 @@ function FairFaresApp() {
       pendingGroupInvite={pendingGroupInvite}
       notificationConversationId={notificationConversationId}
       onRequireLogin={() => setLoginOpen(true)}
+      onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
       onClearPendingPost={() => setPendingPost(null)}
       onClearPendingRide={() => setPendingRide(null)}
       onClearPendingGroupInvite={() => setPendingGroupInvite("")}

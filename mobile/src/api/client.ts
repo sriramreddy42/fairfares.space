@@ -996,6 +996,15 @@ export async function ensureCommunityGuestSession(): Promise<CommunityGuestSessi
   return { ...session, token: communityGuestToken };
 }
 
+export async function getCommunityGuestInbox() {
+  const guest = await ensureCommunityGuestSession();
+  const payload = await request<{ ok: boolean; guestId: string; remaining: number; threads: CommunityPost[] }>(
+    "/api/mobile/community/guest-inbox",
+    { headers: { "X-FairFares-Guest-Token": communityGuestToken || guest.token } },
+  );
+  return payload;
+}
+
 export async function reactToCommunityContent(target: { postId?: string; answerId?: string }, reaction = "HELPFUL") {
   if (!authToken) await ensureCommunityGuestSession();
   return request<{ ok: boolean; active: boolean; reaction: string; count: number; counts: Record<string, number> }>("/api/mobile/community/react", {

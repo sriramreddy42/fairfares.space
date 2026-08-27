@@ -141,6 +141,16 @@ class CommunityFeatureTest(unittest.TestCase):
         guest_names = {answer["author"]["name"] for answer in answers[:-1]}
         self.assertEqual(guest_names, {session["guestId"]})
 
+        status, inbox = self.guest_request("GET", "/api/mobile/community/guest-inbox", token)
+        self.assertEqual(status, 200)
+        self.assertEqual(inbox["guestId"], session["guestId"])
+        self.assertEqual(inbox["remaining"], 0)
+        self.assertEqual(len(inbox["threads"]), 1)
+        self.assertEqual(inbox["threads"][0]["id"], post_id)
+        inbox_answers = inbox["threads"][0]["answers"]
+        self.assertTrue(any(answer["body"] == "Thanks — replying here so you can see it." for answer in inbox_answers))
+        self.assertTrue(all(answer["author"]["name"] == session["guestId"] or answer["parentAnswerId"] == first_answer_id for answer in inbox_answers))
+
         status, resumed = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-installation-guest-0001"})
         self.assertEqual(status, 200)
         self.assertEqual(resumed["guestId"], session["guestId"])

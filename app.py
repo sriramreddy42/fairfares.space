@@ -23384,6 +23384,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rides":
             self.api_mobile_rides(parsed)
             return
+        if parsed.path == "/api/mobile/community/guest-inbox":
+            self.api_mobile_community_guest_inbox()
+            return
         if parsed.path == "/api/mobile/rides/activity":
             self.api_mobile_ride_activity()
             return
@@ -37186,6 +37189,61 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE users SET name = ? WHERE id = ?", (guest_name, user_id))
             con.execute("INSERT INTO ask_community_guest_sessions (token_hash, installation_hash, user_id) VALUES (?, ?, ?)", (token_hash, installation_hash, user_id))
         self.send_json({"ok": True, "token": token, "guestId": guest_name, "remaining": 6}, 201)
+
+    def api_mobile_community_guest_inbox(self) -> None:
+        """Return only Ask threads in which this installation's guest participated."""
+        guest = self.current_community_guest()
+        if not guest:
+            self.send_json({"ok": False, "error": "A guest session is required."}, 401)
+            return
+        guest_user_id = int(guest["user_id"])
+        with db() as con:
+            rows = con.execute(
+                """SELECT posts.id, posts.public_id, MAX(datetime(answers.created_at)) AS activity_at
+                   FROM ask_community_posts posts
+                   JOIN ask_community_answers answers ON answers.post_id = posts.id
+                   WHERE posts.status IN ('PUBLISHED', 'LOCKED')
+                     AND answers.status = 'PUBLISHED'
+                     AND (answers.author_id = ? OR answers.parent_answer_id IN (
+                       SELECT own_answers.id FROM ask_community_answers own_answers
+                       WHERE own_answers.post_id = posts.id AND own_answers.author_id = ?
+                         AND own_answers.status = 'PUBLISHED'
+                     ))
+                   GROUP BY posts.id, posts.public_id
+                   ORDER BY activity_at DESC, posts.id DESC
+                   LIMIT 12""",
+                (guest_user_id, guest_user_id),
+            ).fetchall()
+        threads = []
+        for row in rows:
+            post_rows = community_post_rows(guest_user_id, post_public_id=str(row["public_id"]), limit=1)
+            if not post_rows:
+                continue
+            post = community_post_payload(post_rows[0], guest_user_id)
+            accepted_id = int(row_value(post_rows[0], "accepted_answer_id") or 0)
+            answer_rows = community_answer_rows(int(row["id"]), guest_user_id)
+            own_root_ids = {
+                int(answer["id"])
+                for answer in answer_rows
+                if int(row_value(answer, "author_id") or 0) == guest_user_id
+                and not int(row_value(answer, "parent_answer_id") or 0)
+            }
+            relevant_answers = [
+                answer for answer in answer_rows
+                if int(row_value(answer, "author_id") or 0) == guest_user_id
+                or int(row_value(answer, "parent_answer_id") or 0) in own_root_ids
+            ]
+            post["answers"] = [
+                community_answer_payload(answer, accepted_id, guest_user_id)
+                for answer in relevant_answers[-20:]
+            ]
+            threads.append(post)
+        self.send_json({
+            "ok": True,
+            "guestId": row_value(guest, "name") or f"Guest {guest_user_id:04d}",
+            "remaining": max(0, 6 - int(row_value(guest, "messages_used") or 0)),
+            "threads": threads,
+        })
 
     def api_mobile_react_community(self) -> None:
         user = self.current_user()

@@ -43,6 +43,7 @@ import {
   getChatConversations,
   getChatConversationsPage,
   getChatMessages,
+  getCommunityGuestInbox,
   getAuthenticatedAssetDataUrl,
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
@@ -66,6 +67,7 @@ import {
   sendEncryptedChatMessage,
   sendDirectEncryptedChatAttachment,
   sendChatRichMessage,
+  answerCommunityPost,
   transferChatGroupOwnership,
   updateChatGroupDetails,
   updateChatGroupPhoto,
@@ -78,7 +80,7 @@ import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { shareChitthiGroup } from "../utils/listingShare";
-import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, HousingPost, RidePost } from "../types";
+import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, HousingPost, RidePost } from "../types";
 import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
@@ -99,6 +101,7 @@ type Props = {
   pendingGroupInvite?: string;
   notificationConversationId?: string;
   onRequireLogin: () => void;
+  onRequireSignup?: () => void;
   onClearPendingPost?: () => void;
   onClearPendingRide?: () => void;
   onClearPendingGroupInvite?: () => void;
@@ -1335,7 +1338,74 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
   );
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
+function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => void }) {
+  const isLight = useColorScheme() === "light";
+  const [threads, setThreads] = useState<CommunityPost[]>([]);
+  const [guestId, setGuestId] = useState("Guest");
+  const [remaining, setRemaining] = useState(6);
+  const [selectedId, setSelectedId] = useState("");
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [benefitsOpen, setBenefitsOpen] = useState(false);
+  const selected = threads.find((thread) => thread.id === selectedId) || null;
+
+  const loadGuestLetters = async () => {
+    setBusy(true);
+    try {
+      const payload = await getCommunityGuestInbox();
+      setThreads(payload.threads || []);
+      setGuestId(payload.guestId || "Guest");
+      setRemaining(payload.remaining);
+    } catch {
+      setThreads([]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => { void loadGuestLetters(); }, []);
+
+  const sendGuestReply = async () => {
+    if (!selected || !draft.trim() || busy) return;
+    if (remaining <= 0) { setBenefitsOpen(true); return; }
+    const ownRoot = [...(selected.answers || [])].reverse().find((answer) => !answer.parentAnswerId && answer.author.name === guestId);
+    if (!ownRoot) return;
+    setBusy(true);
+    try {
+      const result = await answerCommunityPost(selected.id, draft.trim(), ownRoot.id);
+      setDraft("");
+      if (typeof result.guestRemaining === "number") setRemaining(result.guestRemaining);
+      const payload = await getCommunityGuestInbox();
+      setThreads(payload.threads || []);
+      setRemaining(payload.remaining);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Reply not sent.";
+      if (text.toLowerCase().includes("free account") || text.toLowerCase().includes("unlimited")) setBenefitsOpen(true);
+      else Alert.alert("Reply not sent", text);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <View style={[styles.guestLetters, isLight && styles.guestLettersLight]}>
+    <View style={styles.guestLettersHead}><View><Text style={[styles.guestLettersTitle, isLight && styles.guestLettersTitleLight]}>Your community replies</Text><Text style={styles.guestLettersSubtitle}>Replies to comments you made as {guestId}</Text></View><Text style={styles.guestLettersCount}>{remaining}/6 left</Text></View>
+    {busy && !threads.length ? <ActivityIndicator color={theme.colors.brand} /> : null}
+    {!busy && !threads.length ? <View style={styles.guestLettersEmpty}><Text style={[styles.guestLettersEmptyTitle, isLight && styles.guestLettersTitleLight]}>No replies yet</Text><Text style={styles.guestLettersSubtitle}>When someone replies to your Ask comment, it will appear here.</Text></View> : null}
+    {threads.map((thread) => {
+      const latest = (thread.answers || []).slice(-1)[0];
+      return <TouchableOpacity key={thread.id} style={[styles.guestLetterRow, isLight && styles.guestLetterRowLight]} onPress={() => setSelectedId((current) => current === thread.id ? "" : thread.id)}>
+        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{thread.title}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latest ? `${latest.author.name}: ${latest.body}` : "Open conversation"}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
+      </TouchableOpacity>;
+    })}
+    {selected ? <View style={[styles.guestThread, isLight && styles.guestLetterRowLight]}>
+      {(selected.answers || []).slice(-8).map((answer) => <View key={answer.id} style={[styles.guestThreadBubble, answer.author.name === guestId && styles.guestThreadBubbleMine]}><Text style={styles.guestThreadAuthor}>{answer.author.name === guestId ? "You" : answer.author.name}</Text><Text style={[styles.guestThreadBody, isLight && answer.author.name !== guestId && styles.guestLettersTitleLight]}>{answer.body}</Text></View>)}
+      <TextInput style={[styles.guestReplyInput, isLight && styles.guestReplyInputLight]} value={draft} onChangeText={setDraft} multiline placeholder={remaining > 0 ? "Write a reply…" : "Write your reply, then sign up to send…"} placeholderTextColor={theme.colors.muted} />
+      <TouchableOpacity style={[styles.guestReplySend, !draft.trim() && styles.disabledButton]} disabled={!draft.trim() || busy} onPress={() => void sendGuestReply()}><Text style={styles.guestReplySendText}>{busy ? "Sending…" : "Send reply"}</Text></TouchableOpacity>
+    </View> : null}
+    <Modal visible={benefitsOpen} transparent animationType="fade" onRequestClose={() => setBenefitsOpen(false)}><View style={styles.guestBenefitsBackdrop}><View style={[styles.guestBenefitsCard, isLight && styles.guestBenefitsCardLight]}><TouchableOpacity style={styles.guestBenefitsClose} onPress={() => setBenefitsOpen(false)}><Text style={styles.guestBenefitsCloseText}>×</Text></TouchableOpacity><Text style={styles.guestBenefitsEyebrow}>KEEP YOUR CONVERSATIONS</Text><Text style={[styles.guestBenefitsTitle, isLight && styles.guestLettersTitleLight]}>Create your free FairFares account</Text><Text style={styles.guestBenefitsBody}>Your six guest comments and replies stay with you. Sign up for unlimited Ask conversations, housing and roommate posts, affordable rentals, and shared rides.</Text><TouchableOpacity style={styles.guestBenefitsPrimary} onPress={() => { setBenefitsOpen(false); setTimeout(onRequireSignup, 100); }}><Text style={styles.guestBenefitsPrimaryText}>Create free account</Text></TouchableOpacity><TouchableOpacity onPress={() => setBenefitsOpen(false)}><Text style={styles.guestBenefitsLater}>Not now</Text></TouchableOpacity></View></View></Modal>
+  </View>;
+}
+
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -6124,13 +6194,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       </Modal>
 
       {!signedIn ? (
-        <View style={[styles.loginGate, isLight && styles.loginGateLight]}>
-          <Text style={[styles.loginTitle, isLight && styles.loginTitleLight]}>Login required to message</Text>
-          <Text style={[styles.loginCopy, isLight && styles.loginCopyLight]}>People can browse listings, but messages and group joins require a FairFares account.</Text>
-          <TouchableOpacity style={styles.loginButton} onPress={onRequireLogin}>
-            <Text style={styles.loginButtonText}>Login / Sign up</Text>
-          </TouchableOpacity>
-        </View>
+        <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} />
       ) : null}
 
       {creatingGroup ? (
@@ -7060,5 +7124,41 @@ const styles = StyleSheet.create({
   suggestedGroupRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 15, backgroundColor: "rgba(20,51,40,0.72)" },
   suggestedGroupRowLight: { backgroundColor: "#f5f7f9", borderWidth: 1, borderColor: "rgba(15,23,42,0.05)" },
   suggestedJoinButton: { minWidth: 48, height: 30, paddingHorizontal: 10, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#1b8551" },
-  suggestedJoinText: { color: "#fff", fontSize: 11, fontWeight: "800" }
+  suggestedJoinText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  guestLetters: { marginBottom: 12, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: "rgba(214,169,95,.28)", backgroundColor: "rgba(7,31,23,.82)", gap: 9 },
+  guestLettersLight: { backgroundColor: "#fff", borderColor: "rgba(15,23,42,.07)", shadowColor: "#15251f", shadowOpacity: .09, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  guestLettersHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  guestLettersTitle: { color: "#fff8e8", fontSize: 16, fontWeight: "800" },
+  guestLettersTitleLight: { color: "#17201c" },
+  guestLettersSubtitle: { color: "#8fa097", fontSize: 11, lineHeight: 16, marginTop: 2 },
+  guestLettersCount: { color: "#65d7aa", fontSize: 11, fontWeight: "800" },
+  guestLettersEmpty: { paddingVertical: 14, alignItems: "center" },
+  guestLettersEmptyTitle: { color: "#f6f2e6", fontSize: 14, fontWeight: "800" },
+  guestLetterRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: 15, backgroundColor: "rgba(20,55,42,.78)" },
+  guestLetterRowLight: { backgroundColor: "#f5f7f6" },
+  guestLetterIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,196,142,.16)" },
+  guestLetterCopy: { flex: 1, minWidth: 0 },
+  guestLetterName: { color: "#f8f5ea", fontSize: 14, fontWeight: "800" },
+  guestLetterPreview: { color: "#8fa097", fontSize: 11, lineHeight: 15, marginTop: 3 },
+  guestLetterArrow: { color: "#d6a95f", fontSize: 22 },
+  guestThread: { gap: 7, padding: 10, borderRadius: 15, backgroundColor: "rgba(3,23,17,.74)" },
+  guestThreadBubble: { alignSelf: "flex-start", maxWidth: "88%", paddingHorizontal: 11, paddingVertical: 8, borderRadius: 13, backgroundColor: "rgba(255,255,255,.07)" },
+  guestThreadBubbleMine: { alignSelf: "flex-end", backgroundColor: "#176e4e" },
+  guestThreadAuthor: { color: "#d6a95f", fontSize: 9, fontWeight: "800", marginBottom: 2 },
+  guestThreadBody: { color: "#f4f6f4", fontSize: 13, lineHeight: 18 },
+  guestReplyInput: { minHeight: 54, maxHeight: 110, borderRadius: 15, borderWidth: 1, borderColor: "rgba(214,169,95,.25)", color: "#f5f6f5", backgroundColor: "#071f18", paddingHorizontal: 12, paddingVertical: 10, textAlignVertical: "top" },
+  guestReplyInputLight: { color: "#17201c", backgroundColor: "#fff", borderColor: "rgba(15,23,42,.10)" },
+  guestReplySend: { alignSelf: "flex-end", minHeight: 38, justifyContent: "center", borderRadius: 19, backgroundColor: "#1ec493", paddingHorizontal: 18 },
+  guestReplySendText: { color: "#06291e", fontSize: 12, fontWeight: "900" },
+  guestBenefitsBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.52)", padding: 14 },
+  guestBenefitsCard: { borderRadius: 24, borderWidth: 1, borderColor: "rgba(214,169,95,.36)", backgroundColor: "#09251c", padding: 20, gap: 12 },
+  guestBenefitsCardLight: { backgroundColor: "#fff", borderColor: "rgba(15,23,42,.08)" },
+  guestBenefitsClose: { position: "absolute", right: 12, top: 10, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(128,128,128,.13)", zIndex: 2 },
+  guestBenefitsCloseText: { color: "#78817c", fontSize: 23 },
+  guestBenefitsEyebrow: { color: "#1ec493", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  guestBenefitsTitle: { color: "#fff8e8", fontSize: 21, lineHeight: 26, fontWeight: "900", paddingRight: 35 },
+  guestBenefitsBody: { color: "#8fa097", fontSize: 13, lineHeight: 20 },
+  guestBenefitsPrimary: { minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, backgroundColor: "#1ec493" },
+  guestBenefitsPrimaryText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
+  guestBenefitsLater: { color: "#7f8d86", fontSize: 12, fontWeight: "700", textAlign: "center", paddingVertical: 5 }
 });
