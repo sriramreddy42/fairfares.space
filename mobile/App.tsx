@@ -2510,16 +2510,25 @@ function FairFaresApp() {
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView
             style={styles.authModalScroll}
-            contentContainerStyle={styles.modalCard}
+            contentContainerStyle={styles.authModalCard}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.modalTitle}>{authMode === "login" ? "Login to FairFares" : "Create FairFares account"}</Text>
-            <Text style={styles.modalCopy}>
+            <View style={styles.authHeader}>
+              <View style={styles.authBrandMark}><Text style={styles.authBrandMarkText}>F</Text></View>
+              <View style={styles.authHeaderCopy}>
+                <Text style={styles.authTitle}>{authMode === "login" ? "Welcome back" : "Join FairFares"}</Text>
+                <Text style={styles.authEyebrow}>{authMode === "login" ? "CONTINUE TO YOUR COMMUNITY" : "YOUR LOCAL COMMUNITY, IN ONE PLACE"}</Text>
+              </View>
+              <TouchableOpacity style={styles.authClose} onPress={() => setLoginOpen(false)} accessibilityRole="button" accessibilityLabel="Close sign up">
+                <Text style={styles.authCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.authIntro}>
               {authMode === "login"
-                ? "Email/phone and password are required before messaging posters or joining groups."
-                : "Signup needs name, email, phone, and password. You will activate the account from email before login."}
+                ? "Sign in to message people, join groups, and manage your listings."
+                : "Create an account to post, reply, join groups, and message securely."}
             </Text>
             <View style={styles.socialAuthStack}>
               {Platform.OS === "ios" ? (
@@ -2556,7 +2565,7 @@ function FairFaresApp() {
                 autoCapitalize="words"
                 autoComplete="name"
                 accessibilityLabel="Full name"
-                style={styles.input}
+                style={[styles.input, styles.authInput]}
               />
             ) : null}
             <TextInput
@@ -2569,7 +2578,7 @@ function FairFaresApp() {
               keyboardType={authMode === "signup" ? "email-address" : "default"}
               autoComplete={authMode === "signup" ? "email" : "username"}
               accessibilityLabel={authMode === "login" ? "Email or phone" : "Email address"}
-              style={styles.input}
+              style={[styles.input, styles.authInput]}
             />
             {authMode === "signup" ? (
               <>
@@ -2591,10 +2600,10 @@ function FairFaresApp() {
                     keyboardType="phone-pad"
                     autoComplete="tel-national"
                     accessibilityLabel="Mobile number without country code"
-                    style={[styles.input, styles.signupPhoneInput]}
+                    style={[styles.input, styles.authInput, styles.signupPhoneInput]}
                   />
                 </View>
-                <Text style={styles.authHint}>Saved securely with your country code. Your phone number is never displayed.</Text>
+                <Text style={styles.authHint}>Private and saved securely with your country code.</Text>
               </>
             ) : null}
             <TextInput
@@ -2605,9 +2614,9 @@ function FairFaresApp() {
               secureTextEntry
               autoComplete={authMode === "login" ? "current-password" : "new-password"}
               accessibilityLabel="Password"
-              style={styles.input}
+              style={[styles.input, styles.authInput]}
             />
-            {authMode === "signup" ? <Text style={styles.authHint}>Use at least 8 characters. You must activate the account from the email we send.</Text> : null}
+            {authMode === "signup" ? <Text style={styles.authHint}>Use 8+ characters. Activate your account from the email we send.</Text> : null}
             {authMode === "signup" ? (
               <View style={styles.signupConsentRow}>
                 <TouchableOpacity
@@ -2626,7 +2635,7 @@ function FairFaresApp() {
             ) : null}
             {authMessage ? <Text style={styles.authMessage}>{authMessage}</Text> : null}
             <TouchableOpacity
-              style={[styles.primaryButton, authBusy && styles.disabledButton]}
+              style={[styles.primaryButton, styles.authPrimaryButton, authBusy && styles.disabledButton]}
               onPress={authMode === "login" ? submitLogin : submitSignup}
               disabled={authBusy}
               accessibilityRole="button"
@@ -2650,9 +2659,6 @@ function FairFaresApp() {
                 <Text style={styles.secondaryButtonText}>Forgot password? Recover account</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setLoginOpen(false)}>
-              <Text style={styles.secondaryButtonText}>Close</Text>
-            </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
@@ -3397,6 +3403,18 @@ const styles = StyleSheet.create({
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "flex-start", paddingTop: Platform.OS === "ios" ? 86 : 42, paddingHorizontal: 8 },
   authModalScroll: { width: "100%", maxWidth: 560, maxHeight: "88%", alignSelf: "center" },
+  authModalCard: { backgroundColor: theme.colors.panel, borderRadius: 24, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18, gap: 10, borderWidth: 1, borderColor: theme.colors.line, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 14 },
+  authHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 10 },
+  authBrandMark: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand, shadowColor: theme.colors.brand, shadowOpacity: 0.28, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  authBrandMarkText: { color: "#06291e", fontSize: 23, fontWeight: "900", fontStyle: "italic" },
+  authHeaderCopy: { flex: 1, minWidth: 0 },
+  authTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900", letterSpacing: -0.35 },
+  authEyebrow: { color: theme.colors.brand, fontSize: 8, lineHeight: 12, fontWeight: "900", letterSpacing: 0.65, marginTop: 2 },
+  authClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  authCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 27, fontWeight: "500", marginTop: -2 },
+  authIntro: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, paddingBottom: 1 },
+  authInput: { minHeight: 46, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 14 },
+  authPrimaryButton: { minHeight: 48, borderRadius: 15, backgroundColor: theme.colors.brand, shadowColor: theme.colors.brand, shadowOpacity: 0.22, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   modalCard: { backgroundColor: theme.colors.panel, borderRadius: 26, padding: 18, gap: 14, borderWidth: 1, borderColor: theme.colors.line, opacity: 1 },
   searchModalCard: { height: "90%", maxHeight: "90%", paddingBottom: theme.spacing.md },
   searchModalScroll: { flex: 1 },
