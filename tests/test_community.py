@@ -115,6 +115,7 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertTrue(session["guestId"].startswith("Guest "))
         self.assertEqual(session["remaining"], 6)
         token = session["token"]
+        first_conversation_id = ""
         status, guest_like = self.guest_request("POST", "/api/mobile/community/react", token, {"postId": post_id, "reaction": "LIKE"})
         self.assertEqual((status, guest_like["active"], guest_like["reaction"], guest_like["count"]), (200, True, "LIKE", 1))
         status, guest_detail = self.guest_request("GET", f"/api/mobile/community?postId={post_id}", token)
@@ -128,6 +129,8 @@ class CommunityFeatureTest(unittest.TestCase):
             self.assertEqual(answered["guestRemaining"], 5 - index)
             first_answer_id = first_answer_id or answered["answerId"]
             self.assertTrue(answered["conversationId"])
+            first_conversation_id = first_conversation_id or answered["conversationId"]
+            self.assertEqual(answered["conversationId"], first_conversation_id)
             with app.db() as con:
                 guest_user = con.execute("SELECT id FROM users WHERE name = ?", (session["guestId"],)).fetchone()
                 guest_message = con.execute(
@@ -138,6 +141,20 @@ class CommunityFeatureTest(unittest.TestCase):
                 self.assertEqual(int(guest_message["sender_id"]), int(guest_user["id"]))
                 self.assertEqual(guest_message["context_type"], "COMMUNITY")
                 self.assertEqual(guest_message["context_public_id"], post_id)
+
+        _, second_session = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-installation-guest-0002"})
+        second_status, second_answer = self.guest_request("POST", "/api/mobile/community/answer", second_session["token"], {"postId": post_id, "body": "A different guest is interested."})
+        self.assertEqual(second_status, 201)
+        self.assertNotEqual(second_answer["conversationId"], first_conversation_id)
+        with app.db() as con:
+            owner_conversations = con.execute(
+                """SELECT DISTINCT conversations.public_id
+                   FROM chat_conversations conversations
+                   JOIN chat_participants participants ON participants.conversation_id = conversations.id
+                   WHERE participants.user_id = ? AND conversations.public_id IN (?, ?)""",
+                (self.owner_id, first_conversation_id, second_answer["conversationId"]),
+            ).fetchall()
+        self.assertEqual({row["public_id"] for row in owner_conversations}, {first_conversation_id, second_answer["conversationId"]})
         status, limited = self.guest_request("POST", "/api/mobile/community/answer", token, {"postId": post_id, "body": "Seventh guest message"})
         self.assertEqual(status, 403)
         self.assertTrue(limited["guestLimitReached"])
@@ -154,7 +171,7 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(answers[-1]["parentAnswerId"], reply["answerId"])
         self.assertEqual(answers[-1]["body"], "This reply is nested under the previous reply.")
         guest_names = {answer["author"]["name"] for answer in answers[:-2]}
-        self.assertEqual(guest_names, {session["guestId"]})
+        self.assertEqual(guest_names, {session["guestId"], second_session["guestId"]})
 
         status, inbox = self.guest_request("GET", "/api/mobile/community/guest-inbox", token)
         self.assertEqual(status, 200)

@@ -1394,12 +1394,13 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
 
   return <View style={[styles.guestLetters, isLight && styles.guestLettersLight]}>
     {threads.map((thread) => {
-      const latest = (thread.answers || []).slice(-1)[0];
+      const latestReply = [...(thread.answers || [])].reverse().find((answer) => answer.author.name !== guestId);
       return <TouchableOpacity key={thread.id} style={[styles.guestLetterRow, isLight && styles.guestLetterRowLight]} onPress={() => setSelectedId((current) => current === thread.id ? "" : thread.id)}>
-        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={styles.guestLetterEyebrow}>COMMUNITY REPLY · {remaining}/6 LEFT</Text><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{latest?.author.name || thread.author.name}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latest?.body || thread.title}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
+        <View style={styles.guestLetterIcon}><Text>💬</Text></View><View style={styles.guestLetterCopy}><Text style={styles.guestLetterEyebrow}>REPLY FROM POST LISTER · {remaining}/6 LEFT</Text><Text style={[styles.guestLetterName, isLight && styles.guestLettersTitleLight]} numberOfLines={1}>{thread.author.name}</Text><Text style={styles.guestLetterPreview} numberOfLines={2}>{latestReply?.body || thread.title}</Text></View><Text style={styles.guestLetterArrow}>{selectedId === thread.id ? "⌃" : "›"}</Text>
       </TouchableOpacity>;
     })}
     {selected ? <View style={[styles.guestThread, isLight && styles.guestLetterRowLight]}>
+      <View style={styles.guestThreadContext}><Text style={styles.guestLetterEyebrow}>POST</Text><Text style={[styles.guestThreadContextTitle, isLight && styles.guestLettersTitleLight]} numberOfLines={2}>{selected.title}</Text></View>
       {(selected.answers || []).slice(-8).map((answer) => <View key={answer.id} style={[styles.guestThreadBubble, answer.author.name === guestId && styles.guestThreadBubbleMine]}><Text style={styles.guestThreadAuthor}>{answer.author.name === guestId ? "You" : answer.author.name}</Text><Text style={[styles.guestThreadBody, isLight && answer.author.name !== guestId && styles.guestLettersTitleLight]}>{answer.body}</Text></View>)}
       <TextInput style={[styles.guestReplyInput, isLight && styles.guestReplyInputLight]} value={draft} onChangeText={setDraft} multiline placeholder={remaining > 0 ? "Write a reply…" : "Write your reply, then sign up to send…"} placeholderTextColor={theme.colors.muted} />
       <TouchableOpacity style={[styles.guestReplySend, !draft.trim() && styles.disabledButton]} disabled={!draft.trim() || busy} onPress={() => void sendGuestReply()}><Text style={styles.guestReplySendText}>{busy ? "Sending…" : "Send reply"}</Text></TouchableOpacity>
@@ -7143,6 +7144,8 @@ const styles = StyleSheet.create({
   guestLetterPreview: { color: "#8fa097", fontSize: 11, lineHeight: 15, marginTop: 3 },
   guestLetterArrow: { color: "#d6a95f", fontSize: 22 },
   guestThread: { gap: 7, padding: 10, borderRadius: 15, backgroundColor: "rgba(3,23,17,.74)" },
+  guestThreadContext: { paddingHorizontal: 4, paddingBottom: 7, borderBottomWidth: 1, borderBottomColor: "rgba(128,128,128,.16)" },
+  guestThreadContextTitle: { color: "#f8f5ea", fontSize: 13, lineHeight: 18, fontWeight: "800" },
   guestThreadBubble: { alignSelf: "flex-start", maxWidth: "88%", paddingHorizontal: 11, paddingVertical: 8, borderRadius: 13, backgroundColor: "rgba(255,255,255,.07)" },
   guestThreadBubbleMine: { alignSelf: "flex-end", backgroundColor: "#176e4e" },
   guestThreadAuthor: { color: "#d6a95f", fontSize: 9, fontWeight: "800", marginBottom: 2 },
