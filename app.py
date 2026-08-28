@@ -16306,6 +16306,35 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "accommodates": int(row_value(row, "accommodates") or 0),
         "roommateCount": int(row_value(row, "roommate_count") or 0),
         "amenities": [item.strip() for item in row_value(row, "amenities").split(",") if item.strip()],
+        "city": row_value(row, "city"),
+        "streetAddress": row_value(row, "street_address"),
+        "zipCode": row_value(row, "zip_code"),
+        "primaryNeighborhood": row_value(row, "primary_neighborhood"),
+        "apartmentName": row_value(row, "apartment_name"),
+        "rentMin": float(row_value(row, "rent_min") or 0),
+        "rentMax": float(row_value(row, "rent_max") or 0),
+        "rentPeriod": row_value(row, "rent_period"),
+        "aboutYou": row_value(row, "about_you"),
+        "commutePreference": row_value(row, "commute_preference"),
+        "deposit": float(row_value(row, "deposit") or 0),
+        "daysAvailable": row_value(row, "days_available"),
+        "vegetarianPreference": row_value(row, "vegetarian_preference"),
+        "smokingPolicy": row_value(row, "smoking_policy"),
+        "petFriendly": row_value(row, "pet_friendly"),
+        "furnished": bool(int(row_value(row, "furnished") or 0)),
+        "privateBath": bool(int(row_value(row, "private_bath") or 0)),
+        "parking": bool(int(row_value(row, "parking") or 0)),
+        "utilitiesIncluded": bool(int(row_value(row, "utilities_included") or 0)),
+        "contactName": row_value(row, "contact_name"),
+        "contactEmail": row_value(row, "contact_email"),
+        "contactPhone": row_value(row, "contact_phone"),
+        "socialFacebook": row_value(row, "social_facebook"),
+        "socialX": row_value(row, "social_x"),
+        "socialInstagram": row_value(row, "social_instagram"),
+        "socialYoutube": row_value(row, "social_youtube"),
+        "bathroomTypeValue": row_value(row, "bathroom_type"),
+        "genderPreferenceValue": row_value(row, "gender_preference"),
+        "leaseTermValue": row_value(row, "lease_term"),
     }
 
 
@@ -26301,7 +26330,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "SELECT muted_at FROM chat_participants WHERE conversation_id = ? AND user_id = ? LIMIT 1",
                     (int(conversation["id"]), notification_target_id),
                 ).fetchone()
-                if target_participant and not row_value(target_participant, "muted_at"):
+                notification_preference = con.execute(
+                    "SELECT chitthi_enabled FROM mobile_notification_preferences WHERE user_id = ? LIMIT 1",
+                    (notification_target_id,),
+                ).fetchone()
+                chitthi_enabled = notification_preference is None or bool(int(row_value(notification_preference, "chitthi_enabled") or 0))
+                if target_participant and not row_value(target_participant, "muted_at") and chitthi_enabled:
                     is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
                     reactor_name = str(row_value(user, "name") or "FairFares member")
                     sender_avatar_url = chat_notification_avatar_url(self.public_origin(), current_user_id)
@@ -37644,6 +37678,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Login is required before posting a housing lead."}, 401)
             return
         payload = self.read_json_body()
+        editing_public_id = clean_text_value(payload.get("listingId") or payload.get("listing_id"), 80)
+        existing_listing = None
+        if editing_public_id:
+            with db() as con:
+                existing_listing = con.execute(
+                    "SELECT * FROM accommodation_posts WHERE public_id = ? AND user_id = ? LIMIT 1",
+                    (editing_public_id, int(row_value(user, "id") or 0)),
+                ).fetchone()
+            if not existing_listing:
+                self.send_json({"ok": False, "error": "You can only edit your own housing listing."}, 403)
+                return
         mode = normalize_accommodation_mode(str(payload.get("postMode") or payload.get("post_mode") or "HAVE_PLACE"))
         category = option_value_or_default(ACCOMMODATION_CATEGORIES, payload.get("category"), "single_room")
         title = clean_text_value(payload.get("title"), 140)
@@ -37702,6 +37747,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 max_bytes=MAX_HOUSING_IMAGE_BYTES,
             )
         ]
+        retained_image_paths = {
+            urllib.parse.urlparse(str(image_value or "")).path
+            for image_value in mobile_images[:4]
+            if str(image_value or "").strip() and not str(image_value or "").startswith("data:")
+        }
         if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
             self.send_json(
                 {
@@ -37717,13 +37767,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if mode == "HAVE_PLACE" and not (street_address or primary_neighborhood or apartment_name or area):
             self.send_json({"ok": False, "error": "Street address, neighborhood, apartment, or area is required when listing a place."}, 400)
             return
-        if mode == "HAVE_PLACE" and not valid_mobile_images:
+        existing_image_count = 0
+        existing_image_rows: list[sqlite3.Row] = []
+        if existing_listing:
+            with db() as con:
+                existing_image_rows = con.execute(
+                    "SELECT id, image_url FROM accommodation_post_images WHERE post_id = ? ORDER BY sort_order, id",
+                    (int(row_value(existing_listing, "id") or 0),),
+                ).fetchall()
+            existing_image_count = sum(
+                1 for image_row in existing_image_rows
+                if urllib.parse.urlparse(public_upload_url(row_value(image_row, "image_url"))).path in retained_image_paths
+            )
+        if mode == "HAVE_PLACE" and not valid_mobile_images and not existing_image_count:
             self.send_json({"ok": False, "error": "Add at least one valid room or property image."}, 400)
             return
         if mode == "NEED_PLACE" and not (area or work_school_location or primary_neighborhood):
             self.send_json({"ok": False, "error": "Preferred area, building, campus, or neighborhood is required when requesting a place."}, 400)
             return
-        public_id = accommodation_public_id()
+        public_id = editing_public_id or accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
         location_query = ", ".join(
             value for value in (
@@ -37752,7 +37814,52 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         now = datetime.utcnow().isoformat(timespec="seconds")
         expires_at = accommodation_expiry_timestamp(now)
         with db() as con:
-            cursor = con.execute(
+            if existing_listing:
+                post_id = int(row_value(existing_listing, "id") or 0)
+                con.execute(
+                    """
+                    UPDATE accommodation_posts
+                    SET post_mode = ?, category = ?, title = ?, description = ?,
+                        street_address = ?, city = ?, country = ?, zip_code = ?,
+                        primary_neighborhood = ?, apartment_name = ?, city_area_zip = ?,
+                        area_or_apartment = ?, work_school_location = ?, radius_miles = ?, lat = ?, lng = ?,
+                        move_in_date = ?, rent_min = ?, rent_max = ?, rent_period = ?,
+                        accommodates = ?, roommate_count = ?, roommate_intent = ?, about_you = ?,
+                        bathroom_type = ?, gender_preference = ?, commute_preference = ?, lease_term = ?,
+                        deposit = ?, days_available = ?, vegetarian_preference = ?, smoking_policy = ?,
+                        pet_friendly = ?, social_facebook = ?, social_x = ?, social_instagram = ?,
+                        social_youtube = ?, amenities = ?, private_bath = ?, furnished = ?, parking = ?,
+                        utilities_included = ?, contact_name = ?, contact_phone = ?, contact_email = ?,
+                        visibility_status = 'ACTIVE', expires_at = ?, updated_at = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (
+                        mode, category, title, description, street_address, city, post_country, zip_code,
+                        primary_neighborhood, apartment_name, city_area_zip, area_value, work_school_location,
+                        radius_miles, post_lat, post_lng, move_in_date, rent_min, rent_max, rent_period,
+                        accommodates, roommate_count, roommate_intent, about_you, bathroom_type,
+                        gender_preference, commute_preference, lease_term, deposit, days_available,
+                        vegetarian_preference, smoking_policy, pet_friendly, social_facebook, social_x,
+                        social_instagram, social_youtube, amenities, private_bath, furnished, parking,
+                        utilities_included, contact_name, contact_phone, contact_email, expires_at, now,
+                        post_id, int(row_value(user, "id") or 0),
+                    ),
+                )
+                retained_image_ids = [
+                    int(row_value(image_row, "id") or 0)
+                    for image_row in existing_image_rows
+                    if urllib.parse.urlparse(public_upload_url(row_value(image_row, "image_url"))).path in retained_image_paths
+                ]
+                if retained_image_ids:
+                    placeholders = ",".join("?" for _ in retained_image_ids)
+                    con.execute(
+                        f"DELETE FROM accommodation_post_images WHERE post_id = ? AND id NOT IN ({placeholders})",
+                        (post_id, *retained_image_ids),
+                    )
+                else:
+                    con.execute("DELETE FROM accommodation_post_images WHERE post_id = ?", (post_id,))
+            else:
+                cursor = con.execute(
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description,
@@ -37821,9 +37928,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     now,
                     now,
                 ),
-            )
-            post_id = int(cursor.lastrowid)
-            for index, image_value in enumerate(valid_mobile_images, start=1):
+                )
+                post_id = int(cursor.lastrowid)
+            image_sort_start = existing_image_count if existing_listing else 0
+            for index, image_value in enumerate(valid_mobile_images, start=image_sort_start + 1):
                 image_url = save_data_url_payload_locally(
                     folder_name="accommodations",
                     data_url=str(image_value or ""),
@@ -37853,7 +37961,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (post_id,),
             ).fetchone()
         invalidate_mobile_search_cache("housing")
-        self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 201)
+        self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
 
     def serve_upload(self, path: str) -> None:
         if path.startswith("/uploads/chat/"):

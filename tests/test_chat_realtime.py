@@ -237,6 +237,32 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_reaction_respects_sender_chitthi_notification_preference(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "quiet reaction target", "reaction-quiet-1")
+            con.execute(
+                "INSERT INTO mobile_notification_preferences (user_id, chitthi_enabled) VALUES (?, 0) ON CONFLICT(user_id) DO UPDATE SET chitthi_enabled = 0",
+                (self.sender_id,),
+            )
+            message_id = int(message["id"])
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/messages/react",
+                data=json.dumps({"conversationId": "CHAT-REALTIME", "messageId": message_id, "emoji": "❤️"}).encode("utf-8"),
+                method="POST",
+                headers={"Authorization": "Bearer recipient-token", "Content-Type": "application/json"},
+            )
+            with patch.object(app, "send_mobile_push_for_users") as push:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+                push.assert_not_called()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_group_reaction_carries_native_group_participants(self):
         with app.db() as con:
             con.execute(

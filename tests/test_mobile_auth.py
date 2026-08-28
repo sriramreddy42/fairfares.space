@@ -379,6 +379,55 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_owner_can_edit_housing_listing_without_creating_duplicate(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Housing Owner", "housing-owner@example.com", "+13035550123", app.hash_password("HousingOwnerPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            with app.db() as con:
+                listing_count_before = int(con.execute("SELECT COUNT(*) AS total FROM accommodation_posts").fetchone()["total"] or 0)
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "housing-owner@example.com",
+                "password": "HousingOwnerPassword123!",
+            })
+            base_payload = {
+                "postMode": "NEED_PLACE", "category": "single_room", "title": "Need a room",
+                "description": "Looking near campus", "city": "Denver, CO", "zipCode": "80203",
+                "area": "Capitol Hill", "moveInDate": "2026-09-15", "rentMin": "700",
+                "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Housing Owner",
+                "contactEmail": "housing-owner@example.com", "contactPhone": "+13035550123",
+            }
+
+            def save(payload):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                    data=json.dumps(payload).encode("utf-8"), method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+
+            with mock.patch.object(app, "refresh_accommodation_location_cache"), mock.patch.object(
+                app, "accommodation_location_point", return_value={"lat": 39.7392, "lng": -104.9903, "label": "Denver, CO 80203, USA"}
+            ):
+                created_status, created = save(base_payload)
+                listing_id = created["post"]["id"]
+                updated_status, updated = save({**base_payload, "listingId": listing_id, "title": "Updated room search"})
+
+            self.assertEqual(created_status, 201)
+            self.assertEqual(updated_status, 200)
+            self.assertEqual(updated["post"]["id"], listing_id)
+            self.assertEqual(updated["post"]["title"], "Updated room search")
+            with app.db() as con:
+                self.assertEqual(con.execute("SELECT COUNT(*) AS total FROM accommodation_posts").fetchone()["total"], listing_count_before + 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_profile_can_save_and_clear_optional_birthday(self):
         with app.db() as con:
             con.execute(

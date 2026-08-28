@@ -2482,6 +2482,7 @@ export async function mobileSignup(name: string, email: string, phone: string, p
 }
 
 export type MobileHousingPostInput = {
+  listingId?: string;
   postMode: "HAVE_PLACE" | "NEED_PLACE";
   category: string;
   title: string;

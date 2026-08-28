@@ -1401,6 +1401,62 @@ function FairFaresApp() {
     openListingFormForUser(data.user, intent);
   }
 
+  function editHousingListing(post: HousingPost) {
+    const havePlace = post.mode === "HAVE_PLACE";
+    setListingForm({
+      ...emptyListingForm,
+      listingId: post.id,
+      postMode: havePlace ? "HAVE_PLACE" : "NEED_PLACE",
+      category: post.category || "single_room",
+      title: post.title || "",
+      description: post.description || "",
+      city: post.city || post.location || city,
+      streetAddress: post.streetAddress || "",
+      zipCode: post.zipCode || "",
+      area: havePlace ? "" : post.area || "",
+      primaryNeighborhood: post.primaryNeighborhood || (havePlace ? post.area : ""),
+      apartmentName: post.apartmentName || "",
+      workSchoolLocation: post.workLocation || "",
+      radiusMiles: String(post.radiusMiles || 10),
+      moveInDate: post.moveIn || "",
+      rentMin: String(post.rentMin || post.rentValue || ""),
+      rentMax: post.rentMax ? String(post.rentMax) : "",
+      rentPeriod: post.rentPeriod || "MONTH",
+      accommodates: post.accommodates ? String(post.accommodates) : "",
+      roommateCount: post.roommateCount ? String(post.roommateCount) : "",
+      aboutYou: post.aboutYou || "",
+      bathroomType: post.bathroomTypeValue || "shared",
+      genderPreference: post.genderPreferenceValue || "open",
+      commutePreference: post.commutePreference || "",
+      leaseTerm: post.leaseTermValue || "flexible",
+      deposit: post.deposit ? String(post.deposit) : "",
+      daysAvailable: post.daysAvailable || "",
+      vegetarianPreference: post.vegetarianPreference || "",
+      smokingPolicy: post.smokingPolicy || "",
+      petFriendly: post.petFriendly || "",
+      amenities: (post.amenities || []).join(", "),
+      furnished: Boolean(post.furnished),
+      privateBath: Boolean(post.privateBath),
+      parking: Boolean(post.parking),
+      utilitiesIncluded: Boolean(post.utilitiesIncluded),
+      socialFacebook: post.socialFacebook || "",
+      socialX: post.socialX || "",
+      socialInstagram: post.socialInstagram || "",
+      socialYoutube: post.socialYoutube || "",
+      contactName: post.contactName || data?.user?.name || "",
+      contactEmail: post.contactEmail || data?.user?.email || "",
+      contactPhone: post.contactPhone || data?.user?.phone || "",
+      roommateIntent: Boolean(post.roommateIntent),
+      images: post.images || []
+    });
+    setRoommatePlaceChoice(post.roommateIntent ? havePlace : null);
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(true);
+    setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
+    setHousingListingSuccess(null);
+    setListingOpen(true);
+  }
+
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
     setListingForm((current) => ({ ...current, [key]: value }));
     if (key === "postMode" && value !== listingForm.postMode) {
@@ -1591,7 +1647,7 @@ function FairFaresApp() {
           ? {
               ...current,
               housing: [payload.post, ...current.housing.filter((post) => post.id !== payload.post.id)],
-              dashboard: { ...current.dashboard, housingPosts: current.dashboard.housingPosts + 1 }
+              dashboard: { ...current.dashboard, housingPosts: current.dashboard.housingPosts + (listingPayload.listingId ? 0 : 1) }
             }
           : current
       );
@@ -2370,6 +2426,7 @@ function FairFaresApp() {
           if (housingDetailReturnTab) setActiveTab(housingDetailReturnTab);
           setHousingDetailReturnTab(null);
         }}
+        onManageHousingListing={editHousingListing}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
@@ -2429,6 +2486,7 @@ function FairFaresApp() {
           if (housingDetailReturnTab) setActiveTab(housingDetailReturnTab);
           setHousingDetailReturnTab(null);
         }}
+        onManageHousingListing={editHousingListing}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
@@ -3016,7 +3074,7 @@ function FairFaresApp() {
                 <Text style={styles.modalBackGlyph}>‹</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>
-                {listingIsHavePlace ? "List your place" : listingIsRoommateSearch ? "Find roommates" : "Find a place"}
+                {listingForm.listingId ? "Edit listing" : listingIsHavePlace ? "List your place" : listingIsRoommateSearch ? "Find roommates" : "Find a place"}
               </Text>
             </View>
             <Text style={styles.modalCopy}>
@@ -3220,7 +3278,7 @@ function FairFaresApp() {
               </>
             )}
             <TouchableOpacity style={styles.primaryButton} onPress={submitListing}>
-              <Text style={styles.primaryButtonText}>Post listing</Text>
+              <Text style={styles.primaryButtonText}>{listingForm.listingId ? "Save changes" : "Post listing"}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setListingOpen(false)}>
               <Text style={styles.switchText}>Cancel</Text>

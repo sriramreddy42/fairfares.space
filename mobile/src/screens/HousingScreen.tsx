@@ -57,6 +57,7 @@ type Props = {
   linkedCarpoolRide?: RidePost | null;
   onLinkedHousingPostOpened?: () => void;
   onHousingDetailClosed?: () => void;
+  onManageHousingListing?: (post: HousingPost) => void;
   onLinkedCarpoolRideOpened?: () => void;
   discoveryLocation?: string;
 };
@@ -587,6 +588,7 @@ export function HousingScreen({
   linkedCarpoolRide,
   onLinkedHousingPostOpened,
   onHousingDetailClosed,
+  onManageHousingListing,
   onLinkedCarpoolRideOpened,
   discoveryLocation = "",
   hasExactLocationSearch = false
@@ -3854,8 +3856,8 @@ export function HousingScreen({
                     </View>
                   </View>
                 ) : null}
-                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, (detailPost.sample || Number(detailPost.posterUserId) === Number(data?.user?.id || 0)) && styles.detailMessageDisabled]} onPress={() => !detailPost.sample && Number(detailPost.posterUserId) !== Number(data?.user?.id || 0) && onMessage(detailPost)} disabled={detailPost.sample || Number(detailPost.posterUserId) === Number(data?.user?.id || 0)}>
-                  <Text style={styles.detailMessageText}>{detailPost.sample ? "Sample preview — no poster yet" : Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? "Your listing" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
+                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, detailPost.sample && styles.detailMessageDisabled, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManage]} onPress={() => Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? onManageHousingListing?.(detailPost) : !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
+                  <Text style={[styles.detailMessageText, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManageText]}>{detailPost.sample ? "Sample preview — no poster yet" : Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? "Edit listing" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}
@@ -4523,6 +4525,8 @@ const styles = StyleSheet.create({
   detailMessage: { backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, alignItems: "center", paddingVertical: 13 },
   detailMessageSent: { backgroundColor: theme.colors.green },
   detailMessageDisabled: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  detailManage: { backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.brand },
+  detailManageText: { color: theme.colors.text },
   detailMessageText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
   detailScrollHint: { position: "absolute", bottom: 10, alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(9,13,18,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 12 },
   detailScrollHintText: { color: "#fff", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -7 },
