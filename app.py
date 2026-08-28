@@ -35656,6 +35656,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             except Exception as exc:
                 print(f"Ride map Google Static Maps fallback: {type(exc).__name__}: {exc}")
+        # React Native's Android Image does not decode SVG responses. Always
+        # provide a real bitmap fallback so the route remains visible when a
+        # Google Static Maps key is unavailable or temporarily fails.
+        if Image is not None and ImageDraw is not None:
+            canvas = Image.new("RGB", (640, 420), "#111111")
+            draw = ImageDraw.Draw(canvas)
+            for x in range(-160, 720, 80):
+                draw.line((x, 0, x + 120, 420), fill="#2b2f36", width=2)
+            for y in range(40, 500, 70):
+                draw.line((0, y, 640, y - 80), fill="#2b2f36", width=2)
+            route_points = [(120, 94), (210, 132), (290, 190), (374, 252), (512, 315)]
+            draw.line(route_points, fill="#f5f5f5", width=8, joint="curve")
+            draw.ellipse((104, 78, 136, 110), fill="#20b26b")
+            draw.ellipse((496, 299, 528, 331), fill="#ef4444")
+            origin_label = ride_display_label(origin or city, origin_point, city)[:34]
+            destination_label = ride_display_label(destination or city, destination_point, city)[:38]
+            draw.rounded_rectangle((142, 65, 442, 111), radius=8, fill="#161616")
+            draw.text((158, 78), origin_label, fill="#ffffff")
+            draw.rounded_rectangle((252, 284, 602, 340), radius=8, fill="#161616")
+            draw.text((268, 301), destination_label, fill="#ffffff")
+            output = io.BytesIO()
+            canvas.save(output, format="PNG", optimize=True)
+            data = output.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("X-FairFares-Map-Source", "fallback-png")
+            self.send_header("Cache-Control", "public, max-age=120")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
 <rect width="640" height="420" fill="#111"/>
 <g stroke="#2b2f36" stroke-width="2">{''.join(f'<path d="M {x} 0 L {x + 120} 420"/>' for x in range(-160, 720, 80))}{''.join(f'<path d="M 0 {y} L 640 {y - 80}"/>' for y in range(40, 500, 70))}</g>

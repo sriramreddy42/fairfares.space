@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useWindowDimensions } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Floating bottom navigation bar dimensions (see BottomTabs.tsx).
 export const BOTTOM_NAV_HEIGHT = 70;
@@ -28,21 +27,17 @@ export type ResponsiveLayout = {
 
 export function useResponsiveLayout(): ResponsiveLayout {
   const { width } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const isTablet = width >= TABLET_BREAKPOINT;
 
   return useMemo(() => {
     const contentMaxWidth: number | "100%" = isTablet
       ? Math.min(width, TABLET_CONTENT_MAX_WIDTH)
       : "100%";
-    // The root SafeAreaView already ends above the device home-indicator inset.
-    // Let the floating pill extend into that reserved area so it sits visually
-    // near the screen edge, while retaining 16pt beneath it on gesture devices.
-    const navBottomInset = isTablet
-      ? BOTTOM_NAV_BOTTOM_OFFSET
-      : insets.bottom > 0
-        ? -(Math.max(0, insets.bottom - 16))
-        : BOTTOM_NAV_BOTTOM_OFFSET;
+    // The root SafeAreaView already ends above Android's gesture/three-button
+    // navigation area and the iOS home indicator. Never move controls back into
+    // that protected area: the size of Android's system navigation can change
+    // at runtime and negative offsets make the last tab partially untappable.
+    const navBottomInset = BOTTOM_NAV_BOTTOM_OFFSET;
     // Extra 14pt breathing room so the last card is fully visible above the pill.
     const navClearance =
       BOTTOM_NAV_HEIGHT + BOTTOM_NAV_BOTTOM_OFFSET + 14;
@@ -53,5 +48,5 @@ export function useResponsiveLayout(): ResponsiveLayout {
       navBottomInset,
       navWidth: isTablet ? TABLET_NAV_MAX_WIDTH : undefined,
     };
-  }, [width, isTablet, insets.bottom]);
+  }, [width, isTablet]);
 }

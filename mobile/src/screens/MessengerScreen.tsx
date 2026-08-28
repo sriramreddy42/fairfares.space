@@ -112,6 +112,7 @@ type Props = {
   onMediaTransferActiveChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
   onCardMessageSent?: (context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) => void;
+  onOpenCommunityPost?: (postId: string) => void;
 };
 
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
@@ -1345,8 +1346,9 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
   );
 }
 
-function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => void }) {
+function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onRequireSignup: () => void; onOpenCommunityPost?: (postId: string) => void }) {
   const isLight = useColorScheme() === "light";
+  const safeAreaInsets = useSafeAreaInsets();
   const [threads, setThreads] = useState<CommunityPost[]>([]);
   const [guestId, setGuestId] = useState("Guest");
   const [guestUserId, setGuestUserId] = useState(0);
@@ -1444,7 +1446,7 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
       </TouchableOpacity>;
     })}
     <Modal visible={Boolean(selected)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setSelectedId("")}>
-      {selected ? <View style={[styles.threadScreen, styles.guestPrivateSafeScreen]}>
+      {selected ? <View style={[styles.threadScreen, styles.guestPrivateSafeScreen, { paddingTop: Math.max(safeAreaInsets.top, Platform.OS === "ios" ? 48 : 10) }]}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: activeWallpaper.color }]}><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: activeWallpaper.accent }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: activeWallpaper.accent }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text><View style={styles.wallpaperShade} /></View>
         <View style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={() => { setBenefitsOpen(false); setSelectedId(""); }} accessibilityRole="button" accessibilityLabel="Back to conversations"><BackIcon /></TouchableOpacity>
@@ -1460,7 +1462,7 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
         <View style={styles.threadKeyboardViewport}>
         <StaticKeyboardBody bottomSafeArea={Platform.OS === "ios" ? 18 : 0}>
           <ScrollView style={styles.threadMessages} contentContainerStyle={[styles.threadMessagesContent, styles.guestPrivateMessagesContent]} keyboardShouldPersistTaps="handled">
-            <View style={[styles.messageContext, styles.theirMessageContext, styles.guestPrivateContext]}><Text style={[styles.messageContextType, styles.theirMessageContextType]}>ASK COMMUNITY POST</Text><Text style={[styles.messageContextTitle, styles.theirMessageContextTitle]}>{selected.title}</Text></View>
+            <TouchableOpacity style={[styles.messageContext, styles.theirMessageContext, styles.guestPrivateContext]} onPress={() => { const postId = selected.id; setSelectedId(""); onOpenCommunityPost?.(postId); }} accessibilityRole="button" accessibilityLabel={`Open Ask Community post: ${selected.title}`}><Text style={[styles.messageContextType, styles.theirMessageContextType]}>ASK COMMUNITY POST</Text><Text style={[styles.messageContextTitle, styles.theirMessageContextTitle]}>{selected.title}</Text></TouchableOpacity>
             {(selected.guestMessages || selected.answers || []).slice(-50).map((answer, index, answers) => {
               const mine = isGuestMessageMine(answer);
               const runEnds = index === answers.length - 1 || isGuestMessageMine(answers[index + 1]) !== mine;
@@ -1500,7 +1502,7 @@ function GuestCommunityLetters({ onRequireSignup }: { onRequireSignup: () => voi
   </View>;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -5740,7 +5742,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {message.metadata?.privateReply ? <PrivateReplyCard context={message.metadata.privateReply} mine={message.mine} /> : null}
                 {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
-                  <View style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
+                  <TouchableOpacity disabled={message.contextType !== "COMMUNITY" || !message.contextId || !onOpenCommunityPost} onPress={(event) => { event.stopPropagation(); if (message.contextId) onOpenCommunityPost?.(message.contextId); }} accessibilityRole={message.contextType === "COMMUNITY" && message.contextId ? "button" : undefined} accessibilityLabel={message.contextType === "COMMUNITY" ? `Open Ask Community post: ${message.contextTitle}` : undefined} style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
                       {message.contextType === "CARPOOL" ? "Carpool listing" : message.contextType === "COMMUNITY" ? "Ask Community" : "Housing listing"}
                       {message.contextOwnerName ? ` · ${message.contextOwnerName}` : ""}
@@ -5753,7 +5755,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                         {message.contextSubtitle}
                       </Text>
                     ) : null}
-                  </View>
+                  </TouchableOpacity>
                 ) : null}
                 {message.attachmentUrl || (message.type === "IMAGE" && Boolean(message.metadata?.thumbnailDataUrl || message.metadata?.decryptedDataUrl)) ? (
                   message.type === "IMAGE" ? <View style={styles.photoMediaWrap}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void openPhotoGroup(mediaGroup); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
@@ -6423,7 +6425,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </TouchableOpacity>
           </TouchableOpacity>
         ) : null}
-        {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} /> : null}
+        {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} onOpenCommunityPost={onOpenCommunityPost} /> : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -7321,7 +7323,7 @@ const styles = StyleSheet.create({
   guestReplyInputLight: { color: "#17201c", backgroundColor: "#fff", borderColor: "rgba(15,23,42,.10)" },
   guestReplySend: { alignSelf: "flex-end", minHeight: 38, justifyContent: "center", borderRadius: 19, backgroundColor: "#1ec493", paddingHorizontal: 18 },
   guestReplySendText: { color: "#06291e", fontSize: 12, fontWeight: "900" },
-  guestPrivateSafeScreen: { paddingTop: Platform.OS === "ios" ? 48 : 10 },
+  guestPrivateSafeScreen: {},
   guestPrivateWallpaper: { ...StyleSheet.absoluteFillObject, overflow: "hidden", backgroundColor: "#D9E5DD" },
   guestPrivateGlowTop: { position: "absolute", width: 300, height: 300, borderRadius: 150, right: -145, top: 70, backgroundColor: "rgba(255,255,255,.28)" },
   guestPrivateGlowBottom: { position: "absolute", width: 300, height: 300, borderRadius: 150, left: -160, bottom: 90, backgroundColor: "rgba(66,137,105,.10)" },

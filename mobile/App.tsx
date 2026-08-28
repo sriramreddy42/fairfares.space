@@ -2142,6 +2142,11 @@ function FairFaresApp() {
         dashboard: { ...current.dashboard, messages: unreadCount }
       } : current)}
       onCardMessageSent={markCardMessageSent}
+      onOpenCommunityPost={(postId) => {
+        setLinkedCommunityPostId(postId);
+        setBottomTabsHidden(false);
+        setActiveTab("community");
+      }}
     />
   );
 
@@ -2222,7 +2227,19 @@ function FairFaresApp() {
           setSelectedNeed("ride_need");
         }}
         onRideMessage={openRideMessage}
-        onOpenHousing={() => {
+        onOpenHousing={(postId = "") => {
+          if (postId) {
+            const openListing = (post: HousingPost) => {
+              setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+              setHousingDetailReturnTab("activity");
+              setLinkedHousingPost(post);
+              setActiveTab("housing");
+            };
+            const existing = visiblePosts.find((post) => post.id === postId);
+            if (existing) { openListing(existing); return; }
+            void getHousingListing(postId).then((post) => post ? openListing(post) : Alert.alert("Listing unavailable", "This listing is no longer available."));
+            return;
+          }
           setRideOwnerOpenToken(0);
           setRideOwnerReturnTab(null);
           setSelectedNeed("need_place");

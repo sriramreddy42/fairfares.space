@@ -11,7 +11,7 @@ type Props = {
   data: BootstrapPayload | null;
   onReserveRide?: () => void;
   onRideMessage?: (ride: RidePost) => void;
-  onOpenHousing?: () => void;
+  onOpenHousing?: (postId?: string) => void;
   onOpenServices?: () => void;
   onOpenRideOwner?: (target?: "workspace" | "requests" | "listings") => void;
   onRequireLogin?: () => void;
@@ -578,7 +578,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         <Text style={styles.sectionMeta}>{activeHousing.length} current · {pastHousing.length} previous</Text>
       </View>
       {activeHousing.length ? activeHousing.slice(0, 4).map((post) => (
-        <TouchableOpacity key={`active-housing-${post.id}`} style={styles.historyRow} onPress={onOpenHousing}>
+        <TouchableOpacity key={`active-housing-${post.id}`} style={styles.historyRow} onPress={() => onOpenHousing?.(post.id)}>
           <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
           <View style={styles.rowText}>
             <Text style={styles.rowTitle}>{post.title}</Text>
@@ -587,7 +587,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           <Text style={styles.rebookText}>Your listing</Text>
         </TouchableOpacity>
       )) : (
-        <TouchableOpacity style={styles.emptyPast} onPress={onOpenHousing}>
+        <TouchableOpacity style={styles.emptyPast} onPress={() => onOpenHousing?.()}>
           <Text style={styles.emptyTitle}>No current listings</Text>
           <Text style={styles.emptyCopy}>Homes, rooms, and roommate searches you post will appear here.</Text>
         </TouchableOpacity>
@@ -741,7 +741,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       ))}
 
       {pastHousing.slice(0, 4).map((post) => (
-        <TouchableOpacity key={`housing-${post.id}`} style={styles.historyRow} onPress={onOpenHousing}>
+        <TouchableOpacity key={`housing-${post.id}`} style={styles.historyRow} onPress={() => onOpenHousing?.(post.id)}>
           <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
           <View style={styles.rowText}>
             <Text style={styles.rowTitle}>{post.title}</Text>

@@ -2922,7 +2922,9 @@ export function HousingScreen({
                   <EmbeddedRideMap origin={nativeMapPoints.origin} destination={nativeMapPoints.destination} />
                 ) : mapUri ? (
                   <Image source={{ uri: mapUri }} style={styles.rideChoiceMapImage} resizeMode="cover" />
-                ) : null}
+                ) : (
+                  <View style={styles.rideChoiceMapFallback}><Text style={styles.rideChoiceMapFallbackIcon}>⌖</Text><Text style={styles.rideChoiceMapFallbackText}>Route preview unavailable</Text></View>
+                )}
                 <TouchableOpacity style={styles.rideMapBackButton} onPress={() => setRidePlannerStage("plan")}>
                   <Text style={styles.rideMapBackText}>‹</Text>
                 </TouchableOpacity>
@@ -3249,13 +3251,14 @@ export function HousingScreen({
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePosterCarousel}>
             {rideServicePosters.filter((service) => !service.available).map((service) => (
-              <View key={service.key} style={[styles.ridePosterCard, { backgroundColor: service.tint }, styles.ridePosterCardSoon]}>
+              <View key={service.key} style={styles.ridePosterCard}>
+                <View style={[styles.ridePosterAccent, { backgroundColor: service.tint }]} />
                 <View style={styles.ridePosterCopy}>
                   <Text style={styles.ridePosterTitle}>{service.title}</Text>
                   <Text style={styles.ridePosterSubtitle}>{service.subtitle}</Text>
                   <Text style={styles.ridePosterButton}>Coming soon</Text>
                 </View>
-                <View style={styles.ridePosterArt}>{renderRideGlyph(service.glyph)}</View>
+                <View style={[styles.ridePosterArt, { backgroundColor: `${service.tint}22` }]}>{renderRideGlyph(service.glyph)}</View>
               </View>
             ))}
           </ScrollView>
@@ -4637,20 +4640,21 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.panel,
     flexDirection: "row",
     shadowColor: "#000",
-    shadowOpacity: 0.28,
+    shadowOpacity: 0.16,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 10 }
   },
+  ridePosterAccent: { width: 5 },
   ridePosterCardActive: { borderColor: theme.colors.text, shadowOpacity: 0.42 },
-  ridePosterCardSoon: { opacity: 0.58 },
   ridePosterCopy: { flex: 1, padding: 14, justifyContent: "space-between", gap: 8 },
   ridePosterTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 23, fontWeight: "700" },
-  ridePosterSubtitle: { color: "rgba(255,255,255,0.78)", fontSize: 12, lineHeight: 16, fontWeight: "600" },
-  ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 6, fontSize: 11, fontWeight: "900" },
-  ridePosterArt: { width: 94, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.12)", transform: [{ scale: 0.9 }] },
+  ridePosterSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, fontWeight: "600" },
+  ridePosterButton: { alignSelf: "flex-start", color: theme.colors.text, backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 6, fontSize: 11, fontWeight: "900" },
+  ridePosterArt: { width: 94, alignItems: "center", justifyContent: "center", transform: [{ scale: 0.9 }] },
   rideGlyphWrap: { width: 78, height: 78, alignItems: "center", justifyContent: "center" },
   rideGlyphWrapSmall: { width: 42, height: 42 },
   rideGlyphCalendar: { width: 48, height: 46, borderRadius: 8, borderWidth: 3, borderColor: theme.colors.text, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.04)" },
@@ -5274,6 +5278,9 @@ const styles = StyleSheet.create({
   rideChoiceScreen: { flex: 1, backgroundColor: "#111" },
   rideChoiceMap: { flex: 1, minHeight: 320, backgroundColor: "#202632", overflow: "hidden" },
   rideChoiceMapImage: { ...StyleSheet.absoluteFillObject, opacity: 0.94 },
+  rideChoiceMapFallback: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#202632" },
+  rideChoiceMapFallbackIcon: { color: theme.colors.accent, fontSize: 34, fontWeight: "900" },
+  rideChoiceMapFallbackText: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" },
   rideMapBackButton: { position: "absolute", top: 34, left: 22, width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
   rideMapBackText: { color: "#f7f7f8", fontSize: 34, lineHeight: 36 },
   rideMapRouteLine: { position: "absolute", left: "24%", right: "18%", top: "31%", height: 6, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.90)", transform: [{ rotate: "42deg" }] },
