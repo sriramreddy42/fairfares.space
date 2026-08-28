@@ -263,6 +263,42 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIsNone(blocked)
         self.assertIn("limit", error.lower())
 
+    def test_membership_changes_create_durable_system_timeline_events_once(self):
+        public_group = next(
+            row for row in app.get_chat_communities_for_user(self.outsider, "Denver, CO")
+            if not row["joined"] and row["visibility"] == "PUBLIC"
+        )
+        joined, error = app.join_chat_community(
+            public_group["id"], self.outsider, public_group["suggestionCity"], public_group["suggestionPurpose"]
+        )
+        self.assertFalse(error)
+        self.assertTrue(joined["joined"])
+        app.join_chat_community(public_group["id"], self.outsider)
+        with app.db() as con:
+            events = con.execute(
+                "SELECT message_type, message_text FROM chat_messages ORDER BY id"
+            ).fetchall()
+        self.assertEqual([(row["message_type"], row["message_text"]) for row in events], [
+            ("SYSTEM", "Outsider joined from the community")
+        ])
+
+    def test_admin_add_and_private_invite_use_distinct_system_event_copy(self):
+        group = self.create_group()
+        self.assertFalse(app.add_chat_group_member(group["id"], self.owner, self.member))
+        token, error = app.create_chat_group_invite(group["id"], self.owner)
+        self.assertFalse(error)
+        joined, error = app.join_chat_group_by_invite(token, self.outsider)
+        self.assertFalse(error)
+        self.assertTrue(joined["joined"])
+        with app.db() as con:
+            events = con.execute(
+                "SELECT message_type, message_text FROM chat_messages ORDER BY id"
+            ).fetchall()
+        self.assertEqual([(row["message_type"], row["message_text"]) for row in events], [
+            ("SYSTEM", "Owner added Member"),
+            ("SYSTEM", "Outsider joined via an invite"),
+        ])
+
     def test_invite_preview_does_not_join_or_consume_invitation(self):
         group = self.create_group()
         token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)

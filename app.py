@@ -18944,7 +18944,48 @@ def update_chat_group_details(public_id: str, user_id: int, name: str, descripti
     return updated, "" if updated else "Group could not be refreshed."
 
 
-def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "", suggestion_purpose: str = "") -> tuple[dict[str, object] | None, str]:
+def record_chat_membership_event(
+    con: sqlite3.Connection,
+    community: sqlite3.Row,
+    actor_id: int,
+    member_id: int,
+    event_kind: str,
+    membership_id: int,
+) -> None:
+    """Persist a non-encrypted group timeline event for a real membership change."""
+    actor = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (actor_id,)).fetchone()
+    member = con.execute("SELECT * FROM users WHERE id = ? LIMIT 1", (member_id,)).fetchone()
+    if not actor or not member or not membership_id:
+        return
+    conversation, _error = get_or_create_community_conversation(con, str(row_value(community, "public_id") or ""), member)
+    if not conversation:
+        return
+    actor_name = clean_text_value(row_value(actor, "name"), 120) or "A member"
+    member_name = clean_text_value(row_value(member, "name"), 120) or "A member"
+    if event_kind == "ADDED":
+        text = f"{actor_name} added {member_name}"
+        sender = actor
+    elif event_kind == "INVITE":
+        text = f"{member_name} joined via an invite"
+        sender = member
+    else:
+        text = f"{member_name} joined from the community"
+        sender = member
+    event_key = f"membership:{int(row_value(community, 'id') or 0)}:{membership_id}:{event_kind.lower()}"
+    message = save_chat_message(
+        con,
+        int(row_value(conversation, "id") or 0),
+        sender,
+        text,
+        event_key,
+    )
+    con.execute(
+        "UPDATE chat_messages SET message_type = 'SYSTEM', metadata_json = ? WHERE id = ?",
+        (json.dumps({"kind": event_kind, "actorId": actor_id, "memberId": member_id}), int(row_value(message, "id") or 0)),
+    )
+
+
+def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "", suggestion_purpose: str = "", event_kind: str = "COMMUNITY") -> tuple[dict[str, object] | None, str]:
     with db() as con:
         community = con.execute(
             "SELECT * FROM chat_communities WHERE public_id = ? LIMIT 1",
@@ -18957,13 +18998,19 @@ def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "",
             return None, "Community not found."
         if (row_value(community, "visibility") or "PUBLIC") != "PUBLIC":
             return None, "This is a private group. Use a valid invitation link to join."
-        con.execute(
+        cursor = con.execute(
             "INSERT OR IGNORE INTO chat_community_members (community_id, user_id) VALUES (?, ?)",
             (community["id"], user_id),
         )
+        membership = con.execute(
+            "SELECT id FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+            (int(community["id"]), user_id),
+        ).fetchone()
         conversation = con.execute("SELECT id FROM chat_conversations WHERE community_id = ?", (int(community["id"]),)).fetchone()
         if conversation:
             con.execute("INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (int(conversation["id"]), user_id))
+        if cursor.rowcount:
+            record_chat_membership_event(con, community, user_id, user_id, event_kind, int(row_value(membership, "id") or 0))
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
     return (joined[0] if joined else None), ""
 
@@ -19062,7 +19109,7 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
     clean_token = (token or "").strip()
     public_group_id = public_chat_group_id_from_invite(clean_token)
     if public_group_id:
-        joined, error = join_chat_community(public_group_id, user_id)
+        joined, error = join_chat_community(public_group_id, user_id, event_kind="INVITE")
         return joined, error or ("" if joined else "This public group is unavailable.")
     if len(clean_token) < 24:
         return None, "This invitation link is invalid."
@@ -19101,6 +19148,13 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
                 "UPDATE chat_group_invites SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (int(invite["id"]),),
             )
+            community = con.execute("SELECT * FROM chat_communities WHERE id = ? LIMIT 1", (int(invite["community_id"]),)).fetchone()
+            membership = con.execute(
+                "SELECT id FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+                (int(invite["community_id"]), user_id),
+            ).fetchone()
+            if community and membership:
+                record_chat_membership_event(con, community, user_id, user_id, "INVITE", int(row_value(membership, "id") or 0))
         public_id = str(row_value(invite, "public_id") or "")
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
     return (joined[0] if joined else None), ""
@@ -19275,10 +19329,14 @@ def add_chat_group_member(public_id: str, actor_id: int, target_id: int) -> str:
         target = con.execute("SELECT id FROM users WHERE id = ? LIMIT 1", (target_id,)).fetchone()
         if not target:
             return "FairFares member not found."
-        con.execute(
+        cursor = con.execute(
             "INSERT OR IGNORE INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
             (community_id, target_id),
         )
+        membership = con.execute(
+            "SELECT id FROM chat_community_members WHERE community_id = ? AND user_id = ? LIMIT 1",
+            (community_id, target_id),
+        ).fetchone()
         conversation = con.execute(
             "SELECT id FROM chat_conversations WHERE community_id = ? LIMIT 1",
             (community_id,),
@@ -19288,6 +19346,10 @@ def add_chat_group_member(public_id: str, actor_id: int, target_id: int) -> str:
                 "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
                 (int(conversation["id"]), target_id),
             )
+        if cursor.rowcount and membership:
+            community_row = con.execute("SELECT * FROM chat_communities WHERE id = ? LIMIT 1", (community_id,)).fetchone()
+            if community_row:
+                record_chat_membership_event(con, community_row, actor_id, target_id, "ADDED", int(row_value(membership, "id") or 0))
     return ""
 
 

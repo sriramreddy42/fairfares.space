@@ -5710,6 +5710,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }
             const { message, skipForMediaGroup, mediaGroup, discoveredUrl, isMediaMessage, messageRunEnds, replyTarget } = item;
             if (skipForMediaGroup) return null;
+            if (message.type === "SYSTEM") {
+              return <View key={message.id} style={styles.systemEventRow} accessibilityRole="text" accessibilityLabel={message.text}>
+                <View style={styles.systemEventPill}><Text style={styles.systemEventText}>~ {message.text}</Text></View>
+              </View>;
+            }
             const mediaUploading = Boolean(message.metadata?.uploading);
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             return (
@@ -6712,6 +6717,9 @@ const styles = StyleSheet.create({
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
+  systemEventRow: { alignItems: "center", paddingHorizontal: 30, marginVertical: 6 },
+  systemEventPill: { maxWidth: "92%", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: "rgba(9,13,18,0.90)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.12)" },
+  systemEventText: { color: "#F5F5F5", fontSize: 12, lineHeight: 16, fontWeight: "600", textAlign: "center" },
   smallAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: "#dbeafe", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   smallAvatarImage: { width: "100%", height: "100%" },
   smallAvatarText: { color: "#0f172a", fontWeight: "900", fontSize: 10 },
