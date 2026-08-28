@@ -385,6 +385,10 @@ class MobileAuthTest(unittest.TestCase):
                 "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
                 ("Housing Owner", "housing-owner@example.com", "+13035550123", app.hash_password("HousingOwnerPassword123!")),
             )
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Housing Viewer", "housing-viewer@example.com", "+13035550124", app.hash_password("HousingViewerPassword123!")),
+            )
         server, thread = self.start_server()
         try:
             with app.db() as con:
@@ -421,6 +425,37 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(updated_status, 200)
             self.assertEqual(updated["post"]["id"], listing_id)
             self.assertEqual(updated["post"]["title"], "Updated room search")
+
+            def fetch_listing(token=""):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/housing?postId={urllib.parse.quote(listing_id)}",
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))["posts"][0]
+
+            guest_listing = fetch_listing()
+            self.assertEqual(guest_listing["contactEmail"], "")
+            self.assertEqual(guest_listing["contactPhone"], "")
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/bootstrap?city=Denver%2C%20CO",
+                timeout=5,
+            ) as response:
+                guest_bootstrap = json.loads(response.read().decode("utf-8"))
+            guest_bootstrap_listing = next(post for post in guest_bootstrap["housing"] if post["id"] == listing_id)
+            self.assertEqual(guest_bootstrap_listing["contactEmail"], "")
+            self.assertEqual(guest_bootstrap_listing["contactPhone"], "")
+            owner_listing = fetch_listing(login["token"])
+            self.assertEqual(owner_listing["contactEmail"], "housing-owner@example.com")
+            self.assertEqual(owner_listing["contactPhone"], "+13035550123")
+            _viewer_status, viewer_login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "housing-viewer@example.com",
+                "password": "HousingViewerPassword123!",
+            })
+            viewer_listing = fetch_listing(viewer_login["token"])
+            self.assertEqual(viewer_listing["contactEmail"], "")
+            self.assertEqual(viewer_listing["contactPhone"], "")
             with app.db() as con:
                 self.assertEqual(con.execute("SELECT COUNT(*) AS total FROM accommodation_posts").fetchone()["total"], listing_count_before + 1)
         finally:

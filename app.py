@@ -82,9 +82,9 @@ PRIVACY_VERSION = "2026-08-10"
 COMMUNITY_GUIDELINES_VERSION = "2026-08-10"
 
 
-def consent_values(payload: dict[str, object]) -> tuple[bool, str]:
+def consent_values(payload: dict[str, object]) -> tuple[bool, str | None]:
     accepted = str(payload.get("consentAccepted") or payload.get("consent_accepted") or "").strip().lower() in {"1", "true", "yes", "on"}
-    return accepted, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S") if accepted else ""
+    return accepted, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S") if accepted else None
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -16336,6 +16336,16 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "genderPreferenceValue": row_value(row, "gender_preference"),
         "leaseTermValue": row_value(row, "lease_term"),
     }
+
+
+def mobile_housing_posts_for_viewer(posts: list[dict[str, object]], viewer_id: int = 0) -> list[dict[str, object]]:
+    """Copy public housing payloads and retain direct contact only for the owner."""
+    visible_posts = [dict(post) for post in posts]
+    for post in visible_posts:
+        if int(post.get("posterUserId") or 0) != int(viewer_id or 0):
+            post["contactEmail"] = ""
+            post["contactPhone"] = ""
+    return visible_posts
 
 
 RIDE_TYPE_LABELS = {
@@ -35421,7 +35431,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 chat["otherPhotoUrl"] = avatar_delivery_path(chat.get("otherPhotoUrl"), int(chat.get("otherUserId") or 0))
         messaged_listing_ids = messaged_listing_ids_for_user(user_id)
-        housing_posts = mobile_housing_posts(city=city, area=area, limit=12)
+        housing_posts = mobile_housing_posts_for_viewer(
+            mobile_housing_posts(city=city, area=area, limit=12),
+            user_id,
+        )
         self.send_json(
             {
                 "ok": True,
@@ -35800,6 +35813,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
+        viewer = self.current_user()
+        viewer_id = int(row_value(viewer, "id") or 0)
         params = urllib.parse.parse_qs(parsed.query)
         city = (params.get("city", ["Denver, CO"])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
@@ -35834,6 +35849,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 post_public_id=post_public_id,
             ),
         )
+        # Search results are public, but a poster's direct email and phone are
+        # account data rather than listing content. Chitthi is the supported
+        # contact path; retain these fields only for the owner so the same
+        # payload can still populate their edit form. Copy cached dictionaries
+        # before redaction so one guest request cannot poison a later owner hit.
+        posts = mobile_housing_posts_for_viewer(posts, viewer_id)
         self.send_json(
             {
                 "ok": True,
