@@ -10,14 +10,14 @@ import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, AppState, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
 import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
-import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
+import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
 import { setPlatformAppearance, theme } from "./src/theme";
 import { BootstrapPayload, Car, HousingPost, RentalSearchInput, RidePost, ServiceItem } from "./src/types";
@@ -258,6 +258,9 @@ function FairFaresApp() {
   const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("community");
+  const [messengerBackRequestToken, setMessengerBackRequestToken] = useState(0);
+  const androidTabHistoryRef = useRef<TabKey[]>(["community"]);
+  const androidBackTargetRef = useRef<TabKey | null>(null);
   const [updatePolicy, setUpdatePolicy] = useState<(AppVersionPolicy & { required: boolean }) | null>(null);
   const updateCheckRunningRef = useRef(false);
   const lastUpdateCheckRef = useRef(0);
@@ -337,6 +340,8 @@ function FairFaresApp() {
     void AsyncStorage.setItem(APPEARANCE_STORAGE_KEY, preference);
   }
   const [data, setData] = useState<BootstrapPayload | null>(null);
+  const authenticatedUserIdRef = useRef(0);
+  authenticatedUserIdRef.current = Number(data?.user?.id || 0);
   const [loading, setLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -467,6 +472,58 @@ function FairFaresApp() {
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
   const notificationPermissionPromptShownRef = useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (androidBackTargetRef.current === activeTab) {
+      androidBackTargetRef.current = null;
+      return;
+    }
+    const history = androidTabHistoryRef.current;
+    if (history[history.length - 1] === activeTab) return;
+    const existingIndex = history.lastIndexOf(activeTab);
+    if (existingIndex >= 0) history.splice(existingIndex + 1);
+    else history.push(activeTab);
+    // Tab history is only needed for a short Android back trail. Bounding it
+    // prevents a long-running session from retaining an ever-growing list.
+    if (history.length > 20) history.splice(0, history.length - 20);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      // Native React Native modals consume Back through their onRequestClose
+      // callbacks before this root handler. This branch handles tab/full-page
+      // state, which otherwise causes Android to finish the activity.
+      if (loading || launchVisible) return true;
+      if (staffPickupOpen) {
+        setStaffPickupOpen(false);
+        return true;
+      }
+      if (activeTab === "messenger" && bottomTabsHidden) {
+        setMessengerBackRequestToken((value) => value + 1);
+        return true;
+      }
+      const history = androidTabHistoryRef.current;
+      if (history.length > 1) {
+        history.pop();
+        const target = history[history.length - 1] || "community";
+        androidBackTargetRef.current = target;
+        setActiveTab(target);
+        return true;
+      }
+      if (activeTab !== "community") {
+        androidTabHistoryRef.current = ["community"];
+        androidBackTargetRef.current = "community";
+        setActiveTab("community");
+        return true;
+      }
+      // At the true root, allow Android to background/finish the activity.
+      return false;
+    });
+    return () => subscription.remove();
+  }, [activeTab, bottomTabsHidden, launchVisible, loading, staffPickupOpen]);
+
   const listingIntent: ListingIntent = listingForm.roommateIntent
     ? "need_roommates"
     : listingForm.postMode === "HAVE_PLACE"
@@ -483,6 +540,7 @@ function FairFaresApp() {
       return false;
     }
     if (pushRegistrationRunningRef.current) return false;
+    const registrationUserId = authenticatedUserIdRef.current;
     pushRegistrationRunningRef.current = true;
     try {
       if (Platform.OS === "android") {
@@ -548,8 +606,16 @@ function FairFaresApp() {
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
       if (!token.data) throw new Error("A push token could not be created.");
-      const userId = Number(data?.user?.id || 0);
+      if (authenticatedUserIdRef.current !== registrationUserId) return false;
+      const userId = registrationUserId;
+      // Password login may be restoring the historical Chitthi identity.
+      // Never let push registration create a competing key first; doing so
+      // makes old text recoverable only intermittently and old photos fail
+      // their device-scoped download authorization.
+      if (userId) await awaitChatIdentityRecovery(userId);
+      if (authenticatedUserIdRef.current !== registrationUserId) return false;
       const deviceId = userId ? (await getOrCreateDeviceIdentity(userId)).deviceId : "";
+      if (authenticatedUserIdRef.current !== registrationUserId) return false;
       await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true, deviceId);
       pushTokenRef.current = token.data;
       return true;
@@ -1140,6 +1206,7 @@ function FairFaresApp() {
     }
     if (Number(post.posterUserId || 0) === userId) throw new Error("You cannot message your own listing.");
     try {
+      await awaitChatIdentityRecovery(userId);
       const identity = await getOrCreateDeviceIdentity(userId);
       await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey || "");
       const opened = await openChatForPost(post.id);
@@ -2287,6 +2354,7 @@ function FairFaresApp() {
       pendingGroupInvite={pendingGroupInvite}
       notificationConversationId={notificationConversationId}
       notificationMessageId={notificationMessageId}
+      androidBackRequestToken={messengerBackRequestToken}
       onRequireLogin={() => setLoginOpen(true)}
       onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
       onClearPendingPost={() => setPendingPost(null)}

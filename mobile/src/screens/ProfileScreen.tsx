@@ -279,7 +279,15 @@ export function ProfileScreen({
     } catch (error) {
       if (currentProfileUserIdRef.current !== operationUserId) return;
       setProfilePhoto((current) => !selectedPhoto || current === selectedPhoto ? previousPhoto : current);
-      Alert.alert("Photo not saved", error instanceof Error ? error.message : "Could not save your profile photo.");
+      const reason = error instanceof Error ? error.message : "Could not save your profile photo.";
+      if (reason === "PHOTO_LIBRARY_SETTINGS_REQUIRED") {
+        Alert.alert("Photo access is off", "Allow FairFares to select photos in Settings, then try again.", [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => void Linking.openSettings() }
+        ]);
+      } else {
+        Alert.alert("Photo not saved", reason);
+      }
     } finally {
       profileMutationRunningRef.current = false;
       setSavingMode("");
@@ -407,8 +415,9 @@ export function ProfileScreen({
           {profileDetailsOpen ? <>
             <Text style={styles.label}>Full name</Text>
             <TextInput value={name} onChangeText={(value) => { setName(value); setProfileDirty(true); }} style={styles.input} placeholder="Your name" placeholderTextColor={theme.colors.muted} />
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>{user.emailIsApplePrivateRelay ? "Apple private relay email" : "Email"}</Text>
             <TextInput value={email} onChangeText={(value) => { setEmail(value); setProfileDirty(true); }} style={styles.input} placeholder="Email" placeholderTextColor={theme.colors.muted} autoCapitalize="none" keyboardType="email-address" />
+            {user.emailIsApplePrivateRelay ? <Text style={styles.securityNote}>You selected “Hide My Email” during Apple sign-in. Apple created this private forwarding address; messages sent here are forwarded to your Apple ID email.</Text> : null}
             <Text style={styles.label}>Phone</Text>
             <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number, including +country code" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" autoComplete="tel" />
             {completingInitialPhone ? <Text style={styles.securityNote}>Include the country code, for example +1 303 555 0123 or +91 98765 43210.</Text> : null}

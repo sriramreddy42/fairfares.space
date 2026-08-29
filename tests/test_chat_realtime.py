@@ -133,6 +133,98 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_history_and_realtime_never_return_messages_before_participant_boundary(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            old_message = app.save_chat_message(con, self.conversation_id, sender, "before joining", "boundary-old")
+            con.execute(
+                "UPDATE chat_participants SET visible_from_message_id = ? WHERE conversation_id = ? AND user_id = ?",
+                (int(old_message["id"]) + 1, self.conversation_id, self.recipient_id),
+            )
+            new_message = app.save_chat_message(con, self.conversation_id, sender, "after joining", "boundary-new")
+
+        server, thread = self.start_server()
+        try:
+            history_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/messages?conversation_id=CHAT-REALTIME&limit=30",
+                headers={"Authorization": "Bearer recipient-token"},
+            )
+            with urllib.request.urlopen(history_request, timeout=3) as response:
+                history = json.loads(response.read())
+            self.assertEqual([row["id"] for row in history["messages"]], [int(new_message["id"])])
+            self.assertEqual([row["text"] for row in history["messages"]], ["after joining"])
+            self.assertFalse(history["hasMore"])
+
+            _status, realtime = self.event_request(server, "recipient-token", 0)
+            self.assertEqual([row["id"] for row in realtime["messages"]], [int(new_message["id"])])
+            self.assertNotIn(int(old_message["id"]), realtime["deletedMessageIds"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_centered_history_does_not_mark_newer_unseen_messages_read(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            first = app.save_chat_message(con, self.conversation_id, sender, "first", "centered-first")
+            target = app.save_chat_message(con, self.conversation_id, sender, "target", "centered-target")
+            newer = app.save_chat_message(con, self.conversation_id, sender, "newer", "centered-newer")
+
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/messages?conversation_id=CHAT-REALTIME&before={int(target['id']) + 1}&limit=30",
+                headers={"Authorization": "Bearer recipient-token"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read())
+            self.assertEqual([row["id"] for row in payload["messages"]], [int(first["id"]), int(target["id"])])
+            with app.db() as con:
+                target_row = con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (int(target["id"]),)).fetchone()
+                newer_row = con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (int(newer["id"]),)).fetchone()
+                participant = con.execute(
+                    "SELECT last_read_message_id FROM chat_participants WHERE conversation_id = ? AND user_id = ?",
+                    (self.conversation_id, self.recipient_id),
+                ).fetchone()
+            self.assertTrue(target_row["read_at"])
+            self.assertIsNone(newer_row["read_at"])
+            self.assertEqual(int(participant["last_read_message_id"]), int(target["id"]))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_sender_message_info_reports_each_participant_read_state(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "receipt target", "info-1")
+            message_id = int(message["id"])
+        server, thread = self.start_server()
+        try:
+            def info(token):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/messages/info?message_id={message_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    return json.loads(response.read())
+
+            before = info("sender-token")
+            self.assertEqual(before["readBy"], [])
+            self.assertEqual([person["id"] for person in before["notReadBy"]], [self.recipient_id])
+            self.event_request(server, "recipient-token")
+            after = info("sender-token")
+            self.assertEqual([person["id"] for person in after["readBy"]], [self.recipient_id])
+            self.assertTrue(after["readBy"][0]["readAt"])
+            self.assertEqual(after["notReadBy"], [])
+            with self.assertRaises(urllib.error.HTTPError) as forbidden:
+                info("recipient-token")
+            self.assertEqual(forbidden.exception.code, 403)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_typing_status_is_authorized_visible_and_stoppable(self):
         server, thread = self.start_server()
         try:
@@ -798,6 +890,25 @@ class ChatRealtimeTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_recovered_legacy_identity_can_refresh_only_its_signing_key(self):
+        encryption_key = base64.b64encode(b"E" * 32).decode("ascii")
+        first_signing_key = base64.b64encode(b"S" * 32).decode("ascii")
+        restored_signing_key = base64.b64encode(b"T" * 32).decode("ascii")
+        different_encryption_key = base64.b64encode(b"X" * 32).decode("ascii")
+
+        self.assertEqual(app.register_chat_device_key(self.recipient_id, "recovered-device-01", encryption_key, first_signing_key), "")
+        self.assertEqual(app.register_chat_device_key(self.recipient_id, "recovered-device-01", encryption_key, restored_signing_key), "")
+        with app.db() as con:
+            row = con.execute(
+                "SELECT public_key, signing_public_key FROM chat_device_keys WHERE user_id = ? AND device_id = ?",
+                (self.recipient_id, "recovered-device-01"),
+            ).fetchone()
+        self.assertEqual(row["public_key"], encryption_key)
+        self.assertEqual(row["signing_public_key"], restored_signing_key)
+
+        error = app.register_chat_device_key(self.recipient_id, "recovered-device-01", different_encryption_key, restored_signing_key)
+        self.assertIn("different encryption key", error)
 
 
 if __name__ == "__main__":

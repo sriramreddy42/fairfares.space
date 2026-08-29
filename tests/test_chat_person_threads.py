@@ -112,6 +112,124 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(message_count, 160)
         self.assertEqual(message_thread_count, 1)
 
+    def test_empty_direct_thread_stays_out_of_inbox_until_first_message(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "empty-current@example.com")
+            other_user_id = self.insert_user(con, "Unmessaged Person", "empty-other@example.com")
+            conversation_id = self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 0)
+
+        self.assertEqual(app.get_chat_conversations_for_user(current_user_id), [])
+
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, ?)",
+                (conversation_id, current_user_id, "Hello"),
+            )
+
+        inbox = app.get_chat_conversations_for_user(current_user_id)
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]["otherName"], "Unmessaged Person")
+        self.assertEqual(inbox[0]["lastMessage"], "Hello")
+
+    def test_direct_thread_disappears_when_its_only_message_is_deleted(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "deleted-current@example.com")
+            other_user_id = self.insert_user(con, "Deleted Person", "deleted-other@example.com")
+            conversation_id = self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 1)
+
+        self.assertEqual(len(app.get_chat_conversations_for_user(current_user_id)), 1)
+
+        with app.db() as con:
+            con.execute("UPDATE chat_messages SET deleted_at = CURRENT_TIMESTAMP WHERE conversation_id = ?", (conversation_id,))
+
+        self.assertEqual(app.get_chat_conversations_for_user(current_user_id), [])
+
+    def test_direct_thread_requires_a_message_inside_participant_visibility_boundary(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "boundary-current@example.com")
+            other_user_id = self.insert_user(con, "Boundary Person", "boundary-other@example.com")
+            conversation_id = self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 1)
+            last_message_id = int(con.execute(
+                "SELECT MAX(id) AS id FROM chat_messages WHERE conversation_id = ?", (conversation_id,)
+            ).fetchone()["id"])
+            con.execute(
+                "UPDATE chat_participants SET visible_from_message_id = ? WHERE conversation_id = ? AND user_id = ?",
+                (last_message_id + 1, conversation_id, current_user_id),
+            )
+
+        self.assertEqual(app.get_chat_conversations_for_user(current_user_id), [])
+        self.assertEqual(len(app.get_chat_conversations_for_user(other_user_id)), 1)
+
+    def test_single_conversation_payload_has_same_last_message_shape_as_inbox(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "shape-current@example.com")
+            other_user_id = self.insert_user(con, "Shape Person", "shape-other@example.com")
+            conversation_id = self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 1)
+            single_row = app.get_chat_conversation_for_user(con, conversation_id, current_user_id)
+
+        self.assertIsNotNone(single_row)
+        single_payload = app.chat_row_payload(single_row, current_user_id)
+        inbox_payload = app.get_chat_conversations_for_user(current_user_id)[0]
+        self.assertGreater(single_payload["lastMessageId"], 0)
+        self.assertEqual(single_payload["lastMessageId"], inbox_payload["lastMessageId"])
+        self.assertEqual(single_payload["lastMessage"], inbox_payload["lastMessage"])
+        self.assertEqual(single_payload["unread"], inbox_payload["unread"])
+
+    def test_deleted_latest_message_restores_previous_visible_activity_timestamp(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "activity-current@example.com")
+            other_user_id = self.insert_user(con, "Activity Person", "activity-other@example.com")
+            conversation_id = self.insert_direct_conversation(con, current_user_id, other_user_id, 0, 0)
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text, created_at) VALUES (?, ?, 'older', '2026-08-01 10:00:00')",
+                (conversation_id, other_user_id),
+            )
+            older_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text, created_at, deleted_at) VALUES (?, ?, 'deleted newer', '2026-08-20 10:00:00', CURRENT_TIMESTAMP)",
+                (conversation_id, other_user_id),
+            )
+            con.execute("UPDATE chat_conversations SET last_message_at = '2026-08-20 10:00:00' WHERE id = ?", (conversation_id,))
+
+        inbox = app.get_chat_conversations_for_user(current_user_id)
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]["lastMessageId"], older_id)
+        self.assertEqual(inbox[0]["lastMessage"], "older")
+        self.assertEqual(inbox[0]["lastMessageAt"], "2026-08-01 10:00:00")
+
+    def test_cursor_orders_by_visible_activity_after_latest_message_deletion(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "cursor-delete-current@example.com")
+            first_user_id = self.insert_user(con, "First Person", "cursor-delete-first@example.com")
+            second_user_id = self.insert_user(con, "Second Person", "cursor-delete-second@example.com")
+            older_conversation_id = self.insert_direct_conversation(con, current_user_id, first_user_id, 0, 0)
+            newer_conversation_id = self.insert_direct_conversation(con, current_user_id, second_user_id, 0, 0)
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text, created_at) VALUES (?, ?, 'visible older', '2026-08-01 10:00:00')",
+                (older_conversation_id, first_user_id),
+            )
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text, created_at, deleted_at) VALUES (?, ?, 'deleted newest', '2026-08-30 10:00:00', CURRENT_TIMESTAMP)",
+                (older_conversation_id, first_user_id),
+            )
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text, created_at) VALUES (?, ?, 'visible newer', '2026-08-15 10:00:00')",
+                (newer_conversation_id, second_user_id),
+            )
+            con.execute("UPDATE chat_conversations SET last_message_at = '2026-08-30 10:00:00' WHERE id = ?", (older_conversation_id,))
+            con.execute("UPDATE chat_conversations SET last_message_at = '2026-08-15 10:00:00' WHERE id = ?", (newer_conversation_id,))
+
+        first_page = app.get_chat_conversations_for_user(current_user_id, limit=1)
+        self.assertEqual(first_page[0]["lastMessage"], "visible newer")
+        cursor = app.decode_chat_conversation_cursor(app.encode_chat_conversation_cursor(
+            first_page[0]["lastMessageAt"], first_page[0]["conversationId"],
+        ))
+        self.assertIsNotNone(cursor)
+        second_page = app.get_chat_conversations_for_user(
+            current_user_id, limit=1, cursor_activity=cursor[0], cursor_id=cursor[1],
+        )
+        self.assertEqual(second_page[0]["lastMessage"], "visible older")
+
     def test_phone_started_chat_reuses_one_person_thread_and_group_creator_is_owner(self):
         with app.db() as con:
             first_id = self.insert_user(con, "Phone User", "phone-user@example.com")

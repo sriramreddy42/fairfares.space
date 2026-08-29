@@ -328,7 +328,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       if (cancelled || reduceMotion) return;
       animation = Animated.sequence([
         Animated.delay(450),
-        Animated.spring(gasIconScale, { toValue: 1.2, damping: 8, stiffness: 190, mass: 0.65, useNativeDriver: true }),
+        // Use a pronounced zoom (1 → 3) while
+        // transforming only the glyph layer; the fixed icon slot/card never
+        // changes size or participates in layout.
+        Animated.spring(gasIconScale, { toValue: 3, damping: 8, stiffness: 190, mass: 0.65, useNativeDriver: true }),
         Animated.sequence([
           Animated.timing(gasIconShake, { toValue: -1, duration: 55, useNativeDriver: true }),
           Animated.timing(gasIconShake, { toValue: 1, duration: 75, useNativeDriver: true }),

@@ -1,5 +1,6 @@
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { createVideoPlayer } from "expo-video";
@@ -13,6 +14,57 @@ import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 // room for descriptor JSON, NaCl and base64 overhead.
 const CHAT_THUMBNAIL_MAX_BYTES = 18_000;
 const IS_EXPO_GO = Constants.appOwnership === "expo";
+let mediaLibraryPickerActive = false;
+
+async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions): Promise<ImagePicker.ImagePickerResult> {
+  // A fast double tap can otherwise attempt to present two PHPicker/activity
+  // controllers at once. Treat the duplicate tap like a cancellation instead
+  // of leaking a native presentation error into the upload UI.
+  if (mediaLibraryPickerActive) return { canceled: true, assets: null };
+  mediaLibraryPickerActive = true;
+  try {
+    try {
+      return await ImagePicker.launchImageLibraryAsync(options);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      // PHPicker normally needs no broad library permission. A few iOS
+      // versions/devices can nevertheless route through the legacy picker
+      // after permission state or an app upgrade changes. Recover once by
+      // requesting access instead of surfacing a dead-end native error.
+      if (Platform.OS === "android" && /unregistered ActivityResultLauncher/i.test(reason)) {
+        // Some Android activity recreation paths can leave expo-image-picker's
+        // launcher detached. The Storage Access Framework is independently
+        // registered and gives the same user-controlled, per-file access.
+        const fallback = await DocumentPicker.getDocumentAsync({
+          type: "image/*",
+          multiple: Boolean(options.allowsMultipleSelection),
+          copyToCacheDirectory: true
+        });
+        if (fallback.canceled) return { canceled: true, assets: null };
+        return {
+          canceled: false,
+          assets: fallback.assets.map((asset) => ({
+            uri: asset.uri,
+            width: 0,
+            height: 0,
+            type: "image" as const,
+            fileName: asset.name,
+            fileSize: asset.size,
+            mimeType: asset.mimeType || "image/jpeg"
+          }))
+        };
+      }
+      if (Platform.OS !== "ios" || !/permission|photo(?: library)? access|rejected/i.test(reason)) throw error;
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
+      if (permission.granted || permission.accessPrivileges === "limited") {
+        return await ImagePicker.launchImageLibraryAsync(options);
+      }
+      throw new Error("PHOTO_LIBRARY_SETTINGS_REQUIRED");
+    }
+  } finally {
+    mediaLibraryPickerActive = false;
+  }
+}
 
 function decodedBase64Size(value: string) {
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
@@ -167,11 +219,12 @@ async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: numb
 
 export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality = 0.72) {
   const remaining = Math.max(1, Math.min(limit, 4));
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) {
-    throw new Error("Allow photo access to upload pictures.");
-  }
-  const result = await ImagePicker.launchImageLibraryAsync({
+  // The system photo picker grants access only to the items the user selects.
+  // It does not require broad Photo Library permission on supported iOS and
+  // Android versions. Requesting that permission first incorrectly locked out
+  // people who had denied full-library access even though the private picker
+  // remained available.
+  const result = await launchPrivateMediaPicker({
     allowsMultipleSelection: remaining > 1,
     base64: false,
     mediaTypes: ["images"],
@@ -202,9 +255,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
 
 export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) throw new Error("Allow photo access to upload pictures.");
-  const result = await ImagePicker.launchImageLibraryAsync({
+  const result = await launchPrivateMediaPicker({
     allowsMultipleSelection: selectionLimit > 1,
     base64: false,
     mediaTypes: ["images"],
@@ -219,9 +270,7 @@ export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62,
 
 export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000, maxVideoBytes = 100_000_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) throw new Error("Allow photo access to upload pictures or videos.");
-  const result = await ImagePicker.launchImageLibraryAsync({
+  const result = await launchPrivateMediaPicker({
     allowsMultipleSelection: selectionLimit > 1,
     base64: false,
     mediaTypes: ["images", "videos"],

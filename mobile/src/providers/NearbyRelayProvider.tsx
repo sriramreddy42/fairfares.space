@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { registerChatDeviceKey } from "../api/client";
 import { BootstrapPayload } from "../types";
 import { getOrCreateDeviceIdentity } from "../utils/chatCrypto";
+import { awaitChatIdentityRecovery } from "../utils/chatRecovery";
 import { readEncryptedOutbox, updateEncryptedOutboxItem } from "../utils/chatOutbox";
 import { createSignedChatRelayBundle } from "../utils/chatRelay";
 import { broadcastNearbyRelayBundle, flushNearbyCarrierQueue, nearbyRelayPreferenceKey, startNearbyRelay } from "../utils/nearbyRelay";
@@ -62,6 +63,7 @@ export function NearbyRelayProvider({ user, children }: { user: BootstrapPayload
     };
     const relayTick = async () => {
       await flushNearbyCarrierQueue(userId);
+      await awaitChatIdentityRecovery(userId);
       const identity = await getOrCreateDeviceIdentity(userId);
       const ownItems = await readEncryptedOutbox(userId);
       for (const item of ownItems) {
@@ -69,7 +71,7 @@ export function NearbyRelayProvider({ user, children }: { user: BootstrapPayload
         await broadcastNearbyRelayBundle(bundle);
       }
     };
-    void getOrCreateDeviceIdentity(userId).then(async (identity) => {
+    void awaitChatIdentityRecovery(userId).then(() => getOrCreateDeviceIdentity(userId)).then(async (identity) => {
       try {
         await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
       } catch (error) {

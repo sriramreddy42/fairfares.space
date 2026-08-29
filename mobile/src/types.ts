@@ -69,6 +69,7 @@ export type FairFaresUser = {
   id: number;
   name: string;
   email: string;
+  emailIsApplePrivateRelay?: boolean;
   phone: string;
   dateOfBirth?: string;
   role: string;
@@ -114,6 +115,7 @@ export type ChatConversation = {
   otherOnline?: boolean;
   otherLastSeenAt?: string;
   lastMessageId?: number;
+  historyStartMessageId?: number;
   lastMessage: string;
   lastMessageAt: string;
   mutedAt?: string;
@@ -159,6 +161,7 @@ export type ChatMessage = {
     imageWidth?: number;
     imageHeight?: number;
     encryptedKeyPayload?: string;
+    encryptedRecipientDeviceId?: string;
     caption?: string;
     mediaGroupId?: string;
     mediaGroupIndex?: number;

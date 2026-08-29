@@ -430,11 +430,14 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
   const cacheRoot = FileSystem.cacheDirectory;
   if (!cacheRoot) throw new Error("Photo preview storage is unavailable.");
   const safeKey = value.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(-80) || String(Date.now());
+  const authScope = authToken
+    ? Array.from(sha256(naclUtil.decodeUTF8(authToken)).slice(0, 12), (byte) => byte.toString(16).padStart(2, "0")).join("")
+    : "guest";
   // Never hand an original-resolution legacy upload directly to the chat
   // recycler. Several visible photos can otherwise decode concurrently and
   // cause an iOS jetsam termination with no JavaScript exception. Version the
   // cache name so old full-resolution `.img` previews are not reused.
-  const destination = `${cacheRoot}chitthi-preview-v2-${safeKey}.jpg`;
+  const destination = `${cacheRoot}chitthi-preview-v3-${authScope}-${safeKey}.jpg`;
   const existing = await FileSystem.getInfoAsync(destination);
   if (existing.exists && Number(existing.size || 0) > 0) return destination;
   const loadPreview = async () => {
@@ -2196,6 +2199,18 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
   };
 }
 
+export type ChatMessageInfoPerson = { id: number; name: string; photoUrl: string; readAt: string };
+
+export async function getChatMessageInfo(messageId: number) {
+  return request<{
+    ok: boolean;
+    messageId: number;
+    sentAt: string;
+    readBy: ChatMessageInfoPerson[];
+    notReadBy: ChatMessageInfoPerson[];
+  }>(`/api/chat/messages/info?message_id=${encodeURIComponent(String(messageId))}`);
+}
+
 export async function updateChatTyping(conversationId: string, active: boolean) {
   return request<{ ok: boolean; active: boolean }>("/api/chat/typing", {
     method: "POST",
@@ -2344,7 +2359,7 @@ export async function createChatGroupInvite(communityId: string) {
   return request<{ ok: boolean; inviteUrl: string; expiresInDays: number }>("/api/chat/groups/invites", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId, expires_days: "7" })
-  });
+  }, { attempts: 2 });
 }
 
 function groupInviteToken(value: string) {

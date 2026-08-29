@@ -38,7 +38,8 @@ export async function syncChatIdentityRecovery(userId: number, password: string,
     const localIdentity = await getStoredDeviceIdentity(userId);
     assertCurrentRecovery(generation);
     const identity = localIdentity || cachedKeyring[0];
-    await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+    const identities = Array.from(new Map([identity, ...cachedKeyring].map((item) => [item.deviceId, item])).values());
+    await Promise.all(identities.map((item) => registerChatDeviceKey(item.deviceId, item.publicKey, item.signingPublicKey)));
     assertCurrentRecovery(generation);
     logDevelopmentPerformance("identity-recovery-complete", {
       userId,
@@ -49,20 +50,6 @@ export async function syncChatIdentityRecovery(userId: number, password: string,
   }
   const localIdentity = await getStoredDeviceIdentity(userId);
   assertCurrentRecovery(generation);
-  if (localIdentity) {
-    // SecureStore is scoped by account and installation. If its validated key
-    // exists, use it immediately; a password-wrapped server backup is a
-    // disaster-recovery source for a missing local key, not a login gate.
-    recoveredIdentityKeyringByUser.set(userId, [localIdentity]);
-    await registerChatDeviceKey(localIdentity.deviceId, localIdentity.publicKey, localIdentity.signingPublicKey);
-    assertCurrentRecovery(generation);
-    logDevelopmentPerformance("identity-recovery-complete", {
-      userId,
-      source: "secure-store",
-      durationMs: Date.now() - recoveryStartedAt,
-    });
-    return;
-  }
   const wrappingPassphrase = accountRecoveryPassphrase(password);
   const backup = await getChatKeyBackup();
   assertCurrentRecovery(generation);
@@ -75,7 +62,11 @@ export async function syncChatIdentityRecovery(userId: number, password: string,
     // Expo Go for another full derivation window.
     const derivationStartedAt = Date.now();
     logDevelopmentPerformance("identity-recovery-kdf-start", { userId, nativeCrypto: FairFaresCrypto.available });
-    const recoveredIdentity = await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, wrappingPassphrase);
+    // When a fresh local identity was created by an older build or an earlier
+    // session, retain it for new messages while recovering the backed-up key
+    // into the in-memory historical keyring. Persist the backup only when no
+    // valid local identity exists.
+    const recoveredIdentity = await restoreEncryptedIdentityBackup(userId, backup.encryptedPayload, wrappingPassphrase, !localIdentity);
     logDevelopmentPerformance("identity-recovery-kdf-complete", {
       userId,
       durationMs: Date.now() - derivationStartedAt,
@@ -83,12 +74,12 @@ export async function syncChatIdentityRecovery(userId: number, password: string,
     }, Date.now() - derivationStartedAt >= 5000);
     assertCurrentRecovery(generation);
     keyring.push(recoveredIdentity);
-    identity = recoveredIdentity;
+    identity = localIdentity || recoveredIdentity;
   }
-  identity ||= await getOrCreateDeviceIdentity(userId);
-  if (!keyring.length) keyring.push(identity);
+  identity ||= localIdentity || await getOrCreateDeviceIdentity(userId);
+  keyring.push(identity);
   recoveredIdentityKeyringByUser.set(userId, Array.from(new Map(keyring.map((item) => [item.deviceId, item])).values()));
-  await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey);
+  await Promise.all(recoveredIdentityKeyringByUser.get(userId)!.map((item) => registerChatDeviceKey(item.deviceId, item.publicKey, item.signingPublicKey)));
   assertCurrentRecovery(generation);
   // PBKDF2 is deliberately expensive. Native builds run it off the JS thread;
   // Expo Go uses a cooperatively-yielding fallback. Do not repeat it when the

@@ -299,6 +299,45 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             ("SYSTEM", "Outsider joined via an invite"),
         ])
 
+    def test_new_group_member_history_starts_at_membership_event(self):
+        group = self.create_group()
+        with app.db() as con:
+            owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
+            conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
+            self.assertFalse(error)
+            old_message = app.save_chat_message(
+                con, int(conversation["id"]), owner, "Private conversation before joining", "old-group-message"
+            )
+            old_message_id = int(old_message["id"])
+
+        token, error = app.create_chat_group_invite(group["id"], self.owner)
+        self.assertFalse(error)
+        joined, error = app.join_chat_group_by_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertTrue(joined["joined"])
+
+        with app.db() as con:
+            participant = con.execute(
+                """SELECT participant.visible_from_message_id, conversation.id AS conversation_id
+                   FROM chat_participants participant
+                   JOIN chat_conversations conversation ON conversation.id = participant.conversation_id
+                   JOIN chat_communities community ON community.id = conversation.community_id
+                   WHERE community.public_id = ? AND participant.user_id = ?""",
+                (group["id"], self.member),
+            ).fetchone()
+            visible_ids = [int(row["id"]) for row in con.execute(
+                """SELECT id FROM chat_messages
+                   WHERE conversation_id = ? AND id >= ? ORDER BY id""",
+                (int(participant["conversation_id"]), int(participant["visible_from_message_id"])),
+            ).fetchall()]
+            membership_event = con.execute(
+                "SELECT id FROM chat_messages WHERE message_text = 'Member joined via an invite'"
+            ).fetchone()
+
+        self.assertGreater(int(participant["visible_from_message_id"]), old_message_id)
+        self.assertNotIn(old_message_id, visible_ids)
+        self.assertEqual(visible_ids, [int(membership_event["id"])])
+
     def test_invite_preview_does_not_join_or_consume_invitation(self):
         group = self.create_group()
         token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)

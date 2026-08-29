@@ -1577,6 +1577,7 @@ def forward_chitthi_attachment(
             """SELECT messages.* FROM chat_messages messages
                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
                WHERE messages.id = ? AND participants.user_id = ?
+                 AND messages.id >= participants.visible_from_message_id
                  AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
                  AND messages.deleted_at IS NULL AND messages.attachment_url != ''
                  AND datetime(
@@ -1710,6 +1711,7 @@ def create_chitthi_download_authorization(
                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
                JOIN chat_message_envelopes envelopes ON envelopes.message_id = messages.id
                WHERE messages.id = ? AND participants.user_id = ?
+                 AND messages.id >= participants.visible_from_message_id
                  AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?
                  AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
                  AND messages.deleted_at IS NULL AND messages.attachment_url != ''
@@ -1730,19 +1732,36 @@ def create_chitthi_download_authorization(
     if created_at and created_at + timedelta(days=retention_days) <= datetime.utcnow():
         return None, "This attachment has expired."
     object_key = reference.replace(f"r2://{R2_BUCKET_NAME}/", "", 1)
-    download_url = r2_storage_client().generate_presigned_url(
+    storage = r2_storage_client()
+    download_url = storage.generate_presigned_url(
         "get_object",
         Params={"Bucket": R2_BUCKET_NAME, "Key": object_key, "ResponseContentType": "application/octet-stream"},
         ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
     )
     checksum = valid_sha256_base64(metadata.get("ciphertextSha256"))
     encrypted_size = int(metadata.get("size") or 0)
+    metadata_repaired = False
+    if encrypted_size <= 0 or not checksum:
+        try:
+            head = storage.head_object(Bucket=R2_BUCKET_NAME, Key=object_key, ChecksumMode="ENABLED")
+            actual_size = int(head.get("ContentLength") or 0)
+            header_checksum = valid_sha256_base64(head.get("ChecksumSHA256"))
+            if encrypted_size <= 0 and 0 < actual_size <= MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES + 1024:
+                encrypted_size = actual_size
+                metadata["size"] = encrypted_size
+                metadata_repaired = True
+            if not checksum and header_checksum:
+                checksum = header_checksum
+                metadata["ciphertextSha256"] = checksum
+                metadata_repaired = True
+        except Exception:
+            pass
     # Compatibility migration for attachments created before whole-object
     # checksums were persisted. The private object is streamed once, bounded by
     # the recorded size, then the repaired metadata is reused by all devices.
     if not checksum and encrypted_size > 0:
         try:
-            stored = r2_storage_client().get_object(Bucket=R2_BUCKET_NAME, Key=object_key)
+            stored = storage.get_object(Bucket=R2_BUCKET_NAME, Key=object_key)
             body = stored["Body"]
             digest = hashlib.sha256()
             total = 0
@@ -1761,10 +1780,14 @@ def create_chitthi_download_authorization(
             if total == encrypted_size:
                 checksum = base64.b64encode(digest.digest()).decode()
                 metadata["ciphertextSha256"] = checksum
-                with db() as con:
-                    con.execute("UPDATE chat_messages SET metadata_json = ? WHERE id = ?", (json.dumps(metadata, sort_keys=True), int(message["id"])))
+                metadata_repaired = True
         except Exception:
             checksum = ""
+    if metadata_repaired:
+        with db() as con:
+            con.execute("UPDATE chat_messages SET metadata_json = ? WHERE id = ?", (json.dumps(metadata, sort_keys=True), int(message["id"])))
+    if encrypted_size <= 0:
+        return None, "Encrypted attachment size could not be verified."
     return {
         "downloadUrl": download_url,
         "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
@@ -6374,7 +6397,9 @@ def init_db() -> None:
                 conversation_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 last_read_message_id INTEGER NOT NULL DEFAULT 0,
+                last_read_at TEXT,
                 joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                visible_from_message_id INTEGER NOT NULL DEFAULT 0,
                 muted_at TEXT,
                 blocked_at TEXT,
                 reported_at TEXT,
@@ -7678,9 +7703,58 @@ def init_db() -> None:
         ensure_column(con, "chat_conversations", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
         ensure_column(con, "chat_conversations", "last_message_at", "last_message_at TEXT")
         ensure_column(con, "chat_participants", "last_read_message_id", "last_read_message_id INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "chat_participants", "last_read_at", "last_read_at TEXT")
+        ensure_column(con, "chat_participants", "visible_from_message_id", "visible_from_message_id INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "chat_participants", "muted_at", "muted_at TEXT")
         ensure_column(con, "chat_participants", "blocked_at", "blocked_at TEXT")
         ensure_column(con, "chat_participants", "reported_at", "reported_at TEXT")
+        # Older group participant rows predate explicit history boundaries.
+        # Anchor them to their persisted membership event when possible, then
+        # to the first message at/after joining. Owners retain full history.
+        con.execute(
+            """UPDATE chat_participants
+               SET visible_from_message_id = COALESCE(
+                   (
+                       SELECT MIN(event.id)
+                       FROM chat_conversations conversation
+                       JOIN chat_community_members membership
+                         ON membership.community_id = conversation.community_id
+                        AND membership.user_id = chat_participants.user_id
+                       JOIN chat_messages event ON event.conversation_id = conversation.id
+                       WHERE conversation.id = chat_participants.conversation_id
+                         AND membership.role != 'OWNER'
+                         AND event.client_message_id LIKE
+                             'membership:' || conversation.community_id || ':' || membership.id || ':%'
+                   ),
+                   (
+                       SELECT MIN(message.id)
+                       FROM chat_conversations conversation
+                       JOIN chat_community_members membership
+                         ON membership.community_id = conversation.community_id
+                        AND membership.user_id = chat_participants.user_id
+                       JOIN chat_messages message ON message.conversation_id = conversation.id
+                       WHERE conversation.id = chat_participants.conversation_id
+                         AND membership.role != 'OWNER'
+                         AND datetime(message.created_at) > datetime(membership.joined_at)
+                   ),
+                   (
+                       SELECT COALESCE(MAX(message.id), 0) + 1
+                       FROM chat_messages message
+                       WHERE message.conversation_id = chat_participants.conversation_id
+                   ),
+                   visible_from_message_id
+               )
+               WHERE visible_from_message_id = 0
+                 AND EXISTS (
+                     SELECT 1
+                     FROM chat_conversations conversation
+                     JOIN chat_community_members membership
+                       ON membership.community_id = conversation.community_id
+                      AND membership.user_id = chat_participants.user_id
+                     WHERE conversation.id = chat_participants.conversation_id
+                       AND membership.role != 'OWNER'
+                 )"""
+        )
         ensure_column(con, "chat_messages", "message_type", "message_type TEXT NOT NULL DEFAULT 'TEXT'")
         ensure_column(con, "chat_messages", "attachment_url", "attachment_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "chat_messages", "metadata_json", "metadata_json TEXT NOT NULL DEFAULT ''")
@@ -12477,7 +12551,8 @@ def messaged_listing_ids_for_user(user_id: int) -> dict[str, list[str]]:
               ON messages.context_type = 'HOUSING'
              AND lower(context_post_contact.email) = lower(context_post.contact_email)
             WHERE messages.sender_id = ?
-             AND messages.deleted_at IS NULL
+              AND messages.id >= participant.visible_from_message_id
+              AND messages.deleted_at IS NULL
               AND messages.context_public_id != ''
               AND messages.context_type IN ('HOUSING', 'RIDE', 'CARPOOL')
               AND (
@@ -16239,6 +16314,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "id": int(row_value(user, "id") or 0),
         "name": row_value(user, "name"),
         "email": row_value(user, "email"),
+        "emailIsApplePrivateRelay": normalize_email(row_value(user, "email")).endswith("@privaterelay.appleid.com"),
         "phone": row_value(user, "phone"),
         "dateOfBirth": row_value(user, "date_of_birth"),
         "role": row_value(user, "role") or "CUSTOMER",
@@ -19040,7 +19116,7 @@ def join_chat_community(public_id: str, user_id: int, suggestion_city: str = "",
         ).fetchone()
         conversation = con.execute("SELECT id FROM chat_conversations WHERE community_id = ?", (int(community["id"]),)).fetchone()
         if conversation:
-            con.execute("INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (int(conversation["id"]), user_id))
+            add_chat_participant(con, int(conversation["id"]), user_id, restrict_group_history=True)
         if cursor.rowcount:
             record_chat_membership_event(con, community, user_id, user_id, event_kind, int(row_value(membership, "id") or 0))
     joined = [item for item in get_chat_communities_for_user(user_id) if item.get("id") == public_id]
@@ -19174,7 +19250,7 @@ def join_chat_group_by_invite(token: str, user_id: int) -> tuple[dict[str, objec
         )
         conversation = con.execute("SELECT id FROM chat_conversations WHERE community_id = ?", (int(invite["community_id"]),)).fetchone()
         if conversation:
-            con.execute("INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (int(conversation["id"]), user_id))
+            add_chat_participant(con, int(conversation["id"]), user_id, restrict_group_history=not already_member)
         if not already_member:
             con.execute(
                 "UPDATE chat_group_invites SET use_count = use_count + 1, last_used_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -19374,10 +19450,7 @@ def add_chat_group_member(public_id: str, actor_id: int, target_id: int) -> str:
             (community_id,),
         ).fetchone()
         if conversation:
-            con.execute(
-                "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
-                (int(conversation["id"]), target_id),
-            )
+            add_chat_participant(con, int(conversation["id"]), target_id, restrict_group_history=bool(cursor.rowcount))
         if cursor.rowcount and membership:
             community_row = con.execute("SELECT * FROM chat_communities WHERE id = ? LIMIT 1", (community_id,)).fetchone()
             if community_row:
@@ -19409,8 +19482,11 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
         ).fetchone()
         if existing and str(row_value(existing, "public_key") or "") != public_key:
             return "This Chitthi device ID is already bound to a different encryption key."
-        if existing and signing_public_key and row_value(existing, "signing_public_key") and str(row_value(existing, "signing_public_key")) != signing_public_key:
-            return "This Chitthi device ID is already bound to a different signing key."
+        # Legacy encrypted backups did not include the later notification/
+        # relay signing pair. A restored backup therefore derives the same
+        # immutable encryption public key but may legitimately mint a new
+        # signing key. Permit that narrow rotation only after the encryption
+        # key equality check above has succeeded.
         con.execute(
             """INSERT INTO chat_device_keys (user_id, device_id, public_key, signing_public_key)
                VALUES (?, ?, ?, ?)
@@ -19583,8 +19659,8 @@ def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.R
             return None, "Encrypted message is invalid."
     if reply_to_message_id:
         reply_target = con.execute(
-            "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL LIMIT 1",
-            (reply_to_message_id, int(conversation["id"])),
+            "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND id >= ? AND deleted_at IS NULL LIMIT 1",
+            (reply_to_message_id, int(conversation["id"]), int(row_value(conversation, "visible_from_message_id") or 0)),
         ).fetchone()
         if not reply_target:
             return None, "The message you replied to is no longer available."
@@ -19722,6 +19798,23 @@ def chat_message_is_editable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]
     return True, ""
 
 
+def add_chat_participant(con: sqlite3.Connection, conversation_id: int, user_id: int, *, restrict_group_history: bool = False) -> None:
+    """Add a participant with an immutable server-side group-history boundary."""
+    visible_from_message_id = 0
+    if restrict_group_history:
+        latest = con.execute(
+            "SELECT COALESCE(MAX(id), 0) AS message_id FROM chat_messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        visible_from_message_id = int(row_value(latest, "message_id") or 0) + 1
+    con.execute(
+        """INSERT OR IGNORE INTO chat_participants
+           (conversation_id, user_id, visible_from_message_id)
+           VALUES (?, ?, ?)""",
+        (conversation_id, user_id, visible_from_message_id),
+    )
+
+
 def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conversation_id: int, community_id: int) -> None:
     member_user_ids = {
         int(row_value(row, "user_id") or 0)
@@ -19752,10 +19845,7 @@ def sync_chat_conversation_members_from_community(con: sqlite3.Connection, conve
         (conversation_id, community_id),
     )
     for member_user_id in member_user_ids:
-        con.execute(
-            "INSERT OR IGNORE INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
-            (conversation_id, member_user_id),
-        )
+        add_chat_participant(con, conversation_id, member_user_id, restrict_group_history=True)
 
 
 def get_or_create_community_conversation(
@@ -19831,8 +19921,12 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "otherOnline": other_online if not community_public_id else False,
         "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
         "lastMessageId": last_message_id,
+        "historyStartMessageId": int(row_value(row, "visible_from_message_id") or 0),
         "lastMessage": row_value(row, "last_message"),
-        "lastMessageAt": row_value(row, "last_message_at") or row_value(row, "updated_at"),
+        # Activity must follow the newest message this participant can actually
+        # see. The conversation-level timestamp can point at a deleted message
+        # or at history from before a later group join.
+        "lastMessageAt": row_value(row, "last_message_created_at") or row_value(row, "updated_at"),
         "mutedAt": row_value(row, "muted_at"),
         "blockedAt": row_value(row, "blocked_at"),
         "unread": max(0, unread),
@@ -19856,8 +19950,21 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                communities.kind AS community_kind,
                communities.photo_url AS community_photo_url,
                participant.last_read_message_id,
+               participant.visible_from_message_id,
                participant.muted_at,
                participant.blocked_at,
+               (
+                   SELECT COUNT(*) FROM chat_messages unread_message
+                   WHERE unread_message.conversation_id = conversations.id
+                     AND unread_message.id > participant.last_read_message_id
+                     AND unread_message.id >= participant.visible_from_message_id
+                     AND unread_message.sender_id != ?
+                     AND unread_message.deleted_at IS NULL
+               ) AS unread_count,
+               (SELECT id FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_id,
+               (SELECT sender_id FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_sender_id,
+               (SELECT message_text FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message,
+               (SELECT created_at FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_created_at,
                COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
@@ -19876,7 +19983,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
         GROUP BY conversations.id
         LIMIT 1
         """,
-        (user_id, conversation_id, user_id),
+        (user_id, user_id, conversation_id, user_id),
     ).fetchone()
 
 
@@ -19897,8 +20004,21 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                communities.kind AS community_kind,
                communities.photo_url AS community_photo_url,
                participant.last_read_message_id,
+               participant.visible_from_message_id,
                participant.muted_at,
                participant.blocked_at,
+               (
+                   SELECT COUNT(*) FROM chat_messages unread_message
+                   WHERE unread_message.conversation_id = conversations.id
+                     AND unread_message.id > participant.last_read_message_id
+                     AND unread_message.id >= participant.visible_from_message_id
+                     AND unread_message.sender_id != ?
+                     AND unread_message.deleted_at IS NULL
+               ) AS unread_count,
+               (SELECT id FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_id,
+               (SELECT sender_id FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_sender_id,
+               (SELECT message_text FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message,
+               (SELECT created_at FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_created_at,
                COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
@@ -19925,7 +20045,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
         GROUP BY conversations.id
         LIMIT 1
         """,
-        (user_id, public_id, user_id, user_id),
+        (user_id, user_id, public_id, user_id, user_id),
     ).fetchone()
 
 
@@ -20308,10 +20428,11 @@ def save_chat_message(
     con.execute(
         """
         UPDATE chat_participants
-        SET last_read_message_id = MAX(last_read_message_id, ?)
+        SET last_read_at = CASE WHEN last_read_message_id < ? THEN CURRENT_TIMESTAMP ELSE last_read_at END,
+            last_read_message_id = MAX(last_read_message_id, ?)
         WHERE conversation_id = ? AND user_id = ?
         """,
-        (message_id, conversation_id, sender_id),
+        (message_id, message_id, conversation_id, sender_id),
     )
     return con.execute(
         """
@@ -21368,19 +21489,22 @@ def get_chat_conversations_for_user(
                    communities.kind AS community_kind,
                    communities.photo_url AS community_photo_url,
                    participant.last_read_message_id,
+                   participant.visible_from_message_id,
                    participant.muted_at,
                    participant.blocked_at,
                    (
                        SELECT COUNT(*)
                        FROM chat_messages unread_message
-                       WHERE unread_message.conversation_id = conversations.id
-                         AND unread_message.id > participant.last_read_message_id
-                         AND unread_message.sender_id != ?
+                         WHERE unread_message.conversation_id = conversations.id
+                           AND unread_message.id > participant.last_read_message_id
+                           AND unread_message.id >= participant.visible_from_message_id
+                           AND unread_message.sender_id != ?
                          AND unread_message.deleted_at IS NULL
                    ) AS unread_count,
                    last_message.id AS last_message_id,
                    last_message.sender_id AS last_sender_id,
                    last_message.message_text AS last_message,
+                   last_message.created_at AS last_message_created_at,
                    COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                    COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                    COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
@@ -21393,6 +21517,7 @@ def get_chat_conversations_for_user(
             LEFT JOIN chat_messages last_message ON last_message.id = (
                 SELECT id FROM chat_messages
                 WHERE conversation_id = conversations.id AND deleted_at IS NULL
+                  AND id >= participant.visible_from_message_id
                 ORDER BY id DESC LIMIT 1
             )
             LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
@@ -21402,10 +21527,26 @@ def get_chat_conversations_for_user(
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             WHERE conversations.status = 'ACTIVE'
               AND (
+                  conversations.community_id IS NOT NULL
+                  OR conversations.conversation_type = 'GROUP'
+                  OR NOT EXISTS (
+                      SELECT 1 FROM chat_participants another_participant
+                      WHERE another_participant.conversation_id = conversations.id
+                        AND another_participant.user_id != participant.user_id
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM chat_messages visible_message
+                      WHERE visible_message.conversation_id = conversations.id
+                        AND visible_message.deleted_at IS NULL
+                        AND visible_message.id >= participant.visible_from_message_id
+                  )
+              )
+              AND (
                   ? = ''
-                  OR datetime(COALESCE(conversations.last_message_at, conversations.updated_at)) < datetime(?)
+                  OR datetime(COALESCE(last_message.created_at, conversations.updated_at)) < datetime(?)
                   OR (
-                      datetime(COALESCE(conversations.last_message_at, conversations.updated_at)) = datetime(?)
+                      datetime(COALESCE(last_message.created_at, conversations.updated_at)) = datetime(?)
                       AND conversations.id < ?
                   )
               )
@@ -21418,7 +21559,7 @@ def get_chat_conversations_for_user(
                   )
               )
             GROUP BY conversations.id
-            ORDER BY COALESCE(datetime(conversations.last_message_at), datetime(conversations.updated_at)) DESC, conversations.id DESC
+            ORDER BY datetime(COALESCE(last_message.created_at, conversations.updated_at)) DESC, conversations.id DESC
             LIMIT ? OFFSET ?
             """,
             (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, limit, offset),
@@ -23618,6 +23759,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/chat/messages":
             self.api_chat_messages(parsed)
             return
+        if parsed.path == "/api/chat/messages/info":
+            self.api_chat_message_info(parsed)
+            return
         if parsed.path == "/api/chat/events":
             self.api_chat_events(parsed)
             return
@@ -25423,6 +25567,68 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 })
         self.send_json({"ok": True, "people": matches[:250]})
 
+    def api_chat_message_info(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Sign in to view message info."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        message_id = max(0, int(float_from_value(params.get("message_id", ["0"])[0] or "0")))
+        if not message_id:
+            self.send_json({"ok": False, "message": "Message is required."}, 400)
+            return
+        current_user_id = int(user["id"])
+        with db() as con:
+            message = con.execute(
+                """SELECT messages.id, messages.conversation_id, messages.sender_id, messages.created_at,
+                          conversations.conversation_type, conversations.community_id
+                   FROM chat_messages messages
+                   JOIN chat_conversations conversations ON conversations.id = messages.conversation_id
+                   WHERE messages.id = ? AND messages.deleted_at IS NULL""",
+                (message_id,),
+            ).fetchone()
+            if not message:
+                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                return
+            if int(row_value(message, "sender_id") or 0) != current_user_id:
+                self.send_json({"ok": False, "message": "Message info is available only for messages you sent."}, 403)
+                return
+            if not con.execute(
+                "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ? AND visible_from_message_id <= ?",
+                (int(message["conversation_id"]), current_user_id, message_id),
+            ).fetchone():
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            rows = con.execute(
+                """SELECT users.id, users.name, users.profile_photo_url,
+                          participants.last_read_message_id, participants.last_read_at
+                   FROM chat_participants participants
+                   JOIN users ON users.id = participants.user_id
+                   WHERE participants.conversation_id = ? AND participants.user_id != ?
+                     AND participants.visible_from_message_id <= ?
+                   ORDER BY CASE WHEN participants.last_read_message_id >= ? THEN 0 ELSE 1 END,
+                            COALESCE(participants.last_read_at, participants.joined_at) DESC,
+                            users.name COLLATE NOCASE""",
+                (int(message["conversation_id"]), current_user_id, message_id, message_id),
+            ).fetchall()
+        readers = []
+        unread = []
+        for row in rows:
+            entry = {
+                "id": int(row["id"]),
+                "name": row_value(row, "name") or "FairFares member",
+                "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row["id"])),
+                "readAt": row_value(row, "last_read_at") if int(row_value(row, "last_read_message_id") or 0) >= message_id else "",
+            }
+            (readers if int(row_value(row, "last_read_message_id") or 0) >= message_id else unread).append(entry)
+        self.send_json({
+            "ok": True,
+            "messageId": message_id,
+            "sentAt": row_value(message, "created_at"),
+            "readBy": readers,
+            "notReadBy": unread,
+        })
+
     def api_chat_messages(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -25448,7 +25654,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             community_id = int(row_value(conversation, "community_id") or 0)
             if community_id:
                 sync_chat_conversation_members_from_community(con, int(conversation["id"]), community_id)
-            message_params: list[object] = [conversation["id"]]
+                conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id) or conversation
+            visible_from_message_id = int(row_value(conversation, "visible_from_message_id") or 0)
+            message_params: list[object] = [conversation["id"], visible_from_message_id]
             before_clause = ""
             if before_message_id > 0:
                 before_clause = "AND messages.id < ?"
@@ -25460,6 +25668,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.conversation_id = ? AND messages.deleted_at IS NULL
+                  AND messages.id >= ?
                 {before_clause}
                 ORDER BY messages.id DESC
                 LIMIT ?
@@ -25469,12 +25678,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             has_more = len(fetched_messages) > limit
             messages = list(reversed(fetched_messages[:limit]))
             if messages:
+                page_last_message_id = max(int(row_value(message, "id") or 0) for message in messages)
                 unread_receipt = con.execute(
                     """SELECT 1 FROM chat_messages
                        WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                         AND id >= ?
+                         AND id <= ?
                          AND (delivered_at IS NULL OR read_at IS NULL)
                        LIMIT 1""",
-                    (conversation["id"], current_user_id),
+                    (conversation["id"], current_user_id, visible_from_message_id, page_last_message_id),
                 ).fetchone()
                 if unread_receipt:
                     con.execute(
@@ -25483,9 +25695,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
                             read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
                         WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
+                          AND id >= ?
+                          AND id <= ?
                           AND (delivered_at IS NULL OR read_at IS NULL)
                         """,
-                        (conversation["id"], current_user_id),
+                        (conversation["id"], current_user_id, visible_from_message_id, page_last_message_id),
                     )
                 messages = con.execute(
                     """
@@ -25535,7 +25749,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute(
                     """
                     UPDATE chat_participants
-                    SET last_read_message_id = MAX(last_read_message_id, ?)
+                    SET last_read_at = CURRENT_TIMESTAMP,
+                        last_read_message_id = MAX(last_read_message_id, ?)
                     WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                     """,
                     (last_message_id, conversation["id"], current_user_id, last_message_id),
@@ -25608,6 +25823,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
             conversation_id = int(conversation["id"])
+            visible_from_message_id = int(row_value(conversation, "visible_from_message_id") or 0)
 
         deadline = time.monotonic() + wait_seconds
         messages: list[sqlite3.Row] = []
@@ -25624,11 +25840,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     JOIN users ON users.id = messages.sender_id
                     WHERE messages.conversation_id = ?
                       AND messages.id > ?
+                      AND messages.id >= ?
                       AND messages.deleted_at IS NULL
                     ORDER BY messages.id ASC
                     LIMIT 100
                     """,
-                    (conversation_id, after_message_id),
+                    (conversation_id, after_message_id, visible_from_message_id),
                 ).fetchall()
                 incoming_ids = [int(row_value(message, "id") or 0) for message in messages if int(row_value(message, "sender_id") or 0) != current_user_id]
                 if incoming_ids:
@@ -25639,14 +25856,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
                             read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
                         WHERE conversation_id = ? AND sender_id != ? AND id <= ? AND deleted_at IS NULL
+                          AND id >= ?
                           AND (delivered_at IS NULL OR read_at IS NULL)
                         """,
-                        (conversation_id, current_user_id, newest_incoming_id),
+                        (conversation_id, current_user_id, newest_incoming_id, visible_from_message_id),
                     )
                     con.execute(
                         """
                         UPDATE chat_participants
-                        SET last_read_message_id = MAX(last_read_message_id, ?)
+                        SET last_read_at = CURRENT_TIMESTAMP,
+                            last_read_message_id = MAX(last_read_message_id, ?)
                         WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                         """,
                         (newest_incoming_id, conversation_id, current_user_id, newest_incoming_id),
@@ -25678,8 +25897,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (conversation_id, current_user_id),
                 ).fetchall()
                 recent_message_ids = [int(row["id"]) for row in con.execute(
-                    "SELECT id FROM chat_messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100",
-                    (conversation_id,),
+                    "SELECT id FROM chat_messages WHERE conversation_id = ? AND id >= ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100",
+                    (conversation_id, visible_from_message_id),
                 ).fetchall()]
                 reaction_updates = []
                 if recent_message_ids:
@@ -25698,11 +25917,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """
                         SELECT id
                         FROM chat_messages
-                        WHERE conversation_id = ? AND deleted_at IS NOT NULL
+                        WHERE conversation_id = ? AND id >= ? AND deleted_at IS NOT NULL
                         ORDER BY datetime(deleted_at) DESC, id DESC
                         LIMIT 250
                         """,
-                        (conversation_id,),
+                        (conversation_id, visible_from_message_id),
                     ).fetchall()
                 ]
             now_monotonic = time.monotonic()
@@ -26066,7 +26285,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         try:
             with db() as con:
                 cursor = con.execute(
-                    "UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND photo_url = ?",
+                    "UPDATE chat_communities SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND COALESCE(photo_url, '') = ?",
                     (stored_photo, community_id, old_photo),
                 )
         except Exception:
@@ -26282,8 +26501,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             rows = con.execute(
                 """SELECT envelopes.message_id, envelopes.sender_public_key, envelopes.nonce, envelopes.ciphertext
                    FROM chat_message_envelopes envelopes JOIN chat_messages messages ON messages.id = envelopes.message_id
-                   WHERE messages.conversation_id = ? AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?""",
-                (int(conversation["id"]), int(user["id"]), device_id),
+                   WHERE messages.conversation_id = ? AND messages.id >= ?
+                     AND envelopes.recipient_user_id = ? AND envelopes.recipient_device_id = ?""",
+                (int(conversation["id"]), int(row_value(conversation, "visible_from_message_id") or 0), int(user["id"]), device_id),
             ).fetchall()
         self.send_json({"ok": True, "envelopes": [{"messageId": int(row["message_id"]), "senderPublicKey": row["sender_public_key"], "nonce": row["nonce"], "ciphertext": row["ciphertext"]} for row in rows]})
 
@@ -26319,6 +26539,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                       ON members.conversation_id = messages.conversation_id AND members.user_id = ?
                     WHERE envelopes.recipient_user_id = ?
                       AND envelopes.recipient_device_id = ?
+                      AND envelopes.message_id >= members.visible_from_message_id
                       AND envelopes.message_id IN ({placeholders})""",
                 (int(user["id"]), int(user["id"]), device_id, *message_ids),
             ).fetchall()
@@ -26432,8 +26653,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
             message = con.execute(
-                "SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ? AND messages.conversation_id = ? AND messages.deleted_at IS NULL LIMIT 1",
-                (message_id, int(conversation["id"])),
+                "SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id WHERE messages.id = ? AND messages.conversation_id = ? AND messages.id >= ? AND messages.deleted_at IS NULL LIMIT 1",
+                (message_id, int(conversation["id"]), int(row_value(conversation, "visible_from_message_id") or 0)),
             ).fetchone()
             if not message:
                 self.send_json({"ok": False, "message": "Message not found."}, 404)
@@ -26975,7 +27196,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         option_index = int(payload.get("optionIndex") if payload.get("optionIndex") is not None else -1)
         current_user_id = int(user["id"])
         with db() as con:
-            row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id WHERE messages.id = ? AND participants.user_id = ?", (message_id, current_user_id)).fetchone()
+            row = con.execute("SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url FROM chat_messages messages JOIN users ON users.id = messages.sender_id JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id WHERE messages.id = ? AND participants.user_id = ? AND messages.id >= participants.visible_from_message_id", (message_id, current_user_id)).fetchone()
             if not row or row_value(row, "message_type") != "POLL":
                 self.send_json({"ok": False, "message": "Poll not found."}, 404)
                 return
@@ -27182,7 +27403,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 SELECT messages.attachment_url
                 FROM chat_messages messages
                 JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
-                WHERE messages.id = ? AND participants.user_id = ? AND messages.deleted_at IS NULL
+                WHERE messages.id = ? AND participants.user_id = ?
+                  AND messages.id >= participants.visible_from_message_id
+                  AND messages.deleted_at IS NULL
                 LIMIT 1
                 """,
                 (message_id, int(user["id"])),
@@ -27224,6 +27447,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM chat_messages messages
                 JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
                 WHERE messages.id = ? AND participants.user_id = ?
+                  AND messages.id >= participants.visible_from_message_id
                   AND messages.message_type = 'ENCRYPTED_ATTACHMENT'
                   AND messages.deleted_at IS NULL
                 LIMIT 1
@@ -27264,9 +27488,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.id = ? AND messages.conversation_id = ?
+                  AND messages.id >= ?
                 LIMIT 1
                 """,
-                (message_id, conversation["id"]),
+                (message_id, conversation["id"], int(row_value(conversation, "visible_from_message_id") or 0)),
             ).fetchone()
             if not message:
                 self.send_json({"ok": False, "message": "Message not found."}, 404)
@@ -27345,9 +27570,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM chat_messages messages
                 JOIN users ON users.id = messages.sender_id
                 WHERE messages.id = ? AND messages.conversation_id = ?
+                  AND messages.id >= ?
                 LIMIT 1
                 """,
-                (message_id, conversation["id"]),
+                (message_id, conversation["id"], int(row_value(conversation, "visible_from_message_id") or 0)),
             ).fetchone()
             if not message:
                 self.send_json({"ok": False, "message": "Message not found."}, 404)
@@ -27375,8 +27601,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
             message = con.execute(
-                "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? LIMIT 1",
-                (message_id, conversation["id"]),
+                "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND id >= ? LIMIT 1",
+                (message_id, conversation["id"], int(row_value(conversation, "visible_from_message_id") or 0)),
             ).fetchone()
             if not message:
                 self.send_json({"ok": False, "message": "Message not found."}, 404)
@@ -27499,7 +27725,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute(
                 """
                 UPDATE chat_participants
-                SET last_read_message_id = MAX(last_read_message_id, ?)
+                SET last_read_at = CURRENT_TIMESTAMP,
+                    last_read_message_id = MAX(last_read_message_id, ?)
                 WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
                 """,
                 (last_message_id, conversation["id"], user["id"], last_message_id),
@@ -35416,7 +35643,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     cursor = con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?,
                                   chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
-                           WHERE id = ? AND profile_photo_url = ?""",
+                           WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
                         (name, email, phone, date_of_birth or None, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
