@@ -3,18 +3,19 @@ import Constants from "expo-constants";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Google from "expo-auth-session/providers/google";
 import * as Device from "expo-device";
+import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -77,7 +78,20 @@ const REVIEW_PROMPT_DELAY_MS = 180_000;
 const REVIEW_PROMPT_READY_GRACE_MS = 5 * 60_000;
 const reviewPromptStorageKey = (userId: number | string) => `fairfares.mobile.review-prompt.v1.${userId}`;
 const APPEARANCE_STORAGE_KEY = "fairfares.mobile.appearance.v1";
+const UPDATE_DISMISS_STORAGE_KEY = "fairfares.mobile.update-dismissed.v1";
+const UPDATE_RECHECK_MS = 15 * 60_000;
 type AppearancePreference = "system" | "dark" | "light";
+
+function compareVersions(left: string, right: string) {
+  const leftParts = String(left || "0").split(".").map((value) => Number.parseInt(value, 10) || 0);
+  const rightParts = String(right || "0").split(".").map((value) => Number.parseInt(value, 10) || 0);
+  const count = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < count; index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference) return difference < 0 ? -1 : 1;
+  }
+  return 0;
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -103,7 +117,7 @@ const emptyListingForm: MobileHousingPostInput = {
   category: "single_room",
   title: "",
   description: "",
-  city: "Denver, CO",
+  city: "",
   streetAddress: "",
   zipCode: "",
   area: "",
@@ -240,16 +254,77 @@ export default function App() {
 function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const systemColorScheme = useColorScheme();
-  const [appearancePreference, setAppearancePreference] = useState<AppearancePreference>("system");
+  const [appearancePreference, setAppearancePreference] = useState<AppearancePreference>("light");
   const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("community");
+  const [updatePolicy, setUpdatePolicy] = useState<(AppVersionPolicy & { required: boolean }) | null>(null);
+  const updateCheckRunningRef = useRef(false);
+  const lastUpdateCheckRef = useRef(0);
+
+  useEffect(() => {
+    if (Platform.OS !== "ios" && Platform.OS !== "android") return;
+    let active = true;
+
+    async function checkForUpdate(force = false) {
+      const now = Date.now();
+      if (updateCheckRunningRef.current || (!force && now - lastUpdateCheckRef.current < UPDATE_RECHECK_MS)) return;
+      updateCheckRunningRef.current = true;
+      lastUpdateCheckRef.current = now;
+      try {
+        const platform = Platform.OS as "ios" | "android";
+        const policy = await getAppVersionPolicy(platform);
+        if (!active) return;
+        const currentVersion = String(Constants.nativeAppVersion || Constants.expoConfig?.version || "0.0.0");
+        const currentBuild = Number(Constants.nativeBuildVersion || (platform === "ios" ? Constants.expoConfig?.ios?.buildNumber : Constants.expoConfig?.android?.versionCode) || 0);
+        const belowMinimum = compareVersions(currentVersion, policy.minimumVersion) < 0
+          || (compareVersions(currentVersion, policy.minimumVersion) === 0 && currentBuild < Number(policy.minimumBuild || 0));
+        const updateAvailable = compareVersions(currentVersion, policy.latestVersion) < 0
+          || (compareVersions(currentVersion, policy.latestVersion) === 0 && currentBuild < Number(policy.latestBuild || 0));
+        if (!updateAvailable) {
+          setUpdatePolicy(null);
+          return;
+        }
+        const dismissalKey = `${platform}:${policy.latestVersion}:${policy.latestBuild}`;
+        const dismissed = await AsyncStorage.getItem(UPDATE_DISMISS_STORAGE_KEY).catch(() => null);
+        if (!active || (!belowMinimum && dismissed === dismissalKey)) return;
+        setUpdatePolicy({ ...policy, required: belowMinimum });
+      } catch {
+        // An update check must never prevent an otherwise healthy app launch.
+      } finally {
+        updateCheckRunningRef.current = false;
+      }
+    }
+
+    void checkForUpdate(true);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void checkForUpdate();
+    });
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+
+  async function openStoreUpdate() {
+    if (!updatePolicy?.storeUrl) return;
+    await Linking.openURL(updatePolicy.storeUrl).catch(() => {
+      Alert.alert("Unable to open the store", "Open the App Store or Google Play and search for FairFares.");
+    });
+  }
+
+  async function dismissRecommendedUpdate() {
+    if (!updatePolicy || updatePolicy.required) return;
+    const dismissalKey = `${updatePolicy.platform}:${updatePolicy.latestVersion}:${updatePolicy.latestBuild}`;
+    await AsyncStorage.setItem(UPDATE_DISMISS_STORAGE_KEY, dismissalKey).catch(() => undefined);
+    setUpdatePolicy(null);
+  }
 
   useEffect(() => {
     let active = true;
     AsyncStorage.getItem(APPEARANCE_STORAGE_KEY).then((saved) => {
       if (!active) return;
-      const preference: AppearancePreference = saved === "light" || saved === "dark" ? saved : "system";
+      const preference: AppearancePreference = saved === "system" || saved === "light" || saved === "dark" ? saved : "light";
       setPlatformAppearance(preference);
       setAppearancePreference(preference);
     }).catch(() => undefined);
@@ -320,13 +395,13 @@ function FairFaresApp() {
   const [selectedGender, setSelectedGender] = useState("");
   const [selectedBudget, setSelectedBudget] = useState("");
   const [selectedSort, setSelectedSort] = useState<"distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc">("distanceAsc");
-  const [city, setCity] = useState("Denver, CO");
+  const [city, setCity] = useState("");
   const [discoveryLocation, setDiscoveryLocation] = useState("");
   const [area, setArea] = useState("");
   const [housingSearchCoordinates, setHousingSearchCoordinates] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [hasSearchedHousingLocation, setHasSearchedHousingLocation] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchCity, setSearchCity] = useState("Denver, CO");
+  const [searchCity, setSearchCity] = useState("");
   const [searchArea, setSearchArea] = useState("");
   const [searchRadius, setSearchRadius] = useState("10");
   const [searchNeed, setSearchNeed] = useState("need_place");
@@ -499,15 +574,39 @@ function FairFaresApp() {
     pushTokenRef.current = "";
   }
 
-  async function load(showLoader = true) {
+  async function resolveInitialDeviceCity() {
+    if (Platform.OS === "web") return "";
+    try {
+      let permission = await Location.getForegroundPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await Location.requestForegroundPermissionsAsync();
+      }
+      if (!permission.granted) return "";
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const livePosition = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 8_000); }),
+      ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      const position = livePosition || await Location.getLastKnownPositionAsync({ maxAge: 2 * 60_000, requiredAccuracy: 1000 });
+      if (!position) return "";
+      const [address] = await Location.reverseGeocodeAsync(position.coords);
+      const locality = String(address?.city || address?.district || address?.subregion || "").trim();
+      const region = String(address?.region || "").trim();
+      return [locality, region].filter(Boolean).join(", ");
+    } catch {
+      return "";
+    }
+  }
+
+  async function load(showLoader = true, requestedCity = city) {
     const generation = bootstrapGenerationRef.current + 1;
     bootstrapGenerationRef.current = generation;
     if (showLoader) setLoading(true);
     try {
-      const payload = await getBootstrap(city);
+      const payload = await getBootstrap(requestedCity);
       if (bootstrapGenerationRef.current !== generation) return;
       setData(payload);
-      setDiscoveryLocation((current) => current || payload.location.city || city);
+      setDiscoveryLocation((current) => current || payload.location.city || requestedCity);
       setVisiblePosts(payload.housing);
       const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
       if (bootstrapGenerationRef.current !== generation) return;
@@ -530,7 +629,16 @@ function FairFaresApp() {
     async function restoreSessionAndCheckout() {
       await hydrateAuthToken();
       if (cancelled) return;
-      await load();
+      const deviceCity = await resolveInitialDeviceCity();
+      if (cancelled) return;
+      const initialCity = deviceCity || city;
+      if (deviceCity) {
+        setCity(deviceCity);
+        setSearchCity(deviceCity);
+        setDiscoveryLocation(deviceCity);
+        setChitthiSuggestionCity(deviceCity);
+      }
+      await load(true, initialCity);
       if (Platform.OS === "web" || cancelled) return;
       const saved = await SecureStore.getItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => null);
       if (!saved || cancelled) return;
@@ -1780,7 +1888,7 @@ function FairFaresApp() {
 
   function normalizeCityInput(value: string) {
     const trimmed = value.trim();
-    if (!trimmed) return "Denver, CO";
+    if (!trimmed) return discoveryLocation || data?.location.city || city || "";
     const known: Record<string, string> = {
       denver: "Denver, CO",
       aurora: "Aurora, CO",
@@ -2302,6 +2410,17 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
+        onEditHousing={(postId) => {
+          const existing = visiblePosts.find((post) => post.id === postId);
+          if (existing) {
+            editHousingListing(existing);
+            return;
+          }
+          void getHousingListing(postId).then((post) => {
+            if (post) editHousingListing(post);
+            else Alert.alert("Listing unavailable", "This listing is no longer available.");
+          });
+        }}
         onOpenServices={(bookingId = "") => {
           setRentalEditBookingId(bookingId);
           setSelectedService("cars");
@@ -2597,6 +2716,34 @@ function FairFaresApp() {
           <ActivityIndicator style={styles.launchSpinner} color={theme.colors.blue} size="small" />
         </Animated.View>
       ) : null}
+      <Modal
+        visible={Boolean(updatePolicy)}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => { if (!updatePolicy?.required) void dismissRecommendedUpdate(); }}
+      >
+        <View style={styles.updateBackdrop}>
+          <View style={styles.updateCard} accessibilityRole="alert">
+            <View style={styles.updateIcon}><Text style={styles.updateIconText}>↑</Text></View>
+            <Text style={styles.updateEyebrow}>{updatePolicy?.required ? "UPDATE REQUIRED" : "UPDATE AVAILABLE"}</Text>
+            <Text style={styles.updateTitle}>A newer FairFares is ready</Text>
+            <Text style={styles.updateBody}>{updatePolicy?.message || "Update for the latest fixes and improvements."}</Text>
+            <Text style={styles.updateVersion}>Version {updatePolicy?.latestVersion}</Text>
+            <TouchableOpacity style={styles.updatePrimary} accessibilityRole="button" onPress={() => void openStoreUpdate()}>
+              <Text style={styles.updatePrimaryText}>Update now</Text>
+            </TouchableOpacity>
+            {!updatePolicy?.required ? (
+              <TouchableOpacity style={styles.updateLater} accessibilityRole="button" onPress={() => void dismissRecommendedUpdate()}>
+                <Text style={styles.updateLaterText}>Later</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.updateRequiredNote}>This version is no longer supported.</Text>
+            )}
+          </View>
+        </View>
+      </Modal>
       <Modal visible={loginOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setLoginOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView
@@ -3533,6 +3680,19 @@ const styles = StyleSheet.create({
   googleMark: { width: 24, height: 24, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "#ffffff" },
   googleMarkText: { color: "#4285F4", fontSize: 19, lineHeight: 23, fontWeight: "800" },
   googleAuthButtonText: { color: "#1f1f1f", fontSize: 15, fontWeight: "700" },
+  updateBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", alignItems: "center", justifyContent: "center", padding: 24 },
+  updateCard: { width: "100%", maxWidth: 430, alignItems: "center", gap: 10, paddingHorizontal: 24, paddingVertical: 26, borderRadius: 28, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E1", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 12 },
+  updateIcon: { width: 62, height: 62, borderRadius: 31, alignItems: "center", justifyContent: "center", marginBottom: 2, backgroundColor: "#00C896" },
+  updateIconText: { color: "#052A20", fontSize: 36, lineHeight: 40, fontWeight: "900" },
+  updateEyebrow: { color: "#008967", fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
+  updateTitle: { color: "#111827", fontSize: 23, lineHeight: 29, fontWeight: "900", textAlign: "center" },
+  updateBody: { color: "#52606D", fontSize: 14, lineHeight: 21, textAlign: "center" },
+  updateVersion: { color: "#73808C", fontSize: 12, fontWeight: "800", marginBottom: 5 },
+  updatePrimary: { width: "100%", minHeight: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: "#00C896" },
+  updatePrimaryText: { color: "#052A20", fontSize: 16, fontWeight: "900" },
+  updateLater: { minHeight: 42, paddingHorizontal: 20, alignItems: "center", justifyContent: "center" },
+  updateLaterText: { color: "#52606D", fontSize: 14, fontWeight: "800" },
+  updateRequiredNote: { color: "#B42318", fontSize: 12, fontWeight: "800", marginTop: 3 },
   authDivider: { flexDirection: "row", alignItems: "center", gap: 10 },
   authDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.line },
   authDividerText: { color: theme.colors.muted, fontSize: 11, fontWeight: "600" },

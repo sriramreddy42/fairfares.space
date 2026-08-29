@@ -62,8 +62,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         { bottom: layout.navBottomInset },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
-          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN },
-        colorScheme === "light" && { left: 0, right: 0, bottom: 0, width: undefined, borderRadius: 0 }
+          : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
       ]}
       accessibilityRole="tablist"
     >
@@ -161,7 +160,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 14,
   },
-  cardLight: { borderWidth: 0, borderRadius: 0, shadowOpacity: 0.12, shadowRadius: 8, elevation: 5 },
+  cardLight: { borderColor: "rgba(15,23,42,0.10)", backgroundColor: "rgba(255,255,255,0.96)", shadowColor: "#101828", shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 8 },
   glassClip: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 35,
@@ -172,7 +171,7 @@ const styles = StyleSheet.create({
     // surface; the native effect then enhances this base when ready.
     backgroundColor: theme.colors.panel,
   },
-  glassClipLight: { borderRadius: 0 },
+  glassClipLight: { backgroundColor: "rgba(255,255,255,0.96)" },
   glassTint: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "transparent",

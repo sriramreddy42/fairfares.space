@@ -5,6 +5,7 @@ import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLo
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
+import { shareHousingListing } from "../utils/listingShare";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
   onReserveRide?: () => void;
   onRideMessage?: (ride: RidePost) => void;
   onOpenHousing?: (postId?: string) => void;
+  onEditHousing?: (postId: string) => void;
   onOpenServices?: () => void;
   onOpenRideOwner?: (target?: "workspace" | "requests" | "listings") => void;
   onRequireLogin?: () => void;
@@ -220,7 +222,7 @@ function ActivityIcon({ kind, color }: { kind: "route" | "items" | "riders" | "l
   return <Text style={[styles.activityGlyph, { color }]}>{symbols[kind]}</Text>;
 }
 
-export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
+export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onEditHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
   const isLight = useColorScheme() === "light";
   const { width: windowWidth } = useWindowDimensions();
   const layout = useResponsiveLayout();
@@ -578,14 +580,23 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         <Text style={styles.sectionMeta}>{activeHousing.length} current · {pastHousing.length} previous</Text>
       </View>
       {activeHousing.length ? activeHousing.slice(0, 4).map((post) => (
-        <TouchableOpacity key={`active-housing-${post.id}`} style={styles.historyRow} onPress={() => onOpenHousing?.(post.id)}>
-          <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
-          <View style={styles.rowText}>
-            <Text style={styles.rowTitle}>{post.title}</Text>
-            <Text style={styles.rowMeta}>{post.location} · {post.expiryLabel}</Text>
+        <View key={`active-housing-${post.id}`} style={styles.historyRow}>
+          <TouchableOpacity style={styles.listingRowMain} onPress={() => onOpenHousing?.(post.id)} accessibilityRole="button" accessibilityLabel={`Open ${post.title}`}>
+            <View style={styles.rowIcon}><Text style={styles.rowIconText}>🛏</Text></View>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{post.title}</Text>
+              <Text style={styles.rowMeta}>{post.location} · {post.expiryLabel}</Text>
+            </View>
+          </TouchableOpacity>
+          <View style={styles.listingActions}>
+            <TouchableOpacity style={styles.listingAction} onPress={() => onEditHousing?.(post.id)} accessibilityRole="button" accessibilityLabel={`Edit ${post.title}`}>
+              <Text style={styles.listingActionText}>✎ Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.listingAction} onPress={() => void shareHousingListing(post)} accessibilityRole="button" accessibilityLabel={`Share ${post.title}`}>
+              <Text style={styles.listingActionText}>↗ Share</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.rebookText}>Your listing</Text>
-        </TouchableOpacity>
+        </View>
       )) : (
         <TouchableOpacity style={styles.emptyPast} onPress={() => onOpenHousing?.()}>
           <Text style={styles.emptyTitle}>No current listings</Text>
@@ -936,6 +947,10 @@ const styles = StyleSheet.create({
   filterText: { color: theme.colors.text, fontWeight: "900", fontSize: 20 },
   pastFeature: { backgroundColor: theme.colors.panel, borderRadius: theme.radius.lg, padding: theme.spacing.md, borderWidth: 1, borderColor: theme.colors.line, gap: 3 },
   historyRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md, paddingVertical: theme.spacing.md, borderBottomWidth: 1, borderColor: theme.colors.line },
+  listingRowMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
+  listingActions: { alignItems: "stretch", gap: 6 },
+  listingAction: { minWidth: 72, alignItems: "center", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: theme.colors.panel2 },
+  listingActionText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   rowIcon: { width: 48, height: 48, borderRadius: theme.radius.sm, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   rowIconText: { fontSize: 23 },
   rowText: { flex: 1 },

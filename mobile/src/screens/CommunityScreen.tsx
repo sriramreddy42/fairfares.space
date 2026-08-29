@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
-  ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
+  AccessibilityInfo, ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
   StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View,
 } from "react-native";
 import {
@@ -215,6 +215,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const [cityOptionsLoading, setCityOptionsLoading] = useState(false);
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
   const [lowestGasPrice, setLowestGasPrice] = useState<number | null>(null);
+  const [gasPreviewCoordinates, setGasPreviewCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [category, setCategory] = useState<string>("ALL");
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
@@ -222,6 +223,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const [refreshing, setRefreshing] = useState(false);
   const pullOffset = useRef(new Animated.Value(0)).current;
   const heroEntrance = useRef(new Animated.Value(0)).current;
+  const gasIconScale = useRef(new Animated.Value(1)).current;
+  const gasIconShake = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -252,6 +255,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     if (!Number.isFinite(price) || price <= 0 || !car.image_url) return lowest;
     return !lowest || price < Number(lowest.daily_price) ? car : lowest;
   }, null), [cars]);
+  const displayedGasPrice = lowestGasPrice ?? 3.54;
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -319,6 +323,32 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   }, [heroEntrance, loading]);
   useEffect(() => {
     let cancelled = false;
+    let animation: Animated.CompositeAnimation | null = null;
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
+      if (cancelled || reduceMotion) return;
+      animation = Animated.sequence([
+        Animated.delay(450),
+        Animated.spring(gasIconScale, { toValue: 1.2, damping: 8, stiffness: 190, mass: 0.65, useNativeDriver: true }),
+        Animated.sequence([
+          Animated.timing(gasIconShake, { toValue: -1, duration: 55, useNativeDriver: true }),
+          Animated.timing(gasIconShake, { toValue: 1, duration: 75, useNativeDriver: true }),
+          Animated.timing(gasIconShake, { toValue: -0.7, duration: 65, useNativeDriver: true }),
+          Animated.timing(gasIconShake, { toValue: 0.45, duration: 60, useNativeDriver: true }),
+          Animated.timing(gasIconShake, { toValue: 0, duration: 55, useNativeDriver: true }),
+        ]),
+        Animated.spring(gasIconScale, { toValue: 1, damping: 11, stiffness: 150, mass: 0.7, useNativeDriver: true }),
+      ]);
+      animation.start();
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      animation?.stop();
+      gasIconScale.stopAnimation();
+      gasIconShake.stopAnimation();
+    };
+  }, [gasIconScale, gasIconShake]);
+  useEffect(() => {
+    let cancelled = false;
     void AsyncStorage.getItem(feedCityStorageKey).then((storedCity) => {
       const normalized = normalizedLocationLabel(storedCity || "");
       if (!cancelled && normalized && normalizedUsCityKey(normalized)) {
@@ -344,6 +374,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
           .catch(() => Location.getLastKnownPositionAsync({ maxAge: 60 * 1000, requiredAccuracy: 1000 }));
         if (!position || cancelled) return;
+        setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
         const [address] = await Location.reverseGeocodeAsync(position.coords);
         const locality = String(address?.city || address?.district || address?.subregion || "").trim();
         const region = String(address?.region || "").trim();
@@ -356,10 +387,27 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     return () => { cancelled = true; };
   }, [city, locationRefreshKey, user?.id]);
   useEffect(() => {
+    if (Platform.OS === "web" || gasPreviewCoordinates) return;
+    let cancelled = false;
+    void (async () => {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (!permission.granted || cancelled) return;
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        .catch(() => Location.getLastKnownPositionAsync({ maxAge: 2 * 60 * 1000, requiredAccuracy: 1000 }));
+      if (!position || cancelled) return;
+      setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+    })().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [gasPreviewCoordinates, locationRefreshKey, user?.id]);
+  useEffect(() => {
     let cancelled = false;
     // Ask only reads the last result saved when Cheap Gas was explicitly
     // opened. Merely loading this feed never contacts Google.
-    void readGasCache("regular").then((result) => {
+    if (!gasPreviewCoordinates) {
+      setLowestGasPrice(null);
+      return () => { cancelled = true; };
+    }
+    void readGasCache("regular", gasPreviewCoordinates).then((result) => {
       if (cancelled) return;
       const prices = (result?.stations || [])
         .map((station) => Number(station.price))
@@ -367,7 +415,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       setLowestGasPrice(prices.length ? Math.min(...prices) : null);
     });
     return () => { cancelled = true; };
-  }, [locationRefreshKey, user?.id]);
+  }, [gasPreviewCoordinates, locationRefreshKey, user?.id]);
   useEffect(() => {
     if (!cityPickerOpen || cityDraft.trim().length < 2) { setCityOptions([]); return; }
     let cancelled = false;
@@ -740,7 +788,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       <View style={[styles.postActions, isLight && styles.postActionsLight]}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction))}
         <TouchableOpacity style={styles.footerCommentAction} onPress={() => void openDetail(post)} accessibilityLabel={`${post.answerCount} comments`}><Text style={[styles.footerIcon, isLight && styles.textBodyLight]}>◯</Text><Text style={[styles.footerActionLabel, isLight && styles.textBodyLight]}>Comment{post.answerCount ? ` ${post.answerCount}` : ""}</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.footerIconAction} onPress={(event) => { event.stopPropagation(); void Share.share({ title: post.title, message: `${post.title}\nhttps://www.fairfare.space/community/${post.id}` }); }} accessibilityLabel="Share"><Text style={[styles.footerShareIcon, isLight && styles.textBodyLight]}>↗</Text><Text style={[styles.footerActionLabel, isLight && styles.textBodyLight]}>Share</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.footerIconAction} onPress={(event) => { event.stopPropagation(); const url = `https://www.fairfare.space/community/${post.id}?share=3`; const summary = `${post.title}\n${post.body.slice(0, 180)}`; void Share.share(Platform.OS === "ios" ? { title: post.title, message: summary, url } : { title: post.title, message: `${summary}\n\n${url}` }); }} accessibilityLabel="Share"><Text style={[styles.footerShareIcon, isLight && styles.textBodyLight]}>↗</Text><Text style={[styles.footerActionLabel, isLight && styles.textBodyLight]}>Share</Text></TouchableOpacity>
         {post.sourceKind === "HOUSING" && post.sourceId ? <TouchableOpacity style={styles.viewListingButton} onPress={(event) => { event.stopPropagation(); onOpenHousing(post.sourceId); }} accessibilityRole="button" accessibilityLabel={`View housing details: ${post.title}`}><Text style={styles.viewListingIcon}>⌂</Text><Text style={[styles.viewListingButtonText, isLight && styles.textBodyLight]}>Details</Text><Text style={[styles.viewListingArrow, isLight && styles.textSecondaryLight]}>›</Text></TouchableOpacity> : null}
       </View>
     </View>
@@ -837,10 +885,14 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         <TouchableOpacity style={[styles.composerPrompt, isLight && styles.composerPromptLight]} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={[styles.composerPromptText, isLight && styles.textSecondaryLight]}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>
-      <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel={lowestGasPrice !== null ? `Last found cheapest regular gas was ${lowestGasPrice.toFixed(2)} dollars. Open nearby gas prices to refresh` : "Open cheap gas prices near you"}>
-        <View style={styles.gasPreviewIcon}><Text style={styles.gasPreviewGlyph}>⛽</Text></View>
+      <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel={lowestGasPrice !== null ? `Last found cheapest regular gas was ${lowestGasPrice.toFixed(2)} dollars. Open nearby gas prices to refresh` : "Starting gas price example is 3.54 dollars. Open nearby gas prices to refresh"}>
+        <View style={styles.gasPreviewIcon}>
+          <Animated.View pointerEvents="none" style={[styles.gasPreviewGlyphLayer, { transform: [{ scale: gasIconScale }, { rotate: gasIconShake.interpolate({ inputRange: [-1, 1], outputRange: ["-9deg", "9deg"] }) }] }]}>
+            <Text style={styles.gasPreviewGlyph}>⛽</Text>
+          </Animated.View>
+        </View>
         <View style={styles.gasPreviewCopy}><Text style={[styles.gasPreviewTitle, isLight && styles.gasPreviewTitleLight]}>Cheap gas near you</Text><Text style={[styles.gasPreviewSubtitle, isLight && styles.textSecondaryLight]}>Tap to compare reported station prices</Text></View>
-        {lowestGasPrice !== null ? <View style={styles.gasPreviewPriceBlock}><Text style={styles.gasPreviewPrice}>${lowestGasPrice.toFixed(2)}</Text><Text style={styles.gasPreviewPriceLabel}>last found</Text></View> : null}
+        <View style={styles.gasPreviewPriceBlock}><Text style={styles.gasPreviewPrice}>${displayedGasPrice.toFixed(2)}</Text><Text style={styles.gasPreviewPriceLabel}>{lowestGasPrice !== null ? "last found" : "starting"}</Text></View>
         <Text style={[styles.gasPreviewChevron, isLight && styles.gasPreviewChevronLight]}>›</Text>
       </TouchableOpacity>
       <View><View style={styles.sectionRow}><Text style={[styles.sectionTitle, isLight && styles.textPrimaryLight]}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
@@ -926,7 +978,7 @@ const styles = StyleSheet.create({
   quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "800", letterSpacing: .8 }, nationalTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800", marginTop: 2 }, nationalBody: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, nationalIcon: { fontSize: 22 }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
   gasPreviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.06)", shadowColor: "#14251f", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
-  gasPreviewIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,202,147,0.16)" }, gasPreviewGlyph: { fontSize: 22 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewPriceBlock: { alignItems: "flex-end", marginLeft: 6 }, gasPreviewPrice: { color: "#16b981", fontSize: 17, fontWeight: "900", letterSpacing: -0.3 }, gasPreviewPriceLabel: { color: theme.colors.muted, fontSize: 8, fontWeight: "600", marginTop: 1 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },
+  gasPreviewIcon: { width: 42, height: 42, position: "relative", alignItems: "center", justifyContent: "center", overflow: "visible" }, gasPreviewGlyphLayer: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, gasPreviewGlyph: { fontSize: 26 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewPriceBlock: { alignItems: "flex-end", marginLeft: 6 }, gasPreviewPrice: { color: "#16b981", fontSize: 17, fontWeight: "900", letterSpacing: -0.3 }, gasPreviewPriceLabel: { color: theme.colors.muted, fontSize: 8, fontWeight: "600", marginTop: 1 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },
   rentalFeatureCard: { minHeight: 220, borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#796029", backgroundColor: theme.colors.panel, shadowColor: "#000", shadowOpacity: .18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   rentalFeatureImage: { width: "100%", height: 142, backgroundColor: theme.colors.panel2 },
   rentalFeatureContent: { paddingHorizontal: 14, paddingVertical: 12, gap: 4 },

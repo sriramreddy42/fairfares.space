@@ -55,6 +55,17 @@ const DEFAULT_API_URL = EXPLICIT_API_URL || WEB_LOCAL_API_URL || PRODUCTION_API_
 export const API_URL =
   DEFAULT_API_URL;
 
+export type AppVersionPolicy = {
+  ok: boolean;
+  platform: "ios" | "android";
+  latestVersion: string;
+  minimumVersion: string;
+  latestBuild: number;
+  minimumBuild: number;
+  storeUrl: string;
+  message: string;
+};
+
 const API_CANDIDATES = uniqueUrls(
   EXPLICIT_API_URL
     ? [EXPLICIT_API_URL]
@@ -347,11 +358,11 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
   throw new Error(`Could not connect to the local FairFares API. Reference: ${referenceId}. Last error: ${lastError}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
 }
 
-function fallbackBootstrap(city = "Denver, CO"): BootstrapPayload {
+function fallbackBootstrap(city = ""): BootstrapPayload {
   return {
     ok: true,
     user: null,
-    location: { city, selected: city, suggested: "Aurora, CO", suggestedAreas: [] },
+    location: { city, selected: city, suggested: "", suggestedAreas: [] },
     housing: [],
     communities: [],
     chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] },
@@ -501,7 +512,13 @@ export async function downloadAuthenticatedAssetToFile(value: string, destinatio
   return result.uri;
 }
 
-export async function getBootstrap(city = "Denver, CO") {
+export async function getAppVersionPolicy(platform: "ios" | "android") {
+  return request<AppVersionPolicy>(`/api/mobile/app-version?platform=${encodeURIComponent(platform)}`, {}, {
+    silentNetworkFailure: true,
+  });
+}
+
+export async function getBootstrap(city = "") {
   try {
     return await request<BootstrapPayload>(`/api/mobile/bootstrap?city=${encodeURIComponent(city)}`);
   } catch (error) {

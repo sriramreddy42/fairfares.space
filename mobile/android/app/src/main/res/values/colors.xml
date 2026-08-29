@@ -2,7 +2,7 @@
   <color name="splashscreen_background">#FFFFFF</color>
   <color name="iconBackground">#101010</color>
   <color name="colorPrimary">#023c69</color>
-  <color name="colorPrimaryDark">#C4D9CE</color>
+  <color name="colorPrimaryDark">#f3f4f6</color>
   <color name="notification_icon_color">#2F6BFF</color>
   <color name="ff_background">#F3F4F6</color>
   <color name="ff_surface">#FFFFFFFF</color>

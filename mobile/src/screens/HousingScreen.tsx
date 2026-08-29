@@ -97,7 +97,7 @@ const SEARCH_PHRASE_AUTO_SLIDE_MS = 1800;
 const QUICK_LINK_TYPE_MS = 85;
 const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
-const rentalPromoSlides = [appAssets.rentalCarouselHowItWorks, appAssets.rentalCarouselPriceMatch];
+const rentalPromoSlides = [appAssets.rentalCarouselPriceMatch, appAssets.rentalCarouselHowItWorks];
 
 function RentalCarImage({ uri, name }: { uri: string; name: string }) {
   const [failed, setFailed] = useState(false);
@@ -514,7 +514,7 @@ const initialRentalListingDraft: RentalCarListingInput = {
 
 const initialRideForm: RideInput = {
   rideType: "CARPOOL_REQUEST",
-  city: "Denver, CO",
+  city: "",
   origin: "",
   originLat: null,
   originLng: null,
@@ -728,7 +728,7 @@ export function HousingScreen({
   }, [linkedCarpoolRide, onBottomTabsHiddenChange, onLinkedCarpoolRideOpened]);
 
   const displayName = data?.user?.name?.split(" ")[0] || "there";
-  const cityExperienceLocation = data?.location.city || "Denver, CO";
+  const cityExperienceLocation = data?.location.city || discoveryLocation || "your current city";
   const cityExperienceInitials = (data?.user?.name || "FairFares member")
     .split(/\s+/)
     .filter(Boolean)
@@ -793,7 +793,7 @@ export function HousingScreen({
       setCityExperienceBusy(false);
     }
   }
-  const rideDefaultCity = data?.location.city || "Denver, CO";
+  const rideDefaultCity = data?.location.city || discoveryLocation || "";
   const rideDefaultPickup = currentRideLocation?.label || selectedLocationText || data?.location.suggested || rideDefaultCity || "Your location";
   const activeSearchPhrases =
     mode === "ride"
@@ -839,7 +839,7 @@ export function HousingScreen({
     />
   );
   const localities = useMemo(() => {
-    const city = data?.location.city || "Denver, CO";
+    const city = data?.location.city || discoveryLocation || "";
     const groups = new Map<string, { name: string; total: number; count: number; offered: number; needed: number; preset: boolean }>();
     const suggestedAreas = (data?.location.suggestedAreas || [])
       .map((value) => cleanLocalityName(value, city) || value.trim())
@@ -874,6 +874,12 @@ export function HousingScreen({
       }));
   }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, posts]);
   const rentalRows = rentalSearched ? rentalCars : [];
+  const lowestRentalDailyPrice = useMemo(() => {
+    const validRates = rentalCars
+      .map((car) => Number(car.daily_price || 0))
+      .filter((rate) => Number.isFinite(rate) && rate > 0);
+    return validRates.length ? Math.min(...validRates) : null;
+  }, [rentalCars]);
   const rentalLocationOptions = useMemo(() => {
     const locations = new Set<string>();
     cars.forEach((car) => {
@@ -1107,7 +1113,7 @@ export function HousingScreen({
         setEditingRideId(ride.id);
         setRideForm({
           rideType: ride.type,
-          city: ride.city || data?.location.city || "Denver, CO",
+          city: ride.city || data?.location.city || discoveryLocation || "",
           origin: ride.origin,
           originLat: ride.originLat ?? null,
           originLng: ride.originLng ?? null,
@@ -1152,7 +1158,7 @@ export function HousingScreen({
     const timer = setTimeout(() => {
       setRideSuggestionsBusy(true);
       getRidePlaceSuggestions(
-        rideForm.city || data?.location.city || "Denver, CO",
+        rideForm.city || data?.location.city || discoveryLocation || "",
         query,
         rideFocusedField !== "origin"
       )
@@ -1166,7 +1172,11 @@ export function HousingScreen({
   useEffect(() => {
     // Popular cities belong to the user's current country. Housing and ride
     // searches must never retarget this discovery rail.
-    const selectedCity = currentRideLocation?.label || discoveryLocation || "Denver, CO";
+    const selectedCity = currentRideLocation?.label || discoveryLocation || data?.location.city || "";
+    if (!selectedCity) {
+      setRidePopularPlaces([]);
+      return;
+    }
     let cancelled = false;
     getRidePlaceSuggestions(selectedCity, "", true, true)
       .then((places) => {
@@ -1178,7 +1188,7 @@ export function HousingScreen({
     return () => {
       cancelled = true;
     };
-  }, [currentRideLocation?.label, discoveryLocation]);
+  }, [currentRideLocation?.label, data?.location.city, discoveryLocation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1279,7 +1289,7 @@ export function HousingScreen({
     setSelectedRideChoice("");
     setRideForm((current) => ({
       ...current,
-      city: rideDefaultCity || current.city || "Denver, CO",
+      city: rideDefaultCity || current.city || "",
       origin: initialOrigin,
       originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
       originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
@@ -1429,7 +1439,7 @@ export function HousingScreen({
     setSelectedRideChoice("");
     setRideForm((current) => ({
       ...current,
-      city: rideDefaultCity || current.city || "Denver, CO",
+      city: rideDefaultCity || current.city || "",
       origin: rideDefaultPickup,
       originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
       originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
@@ -1613,7 +1623,12 @@ export function HousingScreen({
       return;
     }
     ridePlanSubmittingRef.current = true;
-    let effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || "Denver, CO";
+    let effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || discoveryLocation;
+    if (!effectiveOrigin) {
+      ridePlanSubmittingRef.current = false;
+      Alert.alert("Current location needed", "Allow location access or enter your pickup location.");
+      return;
+    }
     let effectiveDestination = submittedDestination;
     const listingRide = requestedRideType === "CARPOOL_OFFER";
     const destinationAlreadyPicked = Boolean(
@@ -1818,8 +1833,12 @@ export function HousingScreen({
   }
 
   function openRideGoogleMaps() {
-    const origin = rideForm.origin || selectedLocationText || rideForm.city || "Denver, CO";
-    const destination = rideForm.destination || rideForm.city || "Denver, CO";
+    const origin = rideForm.origin || selectedLocationText || rideForm.city || discoveryLocation;
+    const destination = rideForm.destination || rideForm.city;
+    if (!origin || !destination) {
+      Alert.alert("Route needed", "Allow location access or enter both route locations.");
+      return;
+    }
     void Linking.openURL(mapDirectionsUrl(origin, destination));
   }
 
@@ -2532,35 +2551,35 @@ export function HousingScreen({
         {rentalRows.length ? (
           <View style={styles.carList} onLayout={(event) => setRentalResultsY(event.nativeEvent.layout.y)}>
             <Modal visible={Boolean(rentalQuote)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setRentalQuote(null)}>
-              <View style={styles.checkoutScreen}>
+              <View style={[styles.checkoutScreen, isLight && styles.checkoutScreenLight]}>
                 <ScrollView contentContainerStyle={styles.checkoutContent} showsVerticalScrollIndicator={false}>
                   <View style={styles.checkoutHeader}>
                     <View>
                       <Text style={styles.reviewEyebrow}>Checkout</Text>
                       <Text style={styles.reviewTitle}>Finalize trip</Text>
                     </View>
-                    <TouchableOpacity style={styles.checkoutClose} onPress={() => setRentalQuote(null)}>
+                    <TouchableOpacity style={[styles.checkoutClose, isLight && styles.checkoutCloseLight]} onPress={() => setRentalQuote(null)}>
                       <Text style={styles.checkoutCloseText}>X</Text>
                     </TouchableOpacity>
                   </View>
             {rentalQuote ? (
-              <View style={styles.rentalReviewPanel}>
+              <View style={[styles.rentalReviewPanel, isLight && styles.rentalReviewPanelLight]}>
                 <Text style={styles.reviewCarTitle}>{rentalQuote.booking.carName || selectedRentalCar?.name}</Text>
-                <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupLocation}</Text>
-                <Text style={styles.reviewMeta}>{rentalQuote.booking.pickupDate} {rentalQuote.booking.pickupTime} to {rentalQuote.booking.returnDate} {rentalQuote.booking.returnTime}</Text>
-                <View style={styles.reviewInfoCard}>
+                <Text style={[styles.reviewMeta, isLight && styles.reviewMetaLight]}>{rentalQuote.booking.pickupLocation}</Text>
+                <Text style={[styles.reviewMeta, isLight && styles.reviewMetaLight]}>{rentalQuote.booking.pickupDate} {rentalQuote.booking.pickupTime} to {rentalQuote.booking.returnDate} {rentalQuote.booking.returnTime}</Text>
+                <View style={[styles.reviewInfoCard, isLight && styles.reviewInfoCardLight]}>
                   <Text style={styles.reviewInfoTitle}>Your information</Text>
-                  <TextInput value={rentalCheckoutInfo.firstName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, firstName: text }))} placeholder="First name" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} />
-                  <TextInput value={rentalCheckoutInfo.lastName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, lastName: text }))} placeholder="Last name" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} />
-                  <TextInput value={rentalCheckoutInfo.email} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, email: text }))} placeholder="Email address" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} autoCapitalize="none" />
-                  <TextInput value={rentalCheckoutInfo.phone} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, phone: text }))} placeholder="Mobile number" placeholderTextColor={theme.colors.muted} style={styles.reviewInput} keyboardType="phone-pad" />
-                  <Text style={styles.reviewPolicy}>Used for booking confirmation, pickup coordination, and rental updates.</Text>
+                  <TextInput value={rentalCheckoutInfo.firstName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, firstName: text }))} placeholder="First name" placeholderTextColor={theme.colors.muted} style={[styles.reviewInput, isLight && styles.reviewInputLight]} />
+                  <TextInput value={rentalCheckoutInfo.lastName} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, lastName: text }))} placeholder="Last name" placeholderTextColor={theme.colors.muted} style={[styles.reviewInput, isLight && styles.reviewInputLight]} />
+                  <TextInput value={rentalCheckoutInfo.email} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, email: text }))} placeholder="Email address" placeholderTextColor={theme.colors.muted} style={[styles.reviewInput, isLight && styles.reviewInputLight]} autoCapitalize="none" />
+                  <TextInput value={rentalCheckoutInfo.phone} onChangeText={(text) => setRentalCheckoutInfo((current) => ({ ...current, phone: text }))} placeholder="Mobile number" placeholderTextColor={theme.colors.muted} style={[styles.reviewInput, isLight && styles.reviewInputLight]} keyboardType="phone-pad" />
+                  <Text style={[styles.reviewPolicy, isLight && styles.reviewPolicyLight]}>Used for booking confirmation, pickup coordination, and rental updates.</Text>
                 </View>
                 <View style={styles.reviewGrid}>
-                  <Text style={styles.reviewItem}>Trip: {rentalQuote.booking.days} days</Text>
-                  <Text style={styles.reviewItem}>Daily: {dollars(rentalQuote.breakdown.effectiveDaily)}</Text>
-                  <Text style={styles.reviewItem}>Taxes/fees: {dollars(rentalQuote.breakdown.taxFeeAmount)}</Text>
-                  <Text style={styles.reviewItem}>Due pickup: {dollars(rentalQuote.breakdown.dueAtPickup)}</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Trip: {rentalQuote.booking.days} days</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Daily: {dollars(rentalQuote.breakdown.effectiveDaily)}</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Taxes/fees: {dollars(rentalQuote.breakdown.taxFeeAmount)}</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Due pickup: {dollars(rentalQuote.breakdown.dueAtPickup)}</Text>
                 </View>
                 <Text style={styles.reviewTotal}>Total {dollars(rentalQuote.breakdown.total)}</Text>
                 {rentalQuote.breakdown.savings > 0 ? <Text style={styles.reviewSavings}>You save {dollars(rentalQuote.breakdown.savings)} vs standard rental pricing.</Text> : null}
@@ -2574,8 +2593,8 @@ export function HousingScreen({
                     <Text style={styles.reviewFullMeta}>{dollars(rentalQuote.breakdown.fullPaymentTotal)} today</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.reviewPolicy}>Deposit: {dollars(rentalQuote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
-                <Text style={styles.reviewPolicy}>{rentalQuote.policy.cancellation.cutoff_copy}</Text>
+                <Text style={[styles.reviewPolicy, isLight && styles.reviewPolicyLight]}>Deposit: {dollars(rentalQuote.policy.securityDepositAmount)} refundable authorization at pickup.</Text>
+                <Text style={[styles.reviewPolicy, isLight && styles.reviewPolicyLight]}>{rentalQuote.policy.cancellation.cutoff_copy}</Text>
               </View>
             ) : null}
                 </ScrollView>
@@ -2583,10 +2602,18 @@ export function HousingScreen({
             </Modal>
             {rentalRows.map((car) => {
               const image = absoluteAssetUrl(car.image_url);
+              const carDailyPrice = Number(car.daily_price || 0);
+              const isLowestDailyRate = lowestRentalDailyPrice !== null && carDailyPrice === lowestRentalDailyPrice;
               return (
-                <TouchableOpacity key={car.id} style={[styles.carMiniCard, isLight && styles.carMiniCardLight, selectedRentalCar?.id === car.id && styles.carMiniCardActive]} onPress={() => reviewRentalCar(car)}>
+                <TouchableOpacity
+                  key={car.id}
+                  style={[styles.carMiniCard, isLight && styles.carMiniCardLight, isLowestDailyRate && styles.carMiniCardLowest, selectedRentalCar?.id === car.id && styles.carMiniCardActive]}
+                  onPress={() => reviewRentalCar(car)}
+                  accessibilityLabel={`${car.name}. ${isLowestDailyRate ? "Lowest daily rental rate. " : ""}${dailyPriceRange(car.daily_price, rentalDayCount).low} to ${dailyPriceRange(car.daily_price, rentalDayCount).high} dollars per day`}
+                >
                   <RentalCarImage uri={image} name={car.name} />
                   <View style={styles.carMiniBody}>
+                    {isLowestDailyRate ? <Text style={styles.carMiniLowestLabel}>Lowest car rental</Text> : null}
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
                     <Text style={styles.carMiniPrice}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
@@ -3597,7 +3624,7 @@ export function HousingScreen({
       </Modal>
 
       <View style={styles.listingSectionHeader}>
-        <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || "Denver, CO"}</Text>
+        <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || discoveryLocation || "your current city"}</Text>
         <TouchableOpacity style={styles.filterHeader} onPress={() => setFiltersOpen((value) => !value)}>
           <Text style={styles.filterGlyph}>☷</Text>
           <Text style={styles.filterHeaderTitle}>Filters</Text>
@@ -4412,39 +4439,49 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 9 },
     elevation: 7
   },
+  carMiniCardLowest: { borderColor: "#d99a18", borderWidth: 1.5 },
   carMiniCardActive: { borderColor: theme.colors.blue },
   carMiniImage: { width: "100%", height: 150 },
   carMiniBody: { padding: theme.spacing.md, gap: 6 },
+  carMiniLowestLabel: { color: "#e8a617", fontSize: 11, lineHeight: 14, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase" },
   carMiniTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
   carMiniAction: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900", alignSelf: "flex-start", marginTop: 4 },
   checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  checkoutScreenLight: { backgroundColor: "#f4f6f8" },
   checkoutContent: { padding: theme.spacing.md, paddingTop: 54, paddingBottom: 120, gap: theme.spacing.md },
   checkoutHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
   checkoutClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center" },
+  checkoutCloseLight: { backgroundColor: "#ffffff", borderColor: "#d9dee5" },
   checkoutCloseText: { color: theme.colors.text, fontWeight: "900", fontSize: 18 },
   rentalReviewPanel: { backgroundColor: "rgba(17,24,39,0.88)", borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(80,124,255,0.72)", padding: theme.spacing.md, gap: 10 },
+  rentalReviewPanelLight: { backgroundColor: "#ffffff", borderColor: "#d9e1ed", shadowColor: "#172033", shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   reviewEyebrow: { color: theme.colors.accent, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1 },
   reviewTitle: { color: theme.colors.text, fontSize: 24, fontWeight: "900" },
   reviewCarTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
   reviewMeta: { color: theme.colors.muted, fontSize: 13, fontWeight: "800", lineHeight: 18 },
+  reviewMetaLight: { color: "#667085" },
   reviewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   reviewItem: { width: "48%", color: theme.colors.soft, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontWeight: "800" },
+  reviewItemLight: { color: "#344054", backgroundColor: "#f2f4f7", borderWidth: 1, borderColor: "#e4e7ec" },
   reviewTotal: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
   reviewSavings: { color: theme.colors.green, backgroundColor: "rgba(34,197,94,0.12)", borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, fontWeight: "900" },
   reviewInfoCard: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", padding: 12, gap: 8 },
+  reviewInfoCardLight: { backgroundColor: "#f8fafb", borderColor: "#dfe4ea" },
   reviewInfoTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
   reviewInput: { backgroundColor: "rgba(255,255,255,0.08)", color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontWeight: "800" },
+  reviewInputLight: { backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d9dee5", color: "#101828" },
   reviewActions: { flexDirection: "row", gap: 10 },
   reviewHoldButton: { flex: 1, backgroundColor: theme.colors.accent, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: "center" },
-  reviewHoldText: { color: theme.colors.text, fontWeight: "900", textTransform: "uppercase" },
-  reviewHoldMeta: { color: theme.colors.text, fontSize: 11, fontWeight: "800", marginTop: 2 },
+  reviewHoldText: { color: "#ffffff", fontWeight: "900", textTransform: "uppercase" },
+  reviewHoldMeta: { color: "#ffffff", fontSize: 11, fontWeight: "800", marginTop: 2 },
   reviewFullButton: { flex: 1, backgroundColor: theme.colors.text, borderRadius: theme.radius.md, paddingVertical: 13, alignItems: "center" },
   reviewFullText: { color: theme.colors.bg, fontWeight: "900", textTransform: "uppercase" },
   reviewFullMeta: { color: "#555", fontSize: 11, fontWeight: "900", marginTop: 2 },
   reviewPolicy: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  reviewPolicyLight: { color: "#667085" },
   pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
   pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
   pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

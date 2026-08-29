@@ -6,6 +6,15 @@ import app
 
 
 class ChatLinkPreviewTest(unittest.TestCase):
+    def test_public_share_pages_never_auto_open_an_app_only_scheme(self):
+        script = app.app_only_open_script("fairfares://housing?postId=FFH-TEST")
+        self.assertNotIn("location.replace", script)
+        self.assertNotIn("fairfares://", script)
+        self.assertIn("/app/fairfares-ltd/id6797162820", script)
+        self.assertIn("id=com.fairfares.mobile", script)
+        self.assertIn("/android/i.test(navigator.userAgent)", script)
+        self.assertIn("Install FairFares", script)
+
     def test_render_origin_is_never_published_as_share_origin(self):
         with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://fairfares.onrender.com"}, clear=False):
             app.os.environ.pop("FAIRFARES_CANONICAL_ORIGIN", None)

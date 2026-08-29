@@ -204,6 +204,39 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(resumed["guestId"], session["guestId"])
         self.assertEqual(resumed["remaining"], 0)
 
+    def test_guest_comment_succeeds_when_post_owner_has_push_token(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO mobile_push_tokens
+                   (user_id, token, platform, device_label, enabled, notification_schema)
+                   VALUES (?, ?, 'ios', 'Previously signed-in iPhone', 1, 3)""",
+                (self.owner_id, "ExponentPushToken[owner-device-token]"),
+            )
+        _, session = self.request(
+            "POST",
+            "/api/mobile/community/guest-session",
+            payload={"installationId": "test-owner-device-guest-comment-0001"},
+        )
+        with mock.patch.object(app, "send_expo_push", return_value={
+            "ExponentPushToken[owner-device-token]": {"status": "ACCEPTED", "ticketId": "guest-comment-ticket", "error": ""},
+        }):
+            status, answered = self.guest_request(
+                "POST",
+                "/api/mobile/community/answer",
+                session["token"],
+                {"postId": post_id, "body": "Available?"},
+            )
+        self.assertEqual(status, 201)
+        self.assertTrue(answered["answerId"])
+        self.assertTrue(answered["conversationId"])
+        with app.db() as con:
+            self.assertIsNotNone(con.execute(
+                "SELECT id FROM mobile_push_outbox WHERE user_id = ?",
+                (self.owner_id,),
+            ).fetchone())
+
     def test_signup_claims_guest_identity_and_preserves_comments(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]
@@ -386,7 +419,9 @@ class CommunityFeatureTest(unittest.TestCase):
             markup = response.read().decode()
         self.assertIn("Best groceries in Brookville?", markup)
         self.assertIn("Open in FairFares", markup)
-        self.assertIn(f"fairfares://community?postId={dayton['post']['id']}", markup)
+        self.assertIn(f"https://fairfare.space/community/{dayton['post']['id']}", markup)
+        self.assertIn("Install FairFares", markup)
+        self.assertNotIn("fairfares://", markup)
 
     def test_creation_rejects_short_content_and_unsafe_link(self):
         status, rejected = self.create_post(title="Bad", body="short")

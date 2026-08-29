@@ -94,7 +94,7 @@ function freshnessLabel(value: string) {
   return `Updated ${Math.floor(hours / 24)}d ago`;
 }
 
-export function GasStationsScreen({ onBack, fallbackCity = "Denver, CO" }: Props) {
+export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
   const isLight = useColorScheme() === "light";
   const [fuel, setFuel] = useState<GasFuelType>("regular");
   const [position, setPosition] = useState<Coordinates | null>(null);
@@ -117,17 +117,8 @@ export function GasStationsScreen({ onBack, fallbackCity = "Denver, CO" }: Props
     setMapFailed(false);
     let restoredCache = false;
     try {
-      if (!refresh) {
-        const cached = await readGasCache(nextFuel);
-        if (cached) {
-          if (requestGeneration.current !== generation) return;
-          setPosition(cached.center);
-          setConfigured(cached.configured);
-          setStations(cached.stations || []);
-          setShowingCached(true);
-          restoredCache = true;
-        }
-      }
+      // Resolve the device first. Showing an unvalidated cache here previously
+      // let users briefly scroll station cards from a location they had left.
       // Prefer the device position. Android emulators and indoor devices can
       // fail to deliver a fresh fix even with permission granted, so fall back
       // to the selected FairFares city instead of withholding all prices.
@@ -141,7 +132,19 @@ export function GasStationsScreen({ onBack, fallbackCity = "Denver, CO" }: Props
         coordinates = { latitude: fallback.lat, longitude: fallback.lng };
         setUsingFallbackCity(fallback.suggestedLocation || fallbackCity);
       }
+      if (requestGeneration.current !== generation) return;
       setPosition(coordinates);
+      const cached = refresh ? null : await readGasCache(nextFuel, coordinates);
+      if (cached) {
+        setConfigured(cached.configured);
+        setStations(cached.stations || []);
+        setShowingCached(true);
+        restoredCache = true;
+      } else if (!refresh) {
+        // Keep the loading surface empty rather than presenting cards from a
+        // stale city while the current-location request is in flight.
+        setStations([]);
+      }
       const result = await getNearbyGasPrices(coordinates.latitude, coordinates.longitude, 10, nextFuel);
       if (requestGeneration.current !== generation) return;
       await writeGasCache(nextFuel, result).catch(() => undefined);

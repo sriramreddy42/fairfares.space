@@ -16,7 +16,7 @@ import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserAvatar } from "../components/UserAvatar";
-import { mapCoordinatesUrl, nativeMapProviderName } from "../utils/maps";
+import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
 import {
   absoluteAssetUrl,
@@ -676,17 +676,19 @@ function conversationAvatarUrl(conversation: ChatConversation | null | undefined
   return conversation?.otherPhotoUrl || "";
 }
 
-const ConversationListRow = React.memo(function ConversationListRow({ chat, currentUserId, currentUserPhotoUrl, currentUserName, onOpen }: {
+const ConversationListRow = React.memo(function ConversationListRow({ chat, currentUserId, currentUserPhotoUrl, currentUserName, onOpen, onOpenAvatar }: {
   chat: ChatConversation;
   currentUserId: number;
   currentUserPhotoUrl?: string;
   currentUserName?: string;
   onOpen: (conversation: ChatConversation) => void;
+  onOpenAvatar: (photoUrl: string, label: string) => void;
 }) {
   const isLight = useColorScheme() === "light";
   const preview = safeConversationPreview(chat);
   const unread = chat.unread > 0;
   const conversationKind = chat.communityId || chat.kind === "GROUP" ? "Group letters" : "Direct letters";
+  const avatarUrl = conversationAvatarUrl(chat, currentUserId, currentUserPhotoUrl, currentUserName);
   return (
     <TouchableOpacity
       style={[styles.chatRow, isLight && styles.chatRowLight, isLight && unread && styles.chatRowUnreadLight]}
@@ -694,12 +696,18 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
       accessibilityLabel={`${chat.otherName || chat.subject}. ${unread ? `${chat.unread} unread. ` : ""}${preview}`}
     >
       {unread ? <View style={styles.unreadAccent} /> : null}
-      <View style={styles.avatarWrap}>
+      <TouchableOpacity
+        style={styles.avatarWrap}
+        disabled={!avatarUrl}
+        onPress={(event) => { event.stopPropagation(); onOpenAvatar(avatarUrl, chat.otherName || chat.subject || "Profile photo"); }}
+        accessibilityRole={avatarUrl ? "button" : undefined}
+        accessibilityLabel={avatarUrl ? `Open ${chat.otherName || chat.subject || "user"} profile photo` : undefined}
+      >
         <View style={styles.avatar}>
-          <InitialsAvatar photoUrl={conversationAvatarUrl(chat, currentUserId, currentUserPhotoUrl, currentUserName)} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
+          <InitialsAvatar photoUrl={avatarUrl} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
         </View>
         {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
-      </View>
+      </TouchableOpacity>
       <View style={styles.chatCopy}>
         <View style={styles.chatTitleRow}>
           <Text style={[styles.chatName, isLight && styles.chatNameLight, unread && styles.chatNameUnread, isLight && unread && styles.chatNameUnreadLight]} numberOfLines={1}>{chat.otherName || chat.subject}</Text>
@@ -722,6 +730,39 @@ function discoveredMessageParts(value: string) {
     const text = trailing ? part.slice(0, -trailing.length) : part;
     return { text, url: /^www\./i.test(text) ? `https://${text}` : text, trailing };
   });
+}
+
+function highlightedMentionParts(value: string, mentionNames: string[]) {
+  const names = [...new Set(mentionNames.map((name) => name.trim()).filter(Boolean))]
+    .sort((left, right) => right.length - left.length);
+  if (!names.length || !value.includes("@")) return [{ text: value, mention: false }];
+  const escapedNames = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const mentionPattern = new RegExp(`(@(?:${escapedNames.join("|")}))(?=$|\\s|[.,!?;:])`, "giu");
+  return value.split(mentionPattern).filter(Boolean).map((text) => ({
+    text,
+    mention: text.startsWith("@") && names.some((name) => text.slice(1).toLocaleLowerCase() === name.toLocaleLowerCase())
+  }));
+}
+
+const streetAddressPattern = /\b\d{1,6}\s+(?:[\p{L}\p{N}.'-]+\s+){1,7}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|court|ct|way|parkway|pkwy|highway|hwy|circle|cir|trail|trl|place|pl|terrace|ter)\b(?:[.,]?\s+(?:apt|unit|suite|ste|#)\s*[\p{L}\p{N}-]+)?(?:,\s*[\p{L} .'-]+)?(?:,\s*[A-Z]{2})?(?:\s+\d{5}(?:-\d{4})?)?/giu;
+
+function highlightedMessageParts(value: string, mentionNames: string[]) {
+  const parts: Array<{ text: string; mention: boolean; address: boolean }> = [];
+  let cursor = 0;
+  for (const match of value.matchAll(streetAddressPattern)) {
+    const index = match.index || 0;
+    if (index > cursor) {
+      parts.push(...highlightedMentionParts(value.slice(cursor, index), mentionNames).map((part) => ({ ...part, address: false })));
+    }
+    parts.push({ text: match[0].trimEnd(), mention: false, address: true });
+    const trailing = match[0].slice(match[0].trimEnd().length);
+    if (trailing) parts.push({ text: trailing, mention: false, address: false });
+    cursor = index + match[0].length;
+  }
+  if (cursor < value.length) {
+    parts.push(...highlightedMentionParts(value.slice(cursor), mentionNames).map((part) => ({ ...part, address: false })));
+  }
+  return parts.length ? parts : [{ text: value, mention: false, address: false }];
 }
 
 function firstDiscoveredUrl(value: string) {
@@ -808,7 +849,7 @@ function WebsitePreviewCard({ url, mine, onOpen }: { url: string; mine: boolean;
   );
 }
 
-function DiscoveredMessageText({ message, mine }: { message: string; mine: boolean }) {
+function DiscoveredMessageText({ message, mine, mentionNames = [] }: { message: string; mine: boolean; mentionNames?: string[] }) {
   const textStyle = [styles.bubbleText, mine ? styles.myBubbleText : styles.theirBubbleText];
   return (
     <Text style={textStyle}>
@@ -824,7 +865,25 @@ function DiscoveredMessageText({ message, mine }: { message: string; mine: boole
           </Text>
           {part.trailing || ""}
         </React.Fragment>
-      ) : <React.Fragment key={`text-${index}`}>{part.text}</React.Fragment>)}
+      ) : highlightedMessageParts(part.text, mentionNames).map((textPart, textIndex) => textPart.address ? (
+        <Text
+          key={`address-${index}-${textIndex}`}
+          style={[styles.messageAddress, mine ? styles.myMessageAddress : styles.theirMessageAddress]}
+          onPress={() => void Linking.openURL(mapSearchUrl(textPart.text))}
+          accessibilityRole="link"
+          accessibilityLabel={`Open ${textPart.text} in ${nativeMapProviderName}`}
+        >
+          {textPart.text}
+        </Text>
+      ) : textPart.mention ? (
+        <Text
+          key={`mention-${index}-${textIndex}`}
+          style={[styles.messageMention, mine ? styles.myMessageMention : styles.theirMessageMention]}
+          accessibilityLabel={`Mention ${textPart.text.slice(1)}`}
+        >
+          {textPart.text}
+        </Text>
+      ) : <React.Fragment key={`text-${index}-${textIndex}`}>{textPart.text}</React.Fragment>))}
     </Text>
   );
 }
@@ -1363,6 +1422,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
   const [muted, setMuted] = useState(false);
   const [actionAnswer, setActionAnswer] = useState<CommunityAnswer | null>(null);
   const [replyingTo, setReplyingTo] = useState<CommunityAnswer | null>(null);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
   const selected = threads.find((thread) => thread.id === selectedId) || null;
   const guestConversationId = selected?.guestConversationId || selectedId;
   const isGuestMessageMine = (answer: CommunityAnswer) => guestUserId > 0
@@ -1450,7 +1510,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: activeWallpaper.color }]}><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: activeWallpaper.accent }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: activeWallpaper.accent }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text><View style={styles.wallpaperShade} /></View>
         <View style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={() => { setBenefitsOpen(false); setSelectedId(""); }} accessibilityRole="button" accessibilityLabel="Back to conversations"><BackIcon /></TouchableOpacity>
-          <View style={styles.threadAvatar}><InitialsAvatar photoUrl={selected.author.photoUrl} label={selected.author.name} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} /></View>
+          <TouchableOpacity style={styles.threadAvatar} disabled={!selected.author.photoUrl} onPress={() => setProfilePhotoPreview({ uri: selected.author.photoUrl || "", label: selected.author.name })} accessibilityRole={selected.author.photoUrl ? "button" : undefined} accessibilityLabel={selected.author.photoUrl ? `Open ${selected.author.name} profile photo` : undefined}><InitialsAvatar photoUrl={selected.author.photoUrl} label={selected.author.name} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} /></TouchableOpacity>
           <View style={styles.threadHeaderCopy}><Text style={styles.threadHeaderTitle} numberOfLines={1}>{selected.author.name}</Text><Text style={styles.threadHeaderMeta} numberOfLines={1}>Private chat · Ask Community</Text></View>
           <TouchableOpacity style={styles.headerAction} onPress={() => setOptionsOpen((current) => !current)} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </View>
@@ -1484,6 +1544,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
         </View>
         <Modal visible={wallpaperOpen} transparent animationType="fade" onRequestClose={() => setWallpaperOpen(false)}><Pressable style={styles.guestSettingsBackdrop} onPress={() => setWallpaperOpen(false)}><Pressable style={styles.guestWallpaperCard} onPress={(event) => event.stopPropagation()}><Text style={styles.guestWallpaperTitle}>Chat wallpaper</Text><View style={styles.guestWallpaperChoices}>{wallpaperChoices.map((choice) => <TouchableOpacity key={choice.id} style={[styles.guestWallpaperChoice, { backgroundColor: choice.color }, wallpaperId === choice.id && styles.guestWallpaperChoiceActive]} onPress={() => { setWallpaperId(choice.id); void AsyncStorage.setItem(`fairfares.chat.wallpaper.${guestConversationId}`, JSON.stringify({ id: choice.id, image: "" })); }}><View style={[styles.guestWallpaperAccent, { backgroundColor: choice.accent }]} /><Text style={styles.guestWallpaperLabel}>{choice.label}</Text></TouchableOpacity>)}</View><TouchableOpacity style={styles.guestWallpaperDone} onPress={() => setWallpaperOpen(false)}><Text style={styles.guestWallpaperDoneText}>Done</Text></TouchableOpacity></Pressable></Pressable></Modal>
         <Modal visible={Boolean(actionAnswer)} transparent animationType="fade" onRequestClose={() => setActionAnswer(null)}><Pressable style={styles.messageActionBackdrop} onPress={() => setActionAnswer(null)}><Pressable style={styles.guestMessageActionCard} onPress={(event) => event.stopPropagation()}>{actionAnswer ? <View style={styles.messageActionSheet}><TouchableOpacity style={styles.messageActionRow} onPress={() => { setReplyingTo(actionAnswer); setActionAnswer(null); }}><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity><TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionAnswer.body); setActionAnswer(null); }}><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity></View> : null}</Pressable></Pressable></Modal>
+        <Modal visible={Boolean(profilePhotoPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setProfilePhotoPreview(null)}><View style={styles.profilePhotoViewerBackdrop}><View style={styles.profilePhotoViewerHeader}><TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity><Text style={styles.profilePhotoViewerTitle} numberOfLines={1}>{profilePhotoPreview?.label || "Profile photo"}</Text><View style={styles.profilePhotoViewerHeaderSpacer} /></View><Pressable style={styles.profilePhotoViewerStage} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo">{profilePhotoPreview ? <Image source={authenticatedAssetSource(profilePhotoPreview.uri)} style={styles.profilePhotoViewerImage} resizeMode="contain" /> : null}</Pressable></View></Modal>
         {benefitsOpen ? <View style={styles.guestBenefitsBackdrop}>
           <View style={styles.guestBenefitsCard}>
             <TouchableOpacity style={styles.guestBenefitsClose} onPress={() => setBenefitsOpen(false)} accessibilityLabel="Close"><Text style={styles.guestBenefitsCloseText}>×</Text></TouchableOpacity>
@@ -1628,6 +1689,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -1684,6 +1746,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [chatOptionsOpen, setChatOptionsOpen] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [groupMembers, setGroupMembers] = useState<ChatGroupMember[]>([]);
+  const [groupMembersLoading, setGroupMembersLoading] = useState(false);
+  const [groupMembersError, setGroupMembersError] = useState("");
+  const groupMembersRequestRef = useRef(0);
   const [mentionedUserIds, setMentionedUserIds] = useState<number[]>([]);
   const [groupMemberSearch, setGroupMemberSearch] = useState("");
   const [groupDetailsEditing, setGroupDetailsEditing] = useState(false);
@@ -1775,22 +1840,68 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const mentionSuggestions = mentionMatch ? groupMembers
     .filter((member) => !member.isCurrentUser && (!mentionQuery || member.name.toLowerCase().includes(mentionQuery)))
     .slice(0, 6) : [];
+
+  async function loadGroupMembers(communityId: string, options: { retries?: number; showLoading?: boolean } = {}) {
+    if (!communityId || !currentUserId) return [] as ChatGroupMember[];
+    const requestId = groupMembersRequestRef.current + 1;
+    groupMembersRequestRef.current = requestId;
+    const cacheKey = `fairfares.chitthi.group-members.v1.${currentUserId}.${communityId}`;
+    if (options.showLoading !== false) setGroupMembersLoading(true);
+    setGroupMembersError("");
+    let lastError: unknown;
+    const attempts = Math.max(1, Number(options.retries || 0) + 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await getChatGroupMembers(communityId);
+        if (groupMembersRequestRef.current !== requestId || activeConversationIdRef.current !== activeConversationId) return response.members || [];
+        const members = response.members || [];
+        setGroupMembers(members);
+        await AsyncStorage.setItem(cacheKey, JSON.stringify(members)).catch(() => undefined);
+        setGroupMembersLoading(false);
+        return members;
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    if (groupMembersRequestRef.current === requestId) {
+      setGroupMembersError(lastError instanceof Error ? lastError.message : "Could not refresh group members.");
+      setGroupMembersLoading(false);
+    }
+    return [] as ChatGroupMember[];
+  }
+
   useEffect(() => {
     setGroupDetailsEditing(false);
     setMentionedUserIds([]);
     const communityId = activeConversation?.communityId || "";
     if (!communityId) {
+      groupMembersRequestRef.current += 1;
       setGroupMembers([]);
+      setGroupMembersError("");
       return;
     }
     let cancelled = false;
-    void getChatGroupMembers(communityId).then((response) => {
-      if (!cancelled) setGroupMembers(response.members || []);
-    }).catch(() => {
-      if (!cancelled) setGroupMembers([]);
+    const cacheKey = `fairfares.chitthi.group-members.v1.${currentUserId}.${communityId}`;
+    void AsyncStorage.getItem(cacheKey).then((cached) => {
+      if (!cancelled && cached) {
+        const members = JSON.parse(cached) as ChatGroupMember[];
+        if (Array.isArray(members) && members.length) setGroupMembers(members);
+      }
+    }).catch(() => undefined).finally(() => {
+      if (!cancelled) void loadGroupMembers(communityId, { retries: 2, showLoading: false });
     });
     return () => { cancelled = true; };
-  }, [activeConversation?.communityId]);
+  }, [activeConversation?.communityId, currentUserId]);
+
+  useEffect(() => {
+    if (!groupMembersOpen || !activeConversation?.communityId) return;
+    const communityId = activeConversation.communityId;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void loadGroupMembers(communityId, { retries: 2, showLoading: false });
+    });
+    return () => subscription.remove();
+  }, [activeConversation?.communityId, groupMembersOpen]);
 
   function selectMention(member: ChatGroupMember) {
     if (!mentionMatch) return;
@@ -4444,17 +4555,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const communityId = activeConversation?.communityId || "";
     if (!communityId) return;
     setChatOptionsOpen(false);
-    setThreadLoading(true);
-    try {
-      const response = await getChatGroupMembers(communityId);
-      setGroupMembers(response.members || []);
-      setGroupMemberSearch("");
-      setGroupMembersOpen(true);
-    } catch (error) {
-      Alert.alert("Members unavailable", error instanceof Error ? error.message : "Could not load group members.");
-    } finally {
-      setThreadLoading(false);
-    }
+    setGroupMemberSearch("");
+    setGroupMembersOpen(true);
+    void loadGroupMembers(communityId, { retries: 2 });
   }
 
   async function changeGroupMember(member: ChatGroupMember, action: "REMOVE" | "ROLE") {
@@ -5264,6 +5367,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId);
     if (!source) return;
     setAttachmentPreview(null);
+    setProfilePhotoPreview(null);
     setSelectedMessageIds([messageSelectionKey(source)]);
     setTimeout(() => {
       setSelectedForwardConversationIds([]);
@@ -5455,7 +5559,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.threadAvatar} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
+          <TouchableOpacity
+            style={styles.threadAvatar}
+            disabled={!activeConversation?.communityId && !conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) && !pendingPost?.photoUrl && !pendingRide?.ownerPhotoUrl}
+            onPress={() => {
+              if (activeConversation?.communityId) {
+                void showGroupMembers();
+                return;
+              }
+              const uri = conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl || "";
+              if (uri) setProfilePhotoPreview({ uri, label: activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Profile photo" });
+            }}
+            accessibilityLabel={activeConversation?.communityId ? "Open group info" : "Open profile photo"}
+          >
             <InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl} label={activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat"} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} />
             {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
           </TouchableOpacity>
@@ -5513,7 +5629,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <Text style={styles.groupInfoHeaderTitle}>Group info</Text>
               <TouchableOpacity style={styles.groupInfoDoneButton} onPress={() => setGroupMembersOpen(false)} accessibilityRole="button" accessibilityLabel="Close group info"><Text style={styles.groupInfoDoneText}>Done</Text></TouchableOpacity>
             </View>
-            <ScrollView style={styles.groupInfoScroll} contentContainerStyle={styles.groupInfoContent}>
+            <ScrollView
+              style={styles.groupInfoScroll}
+              contentContainerStyle={styles.groupInfoContent}
+              refreshControl={<RefreshControl refreshing={groupMembersLoading} onRefresh={() => void loadGroupMembers(activeConversation?.communityId || "", { retries: 2 })} tintColor="#00A77B" colors={["#00A77B"]} />}
+            >
               <View style={styles.groupInfoHero}>
                 <TouchableOpacity style={styles.groupInfoAvatar} onPress={() => void changeActiveGroupPhoto()} accessibilityLabel="Change group image">
                   <InitialsAvatar photoUrl={activeGroupPhotoUrl} label={activeGroup?.name || activeConversation?.otherName || "Group"} imageStyle={styles.groupInfoAvatarImage} textStyle={styles.groupInfoAvatarText} />
@@ -5570,13 +5690,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   const canManage = !member.isCurrentUser && member.role !== "OWNER" && (currentRole === "OWNER" || (currentRole === "ADMIN" && member.role === "MEMBER"));
                   const roleLabel = member.role === "OWNER" ? "Owner" : member.role === "ADMIN" ? "Admin" : "Member";
                   return <TouchableOpacity key={member.id} style={styles.groupMemberRow} disabled={member.isCurrentUser} activeOpacity={0.65} onPress={() => void messageGroupMember(member)} onLongPress={canManage ? () => showGroupMemberActions(member) : undefined} accessibilityLabel={member.isCurrentUser ? `${member.name}, you, ${roleLabel}` : `Message ${member.name} privately. ${roleLabel}`}>
-                    <View style={styles.groupMemberAvatar}><InitialsAvatar photoUrl={member.photoUrl} label={member.name} imageStyle={styles.groupMemberAvatarImage} textStyle={styles.groupMemberAvatarText} /></View>
+                    <TouchableOpacity style={styles.groupMemberAvatar} disabled={!member.photoUrl} onPress={(event) => { event.stopPropagation(); setProfilePhotoPreview({ uri: member.photoUrl || "", label: member.name }); }} accessibilityRole={member.photoUrl ? "button" : undefined} accessibilityLabel={member.photoUrl ? `Open ${member.name} profile photo` : undefined}><InitialsAvatar photoUrl={member.photoUrl} label={member.name} imageStyle={styles.groupMemberAvatarImage} textStyle={styles.groupMemberAvatarText} /></TouchableOpacity>
                     <View style={styles.groupMemberCopy}><View style={styles.groupMemberNameLine}><Text style={styles.groupMemberName}>{member.name}</Text>{member.isCurrentUser ? <Text style={styles.groupMemberCurrentTag}>You</Text> : null}</View><Text style={styles.groupMemberSubtext}>{member.isCurrentUser ? `You are a group ${roleLabel.toLowerCase()}` : "Tap to message privately"}</Text></View>
                     <Text style={[styles.groupMemberRole, member.role === "OWNER" ? styles.groupMemberRoleOwner : member.role === "ADMIN" ? styles.groupMemberRoleAdmin : styles.groupMemberRoleMember]}>{roleLabel}</Text>
                     {canManage ? <TouchableOpacity style={styles.groupMemberManageButton} onPress={() => showGroupMemberActions(member)} accessibilityLabel={`Manage ${member.name}`}><Text style={styles.groupMemberManageIcon}>•••</Text></TouchableOpacity> : !member.isCurrentUser ? <Text style={styles.groupMemberChevron}>›</Text> : null}
                   </TouchableOpacity>;
                 })}
-                {!filteredGroupMembers.length ? <Text style={styles.groupMembersEmpty}>No members match your search.</Text> : null}
+                {groupMembersLoading && !groupMembers.length ? <View style={styles.groupMembersStatus}><ActivityIndicator color="#00A77B" /><Text style={styles.groupMembersEmpty}>Loading members…</Text></View> : null}
+                {!groupMembersLoading && groupMembersError ? <TouchableOpacity style={styles.groupMembersRetry} onPress={() => void loadGroupMembers(activeConversation?.communityId || "", { retries: 2 })}><Text style={styles.groupMembersRetryTitle}>Couldn’t refresh members</Text><Text style={styles.groupMembersRetryText}>Showing saved people when available. Tap to retry.</Text></TouchableOpacity> : null}
+                {!groupMembersLoading && !groupMembersError && !filteredGroupMembers.length ? <Text style={styles.groupMembersEmpty}>{groupMemberSearch.trim() ? "No members match your search." : "No group members are available yet."}</Text> : null}
               </View>
               <TouchableOpacity style={styles.leaveGroupButton} onPress={() => Alert.alert("Leave this group?", "You will stop receiving messages from this group.", [{ text: "Cancel", style: "cancel" }, { text: "Leave group", style: "destructive", onPress: () => void leaveActiveGroup() }])} accessibilityRole="button" accessibilityLabel="Leave group"><Text style={styles.leaveGroupText}>Leave group</Text></TouchableOpacity>
             </ScrollView>
@@ -5721,9 +5843,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
-                <View style={styles.smallAvatar}>
+                <TouchableOpacity style={styles.smallAvatar} disabled={!message.senderPhotoUrl} onPress={() => setProfilePhotoPreview({ uri: message.senderPhotoUrl || "", label: message.senderName || "Profile photo" })} accessibilityRole={message.senderPhotoUrl ? "button" : undefined} accessibilityLabel={message.senderPhotoUrl ? `Open ${message.senderName || "sender"} profile photo` : undefined}>
                   <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
-                </View>
+                </TouchableOpacity>
               ) : !message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.smallAvatarSpacer} /> : null}
               <TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
@@ -5834,7 +5956,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </View>
                   </View>
                 ) : null}
-                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} /> : null}
+                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} /> : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
                     url={discoveredUrl}
@@ -5897,7 +6019,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]} accessibilityRole="button" accessibilityLabel="Close message actions">
                   <View pointerEvents="box-none" style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
                     {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} resolvePreview={resolveEncryptedPhotoPreview} /> : null}
-                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} /> : null}
+                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} mentionNames={groupMembers.map((member) => member.name)} /> : null}
                     {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
                     <View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, actionMessage.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(actionMessage.createdAt)}</Text>{actionMessage.mine && messageReceipt(actionMessage.status) ? <Text style={[styles.receiptMark, actionMessage.status === "seen" && styles.receiptSeen, actionMessage.status === "failed" && styles.receiptFailed]}>{messageReceipt(actionMessage.status)}</Text> : null}</View>
                     {(actionMessage.reactions || []).length ? <View style={styles.messagePreviewReactions}>{actionMessage.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(actionMessage, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
@@ -5941,6 +6063,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <TouchableOpacity style={styles.mediaViewerAction} onPress={forwardMediaFromPreview}><Text style={styles.mediaViewerActionGlyph}>→</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
               </View>
             </View>
+          </View>
+        </Modal>
+
+        <Modal visible={Boolean(profilePhotoPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setProfilePhotoPreview(null)}>
+          <View style={styles.profilePhotoViewerBackdrop}>
+            <View style={styles.profilePhotoViewerHeader}>
+              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
+              <Text style={styles.profilePhotoViewerTitle} numberOfLines={1}>{profilePhotoPreview?.label || "Profile photo"}</Text>
+              <View style={styles.profilePhotoViewerHeaderSpacer} />
+            </View>
+            <Pressable style={styles.profilePhotoViewerStage} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo">
+              {profilePhotoPreview ? <Image source={authenticatedAssetSource(profilePhotoPreview.uri)} style={styles.profilePhotoViewerImage} resizeMode="contain" /> : null}
+            </Pressable>
           </View>
         </Modal>
 
@@ -6439,7 +6574,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ) : null}
         </>}
-        renderItem={({ item: chat }) => <ConversationListRow chat={chat} currentUserId={currentUserId} currentUserPhotoUrl={data?.user?.profilePhotoUrl} currentUserName={data?.user?.name} onOpen={handleOpenConversation} />}
+        renderItem={({ item: chat }) => <ConversationListRow chat={chat} currentUserId={currentUserId} currentUserPhotoUrl={data?.user?.profilePhotoUrl} currentUserName={data?.user?.name} onOpen={handleOpenConversation} onOpenAvatar={(uri, label) => setProfilePhotoPreview({ uri, label })} />}
         ListFooterComponent={<>
 
         {(tab === "All" || tab === "Groups" || tab === "Communities") && filteredCommunities.map((community) => (
@@ -6480,12 +6615,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <View style={[styles.groupSuggestionsSection, isLight && styles.groupSuggestionsSectionLight]}>
             <View style={styles.groupSuggestionsHeader}>
               <View style={styles.groupSuggestionsCopy}>
-                <Text style={[styles.groupSuggestionsTitle, isLight && styles.groupSuggestionsTitleLight]}>Suggested groups</Text>
-                <Text style={[styles.groupSuggestionsSubtitle, isLight && styles.groupSuggestionsSubtitleLight]}>Public groups near {suggestionCity.split(",", 1)[0] || "your location"}</Text>
+                <Text style={[styles.groupSuggestionsTitle, isLight && styles.groupSuggestionsTitleLight]}>
+                  Join {suggestionCity.split(",", 1)[0].trim() || "local"} public groups
+                </Text>
               </View>
               <TouchableOpacity
                 style={[styles.groupSuggestionsDismiss, isLight && styles.groupSuggestionsDismissLight]}
-                accessibilityLabel="Dismiss suggested groups"
+                accessibilityLabel="Dismiss public groups"
                 onPress={() => setGroupSuggestionsDismissed(true)}
               >
                 <Text style={[styles.groupSuggestionsDismissText, isLight && styles.groupSuggestionsDismissTextLight]}>×</Text>
@@ -6505,6 +6641,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
         </>}
       />
+      <Modal visible={Boolean(profilePhotoPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setProfilePhotoPreview(null)}>
+        <View style={styles.profilePhotoViewerBackdrop}>
+          <View style={styles.profilePhotoViewerHeader}>
+            <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
+            <Text style={styles.profilePhotoViewerTitle} numberOfLines={1}>{profilePhotoPreview?.label || "Profile photo"}</Text>
+            <View style={styles.profilePhotoViewerHeaderSpacer} />
+          </View>
+          <Pressable style={styles.profilePhotoViewerStage} onPress={() => setProfilePhotoPreview(null)} accessibilityRole="button" accessibilityLabel="Close profile photo">
+            {profilePhotoPreview ? <Image source={authenticatedAssetSource(profilePhotoPreview.uri)} style={styles.profilePhotoViewerImage} resizeMode="contain" /> : null}
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -6765,10 +6913,10 @@ const styles = StyleSheet.create({
   quickRepliesContent: { gap: 8, paddingHorizontal: 46, paddingVertical: 3 },
   quickReply: { borderWidth: 1, borderColor: "rgba(214,169,95,0.70)", backgroundColor: "rgba(8,43,34,0.94)", borderRadius: 20, paddingHorizontal: 15, minHeight: 36, alignItems: "center", justifyContent: "center" },
   quickReplyText: { color: "#E8D3A6", fontSize: 14, fontWeight: "600" },
-  chittiTypingIndicator: { minHeight: 32, marginLeft: 12, marginTop: 2, marginBottom: 2, paddingRight: 11, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.72)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(23,107,74,0.16)", alignSelf: "flex-start", maxWidth: "82%", flexDirection: "row", alignItems: "center", gap: 5, zIndex: 3 },
-  chittiTypingMascotWrap: { width: 31, height: 34, marginTop: 5, overflow: "hidden" },
-  chittiTypingMascot: { width: "100%", height: "100%" },
-  chittiTypingText: { flexShrink: 1, color: "#52665d", fontSize: 12.5, fontWeight: "500" },
+  chittiTypingIndicator: { minHeight: 29, marginLeft: 12, marginTop: 2, marginBottom: -1, paddingRight: 8, alignSelf: "flex-start", maxWidth: "82%", flexDirection: "row", alignItems: "flex-end", gap: 5, zIndex: 3 },
+  chittiTypingMascotWrap: { width: 32, height: 29, overflow: "hidden" },
+  chittiTypingMascot: { position: "absolute", width: 32, height: 42, left: 0, bottom: -13 },
+  chittiTypingText: { flexShrink: 1, color: "#52665d", fontSize: 12.5, lineHeight: 18, fontWeight: "500", paddingBottom: 4 },
   chittiTypingName: { color: "#174f3a", fontWeight: "800" },
   chittiTypingDots: { color: "#176b4a", letterSpacing: 1.5 },
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
@@ -6828,6 +6976,12 @@ const styles = StyleSheet.create({
   attachmentPreviewSave: { minHeight: 50, borderRadius: 25, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 12 },
   attachmentPreviewSaveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
   mediaViewerBackdrop: { flex: 1, backgroundColor: "#000", paddingTop: Platform.OS === "ios" ? 48 : 20 },
+  profilePhotoViewerBackdrop: { flex: 1, backgroundColor: "#000", paddingTop: Platform.OS === "ios" ? 48 : 20 },
+  profilePhotoViewerHeader: { minHeight: 64, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
+  profilePhotoViewerTitle: { flex: 1, color: "#fff", fontSize: 17, fontWeight: "800", textAlign: "center", paddingHorizontal: 10 },
+  profilePhotoViewerHeaderSpacer: { width: 48, height: 48 },
+  profilePhotoViewerStage: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, paddingBottom: Platform.OS === "ios" ? 34 : 20 },
+  profilePhotoViewerImage: { width: "100%", height: "100%" },
   mediaViewerHeader: { minHeight: 92, paddingHorizontal: 14, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", zIndex: 2 },
   mediaViewerRoundButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", alignItems: "center", justifyContent: "center" },
   mediaViewerBackText: { color: "#fff", fontSize: 39, lineHeight: 41, fontWeight: "300", marginTop: -4 },
@@ -7061,6 +7215,12 @@ const styles = StyleSheet.create({
   theirQuotedReplyText: { color: "#24483C" },
   quotedReplyCopy: { flex: 1, minWidth: 0 },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
+  messageMention: { fontWeight: "900", textDecorationLine: "underline" },
+  myMessageMention: { color: "#FFE6A6", backgroundColor: "rgba(255,230,166,0.16)" },
+  theirMessageMention: { color: "#087552", backgroundColor: "rgba(8,117,82,0.10)" },
+  messageAddress: { fontWeight: "700", textDecorationLine: "underline" },
+  myMessageAddress: { color: "#D9F4FF" },
+  theirMessageAddress: { color: "#1268A8" },
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
   theirDiscoveredLink: { color: "#176A55" },
@@ -7266,6 +7426,10 @@ const styles = StyleSheet.create({
   groupMemberManageIcon: { color: "#D6A95F", fontSize: 13, fontWeight: "900", letterSpacing: -1 },
   groupMemberChevron: { color: "#D6A95F", fontSize: 27, fontWeight: "300" },
   groupMembersEmpty: { color: "#91A198", fontSize: 14, textAlign: "center", paddingVertical: 24 },
+  groupMembersStatus: { minHeight: 74, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  groupMembersRetry: { marginVertical: 12, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: "rgba(212,169,90,0.10)", borderWidth: 1, borderColor: "rgba(212,169,90,0.30)" },
+  groupMembersRetryTitle: { color: "#F3D69D", fontSize: 14, fontWeight: "900", textAlign: "center" },
+  groupMembersRetryText: { color: "#AAB8B0", fontSize: 12, lineHeight: 17, textAlign: "center", marginTop: 3 },
   leaveGroupButton: { minHeight: 54, borderRadius: 16, borderWidth: 1, borderColor: "rgba(232,92,102,0.5)", backgroundColor: "rgba(92,22,30,0.24)", alignItems: "center", justifyContent: "center" },
   leaveGroupText: { color: "#FF8C96", fontSize: 15, fontWeight: "800" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },

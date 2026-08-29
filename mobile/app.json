@@ -4,7 +4,7 @@
     "slug": "fairfares-mobile",
     "newArchEnabled": true,
     "scheme": "fairfares",
-    "version": "0.1.9",
+    "version": "0.1.10",
     "icon": "./assets/app-icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -16,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "33",
+      "buildNumber": "37",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -49,7 +49,7 @@
     "android": {
       "package": "com.fairfares.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 17,
+      "versionCode": 20,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -89,6 +89,16 @@
               "scheme": "https",
               "host": "www.fairfare.space",
               "pathPrefix": "/fchat/"
+            },
+            {
+              "scheme": "https",
+              "host": "fairfare.space",
+              "pathPrefix": "/community"
+            },
+            {
+              "scheme": "https",
+              "host": "www.fairfare.space",
+              "pathPrefix": "/community"
             },
             {
               "scheme": "https",

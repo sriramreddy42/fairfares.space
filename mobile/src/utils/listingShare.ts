@@ -1,8 +1,8 @@
 import { Platform, Share } from "react-native";
-import { Community, HousingPost, RidePost } from "../types";
+import { Community, HousingActivityPost, HousingPost, RidePost } from "../types";
 
 const PUBLIC_SITE_URL = "https://www.fairfare.space";
-const SHARE_PREVIEW_VERSION = "2";
+const SHARE_PREVIEW_VERSION = "3";
 
 function compact(value: string | undefined, fallback: string) {
   return value?.trim() || fallback;
@@ -23,11 +23,12 @@ function versionedShareUrl(url: string) {
   return `${url}${url.includes("?") ? "&" : "?"}share=${SHARE_PREVIEW_VERSION}`;
 }
 
-export async function shareHousingListing(post: HousingPost) {
+export async function shareHousingListing(post: HousingPost | HousingActivityPost) {
   const url = versionedShareUrl(`${PUBLIC_SITE_URL}/accommodations?ad_id=${encodeURIComponent(post.id)}`);
-  const place = compact(post.area || post.location, "FairFares");
+  const place = compact("area" in post ? post.area || post.location : post.location, "FairFares");
   const title = compact(post.title, "FairFares housing listing");
-  const facts = [place, post.rent, post.categoryLabel, post.moveIn].filter(Boolean).join(" · ");
+  const moveIn = "moveIn" in post ? post.moveIn : "";
+  const facts = [place, post.rent, post.categoryLabel, moveIn].filter(Boolean).join(" · ");
   await shareAppCard(title, `Check out this housing listing on FairFares\n${facts}`, url);
 }
 

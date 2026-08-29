@@ -27,6 +27,8 @@ class SecurityHardeningTest(unittest.TestCase):
         self.old_values = {name: os.environ.get(name) for name in (
             "FAIRFARES_DB_PATH", "FAIRFARES_SEED_DEFAULTS", "FAIRFARES_ADMIN_EMAIL",
             "FAIRFARES_ADMIN_PASSWORD", "STRIPE_WEBHOOK_SECRET",
+            "FAIRFARES_IOS_LATEST_VERSION", "FAIRFARES_IOS_LATEST_BUILD",
+            "FAIRFARES_IOS_MINIMUM_VERSION", "FAIRFARES_IOS_MINIMUM_BUILD",
         )}
         os.environ["FAIRFARES_DB_PATH"] = str(Path(self.temp_dir.name) / "security.sqlite3")
         os.environ["FAIRFARES_SEED_DEFAULTS"] = "0"
@@ -305,6 +307,30 @@ class SecurityHardeningTest(unittest.TestCase):
             self.assertEqual(error.exception.code, 401)
             payload = json.loads(error.exception.read())
             self.assertTrue(payload["login_required"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_mobile_app_version_policy_is_platform_specific_and_configurable(self):
+        server, thread = self.start_server()
+        try:
+            with patch.dict(os.environ, {
+                "FAIRFARES_IOS_LATEST_VERSION": "2.4.0",
+                "FAIRFARES_IOS_LATEST_BUILD": "240",
+                "FAIRFARES_IOS_MINIMUM_VERSION": "2.1.0",
+                "FAIRFARES_IOS_MINIMUM_BUILD": "210",
+            }):
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/app-version?platform=ios",
+                    timeout=3,
+                ) as response:
+                    payload = json.loads(response.read())
+            self.assertEqual(payload["latestVersion"], "2.4.0")
+            self.assertEqual(payload["latestBuild"], 240)
+            self.assertEqual(payload["minimumVersion"], "2.1.0")
+            self.assertEqual(payload["minimumBuild"], 210)
+            self.assertIn("apps.apple.com", payload["storeUrl"])
         finally:
             server.shutdown()
             server.server_close()

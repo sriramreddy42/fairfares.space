@@ -574,7 +574,7 @@ ACCOMMODATION_MODES = (
     ("NEED_PLACE", "I need a place"),
     ("HAVE_PLACE", "I have a place"),
 )
-ACCOMMODATION_POST_LIFETIME_DAYS = 30
+ACCOMMODATION_POST_LIFETIME_DAYS = 100
 ACCOMMODATION_POST_RECOVERY_DAYS = positive_int_env("FAIRFARES_HOUSING_RECOVERY_DAYS", 7)
 ACCOMMODATION_CATEGORIES = (
     ("single_room", "Single Room"),
@@ -7815,6 +7815,28 @@ def init_db() -> None:
             """,
             (f"+{ACCOMMODATION_POST_LIFETIME_DAYS} days",),
         )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS app_data_migrations (
+                   migration_key TEXT PRIMARY KEY,
+                   applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        lifetime_migration = "housing_active_100_days_from_rollout_v1"
+        if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (lifetime_migration,)).fetchone():
+            # The product policy starts a fresh 100-day window for every post
+            # already stored, including posts that expired under the old limit.
+            con.execute(
+                """
+                UPDATE accommodation_posts
+                SET expires_at = datetime('now', ?),
+                    visibility_status = 'ACTIVE',
+                    expired_at = NULL,
+                    renewed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (f"+{ACCOMMODATION_POST_LIFETIME_DAYS} days",),
+            )
+            con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (lifetime_migration,))
         expire_accommodation_posts_in_connection(con)
         stale_accommodation_images.extend(purge_expired_accommodation_posts_in_connection(con))
         seed_sample_accommodation_posts(con)
@@ -21754,11 +21776,18 @@ def absolute_public_url(value: str, fallback: str = "/static/img/appicon.png") -
 
 
 def app_only_open_script(deep_link: str) -> str:
+    """Add explicit app/install actions without navigating on page load.
+
+    A custom-scheme navigation can leave Safari or Chrome on a blank page when
+    FairFares is not installed. Public share URLs are already Universal/App
+    Links, so installed clients can claim the original link while everyone else
+    must be allowed to keep using the rendered web page.
+    """
     if not deep_link:
         return ""
     ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
     android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
-    return f"""<script>(function(){{var app={json.dumps(deep_link)},ios={json.dumps(ios_store)},android={json.dumps(android_store)};var store=/android/i.test(navigator.userAgent)?android:ios;var fallback=setTimeout(function(){{if(!document.hidden)location.replace(store)}},1600);document.addEventListener('visibilitychange',function(){{if(document.hidden)clearTimeout(fallback)}});location.replace(app)}})()</script>"""
+    return f"""<style>.ff-share-app-actions{{position:relative;z-index:20;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:#07140f;color:#f4fff9;font:700 14px system-ui,-apple-system,sans-serif}}.ff-share-app-actions a{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:999px;text-decoration:none}}.ff-share-app-open{{background:#00c997;color:#06291e}}.ff-share-app-install{{border:1px solid #547064;color:#f4fff9}}</style><script>(function(){{var ios={json.dumps(ios_store)},android={json.dumps(android_store)};document.addEventListener('DOMContentLoaded',function(){{var isAndroid=/android/i.test(navigator.userAgent);var bar=document.createElement('aside');bar.className='ff-share-app-actions';bar.setAttribute('aria-label','FairFares app options');var open=document.createElement('a');open.className='ff-share-app-open';open.textContent='Open in FairFares';open.href='https://fairfare.space'+location.pathname+location.search;var install=document.createElement('a');install.className='ff-share-app-install';install.textContent='Install FairFares';install.href=isAndroid?android:ios;bar.appendChild(open);bar.appendChild(install);document.body.insertBefore(bar,document.body.firstChild)}})}})()</script>"""
 
 
 def android_chitthi_invite_intent(invite_query: str) -> str:
@@ -21922,7 +21951,7 @@ def branded_share_card(
     detail_font = share_card_font(22, True)
     cta_font = share_card_font(21, True)
     text_width = 490
-    eyebrow = "CHITTHI GROUP" if chitthi else "FAIRFARES CARPOOL" if kind == "carpool" else "FAIRFARES HOUSING"
+    eyebrow = "CHITTHI GROUP" if chitthi else "ASK COMMUNITY" if kind == "community" else "FAIRFARES CARPOOL" if kind == "carpool" else "FAIRFARES HOUSING"
     draw.text((686, 116), eyebrow, font=eyebrow_font, fill="#50dfa8")
     if chitthi:
         title_lines = share_card_wrap_text(draw, safe_title, share_card_font(35, True), text_width, 2)
@@ -23502,6 +23531,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/bootstrap":
             self.api_mobile_bootstrap(parsed)
             return
+        if parsed.path == "/api/mobile/app-version":
+            self.api_mobile_app_version(parsed)
+            return
         if parsed.path == "/api/mobile/notification-preferences":
             self.api_mobile_notification_preferences()
             return
@@ -24179,7 +24211,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             payload = {
                 "applinks": {
                     "apps": [],
-                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}, {"/": "/accommodations"}, {"/": "/carpool"}]}],
+                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}, {"/": "/community/*"}, {"/": "/accommodations"}, {"/": "/carpool"}]}],
                 }
             }
         else:
@@ -24234,6 +24266,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), row_value(row, "category")),
                         option_label((("shared", "Shared Bath"), ("private", "Private Bath"), ("private_shared", "Private/Shared Bath")), row_value(row, "bathroom_type"), row_value(row, "bathroom_type")),
                         f"Available {row_value(row, 'move_in_date')}" if row_value(row, "move_in_date") else "Contact the poster in Chitthi",
+                    ) if item)
+            elif kind == "community" and public_id:
+                row = con.execute(
+                    """SELECT posts.*,
+                              (SELECT image_url FROM ask_community_post_images images
+                               WHERE images.post_id = posts.id ORDER BY sort_order, id LIMIT 1) AS preview_image_url
+                       FROM ask_community_posts posts
+                       WHERE posts.public_id = ? AND posts.status IN ('PUBLISHED', 'LOCKED')
+                       LIMIT 1""",
+                    (public_id,),
+                ).fetchone()
+                if row:
+                    primary_image = row_value(row, "preview_image_url") or "/static/img/appicon.png"
+                    title = row_value(row, "title") or "Ask Community"
+                    subtitle = row_value(row, "area") or row_value(row, "city") or "FairFares Community"
+                    category = row_value(row, "category").replace("_", " ").title()
+                    details = tuple(str(item) for item in (
+                        category,
+                        clean_text_value(row_value(row, "body"), 100),
                     ) if item)
             elif kind == "carpool" and public_id:
                 row = con.execute("SELECT * FROM ride_posts WHERE public_id = ? AND status = 'ACTIVE' LIMIT 1", (public_id,)).fetchone()
@@ -24322,7 +24373,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # simply follow the normal apex-to-www redirect back to this page.
         app_invite_token = token or public_chat_group_invite_token(community_id)
         app_invite_query = urllib.parse.urlencode({"group_invite": app_invite_token})
-        universal_app_link = f"https://www.fairfare.space/chitthi/invite?{app_invite_query}"
+        universal_app_link = f"https://fairfare.space/chitthi/invite?{app_invite_query}"
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         group_query = app_invite_query
@@ -35405,6 +35456,42 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_mobile_app_version(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        platform = clean_text_value((params.get("platform", [""])[0] or ""), 20).lower()
+        if platform not in {"ios", "android"}:
+            self.send_json({"ok": False, "error": "Platform must be ios or android."}, 400)
+            return
+        prefix = "IOS" if platform == "ios" else "ANDROID"
+        default_build = 37 if platform == "ios" else 20
+        store_url = (
+            "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+            if platform == "ios"
+            else "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+        )
+
+        def configured_build(name: str, fallback: int) -> int:
+            try:
+                return max(0, int(os.environ.get(name, str(fallback)) or fallback))
+            except (TypeError, ValueError):
+                return fallback
+
+        latest_version = clean_text_value(os.environ.get(f"FAIRFARES_{prefix}_LATEST_VERSION") or "0.1.10", 30)
+        minimum_version = clean_text_value(os.environ.get(f"FAIRFARES_{prefix}_MINIMUM_VERSION") or "0.0.0", 30)
+        self.send_json({
+            "ok": True,
+            "platform": platform,
+            "latestVersion": latest_version,
+            "minimumVersion": minimum_version,
+            "latestBuild": configured_build(f"FAIRFARES_{prefix}_LATEST_BUILD", default_build),
+            "minimumBuild": configured_build(f"FAIRFARES_{prefix}_MINIMUM_BUILD", 0),
+            "storeUrl": store_url,
+            "message": clean_text_value(
+                os.environ.get("FAIRFARES_UPDATE_MESSAGE") or "Update FairFares for the latest fixes and improvements.",
+                240,
+            ),
+        })
+
     def api_mobile_bootstrap(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         auth_header = (self.headers.get("Authorization") or "").strip()
@@ -35419,9 +35506,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             return
         params = urllib.parse.parse_qs(parsed.query)
-        city = (params.get("city", ["Denver, CO"])[0] or "").strip()
+        city = (params.get("city", [""])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
-        metro_context = accommodation_metro_context(city if "Metro" in city else "", area or city)
+        metro_context = accommodation_metro_context(city if "Metro" in city else "", area or city) if (city or area) else {
+            "selected_location": "",
+            "suggested_location": "",
+            "suggested_areas": [],
+        }
         user_id = int(row_value(user, "id") or 0) if user else 0
         chats = get_chat_conversations_for_user(user_id) if user_id else []
         for chat in chats:
@@ -35440,8 +35531,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "user": mobile_user_payload(user),
                 "location": {
-                    "city": city or "Denver, CO",
-                    "selected": metro_context.get("selected_location") or city or "Denver, CO",
+                    "city": city,
+                    "selected": metro_context.get("selected_location") or city,
                     "suggested": metro_context.get("suggested_location") or "",
                     "suggestedAreas": metro_context.get("suggested_areas") or [],
                 },
@@ -37164,12 +37255,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         public_id = clean_text_value(parsed.path.rsplit("/", 1)[-1] if parsed.path != "/community" else "", 80)
         rows = community_post_rows(0, post_public_id=public_id, limit=1) if public_id else []
         post = community_post_payload(rows[0], 0) if rows else None
-        title = html.escape(str(post["title"]) if post else "Ask Community on FairFares")
-        body = html.escape(str(post["body"]) if post else "Ask questions and get trusted local answers from the FairFares community.")
+        raw_title = str(post["title"]) if post else "Ask Community on FairFares"
+        raw_body = str(post["body"]) if post else "Ask questions and get trusted local answers from the FairFares community."
+        title = html.escape(raw_title)
+        body = html.escape(raw_body)
         author = html.escape(str(post["author"]["name"]) if post else "FairFares Community")
-        app_link = f"fairfares://community?postId={urllib.parse.quote(public_id)}" if public_id else "fairfares://community"
+        share_title = html.escape(f"{raw_title} | FairFares", quote=True)
+        share_description = html.escape(clean_text_value(raw_body, 180), quote=True)
+        share_url = f"{schema_origin()}/community/{urllib.parse.quote(public_id)}" if public_id else f"{schema_origin()}/community"
+        share_image = f"{schema_origin()}/api/share-card?kind=community&id={urllib.parse.quote(public_id)}" if post else absolute_public_url("/static/img/appicon.png")
+        metadata = f"""<title>{share_title}</title><meta name=\"description\" content=\"{share_description}\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/static/img/favicon-32.png?v={ASSET_VERSION}\"><link rel=\"icon\" type=\"image/png\" sizes=\"512x512\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><link rel=\"apple-touch-icon\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><meta name=\"theme-color\" content=\"#00c997\"><meta property=\"og:type\" content=\"article\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:title\" content=\"{share_title}\"><meta property=\"og:description\" content=\"{share_description}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{html.escape(share_image, quote=True)}\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(raw_title + ' on FairFares', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{share_title}\"><meta name=\"twitter:description\" content=\"{share_description}\"><meta name=\"twitter:image\" content=\"{html.escape(share_image, quote=True)}\">"""
+        app_path = f"/community/{urllib.parse.quote(public_id)}" if public_id else "/community"
+        # Cross from the canonical www landing page to the associated apex
+        # domain only after a user gesture. Installed apps claim this Universal
+        # Link; browsers without FairFares return to the readable web preview.
+        app_link = f"https://fairfare.space{app_path}"
+        ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+        android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         status = 200 if post or not public_id else 404
-        markup = f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\"><style>body{{margin:0;background:#07140f;color:#f4fff9;font:16px system-ui,-apple-system,sans-serif}}main{{max-width:680px;margin:auto;padding:56px 20px}}.brand{{color:#62d8a6;font-weight:850;letter-spacing:.08em}}article{{margin-top:22px;padding:28px;background:#10291f;border:1px solid #285641;border-radius:26px}}h1{{font-size:clamp(28px,6vw,44px);line-height:1.08;margin:12px 0}}p{{color:#c5dbd2;line-height:1.65;white-space:pre-wrap}}.by{{color:#7fc7a8;font-size:14px}}.actions{{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}}a{{padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:800}}.open{{background:#62d8a6;color:#06291e}}.home{{border:1px solid #46705e;color:#dff8ed}}</style></head><body><main><div class=\"brand\">FAIRFARES · ASK COMMUNITY</div><article><div class=\"by\">Shared by {author}</div><h1>{title}</h1><p>{body}</p><div class=\"actions\"><a class=\"open\" href=\"{html.escape(app_link)}\">Open in FairFares</a><a class=\"home\" href=\"/\">Visit FairFares</a></div></article></main></body></html>"""
+        markup = f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\"><style>body{{margin:0;background:#07140f;color:#f4fff9;font:16px system-ui,-apple-system,sans-serif}}main{{max-width:680px;margin:auto;padding:56px 20px}}.brand{{color:#62d8a6;font-weight:850;letter-spacing:.08em}}article{{margin-top:22px;padding:28px;background:#10291f;border:1px solid #285641;border-radius:26px}}h1{{font-size:clamp(28px,6vw,44px);line-height:1.08;margin:12px 0}}p{{color:#c5dbd2;line-height:1.65;white-space:pre-wrap}}.by{{color:#7fc7a8;font-size:14px}}.actions{{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}}a{{padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:800}}.open{{background:#62d8a6;color:#06291e}}.home{{border:1px solid #46705e;color:#dff8ed}}</style></head><body><main><div class=\"brand\">FAIRFARES · ASK COMMUNITY</div><article><div class=\"by\">Shared by {author}</div><h1>{title}</h1><p>{body}</p><div class=\"actions\"><a class=\"open\" href=\"{html.escape(app_link)}\">Open in FairFares</a><a class=\"home\" id=\"install-fairfares\" href=\"{ios_store}\">Install FairFares</a><a class=\"home\" href=\"/\">Visit FairFares</a></div></article></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var install=document.getElementById('install-fairfares');if(install)install.href={json.dumps(android_store)}}}}})()</script></body></html>"""
+        legacy_head = f"<title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\">"
+        markup = markup.replace(legacy_head, metadata, 1)
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
@@ -37380,7 +37486,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         },
                     )
                     chitthi_conversation_public_id = str(row_value(conversation, "public_id") or "")
-                    self.notify_chat_recipients(con, conversation, notification_user, chat_message)
+                    # Push queuing opens its own database connection. Commit the
+                    # answer/message transaction first so a recipient with a
+                    # registered device token cannot deadlock guest comments.
+                    con.commit()
+                    try:
+                        self.notify_chat_recipients(con, conversation, notification_user, chat_message)
+                    except Exception as exc:
+                        # The public comment and private Chitthi copy are already
+                        # durable. A transient push failure must never make the
+                        # client report that the comment itself was not posted.
+                        print(f"Community answer notification failed: {exc}")
         if notify_user_id and notify_user_id != author_id and not chitthi_conversation_public_id:
             send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
         remaining = max(0, 6 - guest_usage_after) if guest else None
@@ -37564,7 +37680,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     return
             guest_user = con.execute("SELECT * FROM users WHERE id = ? AND guest_account = 1", (guest_user_id,)).fetchone()
             message = save_chat_message(con, int(conversation["id"]), guest_user, body, client_message_id=f"guest-chat-{secrets.token_hex(12)}", reply_to_message_id=reply_to_message_id)
-            self.notify_chat_recipients(con, conversation, guest_user, message)
+            # Notification enqueueing uses a separate connection; release this
+            # write transaction first and keep guest messaging independent of
+            # transient push infrastructure failures.
+            con.commit()
+            try:
+                self.notify_chat_recipients(con, conversation, guest_user, message)
+            except Exception as exc:
+                print(f"Community guest message notification failed: {exc}")
             current_usage = int(con.execute("SELECT messages_used FROM ask_community_guest_sessions WHERE id = ?", (int(guest["id"]),)).fetchone()["messages_used"])
         remaining = max(0, 6 - current_usage)
         self.send_json({"ok": True, "messageId": int(row_value(message, "id") or 0), "guestRemaining": remaining}, 201)
