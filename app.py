@@ -12111,23 +12111,51 @@ def housing_community_city_label(con: sqlite3.Connection, listing: sqlite3.Row |
         normalize_accommodation_place_label(str(row_value(listing, "city_area_zip") or "")),
         normalize_accommodation_place_label(str(row_value(listing, "primary_neighborhood") or "")),
     )
+    landmark_city = bool(re.search(
+        r"\b(?:airport|campus|college|mall|station|terminal|university)\b",
+        raw_city,
+        re.IGNORECASE,
+    ))
     for candidate in location_candidates:
         variants = community_us_city_variants(candidate)
-        if variants:
+        # A previous repair could have copied a nearby landmark (for example
+        # "University of Dayton, OH") into the city column.  Do not preserve
+        # that as a municipality when the listing still contains a safer city
+        # clue in its area/ZIP fields.
+        if variants and not (candidate == raw_city and landmark_city):
             return variants[0]
     if str(row_value(listing, "country") or "").strip().upper() not in {"US", "USA", "UNITED STATES"}:
         return raw_city
     zip_code = clean_text_value(row_value(listing, "zip_code"), 16)
     city_root = raw_city.split(",", 1)[0].strip()
     location_row = None
+    # Before falling back to the nearest cached point, match unqualified
+    # listing clues against actual municipality names.  This turns an area of
+    # "Dayton" into "Dayton, OH" without adopting a closer campus/landmark.
+    for candidate in location_candidates:
+        candidate_root = candidate.split(",", 1)[0].strip()
+        if not candidate_root or candidate == raw_city or re.search(r"\d", candidate_root):
+            continue
+        exact_rows = con.execute(
+            """SELECT city, state FROM accommodation_local_areas
+               WHERE lower(city) = lower(?) AND trim(state) != ''
+               GROUP BY lower(city), upper(state)
+               ORDER BY id""",
+            (candidate_root,),
+        ).fetchall()
+        if len(exact_rows) == 1:
+            location_row = exact_rows[0]
+            break
     if zip_code:
-        location_row = con.execute(
+        zip_row = con.execute(
             """SELECT city, state FROM accommodation_local_areas
                WHERE zip_code = ? AND trim(city) GLOB '*[A-Za-z]*' AND trim(state) != ''
                ORDER BY CASE WHEN lower(city) = lower(?) THEN 0 ELSE 1 END, id DESC
                LIMIT 1""",
             (zip_code, city_root),
         ).fetchone()
+        if not location_row:
+            location_row = zip_row
     if not location_row and city_root:
         matching_states = con.execute(
             """SELECT city, state FROM accommodation_local_areas

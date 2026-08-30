@@ -461,14 +461,22 @@ class CommunityFeatureTest(unittest.TestCase):
                 (int(metro.lastrowid),),
             )
             con.execute(
+                """INSERT INTO accommodation_local_areas
+                   (metro_id, place_key, name, city, state, zip_code, lat, lng)
+                   VALUES (?, 'university-dayton-test', 'University of Dayton, OH',
+                           'University of Dayton', 'OH', '45410', 39.7400, -84.1800)""",
+                (int(metro.lastrowid),),
+            )
+            con.execute(
                 """INSERT INTO accommodation_posts
                    (public_id, user_id, post_mode, category, title, description,
                     city, country, zip_code, city_area_zip, area_or_apartment,
                     rent_min, contact_name, contact_phone, contact_email,
                     visibility_status, expires_at, created_at, updated_at)
                    VALUES ('CITY-ONLY-DAYTON', ?, 'HAVE_PLACE', 'shared_room',
-                           '238 Oak Street', 'Shared room in Dayton', '', 'US',
-                           '45402', 'Dayton, 45402', 'Downtown', 250,
+                           '238 Oak Street', 'Shared room in Dayton',
+                           'University of Dayton, OH', 'US', '45410',
+                           '238 Oak Street', 'Dayton', 250,
                            'Owner', '9375550100', 'owner@example.com', 'ACTIVE',
                            '2099-12-31 23:59:59', datetime('now'), datetime('now'))""",
                 (self.owner_id,),
