@@ -447,6 +447,94 @@ class CommunityFeatureTest(unittest.TestCase):
         _, rides = self.request("GET", "/api/mobile/community?category=RIDES")
         self.assertEqual([post["id"] for post in rides["posts"]], [created_ids["CARPOOL_RIDE"]])
 
+    def test_city_only_housing_projection_is_visible_locally_and_nationwide(self):
+        with app.db() as con:
+            metro = con.execute(
+                """INSERT INTO accommodation_metros
+                   (metro_key, name, country, state, center_city)
+                   VALUES ('dayton-oh-test', 'Dayton, OH', 'US', 'OH', 'Dayton')"""
+            )
+            con.execute(
+                """INSERT INTO accommodation_local_areas
+                   (metro_id, place_key, name, city, state, zip_code)
+                   VALUES (?, 'dayton-45402-test', 'Dayton, OH 45402', 'Dayton', 'OH', '45402')""",
+                (int(metro.lastrowid),),
+            )
+            con.execute(
+                """INSERT INTO accommodation_posts
+                   (public_id, user_id, post_mode, category, title, description,
+                    city, country, zip_code, city_area_zip, area_or_apartment,
+                    rent_min, contact_name, contact_phone, contact_email,
+                    visibility_status, expires_at, created_at, updated_at)
+                   VALUES ('CITY-ONLY-DAYTON', ?, 'HAVE_PLACE', 'shared_room',
+                           '238 Oak Street', 'Shared room in Dayton', '', 'US',
+                           '45402', 'Dayton, 45402', 'Downtown', 250,
+                           'Owner', '9375550100', 'owner@example.com', 'ACTIVE',
+                           '2099-12-31 23:59:59', datetime('now'), datetime('now'))""",
+                (self.owner_id,),
+            )
+            con.execute(
+                """INSERT INTO accommodation_posts
+                   (public_id, user_id, post_mode, category, title, description,
+                    city, country, zip_code, city_area_zip, area_or_apartment,
+                    rent_min, contact_name, contact_phone, contact_email,
+                    visibility_status, expires_at, created_at, updated_at)
+                   VALUES ('CITY-ONLY-BRIDGEPORT', ?, 'HAVE_PLACE', 'single_room',
+                           'Private room', 'Private room in Bridgeport', 'Bridgeport', 'US',
+                           '06605', 'Bridgeport', 'Bridgeport, CT', 500,
+                           'Owner', '2035550100', 'owner@example.com', 'ACTIVE',
+                           '2099-12-31 23:59:59', datetime('now'), datetime('now'))""",
+                (self.owner_id,),
+            )
+            # Production already contains community projections for these
+            # listings.  Exercise the UPDATE path as well as first-time
+            # projection so a deploy repairs cards users created earlier.
+            con.execute(
+                """INSERT INTO ask_community_posts
+                   (public_id, author_id, post_type, title, body, category,
+                    city, area, status, fulfillment_status, expires_at,
+                    source_kind, source_public_id)
+                   VALUES ('FFH-CITY-ONLY-DAYTON', ?, 'REQUEST',
+                           '238 Oak Street', 'Shared room in Dayton',
+                           'HAVE_PLACE', '', 'Dayton', 'PUBLISHED', 'OPEN',
+                           '2099-12-31 23:59:59', 'HOUSING',
+                           'CITY-ONLY-DAYTON')""",
+                (self.owner_id,),
+            )
+            con.execute(
+                """INSERT INTO ask_community_posts
+                   (public_id, author_id, post_type, title, body, category,
+                    city, area, status, fulfillment_status, expires_at,
+                    source_kind, source_public_id)
+                   VALUES ('FFH-CITY-ONLY-BRIDGEPORT', ?, 'REQUEST',
+                           'Private room', 'Private room in Bridgeport',
+                           'HAVE_PLACE', 'Bridgeport', 'Bridgeport, CT',
+                           'PUBLISHED', 'OPEN', '2099-12-31 23:59:59',
+                           'HOUSING', 'CITY-ONLY-BRIDGEPORT')""",
+                (self.owner_id,),
+            )
+
+        status, dayton = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&category=HOUSING")
+        self.assertEqual(status, 200)
+        self.assertIn("FFH-CITY-ONLY-DAYTON", [post["id"] for post in dayton["sections"]["local"]["posts"]])
+
+        status, cincinnati = self.request("GET", "/api/mobile/community?city=Cincinnati%2C%20OH&layered=1&category=HOUSING")
+        self.assertEqual(status, 200)
+        national = cincinnati["sections"]["national"]["posts"]
+        projected = next(post for post in national if post["id"] == "FFH-CITY-ONLY-DAYTON")
+        self.assertEqual(projected["city"], "Dayton, OH")
+        bridgeport = next(post for post in national if post["id"] == "FFH-CITY-ONLY-BRIDGEPORT")
+        self.assertEqual(bridgeport["city"], "Bridgeport, CT")
+        with app.db() as con:
+            repaired_rows = con.execute(
+                """SELECT public_id, city FROM accommodation_posts
+                   WHERE public_id IN ('CITY-ONLY-DAYTON', 'CITY-ONLY-BRIDGEPORT')"""
+            ).fetchall()
+        self.assertEqual(
+            {row["public_id"]: row["city"] for row in repaired_rows},
+            {"CITY-ONLY-DAYTON": "Dayton, OH", "CITY-ONLY-BRIDGEPORT": "Bridgeport, CT"},
+        )
+
     def test_structured_details_expiration_and_owner_outcome(self):
         status, created = self.create_post(
             category="CARPOOL_RIDE", title="Carpool from Dayton to Columbus",

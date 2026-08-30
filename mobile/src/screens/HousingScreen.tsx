@@ -2399,6 +2399,29 @@ export function HousingScreen({
   }
 
   async function searchRentalCars() {
+    const today = todayIsoDate();
+    if (!rentalSearch.pickupDate || rentalSearch.pickupDate < today) {
+      const pickupDate = today;
+      const returnDate = rentalSearch.returnDate > pickupDate ? rentalSearch.returnDate : addDays(pickupDate, 1);
+      setRentalSearch((current) => ({
+        ...current,
+        pickupDate,
+        returnDate,
+        pickupTime: firstAllowedPickupTime(pickupDate)
+      }));
+      Alert.alert("Choose a current pickup date", "Past rental dates are unavailable. Select today or a future date.");
+      return;
+    }
+    if (!rentalSearch.returnDate || rentalSearch.returnDate <= rentalSearch.pickupDate) {
+      setRentalSearch((current) => ({ ...current, returnDate: addDays(current.pickupDate, 1) }));
+      Alert.alert("Choose a valid return date", "Return must be at least one day after pickup.");
+      return;
+    }
+    if (rentalSearch.pickupDate === today && timeTextToMinutes(rentalSearch.pickupTime) < timeTextToMinutes(firstAllowedPickupTime(today))) {
+      setRentalSearch((current) => ({ ...current, pickupTime: firstAllowedPickupTime(today) }));
+      Alert.alert("Choose a current pickup time", `Today's earliest available pickup is ${firstAllowedPickupTime(today)}.`);
+      return;
+    }
     setRentalBusy(true);
     try {
       const nextCars = await getCars(rentalSearch.pickupLocation, "", rentalSearch);

@@ -16,6 +16,29 @@ const CHAT_THUMBNAIL_MAX_BYTES = 18_000;
 const IS_EXPO_GO = Constants.appOwnership === "expo";
 let mediaLibraryPickerActive = false;
 
+function isDetachedAndroidPicker(error: unknown): boolean {
+  if (Platform.OS !== "android") return false;
+  const candidates: unknown[] = [error];
+  const visited = new Set<unknown>();
+  while (candidates.length) {
+    const candidate = candidates.shift();
+    if (candidate == null || visited.has(candidate)) continue;
+    visited.add(candidate);
+    if (/unregistered\s+ActivityResultLauncher/i.test(String(candidate))) return true;
+    if (typeof candidate === "object") {
+      const record = candidate as Record<string, unknown>;
+      candidates.push(record.message, record.stack, record.cause, record.nativeStackAndroid, record.userInfo);
+      try {
+        if (/unregistered\s+ActivityResultLauncher/i.test(JSON.stringify(record))) return true;
+      } catch {
+        // Native error objects can be cyclic; the explicit fields above still
+        // cover Expo's Error and CodedError shapes.
+      }
+    }
+  }
+  return false;
+}
+
 async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions): Promise<ImagePicker.ImagePickerResult> {
   // A fast double tap can otherwise attempt to present two PHPicker/activity
   // controllers at once. Treat the duplicate tap like a cancellation instead
@@ -31,27 +54,33 @@ async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions)
       // versions/devices can nevertheless route through the legacy picker
       // after permission state or an app upgrade changes. Recover once by
       // requesting access instead of surfacing a dead-end native error.
-      if (Platform.OS === "android" && /unregistered ActivityResultLauncher/i.test(reason)) {
+      if (isDetachedAndroidPicker(error)) {
         // Some Android activity recreation paths can leave expo-image-picker's
         // launcher detached. The Storage Access Framework is independently
         // registered and gives the same user-controlled, per-file access.
+        const requestedMedia = Array.isArray(options.mediaTypes) ? options.mediaTypes : [options.mediaTypes];
+        const acceptsVideo = requestedMedia.includes("videos");
         const fallback = await DocumentPicker.getDocumentAsync({
-          type: "image/*",
+          type: acceptsVideo ? ["image/*", "video/*"] : "image/*",
           multiple: Boolean(options.allowsMultipleSelection),
           copyToCacheDirectory: true
         });
         if (fallback.canceled) return { canceled: true, assets: null };
         return {
           canceled: false,
-          assets: fallback.assets.map((asset) => ({
-            uri: asset.uri,
-            width: 0,
-            height: 0,
-            type: "image" as const,
-            fileName: asset.name,
-            fileSize: asset.size,
-            mimeType: asset.mimeType || "image/jpeg"
-          }))
+          assets: fallback.assets.map((asset) => {
+            const videoByName = /\.(?:mp4|mov|m4v|webm|3gp|mkv)$/i.test(asset.name || "");
+            const isVideo = asset.mimeType?.startsWith("video/") || (!asset.mimeType && videoByName);
+            return {
+              uri: asset.uri,
+              width: 0,
+              height: 0,
+              type: isVideo ? "video" as const : "image" as const,
+              fileName: asset.name,
+              fileSize: asset.size,
+              mimeType: asset.mimeType || (isVideo ? "video/mp4" : "image/jpeg")
+            };
+          })
         };
       }
       if (Platform.OS !== "ios" || !/permission|photo(?: library)? access|rejected/i.test(reason)) throw error;
@@ -181,7 +210,10 @@ async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: numb
     size: Number(asset.fileSize || 0)
   };
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const actions = asset.width && asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
+    // Android's Storage Access Framework does not always report dimensions.
+    // Unknown dimensions must be treated as potentially full-resolution;
+    // otherwise fallback-selected camera photos bypass resizing entirely.
+    const actions = !asset.width || asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
     const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
       base64: false,
       compress: currentQuality,
@@ -237,18 +269,35 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   const images: string[] = [];
   for (const asset of result.assets.slice(0, remaining)) {
     const encoding = preferredImageEncoding();
-    const actions =
-      asset.width && asset.width > maxWidth
-        ? [{ resize: { width: maxWidth } }]
-        : [];
-    const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
-      base64: true,
-      compress: quality,
-      format: encoding.format
-    });
-    if (compressed.base64) {
-      images.push(`data:${encoding.mimeType};base64,${compressed.base64}`);
+    let currentWidth = maxWidth;
+    let currentQuality = quality;
+    let accepted = "";
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const actions = !asset.width || asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
+      const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+        base64: true,
+        compress: currentQuality,
+        format: encoding.format
+      });
+      try {
+        const candidate = compressed.base64 ? `data:${encoding.mimeType};base64,${compressed.base64}` : "";
+        // Stay below the server's 2.5M-character ceiling with room for form
+        // encoding and request metadata. This makes group/profile uploads
+        // deterministic even for high-detail photos from the SAF fallback.
+        if (candidate && candidate.length <= 2_300_000) {
+          accepted = candidate;
+          break;
+        }
+      } finally {
+        if (Platform.OS !== "web" && compressed.uri && compressed.uri !== asset.uri) {
+          await FileSystem.deleteAsync(compressed.uri, { idempotent: true }).catch(() => undefined);
+        }
+      }
+      currentWidth = Math.max(360, Math.round(currentWidth * 0.78));
+      currentQuality = Math.max(0.36, currentQuality - 0.1);
     }
+    if (!accepted) throw new Error("This image could not be reduced to a safe upload size. Choose a smaller photo.");
+    images.push(accepted);
   }
   return images;
 }
@@ -318,13 +367,25 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
 
 export async function takeChatPhoto(maxWidth = 1280, quality = 0.64, maxBytes = 400_000) {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
-  if (!permission.granted) throw new Error("Allow camera access to take a photo.");
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ["images"],
-    allowsEditing: false,
-    base64: false,
-    quality
-  });
+  if (!permission.granted) throw new Error(permission.canAskAgain ? "Allow camera access to take a photo." : "CAMERA_SETTINGS_REQUIRED");
+  let result: ImagePicker.ImagePickerResult;
+  try {
+    result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      base64: false,
+      quality
+    });
+  } catch (error) {
+    if (!isDetachedAndroidPicker(error)) throw error;
+    result = await launchPrivateMediaPicker({
+      allowsMultipleSelection: false,
+      base64: false,
+      mediaTypes: ["images"],
+      quality,
+      selectionLimit: 1
+    });
+  }
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
   return compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality, maxBytes);

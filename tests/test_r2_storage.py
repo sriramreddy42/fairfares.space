@@ -427,6 +427,12 @@ class R2StorageTest(unittest.TestCase):
                 ciphertext_sha256=checksum, media_mime_type="image/jpeg",
             )
             self.assertFalse(error)
+            retry, retry_error = app.create_chitthi_upload_authorization(
+                user_id=user_id, conversation_public_id="direct-upload", encrypted_size=15,
+                ciphertext_sha256=checksum, media_mime_type="image/jpeg",
+            )
+            self.assertFalse(retry_error)
+            self.assertEqual(retry["uploadId"], result["uploadId"])
             self.assertEqual(client.presigned["operation"], "put_object")
             self.assertEqual(client.presigned["params"]["ContentType"], "application/octet-stream")
             self.assertEqual(client.presigned["params"]["ContentLength"], 15)
@@ -434,8 +440,10 @@ class R2StorageTest(unittest.TestCase):
             self.assertNotIn("direct-upload", client.presigned["params"]["Key"])
             with app.db() as con:
                 pending = con.execute("SELECT * FROM chat_attachment_uploads WHERE public_id = ?", (result["uploadId"],)).fetchone()
+                pending_count = int(con.execute("SELECT COUNT(*) FROM chat_attachment_uploads").fetchone()[0])
             self.assertEqual(pending["uploader_user_id"], user_id)
             self.assertEqual(pending["expected_checksum"], checksum)
+            self.assertEqual(pending_count, 1)
 
     def test_direct_upload_authorization_rejects_non_member_and_bad_type(self):
         self.addCleanup(app.refresh_storage_paths)

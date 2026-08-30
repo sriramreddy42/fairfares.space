@@ -1280,29 +1280,46 @@ def create_chitthi_upload_authorization(
         block_error = chat_conversation_block_error(con, conversation, user_id)
         if block_error:
             return None, block_error
-        upload_id = secrets.token_urlsafe(32)
-        object_key = chitthi_r2_object_key()
-        if transfer_mode == "MULTIPART":
-            try:
-                created = r2_storage_client().create_multipart_upload(
-                    Bucket=R2_BUCKET_NAME, Key=object_key,
-                    ContentType="application/octet-stream", Metadata={"upload-id": upload_id},
-                )
-                multipart_upload_id = str(created.get("UploadId") or "")
-            except Exception:
-                return None, "Could not initialize the encrypted multipart upload."
-            if not multipart_upload_id:
-                return None, "Encrypted multipart storage did not return an upload identifier."
-        con.execute(
-            """INSERT INTO chat_attachment_uploads
-               (public_id, conversation_id, uploader_user_id, object_key, expected_size,
-                expected_checksum, media_mime_type, expires_at, transfer_mode,
-                multipart_upload_id, multipart_part_size)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?, ?, ?)""",
-            (upload_id, int(conversation["id"]), user_id, object_key, encrypted_size,
-             checksum, media_type, f"+{CHITTHI_UNFINALIZED_UPLOAD_HOURS} hours",
-             transfer_mode, multipart_upload_id, CHITTHI_MULTIPART_PART_BYTES if multipart_upload_id else 0),
-        )
+        # Authorization is retried when a mobile response is lost. Reuse the
+        # exact pending ciphertext authorization so those safe retries cannot
+        # create abandoned R2 objects or multipart sessions.
+        existing = con.execute(
+            """SELECT * FROM chat_attachment_uploads
+               WHERE conversation_id = ? AND uploader_user_id = ?
+                 AND expected_size = ? AND expected_checksum = ? AND media_mime_type = ?
+                 AND finalized_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+               ORDER BY id DESC LIMIT 1""",
+            (int(conversation["id"]), user_id, encrypted_size, checksum, media_type),
+        ).fetchone()
+        if existing:
+            upload_id = str(existing["public_id"])
+            object_key = str(existing["object_key"])
+            transfer_mode = str(row_value(existing, "transfer_mode") or transfer_mode)
+            multipart_upload_id = str(row_value(existing, "multipart_upload_id") or "")
+        else:
+            upload_id = secrets.token_urlsafe(32)
+            object_key = chitthi_r2_object_key()
+            if transfer_mode == "MULTIPART":
+                try:
+                    created = r2_storage_client().create_multipart_upload(
+                        Bucket=R2_BUCKET_NAME, Key=object_key,
+                        ContentType="application/octet-stream", Metadata={"upload-id": upload_id},
+                    )
+                    multipart_upload_id = str(created.get("UploadId") or "")
+                except Exception:
+                    return None, "Could not initialize the encrypted multipart upload."
+                if not multipart_upload_id:
+                    return None, "Encrypted multipart storage did not return an upload identifier."
+            con.execute(
+                """INSERT INTO chat_attachment_uploads
+                   (public_id, conversation_id, uploader_user_id, object_key, expected_size,
+                    expected_checksum, media_mime_type, expires_at, transfer_mode,
+                    multipart_upload_id, multipart_part_size)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?, ?, ?)""",
+                (upload_id, int(conversation["id"]), user_id, object_key, encrypted_size,
+                 checksum, media_type, f"+{CHITTHI_UNFINALIZED_UPLOAD_HOURS} hours",
+                 transfer_mode, multipart_upload_id, CHITTHI_MULTIPART_PART_BYTES if multipart_upload_id else 0),
+            )
     if transfer_mode == "MULTIPART":
         return {
             "uploadId": upload_id,
@@ -12078,8 +12095,117 @@ def community_safe_link(value: object) -> str:
     return raw if parsed.scheme.lower() in {"https", "http"} and parsed.netloc else ""
 
 
+def housing_community_city_label(con: sqlite3.Connection, listing: sqlite3.Row | dict[str, object]) -> str:
+    """Return a state-qualified city for a housing post when the data permits it.
+
+    Older mobile listings sometimes stored only ``Dayton`` in the city column.
+    That looks fine on a card, but it cannot match a ``Dayton, OH`` local feed
+    and is intentionally rejected by the nationwide-US filter.  Prefer the
+    original qualified value, then repair older rows from their required ZIP or
+    the structured location cache populated when the listing was created.
+    """
+    raw_city = normalize_accommodation_place_label(str(row_value(listing, "city") or ""))
+    location_candidates = (
+        raw_city,
+        normalize_accommodation_place_label(str(row_value(listing, "area_or_apartment") or "")),
+        normalize_accommodation_place_label(str(row_value(listing, "city_area_zip") or "")),
+        normalize_accommodation_place_label(str(row_value(listing, "primary_neighborhood") or "")),
+    )
+    for candidate in location_candidates:
+        variants = community_us_city_variants(candidate)
+        if variants:
+            return variants[0]
+    if str(row_value(listing, "country") or "").strip().upper() not in {"US", "USA", "UNITED STATES"}:
+        return raw_city
+    zip_code = clean_text_value(row_value(listing, "zip_code"), 16)
+    city_root = raw_city.split(",", 1)[0].strip()
+    location_row = None
+    if zip_code:
+        location_row = con.execute(
+            """SELECT city, state FROM accommodation_local_areas
+               WHERE zip_code = ? AND trim(city) GLOB '*[A-Za-z]*' AND trim(state) != ''
+               ORDER BY CASE WHEN lower(city) = lower(?) THEN 0 ELSE 1 END, id DESC
+               LIMIT 1""",
+            (zip_code, city_root),
+        ).fetchone()
+    if not location_row and city_root:
+        matching_states = con.execute(
+            """SELECT city, state FROM accommodation_local_areas
+               WHERE lower(city) = lower(?) AND trim(state) != ''
+               GROUP BY lower(city), upper(state)
+               ORDER BY id""",
+            (city_root,),
+        ).fetchall()
+        # A bare city is safe to qualify only when our structured cache has one
+        # unambiguous state for it. Never guess for names shared across states.
+        if len(matching_states) == 1:
+            location_row = matching_states[0]
+    if not location_row:
+        listing_lat = float_from_value(row_value(listing, "lat"))
+        listing_lng = float_from_value(row_value(listing, "lng"))
+        if listing_lat and listing_lng:
+            nearby_rows = con.execute(
+                """SELECT city, state, lat, lng FROM accommodation_local_areas
+                   WHERE trim(city) GLOB '*[A-Za-z]*' AND trim(state) != ''
+                     AND lat != 0 AND lng != 0
+                     AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                   ORDER BY ((lat - ?) * (lat - ?)) + ((lng - ?) * (lng - ?))
+                   LIMIT 8""",
+                (
+                    listing_lat - 0.75, listing_lat + 0.75,
+                    listing_lng - 0.75, listing_lng + 0.75,
+                    listing_lat, listing_lat, listing_lng, listing_lng,
+                ),
+            ).fetchall()
+            for nearby_row in nearby_rows:
+                distance = distance_miles_between(
+                    listing_lat, listing_lng,
+                    float_from_value(row_value(nearby_row, "lat")),
+                    float_from_value(row_value(nearby_row, "lng")),
+                )
+                if distance <= 25:
+                    location_row = nearby_row
+                    break
+    if location_row:
+        qualified = f"{row_value(location_row, 'city')}, {row_value(location_row, 'state')}"
+        qualified_variants = community_us_city_variants(qualified)
+        if qualified_variants:
+            return qualified_variants[0]
+    return raw_city
+
+
+def repair_active_housing_city_labels() -> int:
+    """Backfill safely resolvable US city/state values on active listings."""
+    repaired = 0
+    with db() as con:
+        rows = con.execute(
+            """SELECT * FROM accommodation_posts
+               WHERE visibility_status = 'ACTIVE'
+                 AND upper(trim(country)) IN ('US', 'USA', 'UNITED STATES')"""
+        ).fetchall()
+        for listing in rows:
+            current_city = normalize_accommodation_place_label(str(row_value(listing, "city") or ""))
+            canonical_city = housing_community_city_label(con, listing)
+            if not community_us_city_variants(canonical_city) or canonical_city == current_city:
+                continue
+            con.execute(
+                """UPDATE accommodation_posts
+                   SET city = ?,
+                       city_area_zip = CASE
+                           WHEN trim(city_area_zip) = '' OR lower(trim(city_area_zip)) = lower(trim(?))
+                           THEN ? ELSE city_area_zip END
+                   WHERE id = ?""",
+                (canonical_city, current_city, canonical_city, int(row_value(listing, "id") or 0)),
+            )
+            repaired += 1
+    if repaired:
+        invalidate_mobile_search_cache("housing")
+    return repaired
+
+
 def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
+    repair_active_housing_city_labels()
     with db() as con:
         listings = con.execute(
             """
@@ -12093,6 +12219,7 @@ def sync_housing_into_community() -> None:
         ).fetchall()
         for listing in listings:
             source_id = str(row_value(listing, "public_id") or "")
+            community_city = housing_community_city_label(con, listing)
             category = "HAVE_PLACE" if str(row_value(listing, "post_mode") or "").upper() == "HAVE_PLACE" else "NEED_PLACE"
             details = {
                 "rent": format_accommodation_rent(listing),
@@ -12111,7 +12238,7 @@ def sync_housing_into_community() -> None:
                 (
                     f"FFH-{source_id}", int(row_value(listing, "user_id") or 0),
                     str(row_value(listing, "title") or "Housing listing"), str(row_value(listing, "description") or ""),
-                    category, str(row_value(listing, "city") or ""),
+                    category, community_city,
                     str(row_value(listing, "area_or_apartment") or row_value(listing, "primary_neighborhood") or ""),
                     json.dumps({key: value for key, value in details.items() if value}, separators=(",", ":")),
                     str(row_value(listing, "expires_at") or ""), str(row_value(listing, "created_at") or ""),
@@ -12126,7 +12253,7 @@ def sync_housing_into_community() -> None:
                    WHERE source_kind = 'HOUSING' AND source_public_id = ?""",
                 (
                     str(row_value(listing, "title") or "Housing listing"), str(row_value(listing, "description") or ""),
-                    category, str(row_value(listing, "city") or ""),
+                    category, community_city,
                     str(row_value(listing, "area_or_apartment") or row_value(listing, "primary_neighborhood") or ""),
                     json.dumps({key: value for key, value in details.items() if value}, separators=(",", ":")),
                     str(row_value(listing, "expires_at") or ""),
@@ -17923,6 +18050,7 @@ def mobile_housing_posts(
     post_public_id: str = "",
 ) -> list[dict[str, object]]:
     expire_accommodation_posts(force=False)
+    repair_active_housing_city_labels()
     clauses = [
         "visibility_status = 'ACTIVE'",
         "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
@@ -18527,6 +18655,14 @@ LOCATION_COUNTRY_HINTS = {
     "NZ": ("new zealand", "auckland", "wellington"), "MX": ("mexico", "mexico city", "guadalajara"),
     "BR": ("brazil", "sao paulo", "são paulo", "rio de janeiro"), "ZA": ("south africa", "johannesburg", "cape town"),
 }
+EXPLICIT_LOCATION_COUNTRY_HINTS = {
+    "IN": ("india",), "GB": ("united kingdom", "uk"), "CA": ("canada",),
+    "AU": ("australia",), "AE": ("united arab emirates", "uae"),
+    "SG": ("singapore",), "JP": ("japan",), "DE": ("germany",),
+    "FR": ("france",), "ES": ("spain",), "IT": ("italy",),
+    "NZ": ("new zealand",), "MX": ("mexico",), "BR": ("brazil",),
+    "ZA": ("south africa",),
+}
 
 
 def accommodation_country_code(location: object) -> str:
@@ -18534,13 +18670,21 @@ def accommodation_country_code(location: object) -> str:
     normalized = f" {clean_location.lower()} "
     if not clean_location:
         return "US"
+    normalized_tokens = set(re.findall(r"[a-z0-9]+", normalized))
+    # Explicit country/city evidence in the saved listing must outrank a
+    # mutable location cache. Otherwise a stale same-name cache row can turn a
+    # clearly Indian listing into USD during a long-running process.
+    for country, hints in EXPLICIT_LOCATION_COUNTRY_HINTS.items():
+        for hint in hints:
+            hint_tokens = set(re.findall(r"[a-z0-9]+", hint.lower()))
+            if hint_tokens and hint_tokens.issubset(normalized_tokens):
+                return country
     cached_country = cached_accommodation_country_for_place(clean_location)
     if cached_country:
         return cached_country
     resolved_country = resolve_accommodation_country(clean_location)
     if resolved_country:
         return resolved_country
-    normalized_tokens = set(re.findall(r"[a-z0-9]+", normalized))
     for country, hints in LOCATION_COUNTRY_HINTS.items():
         for hint in hints:
             hint_tokens = set(re.findall(r"[a-z0-9]+", hint.lower()))
@@ -19629,6 +19773,14 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
             (int(conversation["id"]),),
         ).fetchall()
         participant_count = int(con.execute("SELECT COUNT(*) AS count FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchone()["count"])
+        participants = con.execute(
+            """SELECT participants.user_id, users.name
+               FROM chat_participants participants
+               JOIN users ON users.id = participants.user_id
+               WHERE participants.conversation_id = ?
+               ORDER BY users.name""",
+            (int(conversation["id"]),),
+        ).fetchall()
     keys = [{"userId": int(row["user_id"]), "deviceId": row_value(row, "device_id"), "publicKey": row_value(row, "public_key")} for row in rows]
     keyed_users = len({int(item["userId"]) for item in keys})
     is_group = bool(int(row_value(conversation, "community_id") or 0)) or str(row_value(conversation, "conversation_type") or "").upper() == "GROUP"
@@ -19638,7 +19790,20 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
     # the current app cannot decrypt messages sent before their key registration.
     if is_group and sender_has_key:
         return keys, ""
-    return keys, "" if keyed_users == participant_count else "Every participant must open the latest FairFares app before encryption can start."
+    if keyed_users == participant_count:
+        return keys, ""
+    if not sender_has_key:
+        return keys, "Securing Chitthi on this device. This usually finishes automatically."
+    keyed_user_ids = {int(item["userId"]) for item in keys}
+    missing_names = [
+        str(row_value(participant, "name") or "This participant").strip()
+        for participant in participants
+        if int(row_value(participant, "user_id") or 0) not in keyed_user_ids
+        and int(row_value(participant, "user_id") or 0) != user_id
+    ]
+    if len(missing_names) == 1:
+        return keys, f"{missing_names[0]} needs to open the latest FairFares app before this private chat can be encrypted."
+    return keys, "The other participants need to open the latest FairFares app before this private chat can be encrypted."
 
 
 def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str, reply_to_message_id: int = 0) -> tuple[sqlite3.Row | None, str]:
@@ -38236,6 +38401,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not post_country:
             self.send_json({"ok": False, "error": "Choose a valid city and country before publishing this listing."}, 400)
             return
+        # Persist the canonical city/state now, rather than relying on card
+        # fallback text and repairing it only when the community feed loads.
+        # This keeps Housing search, Ask Community, sharing, and later edits on
+        # the same location identity.
+        if post_country == "US":
+            with db() as con:
+                canonical_city = housing_community_city_label(con, {
+                    "city": city,
+                    "country": post_country,
+                    "zip_code": zip_code,
+                    "area_or_apartment": area,
+                    "city_area_zip": resolved_location_label,
+                    "primary_neighborhood": primary_neighborhood,
+                })
+            if community_us_city_variants(canonical_city):
+                city = canonical_city
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)

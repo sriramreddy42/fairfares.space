@@ -68,6 +68,12 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
     });
   }, [visibleMonth]);
 
+  const minimumMonth = parseIso(minimumDate);
+  const maximumMonth = parseIso(maximumDate);
+  const visibleMonthKey = visibleMonth.getFullYear() * 12 + visibleMonth.getMonth();
+  const canGoPrevious = !minimumMonth || visibleMonthKey > minimumMonth.getFullYear() * 12 + minimumMonth.getMonth();
+  const canGoNext = !maximumMonth || visibleMonthKey < maximumMonth.getFullYear() * 12 + maximumMonth.getMonth();
+
   const display = mode === "date" ? dateLabel(value, placeholder || "Select date") : value || placeholder || "Select time";
 
   return (
@@ -89,9 +95,9 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
             {mode === "date" ? (
               <>
                 <View style={styles.monthHeader}>
-                  <TouchableOpacity style={styles.monthButton} onPress={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><Text style={styles.monthButtonText}>‹</Text></TouchableOpacity>
+                  <TouchableOpacity accessibilityLabel="Previous month" accessibilityState={{ disabled: !canGoPrevious }} disabled={!canGoPrevious} style={[styles.monthButton, !canGoPrevious && styles.monthButtonDisabled]} onPress={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}><Text style={[styles.monthButtonText, !canGoPrevious && styles.monthButtonTextDisabled]}>‹</Text></TouchableOpacity>
                   <Text style={styles.monthTitle}>{visibleMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</Text>
-                  <TouchableOpacity style={styles.monthButton} onPress={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><Text style={styles.monthButtonText}>›</Text></TouchableOpacity>
+                  <TouchableOpacity accessibilityLabel="Next month" accessibilityState={{ disabled: !canGoNext }} disabled={!canGoNext} style={[styles.monthButton, !canGoNext && styles.monthButtonDisabled]} onPress={() => setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}><Text style={[styles.monthButtonText, !canGoNext && styles.monthButtonTextDisabled]}>›</Text></TouchableOpacity>
                 </View>
                 <View style={styles.weekRow}>{weekdays.map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
                 <View style={styles.calendarGrid}>
@@ -132,14 +138,16 @@ const styles = StyleSheet.create({
   closeText: { color: theme.colors.text, fontSize: 25, lineHeight: 27 },
   monthHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   monthButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, borderColor: theme.colors.line, alignItems: "center", justifyContent: "center" },
+  monthButtonDisabled: { opacity: 0.28, backgroundColor: "rgba(148,163,184,0.08)" },
   monthButtonText: { color: theme.colors.text, fontSize: 27, lineHeight: 29 },
+  monthButtonTextDisabled: { color: theme.colors.muted },
   monthTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "800" },
   weekRow: { flexDirection: "row" },
   weekday: { width: "14.285%", textAlign: "center", color: theme.colors.muted, fontSize: 10, fontWeight: "800" },
   calendarGrid: { flexDirection: "row", flexWrap: "wrap" },
   dayCell: { width: "14.285%", aspectRatio: 1, alignItems: "center", justifyContent: "center", borderRadius: 999 },
   dayText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
-  dayDisabled: { color: "#4b5563" },
+  dayDisabled: { color: "#9ca3af", opacity: 0.34, textDecorationLine: "line-through" },
   daySelected: { backgroundColor: theme.colors.blue },
   daySelectedText: { color: "#fff", fontWeight: "900" },
   timeScroll: { maxHeight: 470 },

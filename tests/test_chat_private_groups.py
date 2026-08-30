@@ -620,6 +620,34 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             self.assertFalse(error)
             self.assertIsNotNone(message)
 
+    def test_direct_chat_readiness_recovers_when_recipient_registers_after_opening_app(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type) VALUES ('direct-key-recovery', 'DIRECT')"
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            for user_id in (self.owner, self.member):
+                con.execute(
+                    "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                    (conversation_id, user_id),
+                )
+
+        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        self.assertEqual(keys, [])
+        self.assertIn("this device", warning.lower())
+
+        owner_key = base64.b64encode(b"A" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.owner, "owner-direct-device", owner_key))
+        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        self.assertEqual({item["userId"] for item in keys}, {self.owner})
+        self.assertIn("Member", warning)
+
+        member_key = base64.b64encode(b"B" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.member, "member-direct-device", member_key))
+        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        self.assertFalse(warning)
+        self.assertEqual({item["userId"] for item in keys}, {self.owner, self.member})
+
     def test_signed_relay_rejects_tampering_expiry_and_duplicates(self):
         group = self.create_group()
         signing_key = Ed25519PrivateKey.generate()

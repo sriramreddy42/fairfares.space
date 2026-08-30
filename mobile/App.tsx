@@ -8,6 +8,7 @@ import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BlurView } from "expo-blur";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
@@ -431,6 +432,8 @@ function FairFaresApp() {
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
   const [listingValidatedLabel, setListingValidatedLabel] = useState("");
+  const [listingSubmitting, setListingSubmitting] = useState(false);
+  const listingSubmittingRef = useRef(false);
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
   const [messengerMediaTransferActive, setMessengerMediaTransferActive] = useState(false);
 
@@ -451,6 +454,8 @@ function FairFaresApp() {
   const [reviewPromptBusy, setReviewPromptBusy] = useState(false);
   const [reviewPromptContext, setReviewPromptContext] = useState<{ name: string; photoUrl: string; listingTitle: string } | null>(null);
   const [profileCompletionOpen, setProfileCompletionOpen] = useState(false);
+  const [founderNoteOpen, setFounderNoteOpen] = useState(false);
+  const founderNoteHandledRef = useRef(false);
   const [profileCompletionEditRequested, setProfileCompletionEditRequested] = useState(false);
   const [profileConsentAccepted, setProfileConsentAccepted] = useState(false);
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
@@ -472,6 +477,87 @@ function FairFaresApp() {
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
   const notificationPermissionPromptShownRef = useRef(false);
+  const startupChatKeyRegistrationRef = useRef({ userId: 0, running: false, registeredAt: 0 });
+
+  useEffect(() => {
+    const housingVisible = activeTab === "home" || activeTab === "housing";
+    if (founderNoteHandledRef.current || launchVisible || !housingVisible || updatePolicy || loginOpen || signupCountryOpen || socialContinuation || listingOpen || searchOpen) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleFounderNote = (handled: string | null = null) => {
+      if (cancelled || handled || founderNoteHandledRef.current) return;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        founderNoteHandledRef.current = true;
+        setFounderNoteOpen(true);
+      }, 5_000);
+    };
+    void AsyncStorage.getItem("fairfares:founder-housing-note:v2")
+      .then(scheduleFounderNote)
+      // The note is non-critical guidance. A damaged/unavailable preference
+      // store must neither crash startup nor permanently suppress it.
+      .catch(() => scheduleFounderNote());
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeTab, launchVisible, updatePolicy, loginOpen, signupCountryOpen, socialContinuation, listingOpen, searchOpen]);
+
+  useEffect(() => {
+    const housingVisible = activeTab === "home" || activeTab === "housing";
+    const obstructed = launchVisible || !housingVisible || Boolean(updatePolicy) || loginOpen || signupCountryOpen || Boolean(socialContinuation) || listingOpen || searchOpen;
+    if (!founderNoteOpen || !obstructed) return;
+    // A required update, authentication continuation, or deep-link modal can
+    // arrive after the note is already visible. Postpone the note instead of
+    // stacking native modals or recording a dismissal the user never chose.
+    setFounderNoteOpen(false);
+    founderNoteHandledRef.current = false;
+  }, [founderNoteOpen, activeTab, launchVisible, updatePolicy, loginOpen, signupCountryOpen, socialContinuation, listingOpen, searchOpen]);
+
+  useEffect(() => {
+    const userId = Number(data?.user?.id || 0);
+    if (!userId) {
+      startupChatKeyRegistrationRef.current = { userId: 0, running: false, registeredAt: 0 };
+      return;
+    }
+    // Give each signed-in account its own registration state object. An
+    // account-switch cleanup may finish after the next account starts; sharing
+    // the mutable object allowed that older attempt to clear the new account's
+    // running flag and start duplicate key registrations.
+    if (startupChatKeyRegistrationRef.current.userId !== userId) {
+      startupChatKeyRegistrationRef.current = { userId, running: false, registeredAt: 0 };
+    }
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const registerAtStartup = async (force = false) => {
+      const state = startupChatKeyRegistrationRef.current;
+      if (state.userId !== userId || state.running || (!force && Date.now() - state.registeredAt < 5 * 60_000)) return;
+      state.running = true;
+      try {
+        await awaitChatIdentityRecovery(userId);
+        const identity = await getOrCreateDeviceIdentity(userId);
+        if (cancelled || authenticatedUserIdRef.current !== userId) return;
+        await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey || "");
+        if (!cancelled && authenticatedUserIdRef.current === userId) state.registeredAt = Date.now();
+      } catch {
+        // Registration is safe and idempotent. Retry quietly so opening any
+        // FairFares screen—not only Chitthi—makes this account reachable for
+        // end-to-end encrypted private messages after a network interruption.
+        if (!cancelled) retryTimer = setTimeout(() => void registerAtStartup(true), 5_000);
+      } finally {
+        if (startupChatKeyRegistrationRef.current === state) state.running = false;
+      }
+    };
+    void registerAtStartup();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active" && !cancelled) void registerAtStartup();
+    });
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      subscription.remove();
+    };
+  }, [data?.user?.id]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -1576,6 +1662,20 @@ function FairFaresApp() {
     openListingFormForUser(data.user, intent);
   }
 
+  function dismissFounderNote() {
+    founderNoteHandledRef.current = true;
+    setFounderNoteOpen(false);
+    void AsyncStorage.setItem("fairfares:founder-housing-note:v2", "dismissed").catch(() => undefined);
+  }
+
+  function followFounderNoteLink(intent: ListingIntent) {
+    dismissFounderNote();
+    // Let the transparent native modal finish dismissing before presenting
+    // the listing form. Stacking both in the same frame can freeze touches on
+    // iOS and briefly flash the previous modal on Android.
+    setTimeout(() => postNeed(intent), 180);
+  }
+
   function editHousingListing(post: HousingPost) {
     const havePlace = post.mode === "HAVE_PLACE";
     setListingForm({
@@ -1748,6 +1848,7 @@ function FairFaresApp() {
   }, [listingOpen, listingForm.area, listingForm.city, listingForm.streetAddress, listingAddressValidated, listingLocationInput]);
 
   async function submitListing() {
+    if (listingSubmittingRef.current) return;
     const requiredFields = [
       listingIsRoommateSearch && roommatePlaceChoice === null ? "whether you already have a place" : "",
       !listingForm.city.trim() ? "city" : "",
@@ -1812,6 +1913,8 @@ function FairFaresApp() {
       contactPhone: listingForm.contactPhone.trim(),
       images: listingIsNeedPlace ? [] : listingForm.images
     };
+    listingSubmittingRef.current = true;
+    setListingSubmitting(true);
     try {
       const payload = await createMobileHousingPost(listingPayload);
       setListingOpen(false);
@@ -1829,6 +1932,9 @@ function FairFaresApp() {
       setHousingListingSuccess(payload.post);
     } catch (error) {
       Alert.alert("Post failed", error instanceof Error ? error.message : "Unable to post this listing.");
+    } finally {
+      listingSubmittingRef.current = false;
+      setListingSubmitting(false);
     }
   }
 
@@ -2785,6 +2891,59 @@ function FairFaresApp() {
         </Animated.View>
       ) : null}
       <Modal
+        visible={founderNoteOpen}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={dismissFounderNote}
+      >
+        <View style={styles.founderNoteBackdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={dismissFounderNote} accessibilityLabel="Close founder's note" />
+          <BlurView intensity={62} tint={effectiveColorScheme === "light" ? "light" : "dark"} style={[styles.founderNoteGlass, Platform.OS === "android" && styles.founderNoteGlassAndroid]}>
+            {Platform.OS === "android" ? <View style={styles.founderNoteAndroidTint} pointerEvents="none" /> : null}
+            <View style={styles.founderNoteGlow} pointerEvents="none" />
+            <ScrollView contentContainerStyle={styles.founderNoteContent} showsVerticalScrollIndicator={false} bounces={false}>
+            <View style={styles.founderNoteHeader}>
+              <View style={styles.founderNoteMark}><Text style={styles.founderNoteMarkText}>F</Text></View>
+              <View style={styles.founderNoteHeadingCopy}>
+                <Text style={styles.founderNoteEyebrow}>A NOTE FROM THE FOUNDER</Text>
+                <Text style={styles.founderNoteTitle}>Help the right people find you</Text>
+              </View>
+              <TouchableOpacity style={styles.founderNoteClose} onPress={dismissFounderNote} accessibilityRole="button" accessibilityLabel="Close founder's note">
+                <Text style={styles.founderNoteCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.founderNoteBody}>To increase your chances of matching, list exactly what you need:</Text>
+            <View style={styles.founderNoteLinks}>
+              <View style={styles.founderNoteRow}>
+                <Text style={styles.founderNoteRowCopy}>I need accommodation</Text>
+                <Text style={styles.founderNoteArrow}>→</Text>
+                <TouchableOpacity onPress={() => followFounderNoteLink("need_place")} accessibilityRole="link" accessibilityLabel="Create an I need a place listing">
+                  <Text style={styles.founderNoteLink}>I need a place</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.founderNoteRow}>
+                <Text style={styles.founderNoteRowCopy}>I have a place and need a roommate</Text>
+                <Text style={styles.founderNoteArrow}>→</Text>
+                <TouchableOpacity onPress={() => followFounderNoteLink("need_roommates")} accessibilityRole="link" accessibilityLabel="Create an I need a roommate listing">
+                  <Text style={styles.founderNoteLink}>I need a roommate</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.founderNoteRow}>
+                <Text style={styles.founderNoteRowCopy}>I have a property for rent</Text>
+                <Text style={styles.founderNoteArrow}>→</Text>
+                <TouchableOpacity onPress={() => followFounderNoteLink("have_place")} accessibilityRole="link" accessibilityLabel="Create an I have a place listing">
+                  <Text style={styles.founderNoteLink}>I have a place</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={styles.founderNoteFootnote}>Choose one to start your listing.</Text>
+            </ScrollView>
+          </BlurView>
+        </View>
+      </Modal>
+      <Modal
         visible={Boolean(updatePolicy)}
         transparent
         animationType="fade"
@@ -3492,8 +3651,8 @@ function FairFaresApp() {
                 <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Instagram URL optional" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
               </>
             )}
-            <TouchableOpacity style={styles.primaryButton} onPress={submitListing}>
-              <Text style={styles.primaryButtonText}>{listingForm.listingId ? "Save changes" : "Post listing"}</Text>
+            <TouchableOpacity style={[styles.primaryButton, listingSubmitting && { opacity: 0.6 }]} onPress={submitListing} disabled={listingSubmitting}>
+              <Text style={styles.primaryButtonText}>{listingSubmitting ? "Posting…" : listingForm.listingId ? "Save changes" : "Post listing"}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setListingOpen(false)}>
               <Text style={styles.switchText}>Cancel</Text>
@@ -3642,6 +3801,27 @@ const styles = StyleSheet.create({
   appContent: { flex: 1 },
   criticalAssetPreloader: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", left: -10, top: -10 },
   criticalAssetImage: { width: 1, height: 1 },
+  founderNoteBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 20, backgroundColor: "rgba(3,12,9,0.38)" },
+  founderNoteGlass: { width: "100%", maxWidth: 430, maxHeight: "86%", overflow: "hidden", borderRadius: 30, borderWidth: 1, borderColor: "rgba(255,255,255,0.46)", backgroundColor: "rgba(5,42,31,0.72)", shadowColor: "#001b12", shadowOpacity: 0.36, shadowRadius: 30, shadowOffset: { width: 0, height: 16 }, elevation: 20 },
+  founderNoteGlassAndroid: { backgroundColor: "rgba(7,52,39,0.93)", borderColor: "rgba(185,255,232,0.5)" },
+  founderNoteAndroidTint: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(4,47,34,0.72)" },
+  founderNoteContent: { paddingHorizontal: 20, paddingVertical: 21, gap: 16 },
+  founderNoteGlow: { position: "absolute", width: 220, height: 220, borderRadius: 110, right: -90, top: -110, backgroundColor: "rgba(73,255,191,0.18)" },
+  founderNoteHeader: { flexDirection: "row", alignItems: "center", gap: 11 },
+  founderNoteMark: { width: 46, height: 46, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,201,151,0.22)", borderWidth: 1, borderColor: "rgba(104,255,208,0.65)" },
+  founderNoteMarkText: { color: "#A7FFE3", fontSize: 21, fontWeight: "900" },
+  founderNoteHeadingCopy: { flex: 1, minWidth: 0, gap: 2 },
+  founderNoteEyebrow: { color: "#8DF5D1", fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 1.15 },
+  founderNoteTitle: { color: "#FFFFFF", fontSize: 20, lineHeight: 25, fontWeight: "900" },
+  founderNoteClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.12)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  founderNoteCloseText: { color: "#FFFFFF", fontSize: 26, lineHeight: 29, fontWeight: "500", marginTop: -2 },
+  founderNoteBody: { color: "rgba(244,255,251,0.9)", fontSize: 15, lineHeight: 21, fontWeight: "700" },
+  founderNoteLinks: { gap: 9 },
+  founderNoteRow: { minHeight: 58, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, paddingHorizontal: 13, paddingVertical: 11, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(255,255,255,0.09)" },
+  founderNoteRowCopy: { color: "rgba(244,255,251,0.78)", fontSize: 13, lineHeight: 18, fontWeight: "700", flexShrink: 1 },
+  founderNoteArrow: { color: "#72E8C0", fontSize: 15, fontWeight: "900" },
+  founderNoteLink: { color: "#89FFDA", fontSize: 14, lineHeight: 19, fontWeight: "900", textDecorationLine: "underline" },
+  founderNoteFootnote: { color: "rgba(226,255,245,0.68)", fontSize: 12, lineHeight: 17, fontWeight: "700", textAlign: "center" },
   listingSuccessBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
   listingSuccessCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: "rgba(34,197,94,0.48)", backgroundColor: "#171a18", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", gap: 12 },
   listingSuccessIcon: { width: 70, height: 70, borderRadius: 35, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,197,94,0.18)", borderWidth: 2, borderColor: theme.colors.green },

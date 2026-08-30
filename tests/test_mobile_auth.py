@@ -554,6 +554,13 @@ class MobileAuthTest(unittest.TestCase):
                 "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
                 ((conversation_id, member_id), (conversation_id, observer_id)),
             )
+            # Empty direct conversations are intentionally omitted from
+            # Chitthi. Add a real message so this profile-sync assertion
+            # exercises a conversation that a user can actually see.
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, ?)",
+                (conversation_id, member_id, "Profile sync test"),
+            )
             con.execute(
                 "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, 'Denver, CO', 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
                 (member_id, "Profile changes should appear consistently on this testimonial."),

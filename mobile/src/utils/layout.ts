@@ -3,7 +3,10 @@ import { useWindowDimensions } from "react-native";
 
 // Floating bottom navigation bar dimensions (see BottomTabs.tsx).
 export const BOTTOM_NAV_HEIGHT = 70;
-export const BOTTOM_NAV_BOTTOM_OFFSET = 9;
+// Sit flush with the app's bottom safe-area edge. The SafeAreaView already
+// keeps the pill above the iOS home indicator and Android system navigation;
+// an additional inset exposed a thin strip of page content below the pill.
+export const BOTTOM_NAV_BOTTOM_OFFSET = 0;
 export const BOTTOM_NAV_HORIZONTAL_MARGIN = 12;
 // Content width cap used on tablets (matches ProfileScreen's established maxWidth).
 export const TABLET_CONTENT_MAX_WIDTH = 980;

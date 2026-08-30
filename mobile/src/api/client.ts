@@ -232,6 +232,10 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
   // upload-specific error copy) used by endpoints that move attachment bytes.
   const isAttachmentUpload = (path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments"))
     && path !== "/api/chat/e2ee/attachments/forward";
+  const isAvatarUpload = path === "/api/chat/groups/photo"
+    || path === "/api/chat/communities"
+    || path === "/api/mobile/profile";
+  const isMediaUpload = isAttachmentUpload || isAvatarUpload;
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
@@ -244,7 +248,11 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
       const controller = new AbortController();
       // Multipart completion can legitimately spend time reconciling parts and
       // streaming the completed ciphertext through the backend checksum pass.
-      const timeoutMs = isAttachmentUpload ? 120000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
+      // Avatar requests carry compressed base64 through the API and can spend
+      // several seconds uploading plus waiting for durable object storage.
+      // They must not inherit the short JSON timeout. Keep POST attempts at
+      // one so an uncertain network result cannot duplicate a mutation.
+      const timeoutMs = isMediaUpload ? 120000 : EXPLICIT_API_URL ? REMOTE_API_REQUEST_TIMEOUT_MS : API_REQUEST_TIMEOUT_MS;
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });

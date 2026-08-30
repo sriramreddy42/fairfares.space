@@ -2141,7 +2141,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function activateThreadConversation(conversationId: string) {
-    if (activeConversationIdRef.current !== conversationId) setHydratedConversationId("");
+    if (activeConversationIdRef.current !== conversationId) {
+      setHydratedConversationId("");
+      // Encryption readiness belongs to one conversation. Carrying `true`
+      // from the previous thread could briefly label a not-yet-ready direct
+      // chat as encrypted and suppress its readiness retry until the network
+      // request completed.
+      setEncryptionReady(false);
+      setEncryptionStatusDetail("");
+    }
     activeConversationIdRef.current = conversationId;
     setActiveConversationId(conversationId);
   }
@@ -2651,6 +2659,35 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     return identity;
   }
+
+  useEffect(() => {
+    if (!activeConversationId || encryptionReady || !currentUserId) return;
+    let cancelled = false;
+    let running = false;
+    const refreshReadiness = async () => {
+      if (running || cancelled || activeConversationIdRef.current !== activeConversationId) return;
+      running = true;
+      try {
+        const identity = await getOrCreateDeviceIdentity(currentUserId);
+        await ensureDeviceRegistration(identity);
+        const payload = await getChatDeviceKeys(activeConversationId);
+        if (cancelled || activeConversationIdRef.current !== activeConversationId) return;
+        setEncryptionReady(Boolean(payload.ready));
+        setEncryptionStatusDetail(payload.ready ? "" : payload.warning || "Encryption setup is still pending.");
+      } catch {
+        // Startup registration and normal thread refresh also retry. Preserve
+        // the useful status instead of replacing it with transient network text.
+      } finally {
+        running = false;
+      }
+    };
+    void refreshReadiness();
+    const timer = setInterval(() => void refreshReadiness(), 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeConversationId, currentUserId, encryptionReady]);
 
   async function getEncryptionKeysForSend(conversationId: string) {
     const userId = Number(data?.user?.id || 0);
@@ -4250,6 +4287,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function changeActiveGroupPhoto() {
     const communityId = activeConversation?.communityId || "";
     if (!communityId) return;
+    const previousPhotoUrl = activeGroupPhotoUrl;
     setChatOptionsOpen(false);
     try {
       const images = await pickCompressedImages(1, 720, 0.7);
@@ -4267,7 +4305,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           { text: "Open Settings", onPress: () => void Linking.openSettings() }
         ]);
       } else {
-        Alert.alert("Group image not updated", reason);
+        // The upload may have reached durable storage even when the response
+        // was lost on a slow mobile connection. Reconcile once before showing
+        // a failure so a successful update never looks unsuccessful.
+        const refreshed = await getChatCommunity(communityId).catch(() => null);
+        if (refreshed?.photoUrl && refreshed.photoUrl !== previousPhotoUrl) {
+          setCommunities((current) => [refreshed, ...current.filter((item) => item.id !== refreshed.id)]);
+          setActiveConversation((current) => current ? { ...current, otherPhotoUrl: refreshed.photoUrl || "" } : current);
+          setConversations((current) => current.map((item) => item.communityId === communityId ? { ...item, otherPhotoUrl: refreshed.photoUrl || "" } : item));
+          Alert.alert("Group image updated", "Everyone in the group will now see this image.");
+        } else {
+          Alert.alert("Group image not updated", reason);
+        }
       }
     }
   }
@@ -4868,7 +4917,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setPendingImages([]);
       setPendingAttachment({ ...photo, kind: "IMAGE" });
     } catch (error) {
-      Alert.alert("Camera unavailable", error instanceof Error ? error.message : "Could not take this photo.");
+      const reason = error instanceof Error ? error.message : "Could not take this photo.";
+      if (reason === "CAMERA_SETTINGS_REQUIRED") {
+        Alert.alert("Camera access is off", "Allow FairFares to use the camera in Settings, then try again.", [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => void Linking.openSettings() }
+        ]);
+      } else {
+        Alert.alert("Camera unavailable", reason);
+      }
     }
   }
 
@@ -5127,22 +5184,34 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       try {
         const identity = await ensureChatDeviceIdentity();
         const authorizedDeviceId = String(message.metadata?.encryptedRecipientDeviceId || identity.deviceId);
-        const downloadAuthorization = await getEncryptedChatAttachmentDownloadUrl(message.id, authorizedDeviceId);
+        let downloadAuthorization: Awaited<ReturnType<typeof getEncryptedChatAttachmentDownloadUrl>> | null = null;
         const downloadStartedAt = Date.now();
-        if (message.type === "VIDEO") logDevelopmentPerformance("media-download-start", {
-          messageId: message.id,
-          encryptedMb: Number((downloadAuthorization.encryptedSize / 1_000_000).toFixed(1)),
-          nativeCrypto: FairFaresCrypto.available,
-          nativeFileAssembly: FairFaresCrypto.nativeFileAssemblyAvailable,
-          cryptoFormat: chunkedDescriptor?.format || "legacy-single-payload",
-        });
-        await downloadEncryptedAssetResumably(
-          downloadAuthorization.downloadUrl,
-          encryptedUri,
-          downloadAuthorization.encryptedSize,
-          downloadAuthorization.ciphertextSha256,
-          (progress) => onProgress?.(Math.round(progress * 88))
-        );
+        let downloadError: unknown;
+        for (let authorizationAttempt = 0; authorizationAttempt < 2; authorizationAttempt += 1) {
+          downloadAuthorization = await getEncryptedChatAttachmentDownloadUrl(message.id, authorizedDeviceId);
+          if (message.type === "VIDEO" && authorizationAttempt === 0) logDevelopmentPerformance("media-download-start", {
+            messageId: message.id,
+            encryptedMb: Number((downloadAuthorization.encryptedSize / 1_000_000).toFixed(1)),
+            nativeCrypto: FairFaresCrypto.available,
+            nativeFileAssembly: FairFaresCrypto.nativeFileAssemblyAvailable,
+            cryptoFormat: chunkedDescriptor?.format || "legacy-single-payload",
+          });
+          try {
+            await downloadEncryptedAssetResumably(
+              downloadAuthorization.downloadUrl,
+              encryptedUri,
+              downloadAuthorization.encryptedSize,
+              downloadAuthorization.ciphertextSha256,
+              (progress) => onProgress?.(Math.round(progress * 88))
+            );
+            downloadError = undefined;
+            break;
+          } catch (error) {
+            downloadError = error;
+            if (authorizationAttempt === 0) await new Promise((resolve) => setTimeout(resolve, 600));
+          }
+        }
+        if (downloadError || !downloadAuthorization) throw downloadError || new Error("Encrypted media download could not be authorized.");
         if (message.type === "VIDEO") logDevelopmentPerformance("media-download-complete", {
           messageId: message.id,
           durationMs: Date.now() - downloadStartedAt,
