@@ -19344,6 +19344,7 @@ def chat_group_share_row(con: sqlite3.Connection, token: str) -> sqlite3.Row | N
         ).fetchone()
     invite = con.execute(
         """SELECT communities.*, invites.revoked_at, invites.expires_at,
+                  invites.max_uses, invites.use_count,
                   (SELECT COUNT(*) FROM chat_community_members members WHERE members.community_id = communities.id) AS member_count
            FROM chat_group_invites invites
            JOIN chat_communities communities ON communities.id = invites.community_id
@@ -19351,7 +19352,15 @@ def chat_group_share_row(con: sqlite3.Connection, token: str) -> sqlite3.Row | N
         (chat_group_invite_hash(token),),
     ).fetchone()
     invite_expiry = parse_sql_datetime(row_value(invite, "expires_at")) if invite else None
-    if not invite or row_value(invite, "revoked_at") or not invite_expiry or invite_expiry <= datetime.utcnow():
+    max_uses = int(row_value(invite, "max_uses") or 0) if invite else 0
+    use_count = int(row_value(invite, "use_count") or 0) if invite else 0
+    if (
+        not invite
+        or row_value(invite, "revoked_at")
+        or not invite_expiry
+        or invite_expiry <= datetime.utcnow()
+        or (max_uses > 0 and use_count >= max_uses)
+    ):
         return None
     return invite
 
@@ -24692,6 +24701,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        LIMIT 1""",
                     (community_id,),
                 ).fetchone()
+        if not group:
+            body = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Invitation unavailable | FairFares</title></head><body style="margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center"><main style="max-width:420px;padding:32px;text-align:center"><img src="/static/img/chitthi-letters-gold.png" alt="Chitthi Letters" style="display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 18px"><h1>Invitation unavailable</h1><p style="color:#b7c2d4;line-height:1.5">This group invitation is invalid, expired, revoked, or has already reached its usage limit. Ask a group member for a new invitation.</p><a href="https://www.fairfare.space" style="display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700">Open FairFares</a></main></body></html>"""
+            self.send_text(body, "text/html; charset=utf-8", status=410, cache_control="private, no-store")
+            return
         app_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
         safe_app_store_url = html.escape(app_store_url, quote=True)
         group_name = str(row_value(group, "name") or "Chitthi group")

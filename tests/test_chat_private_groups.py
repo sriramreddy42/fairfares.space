@@ -253,15 +253,61 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             row = con.execute("SELECT * FROM chat_group_invites").fetchone()
             self.assertNotEqual(row["token_hash"], token)
             self.assertEqual(row["token_hash"], app.chat_group_invite_hash(token))
+            self.assertIsNotNone(app.chat_group_share_row(con, token))
         joined, error = app.join_chat_group_by_invite(token, self.member)
         self.assertFalse(error)
         self.assertEqual(joined["memberRole"], "MEMBER")
+        with app.db() as con:
+            self.assertIsNone(app.chat_group_share_row(con, token))
         joined_again, error = app.join_chat_group_by_invite(token, self.member)
         self.assertFalse(error)
         self.assertIsNotNone(joined_again)
         blocked, error = app.join_chat_group_by_invite(token, self.outsider)
         self.assertIsNone(blocked)
         self.assertIn("limit", error.lower())
+
+    def test_exhausted_invite_landing_is_explicitly_unavailable(self):
+        group = self.create_group()
+        token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)
+        self.assertFalse(error)
+        joined, error = app.join_chat_group_by_invite(token, self.member)
+        self.assertFalse(error)
+        self.assertIsNotNone(joined)
+
+        response = {}
+        handler = object.__new__(app.FairFaresHandler)
+        handler.send_text = lambda body, content_type="text/plain; charset=utf-8", status=200, **kwargs: response.update(
+            body=body, content_type=content_type, status=status, **kwargs
+        )
+        parsed = urllib.parse.urlparse(
+            f"/chitthi/invite?group_invite={urllib.parse.quote(token)}"
+        )
+        handler.chitthi_invite_landing(parsed)
+
+        self.assertEqual(response["status"], 410)
+        self.assertIn("Invitation unavailable", response["body"])
+        self.assertNotIn("Open in Chitthi", response["body"])
+
+    def test_valid_invite_landing_keeps_token_and_both_store_fallbacks(self):
+        group = self.create_group()
+        token, error = app.create_chat_group_invite(group["id"], self.owner)
+        self.assertFalse(error)
+
+        response = {}
+        handler = object.__new__(app.FairFaresHandler)
+        handler.send_text = lambda body, content_type="text/plain; charset=utf-8", status=200, **kwargs: response.update(
+            body=body, content_type=content_type, status=status, **kwargs
+        )
+        parsed = urllib.parse.urlparse(
+            f"/chitthi/invite?group_invite={urllib.parse.quote(token)}"
+        )
+        handler.chitthi_invite_landing(parsed)
+
+        self.assertEqual(response["status"], 200)
+        self.assertIn("Open in Chitthi", response["body"])
+        self.assertIn(urllib.parse.quote(token), response["body"])
+        self.assertIn("apps.apple.com/us/app/fairfares-ltd/id6797162820", response["body"])
+        self.assertIn("play.google.com/store/apps/details?id=com.fairfares.mobile", response["body"])
 
     def test_membership_changes_create_durable_system_timeline_events_once(self):
         public_group = next(
