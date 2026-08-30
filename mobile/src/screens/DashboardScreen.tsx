@@ -6,6 +6,7 @@ import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { shareHousingListing } from "../utils/listingShare";
+import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 
 type Props = {
@@ -776,7 +777,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           <ScrollView style={styles.ratingScroll} contentContainerStyle={styles.ratingContent} showsVerticalScrollIndicator={false}>
             <Text style={styles.ratingEyebrow}>Completed carpool</Text>
             <Text style={styles.ratingTitle}>How was your trip with {ratingRide ? ratingTargetName(ratingRide) : "this member"}?</Text>
-            <View style={styles.ratingPersonRow}><View style={styles.ratingPersonAvatar}><Text style={styles.ratingPersonAvatarText}>{ratingRide ? ratingTargetName(ratingRide).split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() : "FF"}</Text></View><View style={styles.ratingPersonCopy}><Text style={styles.ratingPersonName}>{ratingRide ? ratingTargetName(ratingRide) : "FairFares member"}</Text><Text style={styles.ratingPersonRole}>{ratingRide && isIncomingRiderRequest(ratingRide) ? "Rider" : "Driver"} · FairFares member</Text></View></View>
+            <View style={styles.ratingPersonRow}><View style={styles.ratingPersonAvatar}><Text style={styles.ratingPersonAvatarText}>{ratingRide ? avatarInitials(ratingTargetName(ratingRide), "FF") : "FF"}</Text></View><View style={styles.ratingPersonCopy}><Text style={styles.ratingPersonName}>{ratingRide ? ratingTargetName(ratingRide) : "FairFares member"}</Text><Text style={styles.ratingPersonRole}>{ratingRide && isIncomingRiderRequest(ratingRide) ? "Rider" : "Driver"} · FairFares member</Text></View></View>
             {ratingRide ? <View style={styles.ratingTripCard}><Text style={styles.ratingTripLabel}>Trip summary</Text><Text style={styles.ratingTripRoute}>{routeLabel(ratingRide)}</Text><View style={styles.ratingTripMetaRow}><Text style={styles.ratingTripMeta}>{compactDate(ratingRide.pickupDate || ratingRide.startDate, ratingRide.pickupTime)}</Text><Text style={styles.ratingTripContribution}>{ratingRide.contributionPerSeat ? `${money(ratingRide.contributionPerSeat, ratingRide.currencySymbol || "")} agreed contribution` : "Direct agreement"}</Text></View></View> : null}
             <View style={styles.ratingDivider} />
             <Text style={styles.ratingSectionTitle}>Rate your trip</Text>

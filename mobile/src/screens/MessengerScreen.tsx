@@ -18,6 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { UserAvatar } from "../components/UserAvatar";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
+import { avatarInitials } from "../utils/text";
 import {
   absoluteAssetUrl,
   authenticatedAssetSource,
@@ -594,10 +595,7 @@ async function warmChatImagePreviewCache(messages: ChatMessage[]) {
 }
 
 function initials(label: string) {
-  const clean = label.trim();
-  if (!clean) return "F";
-  const parts = clean.split(/\s+/).slice(0, 2);
-  return parts.map((part) => part[0]?.toUpperCase()).join("") || "F";
+  return avatarInitials(label);
 }
 
 function InitialsAvatar({ photoUrl, label, imageStyle, textStyle }: {
@@ -6596,8 +6594,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <Text style={styles.chittiTypingText} numberOfLines={1}>
               <Text style={styles.chittiTypingName}>{typingPeople.map((person) => {
-                const firstName = person.name.trim().split(/\s+/)[0] || "Someone";
-                return firstName.charAt(0).toUpperCase() + firstName.slice(1);
+                const firstName = person.name.normalize("NFKC").trim().split(/\s+/)[0] || "Someone";
+                const characters = Array.from(firstName);
+                return `${characters.shift()?.toLocaleUpperCase() || ""}${characters.join("")}`;
               }).join(", ")}</Text> {typingPeople.length === 1 ? "is" : "are"} typing
               <Text style={styles.chittiTypingDots}>…</Text>
             </Text>

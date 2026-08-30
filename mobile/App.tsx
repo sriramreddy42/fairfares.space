@@ -28,6 +28,7 @@ import { encryptForDevices, getOrCreateDeviceIdentity } from "./src/utils/chatCr
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 import { UserAvatar } from "./src/components/UserAvatar";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
+import { avatarInitials } from "./src/utils/text";
 import { shareHousingListing } from "./src/utils/listingShare";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
@@ -3306,7 +3307,7 @@ function FairFaresApp() {
               <UserAvatar
                 photoUrl={data?.user?.profilePhotoUrl}
                 imageStyle={styles.profileCompletionAvatarImage}
-                fallback={<Text style={styles.profileCompletionAvatarText}>{(data?.user?.name || "F").trim().charAt(0).toUpperCase()}</Text>}
+                fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
               />
             </View>
             <Text style={styles.profileCompletionEyebrow}>Your FairFares profile</Text>
@@ -3349,7 +3350,7 @@ function FairFaresApp() {
           <View style={[styles.modalCard, styles.reviewPromptCard]}>
             <View style={styles.reviewPromptHeader}>
               <View style={styles.reviewPromptAvatar}>
-                <UserAvatar photoUrl={reviewPromptContext?.photoUrl} imageStyle={styles.reviewPromptAvatarImage} fallback={<Text style={styles.reviewPromptAvatarText}>{(reviewPromptContext?.name || "F").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</Text>} />
+                <UserAvatar photoUrl={reviewPromptContext?.photoUrl} imageStyle={styles.reviewPromptAvatarImage} fallback={<Text style={styles.reviewPromptAvatarText}>{avatarInitials(reviewPromptContext?.name || "F")}</Text>} />
               </View>
               <View style={styles.reviewPromptHeaderCopy}>
                 <Text style={styles.reviewPromptEyebrow}>Quick check</Text>

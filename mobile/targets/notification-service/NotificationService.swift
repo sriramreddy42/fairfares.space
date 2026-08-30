@@ -385,8 +385,13 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func initialsAvatarData(for name: String) -> Data? {
-        let words = name.split(whereSeparator: { $0.isWhitespace })
-        let initials = words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        let compatibleName = name.precomposedStringWithCompatibilityMapping
+        let words = compatibleName.split(whereSeparator: { $0.isWhitespace })
+        let initials = words.prefix(2).compactMap { word in
+            word.first(where: { character in
+                character != "\u{FFFD}" && !character.isWhitespace
+            })
+        }.map(String.init).joined().uppercased()
         guard !initials.isEmpty else { return nil }
 
         let size = CGSize(width: 192, height: 192)

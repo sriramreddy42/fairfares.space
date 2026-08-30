@@ -18,6 +18,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
+import { avatarInitials } from "../utils/text";
 import { readGasCache } from "../utils/gasPriceCache";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -101,7 +102,7 @@ function relativeTime(value: string) {
 }
 
 function message(error: unknown) { return error instanceof Error ? error.message : "Something went wrong. Please try again."; }
-function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "FF"; }
+function initials(name: string) { return avatarInitials(name, "FF"); }
 function firstWebUrl(value: string) {
   const match = value.match(/https?:\/\/[^\s<>]+/i)?.[0] || "";
   return match.replace(/[),.!?;:'\"]+$/, "");
@@ -835,7 +836,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     const visibleReplies = expanded ? replies : replies.slice(-2);
     const hiddenReplyCount = Math.max(0, replies.length - visibleReplies.length);
     return <View key={item.id} style={[styles.inlineReply, depth > 1 && styles.inlineReplyNested]}>
-      <View style={styles.inlineReplyHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></View>
+      <View style={styles.inlineReplyHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.latestCommentInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></View>
       <Text style={styles.inlineReplyBody}>{item.body}</Text>
       {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
       <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
@@ -851,7 +852,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     const hiddenReplyCount = Math.max(0, replies.length - visibleReplies.length);
     return (
     <View key={item.id} style={[styles.answerCard, item.accepted && styles.acceptedCard]}>
-      <View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
+      <View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
       <Text style={styles.answerBody}>{item.body}</Text>
       {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
       <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
@@ -884,7 +885,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         <Image source={communityHeroPoster} style={styles.heroPoster} resizeMode="contain" />
       </Animated.View>
       <View style={[styles.quickComposer, isLight && styles.quickComposerLight]}>
-        <UserAvatar photoUrl={user?.profilePhotoUrl} style={styles.composerAvatar} imageStyle={styles.composerAvatarImage} />
+        <UserAvatar photoUrl={user?.profilePhotoUrl} style={styles.composerAvatar} imageStyle={styles.composerAvatarImage} fallback={<Text style={styles.avatarInitials}>{initials(user?.name || "FairFares")}</Text>} />
         <TouchableOpacity style={[styles.composerPrompt, isLight && styles.composerPromptLight]} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={[styles.composerPromptText, isLight && styles.textSecondaryLight]}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>

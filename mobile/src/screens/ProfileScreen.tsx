@@ -11,6 +11,7 @@ import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { syncChatIdentityRecovery } from "../utils/chatRecovery";
+import { avatarInitials } from "../utils/text";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -37,7 +38,7 @@ const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RET
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
 
 function firstInitial(name = "") {
-  return name.trim().slice(0, 1).toUpperCase() || "F";
+  return Array.from(avatarInitials(name, "F"))[0] || "F";
 }
 
 export function ProfileScreen({

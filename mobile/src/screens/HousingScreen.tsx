@@ -12,6 +12,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
+import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { activeFestivalCampaign } from "../utils/festivals";
@@ -729,12 +730,7 @@ export function HousingScreen({
 
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const cityExperienceLocation = data?.location.city || discoveryLocation || "your current city";
-  const cityExperienceInitials = (data?.user?.name || "FairFares member")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
+  const cityExperienceInitials = avatarInitials(data?.user?.name || "FairFares member", "FF");
   const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
   const homeStorySlideCount = 1 + homeTestimonials.length;
   const homeStorySlideWidth = homeStoryViewportWidth || Math.max(1, viewportWidth - 28 - theme.spacing.md * 2);
@@ -3574,7 +3570,7 @@ export function HousingScreen({
             </View>
           </View>
           {homeTestimonials.map((testimonial) => {
-            const initials = testimonial.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+            const initials = avatarInitials(testimonial.name, "FF");
             return (
               <View key={testimonial.id} style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
                 <View style={styles.homeTestimonial}>
