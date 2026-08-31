@@ -1,4 +1,4 @@
-import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, GasFuelType, GasPriceResponse, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
+import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, CommunityUserProfile, GasFuelType, GasPriceResponse, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
@@ -986,6 +986,15 @@ export async function answerCommunityPost(postId: string, body: string, parentAn
     body: JSON.stringify({ postId, body, parentAnswerId })
   });
   return { ...result, guestId: guest?.guestId || "" };
+}
+
+export async function updateCommunityAnswer(answerId: string, body: string) {
+  if (!authToken) await ensureCommunityGuestSession();
+  return request<{ ok: boolean; answerId: string; body: string }>("/api/mobile/community/answer/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
+    body: JSON.stringify({ answerId, body })
+  });
 }
 
 export type CommunityGuestSession = { ok: boolean; token: string; guestId: string; remaining: number; registered?: boolean };
@@ -2217,6 +2226,11 @@ export async function getChatMessageInfo(messageId: number) {
     readBy: ChatMessageInfoPerson[];
     notReadBy: ChatMessageInfoPerson[];
   }>(`/api/chat/messages/info?message_id=${encodeURIComponent(String(messageId))}`);
+}
+
+export async function getCommunityUserProfile(userId: number) {
+  const payload = await request<{ ok: boolean; profile: CommunityUserProfile }>(`/api/mobile/community/user?user_id=${encodeURIComponent(String(userId))}`);
+  return payload.profile;
 }
 
 export async function updateChatTyping(conversationId: string, active: boolean) {

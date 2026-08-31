@@ -1824,7 +1824,18 @@ export function HousingScreen({
   }
 
   function openPostMap(post: HousingPost) {
-    const query = post.lat && post.lng ? `${post.lat},${post.lng}` : `${post.title} ${post.location} ${post.area}`.trim();
+    const preciseAddress = post.addressLabel || [post.streetAddress, post.city || post.location, post.zipCode]
+      .map((value) => String(value || "").trim())
+      .filter((value, index, values) => value && values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === index)
+      .join(", ");
+    const hasExactCoordinates = !post.locationApproximate
+      && Number.isFinite(post.lat)
+      && Number.isFinite(post.lng)
+      && Math.abs(post.lat) > 0.0001
+      && Math.abs(post.lng) > 0.0001;
+    const query = hasExactCoordinates
+      ? `${post.lat},${post.lng}`
+      : preciseAddress || `${post.title} ${post.location} ${post.area}`.trim();
     void Linking.openURL(mapSearchUrl(query));
   }
 
@@ -3807,7 +3818,7 @@ export function HousingScreen({
                 }}
               >
                 <Text style={styles.detailTitle}>{detailPost.title}</Text>
-                <Text style={styles.detailMeta}>{detailPost.location}{detailPost.area ? ` · ${detailPost.area}` : ""}</Text>
+                <Text style={styles.detailMeta}>{detailPost.addressLabel || detailPost.location}</Text>
                 <View style={styles.detailDescriptionCard}>
                   <Text style={styles.detailSectionTitle}>Description</Text>
                   <Text style={styles.detailDescription}>{detailPost.description || "No description yet."}</Text>
@@ -3875,7 +3886,9 @@ export function HousingScreen({
                   <View style={styles.detailMapCopy}>
                     <Text style={[styles.detailMapTitle, isLight && styles.detailMapTitleLight]}>View on map</Text>
                     <Text style={[styles.detailMapText, isLight && styles.detailMapTextLight]} numberOfLines={1}>
-                      {detailPost.distanceMiles !== null
+                      {detailPost.locationApproximate
+                        ? `Open ${detailPost.addressLabel || detailPost.streetAddress || detailPost.location} in maps`
+                        : detailPost.distanceMiles !== null
                         ? `${detailPost.distanceMiles} mi from ${distanceReference || detailPost.location}`
                         : "Open location in maps"}
                     </Text>

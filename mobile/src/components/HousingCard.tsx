@@ -57,8 +57,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
         <Text numberOfLines={2} style={[styles.title, compact && styles.titleCompact]}>
           {post.title}
         </Text>
-        <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.location}</Text>
-        {post.area ? <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.area}</Text> : null}
+        <Text numberOfLines={2} style={[styles.meta, compact && styles.metaCompact]}>{post.addressLabel || post.location}</Text>
         <View style={styles.pillRow}>
           <Text numberOfLines={1} style={[styles.infoPill, compact && styles.infoPillCompact]}>{post.categoryLabel}</Text>
           <Text numberOfLines={1} style={[styles.infoPill, compact && styles.infoPillCompact]}>{post.genderPreference || "Open"}</Text>

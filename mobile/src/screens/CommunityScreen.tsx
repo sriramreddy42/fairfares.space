@@ -8,12 +8,12 @@ import {
 import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
-  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
+  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getCommunityUserProfile, joinChatCommunity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
-  updateCommunityPost, updateCommunityPostStatus,
+  updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { Car, Community, CommunityAnswer, CommunityPost, FairFaresUser } from "../types";
+import { Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -34,6 +34,7 @@ type Props = {
   onOpenRentalCars: () => void;
   onOpenGas: () => void;
   onOpenCommunity: (communityId: string) => void;
+  onOpenUserChat: (userId: number) => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   initialPostId?: string;
   onInitialPostOpened?: () => void;
@@ -124,6 +125,19 @@ function normalizedLocationLabel(value: string) {
   const region = usStateCodes.has(parts[1].toUpperCase()) ? parts[1].toUpperCase() : usStateNameCodes.get(parts[1].toLocaleLowerCase());
   return region ? `${parts[0]}, ${region}` : value.trim();
 }
+function communityPostLocation(area: string, city: string) {
+  const cleanArea = area.trim();
+  const cleanCity = normalizedLocationLabel(city);
+  if (!cleanArea) return cleanCity;
+  if (!cleanCity) return cleanArea;
+  const comparable = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const areaKey = comparable(cleanArea);
+  const cityKey = comparable(cleanCity);
+  // A selected address or locality often already ends with City, ST. Showing
+  // both produced labels such as “Bridgeport, CT · Bridgeport, CT”.
+  if (areaKey === cityKey || areaKey.includes(cityKey)) return cleanArea;
+  return `${cleanArea} · ${cleanCity}`;
+}
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
@@ -198,7 +212,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSignup, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenGas, onOpenCommunity, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSignup, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenGas, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const safeAreaInsets = useSafeAreaInsets();
   // React Native's Android page-sheet Modal can report a zero top inset even
@@ -233,8 +247,13 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [memberProfile, setMemberProfile] = useState<CommunityUserProfile | null>(null);
+  const [memberProfileLoading, setMemberProfileLoading] = useState(false);
+  const [memberProfileLoadFailed, setMemberProfileLoadFailed] = useState(false);
+  const memberProfileRequest = useRef(0);
   const [answer, setAnswer] = useState("");
   const [answerReplyTarget, setAnswerReplyTarget] = useState<{ id: string; name: string } | null>(null);
+  const [editingAnswerId, setEditingAnswerId] = useState("");
   const [expandedReplyThreads, setExpandedReplyThreads] = useState<Set<string>>(() => new Set());
   const [guestIdentity, setGuestIdentity] = useState("");
   const [guestRemaining, setGuestRemaining] = useState(6);
@@ -257,6 +276,35 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     return !lowest || price < Number(lowest.daily_price) ? car : lowest;
   }, null), [cars]);
   const displayedGasPrice = lowestGasPrice ?? 3.54;
+
+  async function openMemberProfile(author: CommunityPost["author"]) {
+    if (!author.id) return;
+    const requestId = memberProfileRequest.current + 1;
+    memberProfileRequest.current = requestId;
+    setMemberProfile({ id: author.id, name: author.name, photoUrl: author.photoUrl, listings: [] });
+    setMemberProfileLoading(true);
+    setMemberProfileLoadFailed(false);
+    try {
+      const profile = await getCommunityUserProfile(author.id);
+      if (memberProfileRequest.current === requestId) setMemberProfile(profile);
+    } catch {
+      if (memberProfileRequest.current === requestId) {
+        // The author identity is already part of the signed public post. Keep
+        // that useful profile shell and Chitthi action visible if an older
+        // backend does not yet provide the optional listings endpoint.
+        setMemberProfileLoadFailed(true);
+      }
+    } finally {
+      if (memberProfileRequest.current === requestId) setMemberProfileLoading(false);
+    }
+  }
+
+  function closeMemberProfile() {
+    memberProfileRequest.current += 1;
+    setMemberProfileLoading(false);
+    setMemberProfileLoadFailed(false);
+    setMemberProfile(null);
+  }
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -468,6 +516,11 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     });
   }, [initialPostId, onInitialPostOpened]);
   useEffect(() => { onBottomTabsHiddenChange?.(composerOpen || Boolean(detail)); }, [composerOpen, detail, onBottomTabsHiddenChange]);
+  useEffect(() => {
+    setEditingAnswerId("");
+    setAnswerReplyTarget(null);
+    setAnswer("");
+  }, [detail?.id]);
 
   const openComposer = () => {
     if (!user) { onRequireLogin(); return; }
@@ -667,6 +720,43 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     finally { setDetailBusy(false); }
   };
 
+  const beginAnswerEdit = (item: CommunityAnswer) => {
+    setAnswerReplyTarget(null);
+    setEditingAnswerId(item.id);
+    setAnswer(item.body);
+  };
+
+  const cancelAnswerEdit = () => {
+    setEditingAnswerId("");
+    setAnswer("");
+  };
+
+  const saveAnswerEdit = async () => {
+    if (!detail || !editingAnswerId || answer.trim().length < 2) return;
+    setDetailBusy(true);
+    try {
+      await updateCommunityAnswer(editingAnswerId, answer.trim());
+      setEditingAnswerId("");
+      setAnswer("");
+      setDetail(await getCommunityPost(detail.id));
+      await load(true);
+    } catch (error) {
+      Alert.alert("Comment not updated", message(error));
+    } finally {
+      setDetailBusy(false);
+    }
+  };
+
+  const editableAnswerBody = (item: CommunityAnswer, bodyStyle: object) => editingAnswerId === item.id ? (
+    <View style={styles.answerEditBox}>
+      <TextInput autoFocus style={[styles.inlineReplyInput, styles.answerEditInput]} value={answer} onChangeText={setAnswer} multiline maxLength={1800} placeholder="Edit your comment…" placeholderTextColor={theme.colors.muted} />
+      <View style={styles.answerEditActions}>
+        <TouchableOpacity onPress={cancelAnswerEdit}><Text style={styles.replyAction}>Cancel</Text></TouchableOpacity>
+        <TouchableOpacity style={[styles.inlineReplySend, answer.trim().length < 2 && styles.disabled]} disabled={answer.trim().length < 2 || detailBusy} onPress={() => void saveAnswerEdit()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Save"}</Text></TouchableOpacity>
+      </View>
+    </View>
+  ) : <Text style={bodyStyle}>{item.body}</Text>;
+
   const confirmDelete = (post: CommunityPost) => Alert.alert("Delete post?", "This removes the post from all community feeds.", [
     { text: "Cancel", style: "cancel" },
     { text: "Delete", style: "destructive", onPress: async () => { try { await deleteCommunityPost(post.id); setPosts((current) => current.filter((item) => item.id !== post.id)); setNationalPosts((current) => current.filter((item) => item.id !== post.id)); setDetail(null); } catch (error) { Alert.alert("Could not delete", message(error)); } } },
@@ -777,8 +867,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     <View key={post.id} style={[styles.postCard, isLight && styles.postCardLight]}>
       <TouchableOpacity activeOpacity={0.92} style={styles.postOpenArea} onPress={() => void openDetail(post)} accessible={false}>
       <View style={styles.postHead}>
-        <UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} />
-        <View style={styles.postAuthor}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]}>{post.author.name}</Text><Text style={[styles.meta, isLight && styles.textSecondaryLight]}>{post.community?.name || [post.area, post.city].filter(Boolean).join(" · ") || "FairFares Community"} · {relativeTime(post.createdAt)}</Text></View>
+        <TouchableOpacity onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} /></TouchableOpacity>
+        <TouchableOpacity style={styles.postAuthor} onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]}>{post.author.name}</Text><Text style={[styles.meta, isLight && styles.textSecondaryLight]}>{post.community?.name || communityPostLocation(post.area, post.city) || "FairFares Community"} · {relativeTime(post.createdAt)}</Text></TouchableOpacity>
         <View style={styles.typeBadge}><Text style={[styles.typeBadgeText, styles.postBadgeSoft]}>{post.sourceKind === "HOUSING" ? "🏠 HOUSING" : post.type === "QUESTION" ? "QUESTION" : post.type}</Text></View>
       </View>
       <Text style={[styles.postTitle, styles.postTitleSoft, isLight && styles.textPrimaryLight]}>{post.title}</Text>
@@ -836,10 +926,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     const visibleReplies = expanded ? replies : replies.slice(-2);
     const hiddenReplyCount = Math.max(0, replies.length - visibleReplies.length);
     return <View key={item.id} style={[styles.inlineReply, depth > 1 && styles.inlineReplyNested]}>
-      <View style={styles.inlineReplyHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.latestCommentInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></View>
-      <Text style={styles.inlineReplyBody}>{item.body}</Text>
+      <TouchableOpacity style={styles.inlineReplyHead} onPress={() => void openMemberProfile(item.author)} accessibilityRole="button" accessibilityLabel={`View ${item.author.name}'s profile`}><UserAvatar photoUrl={item.author.photoUrl} style={styles.inlineReplyAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.latestCommentInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.inlineReplyAuthor}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></TouchableOpacity>
+      {editableAnswerBody(item, styles.inlineReplyBody)}
       {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
-      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
+      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}{item.canEdit ? <TouchableOpacity onPress={() => beginAnswerEdit(item)}><Text style={styles.replyAction}>Edit</Text></TouchableOpacity> : null}<TouchableOpacity onPress={() => { setEditingAnswerId(""); setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity></View>
       {visibleReplies.length ? <View style={[styles.inlineReplies, depth < 2 ? styles.inlineRepliesNested : styles.inlineRepliesDeep]}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, depth + 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
     </View>;
@@ -852,10 +942,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     const hiddenReplyCount = Math.max(0, replies.length - visibleReplies.length);
     return (
     <View key={item.id} style={[styles.answerCard, item.accepted && styles.acceptedCard]}>
-      <View style={styles.postHead}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
-      <Text style={styles.answerBody}>{item.body}</Text>
+      <View style={styles.postHead}><TouchableOpacity style={styles.answerAuthorButton} onPress={() => void openMemberProfile(item.author)} accessibilityRole="button" accessibilityLabel={`View ${item.author.name}'s profile`}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></TouchableOpacity>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
+      {editableAnswerBody(item, styles.answerBody)}
       {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
-      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}<TouchableOpacity onPress={() => { setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
+      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}{item.canEdit ? <TouchableOpacity onPress={() => beginAnswerEdit(item)}><Text style={styles.replyAction}>Edit</Text></TouchableOpacity> : null}<TouchableOpacity onPress={() => { setEditingAnswerId(""); setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
       {replies.length ? <View style={styles.inlineReplies}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
     </View>
@@ -953,7 +1043,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         {renderPost(detail)}
         <Text style={[styles.answersTitle, isLight && styles.textPrimaryLight]}>{detail.answerCount} {detail.answerCount === 1 ? "comment" : "comments"}</Text>
         {detail.answers?.filter((item) => !item.parentAnswerId).map((item) => renderAnswer(item, detail.answers || []))}
-        {detail.canAnswer && !answerReplyTarget ? <View style={styles.answerComposer}>{!user ? <View style={styles.guestAllowance}><Text style={styles.guestAllowanceName}>{guestIdentity || "Guest"}</Text><Text style={styles.guestAllowanceCount}>{guestRemaining} of 6 guest messages left</Text></View> : null}<TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder={guestRemaining > 0 || user ? "Write a comment…" : "Write your comment, then sign up to post…"} placeholderTextColor={theme.colors.muted} editable /><TouchableOpacity style={[styles.sendAnswer, !answer.trim() && styles.disabled]} disabled={!answer.trim() || detailBusy} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity>{!user ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}</View> : !detail.canAnswer ? <Text style={styles.locked}>This discussion is closed to new comments.</Text> : null}
+        {detail.canAnswer && !answerReplyTarget && !editingAnswerId ? <View style={styles.answerComposer}>{!user ? <View style={styles.guestAllowance}><Text style={styles.guestAllowanceName}>{guestIdentity || "Guest"}</Text><Text style={styles.guestAllowanceCount}>{guestRemaining} of 6 guest messages left</Text></View> : null}<TextInput style={styles.answerInput} value={answer} onChangeText={setAnswer} multiline placeholder={guestRemaining > 0 || user ? "Write a comment…" : "Write your comment, then sign up to post…"} placeholderTextColor={theme.colors.muted} editable /><TouchableOpacity style={[styles.sendAnswer, !answer.trim() && styles.disabled]} disabled={!answer.trim() || detailBusy} onPress={() => void submitAnswer()}><Text style={styles.sendAnswerText}>{detailBusy ? "…" : "Post comment"}</Text></TouchableOpacity>{!user ? <TouchableOpacity onPress={() => setGuestBenefitsOpen(true)}><Text style={styles.guestSignupHint}>Sign up for unlimited comments and replies</Text></TouchableOpacity> : null}</View> : !detail.canAnswer ? <Text style={styles.locked}>This discussion is closed to new comments.</Text> : null}
       </> : null}{detailBusy && !detail?.answers ? <ActivityIndicator color={theme.colors.brand} /> : null}</ScrollView>
       {guestBenefitsOpen ? <View style={styles.guestBenefitsBackdrop}>
         <View style={styles.guestBenefitsCard}>
@@ -969,6 +1059,19 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         </View>
       </View> : null}
       </KeyboardAvoidingView>
+    </Modal>
+
+    <Modal visible={Boolean(memberProfile)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={closeMemberProfile}>
+      <View style={styles.memberBackdrop}><View style={[styles.memberCard, isLight && styles.memberCardLight]}>
+        <TouchableOpacity style={[styles.memberClose, isLight && styles.memberCloseLight]} onPress={closeMemberProfile} accessibilityLabel="Close member details"><Text style={[styles.memberCloseText, isLight && styles.memberCloseTextLight]}>×</Text></TouchableOpacity>
+        {memberProfile ? <>
+          <UserAvatar photoUrl={memberProfile.photoUrl} style={styles.memberAvatar} imageStyle={styles.memberAvatarImage} fallback={<Text style={styles.memberAvatarText}>{initials(memberProfile.name)}</Text>} />
+          <Text style={[styles.memberName, isLight && styles.textPrimaryLight]}>{memberProfile.name}</Text>
+          <Text style={[styles.memberSummary, isLight && styles.textSecondaryLight]}>{memberProfileLoading ? "Loading profile…" : memberProfileLoadFailed ? "FairFares member" : `${memberProfile.listings.length} active ${memberProfile.listings.length === 1 ? "listing" : "listings"}`}</Text>
+          {Number(user?.id || 0) !== memberProfile.id ? <TouchableOpacity style={styles.memberChitthi} onPress={() => { const id = memberProfile.id; closeMemberProfile(); if (!user) onRequireLogin(); else onOpenUserChat(id); }}><Text style={styles.memberChitthiText}>Open Chitthi connection</Text></TouchableOpacity> : <Text style={styles.memberOwnProfile}>This is your public profile</Text>}
+          {!memberProfileLoading && memberProfile.listings.length ? <ScrollView style={styles.memberListings} contentContainerStyle={styles.memberListingsContent}>{memberProfile.listings.map((listing) => <TouchableOpacity key={listing.id} style={[styles.memberListing, isLight && styles.memberListingLight]} onPress={() => { closeMemberProfile(); onOpenHousing(listing.id); }}><View style={styles.memberListingCopy}><Text style={[styles.memberListingTitle, isLight && styles.textPrimaryLight]} numberOfLines={2}>{listing.title}</Text><Text style={[styles.memberListingMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{listing.addressLabel || listing.location}</Text><Text style={styles.memberListingRent} numberOfLines={1}>{listing.rent}</Text></View><Text style={styles.memberListingArrow}>›</Text></TouchableOpacity>)}</ScrollView> : !memberProfileLoading ? <Text style={[styles.memberEmpty, isLight && styles.textSecondaryLight]}>{memberProfileLoadFailed ? "Listings are temporarily unavailable. You can still connect in Chitthi." : "No active listings right now."}</Text> : <ActivityIndicator color={theme.colors.brand} />}
+        </> : null}
+      </View></View>
     </Modal>
   </View>;
 }
@@ -1013,6 +1116,32 @@ const styles = StyleSheet.create({
   postCard: { backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 15, gap: 12, shadowColor: "#000", shadowOpacity: .14, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, postHead: { flexDirection: "row", alignItems: "center", gap: 10 }, avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#204538" }, avatarImage: { borderRadius: 22 }, avatarInitials: { color: "#a8ecd1", fontSize: 14, fontWeight: "900" }, postAuthor: { flex: 1, minWidth: 0 }, author: { color: theme.colors.text, fontWeight: "900", fontSize: 15 }, meta: { color: theme.colors.muted, fontSize: 11, marginTop: 2 }, typeBadge: { backgroundColor: "#153a2c", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 }, typeBadgeText: { color: "#78dcb4", fontWeight: "800", fontSize: 9, letterSpacing: .4 }, postTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 25, fontWeight: "800" }, postBody: { color: theme.colors.soft, fontSize: 14, lineHeight: 21 }, imageRow: { gap: 5 }, postImage: { width: 255, height: 175, borderRadius: 12, backgroundColor: theme.colors.panel2 }, linkCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 14, padding: 9, overflow: "hidden" }, linkPreviewImage: { width: 74, height: 74, borderRadius: 10, backgroundColor: theme.colors.panel2 }, linkPreviewPlaceholder: { width: 74, height: 74, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#173b2d" }, linkPreviewPlaceholderText: { color: theme.colors.brand, fontSize: 28 }, linkContent: { flex: 1, minWidth: 0, gap: 4 }, linkLabel: { color: theme.colors.text, fontWeight: "800", fontSize: 13, lineHeight: 17 }, linkDescription: { color: theme.colors.muted, fontSize: 10, lineHeight: 14 }, linkSource: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, linkFavicon: { width: 15, height: 15, borderRadius: 3 }, linkFaviconFallback: { width: 15, height: 15, borderRadius: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#1c4938" }, linkFaviconFallbackText: { color: theme.colors.brand, fontSize: 9 }, linkUrl: { flex: 1, color: "#85caae", fontSize: 10 }, linkChevron: { color: theme.colors.brand, fontSize: 26, marginRight: 2 }, latestComment: { flexDirection: "row", alignItems: "flex-start", gap: 9 }, latestCommentAvatar: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#204538" }, latestCommentInitials: { color: "#a8ecd1", fontSize: 9, fontWeight: "900" }, latestCommentBubble: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: theme.colors.panel2, paddingHorizontal: 11, paddingVertical: 8 }, latestCommentAuthor: { color: theme.colors.text, fontSize: 11, fontWeight: "900" }, latestCommentBody: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, marginTop: 2 }, addCommentPrompt: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.line }, addCommentIcon: { color: theme.colors.brand, fontSize: 15 }, addCommentText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" }, postActions: { position: "relative", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 10, overflow: "visible" }, reactionDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0, backgroundColor: "transparent" }, reactionControl: { position: "relative", zIndex: 30 }, reactionTray: { position: "absolute", left: 0, bottom: 40, height: 50, flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 7, borderRadius: 25, borderWidth: 1, borderColor: "#dedede", backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: .24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 24, zIndex: 50 }, reactionChoice: { width: 37, height: 42, alignItems: "center", justifyContent: "center" }, reactionChoiceEmoji: { fontSize: 24 }, reactionSummary: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 7, borderRadius: 9 }, reactionSummaryEmoji: { fontSize: 16 }, reactionSummaryText: { color: theme.colors.soft, fontSize: 11, fontWeight: "800" }, reactionSummaryTextActive: { color: theme.colors.brand }, reactionTotal: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, action: { backgroundColor: "transparent", borderRadius: 9, paddingHorizontal: 7, minHeight: 36, justifyContent: "center" }, iconAction: { width: 34, height: 34, borderRadius: 9, justifyContent: "center", alignItems: "center", backgroundColor: "transparent" }, actionActive: { backgroundColor: "#174c38" }, actionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" },
   activitySummary: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(145,145,150,.28)", paddingTop: 8 }, activitySummaryLight: { borderTopColor: "rgba(101,103,107,.16)" }, reactionBreakdown: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }, answerReactionStats: { minHeight: 24, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 5 }, activityText: { color: theme.colors.soft, fontSize: 10, fontWeight: "700" }, commentCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, footerIconAction: { minWidth: 58, height: 34, paddingHorizontal: 6, flexDirection: "row", gap: 4, borderRadius: 9, alignItems: "center", justifyContent: "center" }, footerIcon: { color: theme.colors.soft, fontSize: 20, lineHeight: 23 }, footerShareIcon: { color: theme.colors.soft, fontSize: 19, fontWeight: "500", transform: [{ rotate: "-12deg" }] }, footerActionLabel: { color: theme.colors.soft, fontSize: 10, fontWeight: "800" },
   postOpenArea: { gap: 12 },
+  answerAuthorButton: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
+  memberBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 20, backgroundColor: "rgba(0,0,0,.72)" },
+  memberCard: { maxHeight: "78%", borderRadius: 26, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, padding: 20, alignItems: "center", gap: 9 },
+  memberCardLight: { backgroundColor: "#fff", borderColor: "#e1e5e9" },
+  memberClose: { position: "absolute", right: 13, top: 13, zIndex: 2, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
+  memberCloseLight: { backgroundColor: "#eef1f3" },
+  memberCloseText: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 },
+  memberCloseTextLight: { color: "#24282d" },
+  memberAvatar: { width: 86, height: 86, borderRadius: 43, backgroundColor: "#173b2d", marginTop: 5 },
+  memberAvatarImage: { borderRadius: 43 },
+  memberAvatarText: { color: "#a8ecd1", fontSize: 25, fontWeight: "900" },
+  memberName: { color: theme.colors.text, fontSize: 23, lineHeight: 29, fontWeight: "900", textAlign: "center" },
+  memberSummary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
+  memberChitthi: { width: "100%", minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, marginTop: 5 },
+  memberChitthiText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
+  memberOwnProfile: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 5 },
+  memberListings: { width: "100%", marginTop: 5 },
+  memberListingsContent: { gap: 8, paddingBottom: 2 },
+  memberListing: { minHeight: 76, flexDirection: "row", alignItems: "center", borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 13, paddingVertical: 10 },
+  memberListingLight: { borderColor: "#e1e5e9", backgroundColor: "#f6f7f8" },
+  memberListingCopy: { flex: 1, minWidth: 0 },
+  memberListingTitle: { color: theme.colors.text, fontSize: 13, lineHeight: 17, fontWeight: "900" },
+  memberListingMeta: { color: theme.colors.muted, fontSize: 10, marginTop: 3 },
+  memberListingRent: { color: theme.colors.brand, fontSize: 11, fontWeight: "900", marginTop: 3 },
+  memberListingArrow: { color: theme.colors.brand, fontSize: 27 },
+  memberEmpty: { color: theme.colors.muted, fontSize: 12, paddingVertical: 12 },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaGridSingle: { height: 330 },
@@ -1038,7 +1167,7 @@ const styles = StyleSheet.create({
   inlineRepliesNested: { marginLeft: 12, paddingLeft: 8 },
   inlineRepliesDeep: { marginLeft: 0, paddingLeft: 6 },
   inlineReplyNested: { borderTopColor: "rgba(145,145,150,.20)" },
-  moreRepliesButton: { alignSelf: "flex-start", paddingVertical: 7, paddingRight: 12 }, moreRepliesText: { color: theme.colors.brand, fontSize: 11, fontWeight: "900" }, inlineReplyComposer: { marginTop: 7, marginLeft: 38, gap: 8, padding: 10, borderRadius: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: "rgba(24,184,132,.28)" }, inlineReplyInput: { minHeight: 58, maxHeight: 120, color: theme.colors.text, fontSize: 13, lineHeight: 18, textAlignVertical: "top" }, inlineReplySend: { alignSelf: "flex-end", minWidth: 72, alignItems: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 14, paddingVertical: 9 }, inlineGuestAllowance: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" },
+  moreRepliesButton: { alignSelf: "flex-start", paddingVertical: 7, paddingRight: 12 }, moreRepliesText: { color: theme.colors.brand, fontSize: 11, fontWeight: "900" }, inlineReplyComposer: { marginTop: 7, marginLeft: 38, gap: 8, padding: 10, borderRadius: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: "rgba(24,184,132,.28)" }, inlineReplyInput: { minHeight: 58, maxHeight: 120, color: theme.colors.text, fontSize: 13, lineHeight: 18, textAlignVertical: "top" }, inlineReplySend: { alignSelf: "flex-end", minWidth: 72, alignItems: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 14, paddingVertical: 9 }, inlineGuestAllowance: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, answerEditBox: { gap: 8, padding: 10, borderRadius: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: "rgba(24,184,132,.35)" }, answerEditInput: { minHeight: 72 }, answerEditActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 14 },
   guestBenefitsBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.64)" }, guestBenefitsCard: { paddingHorizontal: 22, paddingTop: 24, paddingBottom: 34, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, gap: 13 }, guestBenefitsClose: { position: "absolute", right: 17, top: 15, width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: theme.colors.panel2, zIndex: 2 }, guestBenefitsCloseText: { color: theme.colors.soft, fontSize: 23 }, guestBenefitsEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 }, guestBenefitsTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 28, fontWeight: "900", paddingRight: 30 }, guestBenefitsIntro: { color: theme.colors.muted, fontSize: 13, marginBottom: 3 }, guestBenefit: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 5 }, guestBenefitIcon: { width: 36, fontSize: 25 }, guestBenefitTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" }, guestBenefitBody: { maxWidth: 290, color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 }, guestBenefitsPrimary: { minHeight: 50, marginTop: 5, alignItems: "center", justifyContent: "center", borderRadius: 15, backgroundColor: theme.colors.brand }, guestBenefitsPrimaryText: { color: "#06291e", fontWeight: "900", fontSize: 15 }, guestBenefitsSecondary: { minHeight: 42, alignItems: "center", justifyContent: "center" }, guestBenefitsSecondaryText: { color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
   groupCreate: { backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 20, padding: 15, gap: 12 }, discoverGroup: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 16, padding: 14 }, joined: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, joinButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 9 }, joinButtonText: { color: "#06291e", fontWeight: "800" },
   contentLight: { gap: 9 },

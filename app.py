@@ -15668,6 +15668,25 @@ def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     return results[0] if results and isinstance(results[0], dict) else None
 
 
+def precise_accommodation_location_point(query: str) -> dict[str, object]:
+    """Resolve an exact saved address without accepting a broad metro fallback."""
+    geocode = google_accommodation_geocode(query)
+    if not isinstance(geocode, dict):
+        return {}
+    geometry = geocode.get("geometry") if isinstance(geocode.get("geometry"), dict) else {}
+    location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+    lat = float(location.get("lat") or 0)
+    lng = float(location.get("lng") or 0)
+    if not lat or not lng:
+        return {}
+    return {
+        "label": dedupe_repeated_location_label(str(geocode.get("formatted_address") or query)),
+        "lat": lat,
+        "lng": lng,
+        "source": "google-address",
+    }
+
+
 def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> list[dict[str, object]]:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if not api_key or not query or not lat or not lng:
@@ -16270,19 +16289,32 @@ def accommodation_address_label(values: sqlite3.Row | dict[str, object], fallbac
     zip_code = row_value(values, "zip_code")
     if street:
         parts: list[str] = []
+        normalized_street = re.sub(r"[^a-z0-9]+", " ", street.lower()).strip()
         for value in (street, city, zip_code):
             value = value.strip()
+            normalized_value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+            # Autocomplete may save either just the street or its complete
+            # formatted address. Do not append city/ZIP a second time when the
+            # selected street value already contains them.
+            if value != street and normalized_value and normalized_value in normalized_street:
+                continue
             if value and value.lower() not in {part.lower() for part in parts}:
                 parts.append(value)
         return ", ".join(parts)
-    return (
-        row_value(values, "city_area_zip")
-        or row_value(values, "area_or_apartment")
+    precise_area = (
+        row_value(values, "area_or_apartment")
         or row_value(values, "work_school_location")
-        or city
-        or zip_code
-        or fallback
+        or row_value(values, "primary_neighborhood")
+        or row_value(values, "apartment_name")
     ).strip()
+    broad_location = (row_value(values, "city_area_zip") or city or zip_code or fallback).strip()
+    if not precise_area:
+        return broad_location
+    normalized_area = re.sub(r"[^a-z0-9]+", " ", precise_area.lower()).strip()
+    normalized_broad = re.sub(r"[^a-z0-9]+", " ", broad_location.lower()).strip()
+    if not normalized_broad or normalized_area == normalized_broad or normalized_broad in normalized_area:
+        return precise_area
+    return f"{precise_area}, {broad_location}"
 
 
 def accommodation_form_location_query(form: dict[str, str]) -> str:
@@ -16533,6 +16565,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "category": row_value(row, "category"),
         "categoryLabel": option_label(ACCOMMODATION_CATEGORIES, row_value(row, "category"), "Housing"),
         "location": row_value(row, "city_area_zip") or row_value(row, "city") or "Location open",
+        "addressLabel": accommodation_address_label(row),
         "country": stored_country or accommodation_country_code(listing_location),
         "area": row_value(row, "area_or_apartment") or row_value(row, "primary_neighborhood"),
         "workLocation": row_value(row, "work_school_location"),
@@ -18259,13 +18292,37 @@ def mobile_housing_posts(
             city_terms.append(city.split(",", 1)[0].strip())
         city_terms = [term for term in dict.fromkeys(term for term in city_terms if term)]
     ranked_payloads: list[tuple[int, float, dict[str, object]]] = []
+    repaired_coordinates: list[tuple[float, float, int]] = []
     for row in rows:
         item = mobile_housing_post_payload(row)
         lat, lng, used_city_fallback = accommodation_post_search_point(row)
+        if used_city_fallback and row_value(row, "street_address"):
+            precise_point = precise_accommodation_location_point(accommodation_address_label(row))
+            precise_lat = float(precise_point.get("lat") or 0)
+            precise_lng = float(precise_point.get("lng") or 0)
+            city_point = accommodation_location_point(row_value(row, "city"), allow_refresh=False)
+            city_lat = float(city_point.get("lat") or 0)
+            city_lng = float(city_point.get("lng") or 0)
+            if (
+                precise_lat
+                and precise_lng
+                and (
+                    not city_lat
+                    or not city_lng
+                    or distance_miles_between(city_lat, city_lng, precise_lat, precise_lng) <= 100
+                )
+            ):
+                lat, lng, used_city_fallback = precise_lat, precise_lng, False
+                post_id = int(row_value(row, "id") or 0)
+                if post_id:
+                    repaired_coordinates.append((lat, lng, post_id))
         if used_city_fallback:
             item["lat"] = lat
             item["lng"] = lng
             item["locationApproximate"] = True
+        else:
+            item["lat"] = lat
+            item["lng"] = lng
         distance = None
         if center_lat and center_lng and lat and lng:
             distance = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
@@ -18319,6 +18376,12 @@ def mobile_housing_posts(
         else:
             rank = 0
         ranked_payloads.append((rank, float(item.get("distanceMiles") if item.get("distanceMiles") is not None else 9999), item))
+    if repaired_coordinates:
+        with db() as con:
+            con.executemany(
+                "UPDATE accommodation_posts SET lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                repaired_coordinates,
+            )
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
     ranked_page = ranked_payloads[offset:offset + limit] if area or radius_search else ranked_payloads[:limit]
     matched_posts = [item for _, _, item in ranked_page]
@@ -23889,6 +23952,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/community":
             self.api_mobile_community(parsed)
             return
+        if parsed.path == "/api/mobile/community/user":
+            self.api_mobile_community_user(parsed)
+            return
         if parsed.path == "/community" or re.fullmatch(r"/community/[A-Za-z0-9_-]+", parsed.path):
             self.community_share_page(parsed)
             return
@@ -24217,6 +24283,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
             "/api/mobile/community/guest-message": self.api_mobile_community_guest_message,
             "/api/mobile/community/answer": self.api_mobile_create_community_answer,
+            "/api/mobile/community/answer/update": self.api_mobile_update_community_answer,
             "/api/mobile/community/react": self.api_mobile_react_community,
             "/api/mobile/community/save": self.api_mobile_save_community_post,
             "/api/mobile/community/report": self.api_mobile_report_community,
@@ -25477,7 +25544,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ) if value
         ) or accommodation_form_location_query(form)
         refresh_accommodation_location_cache((form.get("city") or form.get("city_area_zip") or location_query).strip())
-        location_point = accommodation_location_point(location_query)
+        has_street_address = bool((form.get("street_address") or "").strip())
+        location_point = (
+            precise_accommodation_location_point(location_query)
+            if has_street_address
+            else accommodation_location_point(location_query)
+        )
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         post_country = resolve_accommodation_country(
@@ -36411,6 +36483,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         posts = [mobile_housing_post_summary(post) for post in get_accommodation_posts_for_user(user_id)]
         self.send_json({"ok": True, "posts": posts})
 
+    def api_mobile_community_user(self, parsed: urllib.parse.ParseResult) -> None:
+        """Return only member-visible identity fields and current public listings."""
+        params = urllib.parse.parse_qs(parsed.query)
+        user_id = int(float_from_value((params.get("user_id", ["0"])[0] or "0")))
+        if user_id <= 0:
+            self.send_json({"ok": False, "message": "Member not found."}, 404)
+            return
+        with db() as con:
+            user = con.execute(
+                "SELECT id, name, profile_photo_url FROM users WHERE id = ? AND guest_account = 0 LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if not user:
+                self.send_json({"ok": False, "message": "Member not found."}, 404)
+                return
+            rows = con.execute(
+                """
+                SELECT posts.*, users.name AS owner_name, users.profile_photo_url AS owner_photo,
+                       (SELECT image_url FROM accommodation_post_images images
+                        WHERE images.post_id = posts.id ORDER BY images.sort_order, images.id LIMIT 1) AS preview_image_url
+                FROM accommodation_posts posts
+                JOIN users ON users.id = posts.user_id
+                WHERE posts.user_id = ? AND posts.visibility_status = 'ACTIVE'
+                  AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))
+                ORDER BY posts.created_at DESC, posts.id DESC
+                LIMIT 30
+                """,
+                (user_id,),
+            ).fetchall()
+        listings = mobile_housing_posts_for_viewer([mobile_housing_post_payload(row) for row in rows], 0)
+        self.send_json({
+            "ok": True,
+            "profile": {
+                "id": user_id,
+                "name": clean_text_value(row_value(user, "name"), 120) or "FairFares member",
+                "photoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), user_id),
+                "listings": listings,
+            },
+        })
+
     def api_mobile_rides(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
@@ -37935,6 +38047,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         remaining = max(0, 6 - guest_usage_after) if guest else None
         self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id, "guestRemaining": remaining}, 201)
 
+    def api_mobile_update_community_answer(self) -> None:
+        user = self.current_user()
+        guest = None if user else self.current_community_guest()
+        if not user and not guest:
+            self.send_json({"ok": False, "error": "A guest session or login is required to edit this comment."}, 401)
+            return
+        author_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
+        payload = self.read_json_body()
+        answer_public_id = clean_text_value(payload.get("answerId"), 80)
+        body = clean_multiline_text_value(payload.get("body"), 1800)
+        if len(body) < 2:
+            self.send_json({"ok": False, "error": "A comment must contain at least two characters."}, 400)
+            return
+        with db() as con:
+            answer = con.execute(
+                """SELECT answers.id, posts.status AS post_status, posts.community_id,
+                          communities.visibility AS community_visibility
+                   FROM ask_community_answers answers
+                   JOIN ask_community_posts posts ON posts.id = answers.post_id
+                   LEFT JOIN chat_communities communities ON communities.id = posts.community_id
+                   WHERE answers.public_id = ? AND answers.author_id = ? AND answers.status = 'PUBLISHED'""",
+                (answer_public_id, author_id),
+            ).fetchone()
+            if not answer or str(row_value(answer, "post_status") or "") not in {"PUBLISHED", "LOCKED"}:
+                self.send_json({"ok": False, "error": "You can only edit your own active comment."}, 403)
+                return
+            if (
+                str(row_value(answer, "community_visibility") or "").upper() == "PRIVATE"
+                and not chat_group_member_role(con, int(row_value(answer, "community_id") or 0), author_id)
+            ):
+                self.send_json({"ok": False, "error": "Rejoin this private group before editing its comments."}, 403)
+                return
+            con.execute(
+                "UPDATE ask_community_answers SET body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (body, int(answer["id"])),
+            )
+        self.send_json({"ok": True, "answerId": answer_public_id, "body": body})
+
     def api_mobile_community_guest_session(self) -> None:
         if self.current_user():
             self.send_json({"ok": True, "registered": True, "remaining": None})
@@ -38434,7 +38584,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ) if value
         )
         refresh_accommodation_location_cache(city or location_query)
-        location_point = accommodation_location_point(location_query)
+        location_point = (
+            precise_accommodation_location_point(location_query)
+            if street_address
+            else accommodation_location_point(location_query)
+        )
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         resolved_location_label = dedupe_repeated_location_label(str(location_point.get("label") or ""))

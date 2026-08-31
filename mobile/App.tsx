@@ -16,7 +16,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -1804,7 +1804,9 @@ function FairFaresApp() {
     const parts = suggestion.label.split(",").map((part) => part.trim()).filter(Boolean);
     const stateZip = parts.at(-1)?.match(/^([A-Z]{2}|[A-Za-z]+(?:\s+[A-Za-z]+)*)(?:\s+(\d{5}(?:-\d{4})?))?$/);
     const stateLabel = stateZip?.[1].length === 2 ? stateZip[1].toUpperCase() : stateZip?.[1];
-    const suggestedCity = stateZip && parts.length >= 3 ? `${parts.at(-2)}, ${stateLabel}` : listingForm.city;
+    const suggestedCity = stateZip && parts.length >= 2
+      ? `${parts.length === 2 ? parts[0] : parts.at(-2)}, ${stateLabel}`
+      : listingForm.city;
     const streetParts = stateZip && parts.length >= 3 ? parts.slice(0, -2) : parts;
     const streetAddress = streetParts.join(", ") || suggestion.main || suggestion.label;
     const zipCode = stateZip?.[2] || suggestion.label.match(/\b\d{5}(?:-\d{4})?\b/)?.[0] || listingForm.zipCode;
@@ -2553,6 +2555,20 @@ function FairFaresApp() {
           setPendingRide(null);
           setPendingGroupInvite(`community:${communityId}`);
           setActiveTab("messenger");
+        }}
+        onOpenUserChat={(userId) => {
+          void (async () => {
+            try {
+              const opened = await openChatWithPerson(userId);
+              setData((current) => current ? { ...current, chat: { ...current.chat, conversations: [opened.conversation, ...current.chat.conversations.filter((item) => item.id !== opened.conversation.id)] } } : current);
+              setPendingPost(null);
+              setPendingRide(null);
+              setNotificationConversationId(String(opened.conversation.id));
+              setActiveTab("messenger");
+            } catch (error) {
+              Alert.alert("Chitthi unavailable", error instanceof Error ? error.message : "Could not open this connection.");
+            }
+          })();
         }}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         initialPostId={linkedCommunityPostId}

@@ -107,6 +107,92 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
 
+    def test_comment_author_can_edit_but_other_users_cannot(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        status, answered = self.request(
+            "POST", "/api/mobile/community/answer", "member-token",
+            {"postId": post_id, "body": "My original comment."},
+        )
+        self.assertEqual(status, 201)
+        answer_id = answered["answerId"]
+
+        denied_status, _ = self.request(
+            "POST", "/api/mobile/community/answer/update", "outsider-token",
+            {"answerId": answer_id, "body": "Trying to replace someone else's comment."},
+        )
+        self.assertEqual(denied_status, 403)
+
+        edited_status, edited = self.request(
+            "POST", "/api/mobile/community/answer/update", "member-token",
+            {"answerId": answer_id, "body": "My corrected comment."},
+        )
+        self.assertEqual(edited_status, 200)
+        self.assertEqual(edited["body"], "My corrected comment.")
+        _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}", "member-token")
+        answer = next(item for item in detail["posts"][0]["answers"] if item["id"] == answer_id)
+        self.assertEqual(answer["body"], "My corrected comment.")
+        self.assertTrue(answer["canEdit"])
+        self.assertNotEqual(answer["updatedAt"], "")
+        self.assertEqual(detail["posts"][0]["latestAnswer"]["body"], "My corrected comment.")
+
+        accepted_status, _ = self.request(
+            "POST", "/api/mobile/community/accept-answer", "owner-token",
+            {"postId": post_id, "answerId": answer_id},
+        )
+        self.assertEqual(accepted_status, 200)
+        accepted_edit_status, _ = self.request(
+            "POST", "/api/mobile/community/answer/update", "member-token",
+            {"answerId": answer_id, "body": "My corrected accepted comment."},
+        )
+        self.assertEqual(accepted_edit_status, 200)
+
+        with app.db() as con:
+            con.execute("UPDATE ask_community_posts SET status = 'DELETED' WHERE public_id = ?", (post_id,))
+        deleted_post_status, _ = self.request(
+            "POST", "/api/mobile/community/answer/update", "member-token",
+            {"answerId": answer_id, "body": "This hidden comment must not change."},
+        )
+        self.assertEqual(deleted_post_status, 403)
+
+    def test_guest_can_edit_only_with_the_original_guest_session(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, first_guest = self.request(
+            "POST", "/api/mobile/community/guest-session",
+            payload={"installationId": "comment-edit-owner-installation"},
+        )
+        _, second_guest = self.request(
+            "POST", "/api/mobile/community/guest-session",
+            payload={"installationId": "comment-edit-other-installation"},
+        )
+        status, answered = self.guest_request(
+            "POST", "/api/mobile/community/answer", first_guest["token"],
+            {"postId": post_id, "body": "Guest comment before correction."},
+        )
+        self.assertEqual(status, 201)
+        answer_id = answered["answerId"]
+
+        denied_status, _ = self.guest_request(
+            "POST", "/api/mobile/community/answer/update", second_guest["token"],
+            {"answerId": answer_id, "body": "Different guest edit attempt."},
+        )
+        self.assertEqual(denied_status, 403)
+        short_status, _ = self.guest_request(
+            "POST", "/api/mobile/community/answer/update", first_guest["token"],
+            {"answerId": answer_id, "body": "x"},
+        )
+        self.assertEqual(short_status, 400)
+        edited_status, _ = self.guest_request(
+            "POST", "/api/mobile/community/answer/update", first_guest["token"],
+            {"answerId": answer_id, "body": "Guest comment after correction."},
+        )
+        self.assertEqual(edited_status, 200)
+        _, detail = self.guest_request("GET", f"/api/mobile/community?postId={post_id}", first_guest["token"])
+        answer = next(item for item in detail["posts"][0]["answers"] if item["id"] == answer_id)
+        self.assertEqual(answer["body"], "Guest comment after correction.")
+        self.assertTrue(answer["canEdit"])
+
     def test_guest_identity_allows_six_comments_then_requires_signup(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]
@@ -662,6 +748,32 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(detail["posts"][0]["answerCount"], 1)
         self.assertEqual(detail["posts"][0]["answers"][0]["id"], comment["answerId"])
 
+    def test_public_member_profile_exposes_only_identity_and_active_listings(self):
+        with app.db() as con:
+            con.execute("UPDATE users SET profile_photo_url = '/uploads/owner.jpg' WHERE id = ?", (self.owner_id,))
+            for public_id, status, expires_at in (
+                ("PROFILE-ACTIVE", "ACTIVE", "2099-12-31 23:59:59"),
+                ("PROFILE-HIDDEN", "PAUSED", "2099-12-31 23:59:59"),
+                ("PROFILE-EXPIRED", "ACTIVE", "2020-01-01 00:00:00"),
+            ):
+                con.execute(
+                    """INSERT INTO accommodation_posts
+                       (public_id, user_id, post_mode, category, title, description,
+                        city, city_area_zip, rent_min, visibility_status, expires_at)
+                       VALUES (?, ?, 'HAVE_PLACE', 'single_room', ?, 'Public description',
+                               'Dayton, OH', 'Dayton, OH', 800, ?, ?)""",
+                    (public_id, self.owner_id, public_id, status, expires_at),
+                )
+        status, payload = self.request("GET", f"/api/mobile/community/user?user_id={self.owner_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["profile"]["name"], "Owner")
+        self.assertEqual([item["id"] for item in payload["profile"]["listings"]], ["PROFILE-ACTIVE"])
+        self.assertNotIn("email", payload["profile"])
+        self.assertNotIn("phone", payload["profile"])
+
+        status, _ = self.request("GET", "/api/mobile/community/user?user_id=999999")
+        self.assertEqual(status, 404)
+
     def test_only_question_owner_can_accept_answer(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]
@@ -674,6 +786,7 @@ class CommunityFeatureTest(unittest.TestCase):
             cursor = con.execute("INSERT INTO chat_communities (public_id, name, kind, visibility, created_by_user_id) VALUES ('FFG-PRIVATE', 'Private neighbors', 'GROUP', 'PRIVATE', ?)", (self.owner_id,))
             group_id = int(cursor.lastrowid)
             con.execute("INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'OWNER')", (group_id, self.owner_id))
+            con.execute("INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')", (group_id, self.member_id))
         status, created = self.create_post(communityId="FFG-PRIVATE")
         self.assertEqual(status, 201)
         status, _ = self.create_post(token="outsider-token", communityId="FFG-PRIVATE")
@@ -682,6 +795,18 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertFalse(any(post["id"] == created["post"]["id"] for post in outsider_feed["posts"]))
         _, owner_feed = self.request("GET", "/api/mobile/community", "owner-token")
         self.assertTrue(any(post["id"] == created["post"]["id"] for post in owner_feed["posts"]))
+        answer_status, answered = self.request(
+            "POST", "/api/mobile/community/answer", "member-token",
+            {"postId": created["post"]["id"], "body": "Member-only group comment."},
+        )
+        self.assertEqual(answer_status, 201)
+        with app.db() as con:
+            con.execute("DELETE FROM chat_community_members WHERE community_id = ? AND user_id = ?", (group_id, self.member_id))
+        edit_status, _ = self.request(
+            "POST", "/api/mobile/community/answer/update", "member-token",
+            {"answerId": answered["answerId"], "body": "Edit after leaving private group."},
+        )
+        self.assertEqual(edit_status, 403)
 
     def test_reporting_own_content_is_rejected_and_other_report_is_deduplicated(self):
         _, created = self.create_post()

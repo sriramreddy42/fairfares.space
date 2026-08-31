@@ -106,6 +106,33 @@ class HousingLocationSearchTest(unittest.TestCase):
         refreshed_listing = next(item for item in refreshed if item["id"] == "PROFILE-PHOTO")
         self.assertEqual(refreshed_listing["photoUrl"], updated_photo)
 
+    def test_formatted_street_address_is_not_repeated_with_city_and_zip(self):
+        self.assertEqual(
+            app.accommodation_address_label({
+                "street_address": "Dayton Street, Aurora, CO 80010",
+                "city": "Aurora, CO",
+                "zip_code": "80010",
+            }),
+            "Dayton Street, Aurora, CO 80010",
+        )
+        self.assertEqual(
+            app.accommodation_address_label({
+                "street_address": "2018 South Xenia Way",
+                "city": "Denver, CO",
+                "zip_code": "80231",
+            }),
+            "2018 South Xenia Way, Denver, CO, 80231",
+        )
+        self.assertEqual(
+            app.accommodation_address_label({
+                "street_address": "",
+                "city": "Bridgeport, CT",
+                "city_area_zip": "Bridgeport, CT",
+                "area_or_apartment": "Downtown Bridgeport",
+            }),
+            "Downtown Bridgeport, Bridgeport, CT",
+        )
+
     def test_plain_miami_does_not_resolve_to_miamisburg(self):
         options = app.accommodation_location_options("Miami")
         self.assertNotIn("Miamisburg", options["selectedLocation"])
@@ -290,6 +317,42 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(listing["locationApproximate"])
         self.assertAlmostEqual(listing["lat"], 39.7589, places=4)
         self.assertLessEqual(listing["distanceMiles"], 25)
+
+    @patch.object(
+        app,
+        "accommodation_location_point",
+        return_value={"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903, "source": "test"},
+    )
+    @patch.object(
+        app,
+        "precise_accommodation_location_point",
+        return_value={"label": "2018 South Xenia Way, Denver, CO 80231", "lat": 39.6821, "lng": -104.8862, "source": "google-address"},
+    )
+    def test_stale_listing_coordinates_are_repaired_from_full_street_address(self, _mock_precise, _mock_city):
+        self.insert_post(
+            "STALE-STREET",
+            "Room with exact address",
+            "Denver, CO",
+            "Indian Creek",
+            51.4805847,
+            -0.2655634,
+        )
+        with app.db() as con:
+            con.execute(
+                "UPDATE accommodation_posts SET street_address = '2018 South Xenia Way', zip_code = '80231' WHERE public_id = 'STALE-STREET'"
+            )
+
+        results = app.mobile_housing_posts(city="Denver, CO", need="need_place", limit=30)
+
+        listing = next(item for item in results if item["id"] == "STALE-STREET")
+        self.assertNotIn("locationApproximate", listing)
+        self.assertAlmostEqual(listing["lat"], 39.6821, places=4)
+        self.assertAlmostEqual(listing["lng"], -104.8862, places=4)
+        self.assertGreater(listing["distanceMiles"], 0)
+        with app.db() as con:
+            saved = con.execute("SELECT lat, lng FROM accommodation_posts WHERE public_id = 'STALE-STREET'").fetchone()
+        self.assertAlmostEqual(float(saved["lat"]), 39.6821, places=4)
+        self.assertAlmostEqual(float(saved["lng"]), -104.8862, places=4)
 
     @patch.object(
         app,

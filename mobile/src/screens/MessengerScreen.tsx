@@ -681,6 +681,10 @@ function messageSelectionKey(message: ChatMessage) {
   return message.localClientMessageId || String(message.id);
 }
 
+function messageCanDelete(message: ChatMessage) {
+  return Boolean(message.mine && (message.canDelete ?? message.canEdit));
+}
+
 function shareableMessageText(message: ChatMessage) {
   const prefix = message.senderName ? `${message.senderName}: ` : "";
   if (message.type === "IMAGE") return `${prefix}📷 ${message.text || "Photo"}`;
@@ -698,6 +702,16 @@ function isEncryptedPlaceholder(value: string) {
 
 function encryptedOverviewPreview(clearText: string) {
   if (!clearText) return "New letter";
+  if (clearText.startsWith("FFPRIVATE:")) {
+    try {
+      const privateReply = JSON.parse(clearText.slice(10)) as { text?: unknown };
+      const text = typeof privateReply.text === "string" ? privateReply.text.trim() : "";
+      return text || "Private reply";
+    } catch {
+      // Transport metadata must never be exposed in the conversation list.
+      return "Private reply";
+    }
+  }
   if (clearText.startsWith("FFFORWARD:")) {
     try {
       const forwarded = JSON.parse(clearText.slice(10)) as { text?: unknown };
@@ -719,6 +733,7 @@ function encryptedOverviewPreview(clearText: string) {
       return "New letter";
     }
   }
+  if (/^FF[A-Z]+:/.test(clearText)) return "Secure message";
   if (clearText.startsWith("{")) {
     try {
       const attachment = JSON.parse(clearText) as { kind?: string; caption?: string; fileName?: string };
@@ -1305,7 +1320,7 @@ function decodePrivateReply(clearText: string): { text: string; context: Private
       }
     };
   } catch {
-    return { text: clearText, context: null };
+    return { text: "Private reply", context: null };
   }
 }
 
@@ -2751,7 +2766,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const keyPayload = await getChatDeviceKeys(item.conversationId);
           if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
           await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
-          const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys);
+          const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys, encryptedOverviewPreview(clearText));
           await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
           const response = await sendEncryptedChatMessage(item.conversationId, refreshedEnvelopes, item.clientMessageId, false, item.replyToMessageId || 0, "", item.mentionedUserIds || []);
           await removeEncryptedOutboxItem(userId, item.clientMessageId);
@@ -2760,7 +2775,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               const withoutServerDuplicate = current.filter((message) => message.id !== response.message.id || message.localClientMessageId === item.clientMessageId);
               const hasLocal = withoutServerDuplicate.some((message) => message.localClientMessageId === item.clientMessageId);
               const decoded = decodePrivateReply(clearText);
-              const sentMessage = { ...response.message, text: decoded.text, canEdit: Boolean(response.message.canEdit && !decoded.context), metadata: { ...response.message.metadata, encrypted: true, privateReply: decoded.context || undefined } };
+              const sentMessage = { ...response.message, text: decoded.text, canEdit: Boolean(response.message.canEdit && !decoded.context), canDelete: Boolean(response.message.canEdit), metadata: { ...response.message.metadata, encrypted: true, privateReply: decoded.context || undefined } };
               return hasLocal
                 ? withoutServerDuplicate.map((message) => message.localClientMessageId === item.clientMessageId ? sentMessage : message)
                 : [...withoutServerDuplicate, sentMessage];
@@ -2857,19 +2872,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               ...message,
               type: attachmentKind,
               text: attachmentInfo.caption || "",
+              canEdit: false,
+              canDelete: Boolean(message.mine && message.canEdit),
               metadata: { ...message.metadata, encrypted: true, forwarded: Boolean(attachmentInfo.forwarded), kind: attachmentKind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, encryptedRecipientDeviceId, caption: attachmentInfo.caption, thumbnailDataUrl: attachmentInfo.thumbnailBase64 ? `data:image/jpeg;base64,${attachmentInfo.thumbnailBase64}` : undefined, imageWidth: attachmentInfo.imageWidth, imageHeight: attachmentInfo.imageHeight, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
             };
           }
           if (clearText.startsWith("FFFORWARD:")) {
             const forwarded = JSON.parse(clearText.slice(10)) as { text?: string };
-            return { ...message, text: String(forwarded.text || ""), canEdit: false, metadata: { ...message.metadata, encrypted: true, forwarded: true } };
+            return { ...message, text: String(forwarded.text || ""), canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true, forwarded: true } };
           }
           if (clearText.startsWith("FFRICH:")) {
             const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
-            return { ...message, type: rich.type, text: "", canEdit: false, metadata: { ...rich.metadata, encrypted: true } };
+            return { ...message, type: rich.type, text: "", canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...rich.metadata, encrypted: true } };
+          }
+          if (/^FF[A-Z]+:/.test(clearText) && !clearText.startsWith("FFPRIVATE:")) {
+            return { ...message, text: "Secure message", canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
           }
           const privateReply = decodePrivateReply(clearText);
-          return { ...message, text: privateReply.text, canEdit: Boolean(message.mine && message.canEdit && !privateReply.context), metadata: { ...message.metadata, encrypted: true, privateReply: privateReply.context || undefined } };
+          return { ...message, text: privateReply.text, canEdit: Boolean(message.mine && message.canEdit && !privateReply.context), canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true, privateReply: privateReply.context || undefined } };
         } catch {
           // A corrupt, expired, or old-device envelope must affect only that
           // message. Previously it rejected Promise.all and exposed encrypted
@@ -4157,6 +4177,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             ...response.message,
             text: cleanMessage,
             canEdit: Boolean(response.message.canEdit && !privateReplySnapshot),
+            canDelete: Boolean(response.message.canEdit),
             metadata: { ...response.message.metadata, encrypted: true, privateReply: privateReplySnapshot || undefined }
           };
           setMessages((current) => {
@@ -4992,7 +5013,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi letter";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
-    const message = { ...response.message, type, text: "", canEdit: false, metadata: { ...metadata, encrypted: true } } as ChatMessage;
+    const message = { ...response.message, type, text: "", canEdit: false, canDelete: Boolean(response.message.canEdit), metadata: { ...metadata, encrypted: true } } as ChatMessage;
     setMessages((current) => mergeThreadHistoryMessages(current, [message]));
     return message;
   }
@@ -5506,7 +5527,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   async function deleteMessage(message: ChatMessage) {
-    if (!activeConversationId || !message.canEdit) return;
+    if (!activeConversationId || !messageCanDelete(message)) return;
     try {
       await deleteChatMessage(activeConversationId, message.id);
       setMessages((current) => current.filter((item) => item.id !== message.id));
@@ -6334,7 +6355,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }} accessibilityRole="button" accessibilityLabel="Copy"><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)} accessibilityRole="button" accessibilityLabel="Select"><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
                   {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }} accessibilityRole="button" accessibilityLabel="Edit"><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
-                  {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }} accessibilityRole="button" accessibilityLabel="Delete"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
+                  {messageCanDelete(actionMessage) ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }} accessibilityRole="button" accessibilityLabel="Delete"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
                   {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }} accessibilityRole="button" accessibilityLabel="Report"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
                 </Pressable>
               </Pressable>
@@ -6461,7 +6482,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   const selected = selectedForwardConversationIds.includes(conversation.id);
                   return <TouchableOpacity key={conversation.id} disabled={forwardingMessages} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
                     <View style={styles.forwardPickerAvatar}><InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject} imageStyle={styles.forwardPickerAvatarImage} textStyle={styles.forwardPickerAvatarText} /></View>
-                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : conversation.lastMessage || "Chitthi conversation"}</Text></View>
+                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : safeConversationPreview(conversation)}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
                   </TouchableOpacity>;
                 })}

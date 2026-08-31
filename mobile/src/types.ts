@@ -7,6 +7,7 @@ export type HousingPost = {
   category: string;
   categoryLabel: string;
   location: string;
+  addressLabel?: string;
   country?: string;
   area: string;
   photoUrl?: string;
@@ -20,6 +21,7 @@ export type HousingPost = {
   distanceMiles: number | null;
   lat: number;
   lng: number;
+  locationApproximate?: boolean;
   imageUrl: string;
   images: string[];
   posterName?: string;
@@ -197,6 +199,7 @@ export type ChatMessage = {
   editedAt: string;
   deletedAt: string;
   canEdit: boolean;
+  canDelete?: boolean;
   status: "pending" | "relayed" | "failed" | "sent" | "delivered" | "seen" | "";
   localClientMessageId?: string;
 };
@@ -223,6 +226,13 @@ export type CommunityAuthor = {
   id: number;
   name: string;
   photoUrl: string;
+};
+
+export type CommunityUserProfile = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  listings: HousingPost[];
 };
 
 export type CommunityAnswer = {
