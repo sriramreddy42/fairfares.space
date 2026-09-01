@@ -43,6 +43,10 @@ services:
       # issued to unrelated applications remain rejected.
       - key: GOOGLE_OAUTH_CLIENT_IDS
         value: "41774403974-u83lgq8j6edpthtrjnn5f2de5o2vaovo.apps.googleusercontent.com,41774403974-cl5760k73380elrfjpl53l0ar00og3tg.apps.googleusercontent.com,41774403974-asj11531ip4gakvt75ijvr8n58ies1kj.apps.googleusercontent.com"
+      # The public website still uses its original Web client. Declare it in
+      # the Blueprint instead of relying on an untracked manual Render value.
+      - key: GOOGLE_WEB_CLIENT_ID
+        value: "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com"
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_AGENT_MCP_SERVERS

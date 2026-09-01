@@ -20,6 +20,7 @@ class SocialAuthConfigTest(unittest.TestCase):
         }
         render_config = (root / "render.yaml").read_text()
         match = re.search(r"- key: GOOGLE_OAUTH_CLIENT_IDS\s+value: [\"']([^\"']+)[\"']", render_config)
+        website_match = re.search(r"- key: GOOGLE_WEB_CLIENT_ID\s+value: [\"']([^\"']+)[\"']", render_config)
 
         self.assertTrue(android_clients, "FairFares Android has no Google OAuth clients configured")
         self.assertIsNotNone(match, "Render must explicitly declare the Google OAuth audience allow-list")
@@ -28,6 +29,9 @@ class SocialAuthConfigTest(unittest.TestCase):
             android_clients.issubset(render_clients),
             "Render's Google audience allow-list drifted from mobile/google-services.json",
         )
+        self.assertIsNotNone(website_match, "Render must explicitly preserve the website Google client")
+        self.assertTrue(website_match.group(1).endswith(".apps.googleusercontent.com"))
+        self.assertNotIn(website_match.group(1), android_clients)
 
     def test_owned_apple_bundle_ids_survive_stale_environment_override(self):
         previous = os.environ.get("APPLE_SIGN_IN_CLIENT_IDS")
