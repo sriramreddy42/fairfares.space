@@ -1500,7 +1500,7 @@ async function authorizeEncryptedMultipartPart(uploadId: string, partNumber: num
 }
 
 async function getEncryptedMultipartStatus(uploadId: string) {
-  return request<{ ok: boolean; parts: CompletedMultipartPart[] }>("/api/chat/e2ee/attachments/multipart/status", {
+  return request<{ ok: boolean; parts: CompletedMultipartPart[]; completed?: boolean; restarted?: boolean }>("/api/chat/e2ee/attachments/multipart/status", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId })
   }, { attempts: 3 });
 }
@@ -1568,6 +1568,10 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
     }
   }
   const remote = await getEncryptedMultipartStatus(authorization.uploadId);
+  if (remote.completed) {
+    onProgress?.(1);
+    return;
+  }
   const completed = new Map(remote.parts.map((part) => [part.partNumber, part]));
   const pendingPartNumbers = Array.from({ length: partCount }, (_, index) => index + 1).filter((partNumber) => {
     const expectedSize = partNumber < partCount ? partSize : source.size - partSize * (partCount - 1);

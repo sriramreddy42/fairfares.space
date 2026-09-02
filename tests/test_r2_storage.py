@@ -12,6 +12,10 @@ os.environ.setdefault("FAIRFARES_SKIP_BOOTSTRAP", "1")
 import app
 
 
+class NoSuchUploadError(Exception):
+    response = {"Error": {"Code": "NoSuchUpload"}}
+
+
 class FakeR2Client:
     def __init__(self):
         self.objects = {}
@@ -69,7 +73,9 @@ class FakeR2Client:
         return etag
 
     def list_parts(self, **kwargs):
-        upload = self.multipart_uploads[kwargs["UploadId"]]
+        upload = self.multipart_uploads.get(kwargs["UploadId"])
+        if upload is None:
+            raise NoSuchUploadError("The specified multipart upload does not exist")
         return {"Parts": [
             {"PartNumber": number, "ETag": part["etag"], "Size": len(part["payload"])}
             for number, part in sorted(upload["parts"].items())
@@ -257,6 +263,19 @@ class R2StorageTest(unittest.TestCase):
             with app.db() as con:
                 upload = con.execute("SELECT * FROM chat_attachment_uploads WHERE public_id = ?", (authorization["uploadId"],)).fetchone()
             multipart_id = upload["multipart_upload_id"]
+            # R2 can independently discard a resumable session while our
+            # authorization record is still valid. Status must repair it
+            # instead of leaking NoSuchUpload as a backend exception.
+            client.multipart_uploads.pop(multipart_id)
+            repaired, repair_error = app.chitthi_multipart_status(upload_id=authorization["uploadId"], user_id=sender_id)
+            self.assertFalse(repair_error)
+            self.assertTrue(repaired["restarted"])
+            self.assertEqual(repaired["parts"], [])
+            with app.db() as con:
+                multipart_id = con.execute(
+                    "SELECT multipart_upload_id FROM chat_attachment_uploads WHERE public_id = ?", (authorization["uploadId"],)
+                ).fetchone()["multipart_upload_id"]
+            self.assertIn(multipart_id, client.multipart_uploads)
             completed_parts = []
             for number, payload in enumerate((encrypted[:8], encrypted[8:]), 1):
                 part_checksum = base64.b64encode(hashlib.md5(payload).digest()).decode()
@@ -279,6 +298,18 @@ class R2StorageTest(unittest.TestCase):
             self.assertFalse(completion_error)
             self.assertTrue(completion["completed"])
             self.assertEqual(client.get_object_calls, 0)
+            # Simulate R2 completing successfully while the process loses its
+            # response before recording multipart_completed_at.
+            with app.db() as con:
+                con.execute(
+                    "UPDATE chat_attachment_uploads SET multipart_completed_at = NULL WHERE public_id = ?",
+                    (authorization["uploadId"],),
+                )
+            reconciled, reconcile_error = app.chitthi_multipart_status(
+                upload_id=authorization["uploadId"], user_id=sender_id,
+            )
+            self.assertFalse(reconcile_error)
+            self.assertTrue(reconciled["completed"])
             envelopes = [
                 {"recipientUserId": sender_id, "recipientDeviceId": "sender-device", "senderPublicKey": sender_key, "nonce": "n1", "ciphertext": "c1"},
                 {"recipientUserId": recipient_id, "recipientDeviceId": "recipient-device", "senderPublicKey": sender_key, "nonce": "n2", "ciphertext": "c2"},

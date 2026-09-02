@@ -1411,6 +1411,84 @@ def list_chitthi_multipart_parts(*, upload_id: str, user_id: int) -> tuple[list[
     return [{"partNumber": int(part.get("PartNumber") or 0), "etag": str(part.get("ETag") or ""), "size": int(part.get("Size") or 0)} for part in parts], ""
 
 
+def storage_error_code(error: Exception) -> str:
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        details = response.get("Error")
+        if isinstance(details, dict) and details.get("Code"):
+            return str(details["Code"])
+    return type(error).__name__
+
+
+def chitthi_multipart_status(*, upload_id: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+    """Reconcile an app upload record with R2 without leaking storage exceptions."""
+    upload = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return None, "Multipart upload was not found or has expired."
+    if row_value(upload, "multipart_completed_at"):
+        return {"parts": [], "completed": True, "restarted": False}, ""
+    storage = r2_storage_client()
+    try:
+        response = storage.list_parts(
+            Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
+        )
+        parts = response.get("Parts") if isinstance(response.get("Parts"), list) else []
+        return {
+            "parts": [{"partNumber": int(part.get("PartNumber") or 0), "etag": str(part.get("ETag") or ""), "size": int(part.get("Size") or 0)} for part in parts],
+            "completed": False, "restarted": False,
+        }, ""
+    except Exception as error:
+        if storage_error_code(error) != "NoSuchUpload":
+            return None, "Could not inspect the encrypted multipart upload."
+
+    # Completion removes the R2 multipart session. A valid assembled object
+    # means only the response was lost, so recognize it without overwriting it.
+    try:
+        head = storage.head_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+        metadata = head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        if (int(head.get("ContentLength") or 0) == int(upload["expected_size"])
+                and secrets.compare_digest(str(metadata.get("upload-id") or ""), str(upload["public_id"]))):
+            with db() as con:
+                con.execute("UPDATE chat_attachment_uploads SET multipart_completed_at = CURRENT_TIMESTAMP WHERE id = ?", (int(upload["id"]),))
+            return {"parts": [], "completed": True, "restarted": False}, ""
+    except Exception:
+        pass
+
+    # If both the session and object vanished, retain the public upload ID used
+    # by mobile recovery state and replace only R2's internal session ID.
+    try:
+        created = storage.create_multipart_upload(
+            Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]),
+            ContentType="application/octet-stream", Metadata={"upload-id": str(upload["public_id"])},
+        )
+        replacement_id = str(created.get("UploadId") or "")
+        if not replacement_id:
+            return None, "Encrypted multipart storage did not return an upload identifier."
+        with db() as con:
+            updated = con.execute(
+                """UPDATE chat_attachment_uploads SET multipart_upload_id = ?
+                   WHERE id = ? AND multipart_upload_id = ? AND multipart_completed_at IS NULL""",
+                (replacement_id, int(upload["id"]), str(upload["multipart_upload_id"])),
+            )
+        if not updated.rowcount:
+            # Another status request repaired or completed the same upload
+            # first. Abort only our unused replacement so it cannot leak, then
+            # report the authoritative database state on the next retry.
+            try:
+                storage.abort_multipart_upload(
+                    Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=replacement_id,
+                )
+            except Exception:
+                pass
+            current = chitthi_pending_multipart_upload(upload_id=upload_id, user_id=user_id)
+            if current and row_value(current, "multipart_completed_at"):
+                return {"parts": [], "completed": True, "restarted": False}, ""
+            return None, "The encrypted multipart upload changed. Retry the upload."
+        return {"parts": [], "completed": False, "restarted": True}, ""
+    except Exception:
+        return None, "Could not restart the encrypted multipart upload."
+
+
 def complete_chitthi_multipart_upload(
     *, upload_id: str, user_id: int, completed_parts: list[dict[str, object]],
 ) -> tuple[dict[str, object] | None, str]:
@@ -27699,11 +27777,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to resume the encrypted upload."}, 401)
             return
         payload = self.read_json_body()
-        parts, error = list_chitthi_multipart_parts(upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]))
-        if parts is None:
+        status, error = chitthi_multipart_status(upload_id=str(payload.get("uploadId") or ""), user_id=int(user["id"]))
+        if status is None:
             self.send_json({"ok": False, "message": error}, 404)
             return
-        self.send_json({"ok": True, "parts": parts})
+        self.send_json({"ok": True, **status})
 
     def api_complete_encrypted_chat_attachment_multipart(self) -> None:
         user = self.current_user()
