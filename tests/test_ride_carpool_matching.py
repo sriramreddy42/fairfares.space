@@ -752,6 +752,32 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(dispatch["driverUserIds"], [self.driver_id])
         self.assertEqual(notified_offer_ids, {int(matching_driver["id"])})
 
+    @patch.object(app, "google_route_totals", return_value=None)
+    def test_new_offer_back_matches_existing_request(self, _mock_routes):
+        with app.db() as con:
+            request = self.insert_ride(
+                con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO",
+                pickup_date="2099-08-02",
+            )
+            offer = self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO",
+                pickup_date="2099-08-02",
+            )
+            matched = app.create_dispatch_for_ride_offer(con, offer)
+            notification = con.execute(
+                "SELECT * FROM ride_dispatch_notifications WHERE request_ride_post_id = ? AND driver_ride_post_id = ?",
+                (int(request["id"]), int(offer["id"])),
+            ).fetchone()
+
+        self.assertEqual(matched, 1)
+        self.assertIsNotNone(notification)
+        self.assertEqual(int(notification["driver_user_id"]), self.driver_id)
+
+    @patch.object(app, "google_accommodation_place_suggestions", return_value=[])
+    def test_missing_carpool_city_does_not_fall_back_to_denver(self, _mock_places):
+        suggestions = app.ride_place_suggestions("", "unin", limit=10)
+        self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))
+
     @patch.object(app, "send_mobile_push_for_users")
     def test_concurrent_driver_acceptance_has_exactly_one_winner(self, _mock_push):
         with app.db() as con:

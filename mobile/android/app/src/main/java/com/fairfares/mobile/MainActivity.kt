@@ -2,7 +2,6 @@ package com.fairfares.mobile
 
 import android.os.Build
 import android.os.Bundle
-import android.content.res.Configuration
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -12,25 +11,12 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
-  private var lastNightMode = Configuration.UI_MODE_NIGHT_UNDEFINED
-
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
-    lastNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
     super.onCreate(null)
-  }
-
-  override fun onConfigurationChanged(newConfig: Configuration) {
-    val nextNightMode = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
-    val appearanceChanged = lastNightMode != Configuration.UI_MODE_NIGHT_UNDEFINED && lastNightMode != nextNightMode
-    lastNightMode = nextNightMode
-    super.onConfigurationChanged(newConfig)
-    if (appearanceChanged) {
-      window.decorView.post { recreate() }
-    }
   }
 
   /**

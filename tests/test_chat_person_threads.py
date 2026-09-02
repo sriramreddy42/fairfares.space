@@ -131,6 +131,68 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(inbox[0]["otherName"], "Unmessaged Person")
         self.assertEqual(inbox[0]["lastMessage"], "Hello")
 
+    def test_direct_chat_exposes_only_other_participant_phone_and_groups_hide_it(self):
+        with app.db() as con:
+            first_user_id = self.insert_user(con, "First Caller", "caller-one@example.com")
+            second_user_id = self.insert_user(con, "Second Caller", "caller-two@example.com")
+            con.execute("UPDATE users SET phone = '+13035550101', phone_verified_at = CURRENT_TIMESTAMP WHERE id = ?", (first_user_id,))
+            con.execute("UPDATE users SET phone = '+19375550102', phone_verified_at = CURRENT_TIMESTAMP WHERE id = ?", (second_user_id,))
+            direct_id = self.insert_direct_conversation(con, first_user_id, second_user_id, 0, 1)
+
+            first_row = app.get_chat_conversation_for_user(con, direct_id, first_user_id)
+            second_row = app.get_chat_conversation_for_user(con, direct_id, second_user_id)
+            first_payload = app.chat_row_payload(first_row, first_user_id)
+            second_payload = app.chat_row_payload(second_row, second_user_id)
+
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name, visibility) VALUES ('CALL-GROUP', 'GROUP', 'Call group', 'PRIVATE')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject) VALUES ('CALL-GROUP-CHAT', 'GROUP', ?, 'Call group')",
+                (community_id,),
+            )
+            group_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                ((group_id, first_user_id), (group_id, second_user_id)),
+            )
+            con.executemany(
+                "INSERT INTO chat_community_members (community_id, user_id, role) VALUES (?, ?, 'MEMBER')",
+                ((community_id, first_user_id), (community_id, second_user_id)),
+            )
+            group_row = app.get_chat_conversation_for_user(con, group_id, first_user_id)
+            group_payload = app.chat_row_payload(group_row, first_user_id)
+
+        self.assertEqual(first_payload["otherPhone"], "+19375550102")
+        self.assertEqual(second_payload["otherPhone"], "+13035550101")
+        self.assertNotEqual(first_payload["otherPhone"], "+13035550101")
+        self.assertEqual(group_payload["otherPhone"], "")
+
+    def test_legacy_group_without_community_link_never_looks_like_an_individual(self):
+        with app.db() as con:
+            current_user_id = self.insert_user(con, "Current User", "legacy-group-current@example.com")
+            other_user_id = self.insert_user(con, "Misleading Person", "legacy-group-other@example.com")
+            con.execute("UPDATE users SET phone = '+19375550199', profile_photo_url = 'https://example.com/person.jpg' WHERE id = ?", (other_user_id,))
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('LEGACY-GROUP-CHAT', 'GROUP', 'Legacy Housing Group')"
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.executemany(
+                "INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)",
+                ((conversation_id, current_user_id), (conversation_id, other_user_id)),
+            )
+            row = app.get_chat_conversation_for_user(con, conversation_id, current_user_id)
+            payload = app.chat_row_payload(row, current_user_id)
+
+        self.assertEqual(payload["kind"], "GROUP")
+        self.assertEqual(payload["otherName"], "Legacy Housing Group")
+        self.assertEqual(payload["otherUserId"], 0)
+        self.assertEqual(payload["otherPhone"], "")
+        self.assertEqual(payload["otherPhotoUrl"], "")
+        self.assertFalse(payload["otherOnline"])
+        self.assertEqual(payload["otherLastSeenAt"], "")
+
     def test_direct_thread_disappears_when_its_only_message_is_deleted(self):
         with app.db() as con:
             current_user_id = self.insert_user(con, "Current User", "deleted-current@example.com")

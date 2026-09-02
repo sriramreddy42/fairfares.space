@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Modal, ScrollView, StyleProp, StyleSheet, Text, TouchableOpacity, View, ViewStyle } from "react-native";
+import { Keyboard, Modal, ScrollView, StyleProp, StyleSheet, Text, TouchableOpacity, View, ViewStyle } from "react-native";
 import { theme } from "../theme";
 
 type Props = {
@@ -79,7 +79,15 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
 
   return (
     <>
-      <TouchableOpacity style={[styles.field, darkSurface && styles.darkField, style]} onPress={() => setOpen(true)} accessibilityLabel={`${label}: ${display}`}>
+      <TouchableOpacity
+        style={[styles.field, darkSurface && styles.darkField, style]}
+        onPress={() => {
+          Keyboard.dismiss();
+          setOpen(true);
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${display}`}
+      >
         <View style={styles.fieldCopy}>
           <Text style={[styles.fieldLabel, darkSurface && styles.darkFieldLabel]}>{label}</Text>
           <Text style={[styles.fieldValue, darkSurface && styles.darkFieldValue, !value && styles.placeholder, !value && darkSurface && styles.darkPlaceholder]}>{display}</Text>

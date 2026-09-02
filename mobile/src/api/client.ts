@@ -12,6 +12,7 @@ import * as naclUtil from "tweetnacl-util";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { logDevelopmentPerformance, startDevelopmentPerformanceOperation } from "../utils/performanceDiagnostics";
 import { explicitUsState } from "../utils/locationRegion";
+import { manipulateImageSafely } from "../utils/imageManipulation";
 
 declare const process: {
   env: {
@@ -561,11 +562,10 @@ export async function getAuthenticatedImagePreviewUri(value: string) {
         }
       }
       if (!result) throw lastError instanceof Error ? lastError : new Error("Could not load photo preview.");
-      const resized = await ImageManipulator.manipulateAsync(
-        temporary,
-        [{ resize: { width: 720 } }],
-        { compress: 0.72, format: ImageManipulator.SaveFormat.JPEG }
-      );
+      const resized = await manipulateImageSafely(temporary, 720, {
+        compress: 0.72,
+        format: ImageManipulator.SaveFormat.JPEG
+      });
       await FileSystem.copyAsync({ from: resized.uri, to: destination });
       if (resized.uri !== temporary) await FileSystem.deleteAsync(resized.uri, { idempotent: true }).catch(() => undefined);
       return destination;
@@ -665,6 +665,7 @@ type RideSearchCoordinates = {
   originLng?: number | null;
   destinationLat?: number | null;
   destinationLng?: number | null;
+  pickupDate?: string;
 };
 
 function addFiniteParam(params: URLSearchParams, key: string, value: number | null | undefined) {
@@ -680,6 +681,7 @@ export async function getRides(city: string, origin = "", destination = "", ride
   addFiniteParam(params, "originLng", coordinates.originLng);
   addFiniteParam(params, "destinationLat", coordinates.destinationLat);
   addFiniteParam(params, "destinationLng", coordinates.destinationLng);
+  if (coordinates.pickupDate) params.set("pickupDate", coordinates.pickupDate);
   const payload = await request<{ ok: boolean; rides: RidePost[] }>(`/api/mobile/rides?${params.toString()}`);
   return payload.rides || [];
 }
@@ -1060,7 +1062,7 @@ export async function createCommunityPost(input: CommunityPostInput) {
   return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
 }
 
-export async function updateCommunityPost(postId: string, input: Pick<CommunityPostInput, "title" | "body" | "linkUrl" | "details">) {
+export async function updateCommunityPost(postId: string, input: Pick<CommunityPostInput, "title" | "body" | "linkUrl" | "details" | "images">) {
   return communityPostRequest<{ ok: boolean }>("/api/mobile/community/update", { postId, ...input });
 }
 

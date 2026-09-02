@@ -479,6 +479,171 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_housing_post_lifecycle_across_cities_and_images(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Housing Matrix Owner", "housing-matrix@example.com", "+13035550131", app.hash_password("HousingMatrixPassword123!")),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Housing Matrix Other", "housing-matrix-other@example.com", "+13035550132", app.hash_password("HousingMatrixOtherPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "housing-matrix@example.com",
+                "password": "HousingMatrixPassword123!",
+            })
+            _other_status, other_login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "housing-matrix-other@example.com",
+                "password": "HousingMatrixOtherPassword123!",
+            })
+
+            def save(payload, token=login["token"]):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                    data=json.dumps(payload).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.loads(response.read().decode("utf-8"))
+                except urllib.error.HTTPError as error:
+                    return error.code, json.loads(error.read().decode("utf-8"))
+
+            def search(city, token=""):
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/housing?city={urllib.parse.quote(city)}&limit=50",
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))["posts"]
+
+            base = {
+                "postMode": "NEED_PLACE", "category": "single_room",
+                "description": "Disposable cross-city API housing lifecycle test.",
+                "moveInDate": "2099-09-15", "rentMin": "700", "rentPeriod": "MONTH",
+                "accommodates": "1", "contactName": "Housing Matrix Owner",
+                "contactEmail": "housing-matrix@example.com", "contactPhone": "+13035550131",
+            }
+            cities = (
+                ("Denver, CO", "80203", "Capitol Hill", 39.7392, -104.9903),
+                ("Denver, NE", "68333", "Central", 40.6572, -96.7056),
+                ("Cincinnati, OH", "45202", "Downtown", 39.1031, -84.5120),
+            )
+            points = {
+                city: {"lat": lat, "lng": lng, "label": f"{area}, {city} {zip_code}, USA"}
+                for city, zip_code, area, lat, lng in cities
+            }
+
+            def location_point(value, *_args, **_kwargs):
+                text = str(value or "")
+                return next((point for city, point in points.items() if city in text), {})
+
+            created_ids = {}
+            with mock.patch.object(app, "refresh_accommodation_location_cache"), mock.patch.object(
+                app, "accommodation_location_point", side_effect=location_point
+            ):
+                for city, zip_code, area, _lat, _lng in cities:
+                    status, response = save({
+                        **base, "title": f"Need housing in {city}", "city": city,
+                        "zipCode": zip_code, "area": area,
+                    })
+                    self.assertEqual(status, 201, response)
+                    created_ids[city] = response["post"]["id"]
+
+            for city, _zip_code, _area, _lat, _lng in cities:
+                ids = {post["id"] for post in search(city)}
+                self.assertIn(created_ids[city], ids)
+                self.assertTrue(ids.isdisjoint({value for key, value in created_ids.items() if key != city}))
+
+            tiny_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            dayton_payload = {
+                **base,
+                "postMode": "HAVE_PLACE", "title": "Dayton room with photo",
+                "city": "Dayton, OH", "zipCode": "45402", "area": "Downtown",
+                "streetAddress": "1 Main St", "images": [tiny_png],
+            }
+            dayton_point = {"lat": 39.7589, "lng": -84.1916, "label": "1 Main St, Dayton, OH 45402, USA"}
+            with mock.patch.object(app, "refresh_accommodation_location_cache"), mock.patch.object(
+                app, "precise_accommodation_location_point", return_value=dayton_point
+            ):
+                dayton_status, dayton = save(dayton_payload)
+            self.assertEqual(dayton_status, 201, dayton)
+            dayton_id = dayton["post"]["id"]
+            self.assertEqual(len(dayton["post"]["images"]), 1)
+            retained_image = dayton["post"]["images"][0]
+
+            with mock.patch.object(app, "refresh_accommodation_location_cache"), mock.patch.object(
+                app, "precise_accommodation_location_point", return_value=dayton_point
+            ):
+                edited_status, edited = save({
+                    **dayton_payload, "listingId": dayton_id,
+                    "title": "Updated Dayton room", "images": [retained_image],
+                })
+            self.assertEqual(edited_status, 200, edited)
+            self.assertEqual(edited["post"]["id"], dayton_id)
+            self.assertEqual(edited["post"]["title"], "Updated Dayton room")
+            self.assertEqual(edited["post"]["images"], [retained_image])
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}{retained_image}", timeout=5
+            ) as image_response:
+                self.assertEqual(image_response.status, 200)
+                self.assertEqual(image_response.headers.get_content_type(), "image/png")
+                self.assertGreater(len(image_response.read()), 0)
+
+            forbidden_status, _forbidden = save(
+                {**dayton_payload, "listingId": dayton_id, "images": [retained_image]},
+                other_login["token"],
+            )
+            self.assertEqual(forbidden_status, 403)
+            missing_image_status, _missing_image = save({**dayton_payload, "images": []})
+            self.assertEqual(missing_image_status, 400)
+            past_date_status, _past_date = save({
+                **base, "title": "Past date", "city": "Denver, CO", "zipCode": "80203",
+                "area": "Capitol Hill", "moveInDate": "2020-01-01",
+            })
+            self.assertEqual(past_date_status, 400)
+            reversed_rent_status, _reversed_rent = save({
+                **base, "title": "Invalid rent", "city": "Denver, CO", "zipCode": "80203",
+                "area": "Capitol Hill", "rentMin": "900", "rentMax": "700",
+            })
+            self.assertEqual(reversed_rent_status, 400)
+            with mock.patch.object(app, "refresh_accommodation_location_cache") as refresh_location, mock.patch.object(
+                app, "accommodation_location_point"
+            ) as locate_invalid_state:
+                invalid_state_status, _invalid_state = save({
+                    **base, "title": "Invalid state", "city": "Denver, CE", "zipCode": "80203",
+                    "area": "Central",
+                })
+            self.assertEqual(invalid_state_status, 400)
+            refresh_location.assert_not_called()
+            locate_invalid_state.assert_not_called()
+
+            activity_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing/activity",
+                headers={"Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(activity_request, timeout=5) as response:
+                activity_ids = {post["id"] for post in json.loads(response.read().decode("utf-8"))["posts"]}
+            self.assertTrue(set(created_ids.values()) | {dayton_id} <= activity_ids)
+
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/community?city=Dayton%2C%20OH&category=HOUSING",
+                timeout=5,
+            ) as community_response:
+                community_posts = json.loads(community_response.read().decode("utf-8"))["posts"]
+            projected = next(post for post in community_posts if post.get("sourceId") == dayton_id)
+            self.assertEqual(projected["sourceKind"], "HOUSING")
+            self.assertEqual(projected["title"], "Updated Dayton room")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_profile_can_save_and_clear_optional_birthday(self):
         with app.db() as con:
             con.execute(

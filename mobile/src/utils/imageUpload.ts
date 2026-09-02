@@ -6,6 +6,7 @@ import Constants from "expo-constants";
 import { createVideoPlayer } from "expo-video";
 import { Platform } from "react-native";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
+import { manipulateImageSafely } from "./imageManipulation";
 
 // The thumbnail stays inside the per-device end-to-end encrypted descriptor;
 // it is never stored as a public image. Start at a useful chat-bubble
@@ -15,7 +16,6 @@ import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 const CHAT_THUMBNAIL_MAX_BYTES = 32_000;
 const IS_EXPO_GO = Constants.appOwnership === "expo";
 let mediaLibraryPickerActive = false;
-
 function isDetachedAndroidPicker(error: unknown): boolean {
   if (Platform.OS !== "android") return false;
   const candidates: unknown[] = [error];
@@ -39,6 +39,33 @@ function isDetachedAndroidPicker(error: unknown): boolean {
   return false;
 }
 
+async function launchAndroidMediaProvider(options: ImagePicker.ImagePickerOptions): Promise<ImagePicker.ImagePickerResult> {
+  const requestedMedia = Array.isArray(options.mediaTypes) ? options.mediaTypes : [options.mediaTypes];
+  const acceptsVideo = requestedMedia.includes("videos");
+  const fallback = await DocumentPicker.getDocumentAsync({
+    type: acceptsVideo ? ["image/*", "video/*"] : "image/*",
+    multiple: Boolean(options.allowsMultipleSelection),
+    copyToCacheDirectory: true
+  });
+  if (fallback.canceled) return { canceled: true, assets: null };
+  return {
+    canceled: false,
+    assets: fallback.assets.map((asset) => {
+      const videoByName = /\.(?:mp4|mov|m4v|webm|3gp|mkv)$/i.test(asset.name || "");
+      const isVideo = asset.mimeType?.startsWith("video/") || (!asset.mimeType && videoByName);
+      return {
+        uri: asset.uri,
+        width: 0,
+        height: 0,
+        type: isVideo ? "video" as const : "image" as const,
+        fileName: asset.name,
+        fileSize: asset.size,
+        mimeType: asset.mimeType || (isVideo ? "video/mp4" : "image/jpeg")
+      };
+    })
+  };
+}
+
 async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions): Promise<ImagePicker.ImagePickerResult> {
   // A fast double tap can otherwise attempt to present two PHPicker/activity
   // controllers at once. Treat the duplicate tap like a cancellation instead
@@ -46,6 +73,11 @@ async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions)
   if (mediaLibraryPickerActive) return { canceled: true, assets: null };
   mediaLibraryPickerActive = true;
   try {
+    // Expo Image Picker's Android ActivityResultLauncher can become detached
+    // after activity recreation, navigation, or an over-the-air JS reload.
+    // Android's system document/photo provider owns its launcher lifecycle and
+    // grants access only to selected files, so use it as the primary path.
+    if (Platform.OS === "android") return await launchAndroidMediaProvider(options);
     try {
       return await ImagePicker.launchImageLibraryAsync(options);
     } catch (error) {
@@ -55,33 +87,7 @@ async function launchPrivateMediaPicker(options: ImagePicker.ImagePickerOptions)
       // after permission state or an app upgrade changes. Recover once by
       // requesting access instead of surfacing a dead-end native error.
       if (isDetachedAndroidPicker(error)) {
-        // Some Android activity recreation paths can leave expo-image-picker's
-        // launcher detached. The Storage Access Framework is independently
-        // registered and gives the same user-controlled, per-file access.
-        const requestedMedia = Array.isArray(options.mediaTypes) ? options.mediaTypes : [options.mediaTypes];
-        const acceptsVideo = requestedMedia.includes("videos");
-        const fallback = await DocumentPicker.getDocumentAsync({
-          type: acceptsVideo ? ["image/*", "video/*"] : "image/*",
-          multiple: Boolean(options.allowsMultipleSelection),
-          copyToCacheDirectory: true
-        });
-        if (fallback.canceled) return { canceled: true, assets: null };
-        return {
-          canceled: false,
-          assets: fallback.assets.map((asset) => {
-            const videoByName = /\.(?:mp4|mov|m4v|webm|3gp|mkv)$/i.test(asset.name || "");
-            const isVideo = asset.mimeType?.startsWith("video/") || (!asset.mimeType && videoByName);
-            return {
-              uri: asset.uri,
-              width: 0,
-              height: 0,
-              type: isVideo ? "video" as const : "image" as const,
-              fileName: asset.name,
-              fileSize: asset.size,
-              mimeType: asset.mimeType || (isVideo ? "video/mp4" : "image/jpeg")
-            };
-          })
-        };
+        return await launchAndroidMediaProvider(options);
       }
       if (Platform.OS !== "ios" || !/permission|photo(?: library)? access|rejected/i.test(reason)) throw error;
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
@@ -104,7 +110,7 @@ export async function createLightweightChatThumbnail(uri: string) {
   let width = 720;
   let quality = 0.88;
   for (let attempt = 0; attempt < 7; attempt += 1) {
-    const thumbnail = await ImageManipulator.manipulateAsync(uri, [{ resize: { width } }], {
+    const thumbnail = await manipulateImageSafely(uri, width, {
       base64: true,
       compress: quality,
       format: ImageManipulator.SaveFormat.JPEG
@@ -200,6 +206,20 @@ function preferredImageEncoding() {
   };
 }
 
+export type PickedChatMedia = {
+  uri: string;
+  blob?: Blob;
+  name: string;
+  mimeType: string;
+  size: number;
+  thumbnailBase64: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  pickerAssetId?: string;
+  ownedCacheFile: boolean;
+  kind: "IMAGE" | "VIDEO";
+};
+
 async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: number, prefix: string, maxWidth: number, quality: number, maxBytes = 0) {
   const encoding = preferredImageEncoding();
   let currentWidth = maxWidth;
@@ -214,7 +234,7 @@ async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: numb
     // Unknown dimensions must be treated as potentially full-resolution;
     // otherwise fallback-selected camera photos bypass resizing entirely.
     const actions = !asset.width || asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
-    const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+    const compressed = await manipulateImageSafely(asset.uri, actions.length ? currentWidth : null, {
       base64: false,
       compress: currentQuality,
       format: encoding.format
@@ -274,7 +294,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
     let accepted = "";
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const actions = !asset.width || asset.width > currentWidth ? [{ resize: { width: currentWidth } }] : [];
-      const compressed = await ImageManipulator.manipulateAsync(asset.uri, actions, {
+      const compressed = await manipulateImageSafely(asset.uri, actions.length ? currentWidth : null, {
         base64: true,
         compress: currentQuality,
         format: encoding.format
@@ -318,7 +338,10 @@ export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62,
 }
 
 export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000, maxVideoBytes = 100_000_000) {
-  const selectionLimit = Math.max(1, Math.min(limit, 4));
+  // A batch cap protects the native picker and low-memory phones without
+  // imposing the old one-video/four-item product restriction. People can send
+  // another batch immediately; the composer processes this batch serially.
+  const selectionLimit = Math.max(1, Math.min(limit, 20));
   const result = await launchPrivateMediaPicker({
     allowsMultipleSelection: selectionLimit > 1,
     base64: false,
@@ -334,53 +357,41 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
   });
   if (result.canceled || !result.assets.length) return [];
   const selectedAssets = result.assets.slice(0, selectionLimit);
-  if (selectedAssets.filter((asset) => asset.type === "video").length > 1) {
-    if (Platform.OS !== "web") {
-      await Promise.all(selectedAssets.filter((asset) => asset.type === "video").map((asset) =>
-        FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined)
-      ));
-    }
-    throw new Error("Choose one video at a time. You can include photos with that video.");
-  }
   const videoLimit = Math.max(1_000_000, Math.min(100_000_000, maxVideoBytes));
-  const results = await Promise.allSettled(selectedAssets.map(async (asset, index) => {
-    if (asset.type !== "video") {
-      return compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes);
-    }
-    const blob = Platform.OS === "web" ? await fetch(asset.uri).then((response) => response.blob()) : undefined;
-    const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(asset.uri);
-    const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(asset.fileSize || 0));
-    if (!size) throw new Error("Could not determine the selected video size.");
-    if (size > videoLimit) {
+  const prepared: PickedChatMedia[] = [];
+  let firstFailure: unknown = null;
+  // Do not decode/compress a large batch concurrently. Sequential preparation
+  // keeps memory bounded and preserves exactly the order chosen by the user.
+  for (const [index, asset] of selectedAssets.entries()) {
+    try {
+      if (asset.type !== "video") {
+        prepared.push(await compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes));
+        continue;
+      }
+      const blob = Platform.OS === "web" ? await fetch(asset.uri).then((response) => response.blob()) : undefined;
+      const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(asset.uri);
+      const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(asset.fileSize || 0));
+      if (!size) throw new Error("Could not determine the selected video size.");
+      if (size > videoLimit) throw new Error(`This video is larger than the ${Math.round(videoLimit / 1_000_000)} MB encrypted-transfer limit currently enabled for your account.`);
+      const mimeType = asset.mimeType || "video/mp4";
+      prepared.push({
+        uri: asset.uri,
+        blob,
+        name: asset.fileName || `chitthi-video-${Date.now()}-${index + 1}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
+        mimeType,
+        size,
+        thumbnailBase64: "",
+        pickerAssetId: asset.assetId || undefined,
+        ownedCacheFile: Platform.OS !== "web",
+        kind: "VIDEO" as const
+      });
+    } catch (error) {
+      firstFailure ||= error;
       if (Platform.OS !== "web") await FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined);
-      throw new Error(`This video is larger than the ${Math.round(videoLimit / 1_000_000)} MB encrypted-transfer limit currently enabled for your account.`);
     }
-    const mimeType = asset.mimeType || "video/mp4";
-    return {
-      uri: asset.uri,
-      blob,
-      name: asset.fileName || `chitthi-video-${Date.now()}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
-      mimeType,
-      size,
-      thumbnailBase64: "",
-      pickerAssetId: asset.assetId || undefined,
-      ownedCacheFile: Platform.OS !== "web",
-      kind: "VIDEO" as const
-    };
-  }));
-  const failed = results.find((result) => result.status === "rejected");
-  if (failed) {
-    if (Platform.OS !== "web") {
-      await Promise.all(results.flatMap((result) => result.status === "fulfilled" && result.value.ownedCacheFile
-        ? [FileSystem.deleteAsync(result.value.uri, { idempotent: true }).catch(() => undefined)]
-        : []));
-    }
-    throw failed.reason;
   }
-  const prepared = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  // Photos are small and complete quickly. Send them before the encrypted
-  // video so a long native transcode/upload cannot make the rest look lost.
-  return prepared.sort((left, right) => Number(left.kind === "VIDEO") - Number(right.kind === "VIDEO"));
+  if (!prepared.length && firstFailure) throw firstFailure;
+  return prepared;
 }
 
 export async function takeChatPhoto(maxWidth = 1280, quality = 0.64, maxBytes = 400_000) {

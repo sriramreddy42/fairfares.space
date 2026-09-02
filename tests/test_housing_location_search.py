@@ -960,6 +960,68 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertIn("housing-mobile-card-image-empty", mobile_without_image)
         self.assertNotIn("trivago.com", mobile_without_image)
 
+    def test_unresolved_map_center_never_falls_back_to_denver(self):
+        with patch.object(app, "accommodation_location_point", return_value={}):
+            payload = app.accommodation_post_map_payload([], "", "")
+
+        self.assertEqual(payload["center"]["label"], "Selected area")
+        self.assertEqual((payload["center"]["lat"], payload["center"]["lng"]), (0.0, 0.0))
+
+    def test_unresolved_map_center_uses_returned_listing_location(self):
+        self.insert_post(
+            "CINCINNATI-MAP-CENTER",
+            "Cincinnati room",
+            "Cincinnati, OH",
+            "Downtown",
+            39.1031,
+            -84.5120,
+        )
+        with app.db() as con:
+            post = con.execute(
+                "SELECT * FROM accommodation_posts WHERE public_id = 'CINCINNATI-MAP-CENTER'"
+            ).fetchone()
+        with patch.object(app, "accommodation_location_point", return_value={}):
+            payload = app.accommodation_post_map_payload([post], "Unknown selected area", "")
+
+        self.assertIn("Cincinnati, OH", payload["center"]["label"])
+        self.assertEqual(
+            (payload["center"]["lat"], payload["center"]["lng"]),
+            (39.1031, -84.5120),
+        )
+
+    def test_city_state_matrix_keeps_same_named_cities_isolated(self):
+        locations = (
+            ("MATRIX-DENVER-CO", "Denver, CO", 39.7392, -104.9903),
+            ("MATRIX-DENVER-NE", "Denver, NE", 40.6572, -96.7056),
+            ("MATRIX-DENVER-NC", "Denver, NC", 35.5312, -81.0298),
+            ("MATRIX-CINCINNATI-OH", "Cincinnati, OH", 39.1031, -84.5120),
+        )
+        for public_id, city, lat, lng in locations:
+            self.insert_post(public_id, f"Temporary test listing in {city}", city, "Central", lat, lng)
+
+        for expected_id, city, lat, lng in locations:
+            with self.subTest(city=city):
+                results = app.mobile_housing_posts(
+                    city=city,
+                    radius=15,
+                    center_lat=lat,
+                    center_lng=lng,
+                    limit=50,
+                )
+                result_ids = {item["id"] for item in results}
+                self.assertIn(expected_id, result_ids)
+                self.assertTrue(
+                    result_ids.isdisjoint({item[0] for item in locations if item[0] != expected_id}),
+                    f"{city} returned a listing from another city/state: {result_ids}",
+                )
+
+        # A mistyped/unknown region must fail closed instead of quietly being
+        # interpreted as the best-known city with that name (Denver, CO).
+        invalid_region_ids = {
+            item["id"] for item in app.mobile_housing_posts(city="Denver, CE", limit=50)
+        }
+        self.assertNotIn("MATRIX-DENVER-CO", invalid_region_ids)
+
     def test_popular_ride_cities_stay_inside_selected_country(self):
         origin = {
             "address_components": [

@@ -22,6 +22,84 @@ class QuietHandler(app.FairFaresHandler):
 
 
 class ChatRealtimeTest(unittest.TestCase):
+    def test_new_group_photo_is_available_to_notification_extension(self):
+        # A notification service runs outside the signed-in app, so the group
+        # avatar URL must remain fetchable using only its short-lived signature.
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        photo_data_url = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+        community, error = app.create_chat_community(
+            self.sender_id,
+            "Brand New Photo Group",
+            photo_url=photo_data_url,
+        )
+        self.assertEqual(error, "")
+        self.assertIsNotNone(community)
+
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            conversation, conversation_error = app.get_or_create_community_conversation(
+                con, str(community["id"]), sender,
+            )
+            self.assertEqual(conversation_error, "")
+            is_group, group_name, community_id = app.chat_notification_conversation_context(con, conversation)
+
+        self.assertTrue(is_group)
+        self.assertEqual(group_name, "Brand New Photo Group")
+        self.assertGreater(community_id, 0)
+
+        server, thread = self.start_server()
+        try:
+            signed_url = app.chat_notification_group_avatar_url(
+                f"http://127.0.0.1:{server.server_port}", community_id,
+            )
+            with urllib.request.urlopen(signed_url, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "image/png")
+                self.assertEqual(response.headers.get("Cache-Control"), "private, no-store")
+                self.assertEqual(response.read(), png)
+
+            expired_at = int(app.time.time()) - 1
+            expired_signature = app.chat_notification_group_avatar_signature(community_id, expired_at)
+            expired_url = (
+                f"http://127.0.0.1:{server.server_port}/api/chat/notification-avatar"
+                f"?community={community_id}&expires={expired_at}&signature={expired_signature}"
+            )
+            with self.assertRaises(urllib.error.HTTPError) as expired_error:
+                urllib.request.urlopen(expired_url, timeout=3)
+            self.assertEqual(expired_error.exception.code, 404)
+
+            signed_query = signed_url.split("?", 1)[1]
+            tampered_url = (
+                f"http://127.0.0.1:{server.server_port}/api/chat/notification-avatar?"
+                + signed_query.replace(f"community={community_id}", f"community={community_id + 1}")
+            )
+            with self.assertRaises(urllib.error.HTTPError) as tampered_error:
+                urllib.request.urlopen(tampered_url, timeout=3)
+            self.assertEqual(tampered_error.exception.code, 404)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_legacy_group_type_without_link_resolves_group_avatar_context(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('LEGACY-AVATAR-GROUP', 'GROUP', 'Legacy Avatar Group', '/uploads/groups/legacy-avatar.jpg')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "UPDATE chat_conversations SET conversation_type = 'GROUP', community_id = NULL, subject = 'Legacy Avatar Group' WHERE id = ?",
+                (self.conversation_id,),
+            )
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone()
+            is_group, group_name, resolved_community_id = app.chat_notification_conversation_context(con, conversation)
+
+        self.assertTrue(is_group)
+        self.assertEqual(group_name, "Legacy Avatar Group")
+        self.assertEqual(resolved_community_id, community_id)
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")

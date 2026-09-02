@@ -154,10 +154,10 @@ const housingSearchPhrases = ["Search housing", "City or area"];
 const rideSearchPhrases = ["Search rides", "Where are you going?"];
 const rentalSearchPhrases = ["Search rental cars", "Airport pickup"];
 const cityLocalityPresets: Record<string, string[]> = {
-  denver: ["Downtown Denver", "Capitol Hill", "Cherry Creek", "Five Points", "LoDo", "RiNo", "Highlands", "DU Area", "Aurora", "Lakewood", "Boulder"],
-  "los angeles": ["Downtown LA", "Hollywood", "Koreatown", "Santa Monica", "Westwood", "Culver City", "Pasadena", "Glendale", "Long Beach", "Irvine"],
-  austin: ["Downtown Austin", "West Campus", "North Austin", "South Congress", "Riverside", "The Domain", "Round Rock", "Cedar Park"],
-  miami: ["Downtown Miami", "Brickell", "Wynwood", "Coral Gables", "Doral", "Miami Beach", "Aventura", "Kendall"]
+  "denver, co": ["Downtown Denver", "Capitol Hill", "Cherry Creek", "Five Points", "LoDo", "RiNo", "Highlands", "DU Area", "Aurora", "Lakewood", "Boulder"],
+  "los angeles, ca": ["Downtown LA", "Hollywood", "Koreatown", "Santa Monica", "Westwood", "Culver City", "Pasadena", "Glendale", "Long Beach", "Irvine"],
+  "austin, tx": ["Downtown Austin", "West Campus", "North Austin", "South Congress", "Riverside", "The Domain", "Round Rock", "Cedar Park"],
+  "miami, fl": ["Downtown Miami", "Brickell", "Wynwood", "Coral Gables", "Doral", "Miami Beach", "Aventura", "Kendall"]
 };
 const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Distance ↑", value: "distanceAsc" },
@@ -251,7 +251,7 @@ const rideServicePosters: Array<{
     type: "GENERAL_REQUEST",
     title: "General rides",
     subtitle: "Available soon",
-    stat: "Example: Denver to Union Station today at 6:00 PM",
+    stat: "Example: Downtown to the train station today at 6:00 PM",
     insight: "General rides will be available soon. For now, use Carpool for shared route matching and direct rider-driver agreement.",
     tint: "#243b73",
     glyph: "general",
@@ -265,7 +265,7 @@ const rideServicePosters: Array<{
     type: "CARPOOL_REQUEST",
     title: "Carpool",
     subtitle: "Shared route, shared cost",
-    stat: "Example: Denver to Colorado Springs or Denver to Cincinnati",
+    stat: "Example: Your city to a nearby city or a longer interstate route",
     insight: "Best when riders and drivers are already going the same direction. Useful for longer trips, airport runs, or shared commutes.",
     tint: "#0f5f4b",
     glyph: "carpool",
@@ -352,13 +352,13 @@ const timeOptions = Array.from({ length: 48 }, (_, index) => {
 function isoDateFromNow(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function addDays(dateText: string, days: number) {
   const date = new Date(`${dateText}T00:00:00`);
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function dateOptionsFromToday(count = 90) {
@@ -396,6 +396,15 @@ function firstAllowedPickupTime(pickupDate: string) {
   if (pickupDate !== todayIsoDate()) return timeOptions[0];
   const minimum = timeTextToMinutes(minimumPickupTimeToday());
   return timeOptions.find((time) => timeTextToMinutes(time) >= minimum) || timeOptions[timeOptions.length - 1];
+}
+
+function ridePickupIsInPast(pickupDate: string, pickupTime: string) {
+  if (!pickupDate || !pickupTime) return false;
+  const [year, month, day] = pickupDate.split("-").map(Number);
+  if (!year || !month || !day) return true;
+  const minutes = timeTextToMinutes(pickupTime);
+  const pickup = new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, 0);
+  return Number.isNaN(pickup.getTime()) || pickup.getTime() < Date.now();
 }
 
 function rentalDays(search: RentalSearchInput) {
@@ -472,9 +481,8 @@ function cleanLocalityName(value: string, fallbackCity: string) {
 }
 
 function localityPresetsForCity(city: string) {
-  const cityKey = normalizeLocalityKey(city).replace(/\s+county$/i, "");
-  const match = Object.entries(cityLocalityPresets).find(([key]) => cityKey.includes(key) || key.includes(cityKey));
-  return match?.[1] || [];
+  const cityKey = city.trim().toLowerCase().replace(/\s+/g, " ").replace(/,\s*usa$/i, "");
+  return cityLocalityPresets[cityKey] || [];
 }
 
 const initialRentalSearch: RentalSearchInput = {
@@ -685,6 +693,8 @@ export function HousingScreen({
   );
   const housingCardHeight = compactHousingHome ? 558 : 638;
   const scrollRef = useRef<ScrollView | null>(null);
+  const rideOriginInputRef = useRef<TextInput | null>(null);
+  const rideDestinationInputRef = useRef<TextInput | null>(null);
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
@@ -1375,8 +1385,7 @@ export function HousingScreen({
         setRideOwnerPrompt(`Complete and save these driver details first: ${carpoolProfile.missing.join(", ")}.`);
       }
     } catch {
-      setRideDriverProfile(null);
-      setRideOwnerPrompt("Save your driver profile first. Add vehicle, plate/state, insurance, and carpool service type to list a ride.");
+      setRideOwnerPrompt("Could not load your driver profile. Check your connection and reopen this page to retry; no saved details were changed.");
     } finally {
       setRideDriverBusy(false);
     }
@@ -1509,8 +1518,9 @@ export function HousingScreen({
         currentProfile = { ...profile, serviceTypes: ["CARPOOL_OFFER" as RideType] };
         setRideDriverProfile(currentProfile);
         setRideDriverDraft({ ...blankRideDriverProfile, ...currentProfile });
-      } catch {
-        currentProfile = null;
+      } catch (error) {
+        Alert.alert("Could not load driver profile", error instanceof Error ? error.message : "Check your connection and try again. Your saved driver details were not changed.");
+        return;
       } finally {
         setRideDriverBusy(false);
       }
@@ -1541,7 +1551,7 @@ export function HousingScreen({
     }));
     if (selectedField === "origin") {
       setRideFocusedField("destination");
-    } else if (rideForm.rideType !== "CARPOOL_OFFER") {
+    } else if (rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId) {
       setRideSuggestions([]);
       void planRideRoute(place, "CARPOOL_REQUEST");
     }
@@ -1578,29 +1588,6 @@ export function HousingScreen({
     return Boolean(rideForm.origin.trim() && rideForm.destination.trim());
   }
 
-  function estimateRideMiles(originValue = rideForm.origin, destinationValue = rideForm.destination, rows = rideRows) {
-    const matched = rows.find((ride) => ride.distanceMiles !== null);
-    if (matched?.distanceMiles !== null && matched?.distanceMiles !== undefined) {
-      return Math.max(1, Number(matched.distanceMiles) + 3);
-    }
-    const origin = originValue.toLowerCase();
-    const destination = destinationValue.toLowerCase();
-    if (origin.includes("airport") || destination.includes("airport")) return 24;
-    if (origin.includes("union") || destination.includes("union")) return 5;
-    if (origin.includes("colorado springs") || destination.includes("colorado springs")) return 69;
-    if (origin.includes("fort collins") || destination.includes("fort collins")) return 64;
-    if (origin.includes("cincinnati") || destination.includes("cincinnati")) return 1180;
-    if (origin.includes("indianapolis") || destination.includes("indianapolis")) return 1080;
-    if (origin.includes("chicago") || destination.includes("chicago")) return 1000;
-    if (origin.includes("dallas") || destination.includes("dallas")) return 790;
-    if (origin.includes("salt lake") || destination.includes("salt lake")) return 520;
-    if (rows.length) {
-      const rowMiles = rows.find((ride) => ride.distanceMiles !== null)?.distanceMiles;
-      if (rowMiles !== null && rowMiles !== undefined) return Math.max(1, Number(rowMiles) + 3);
-    }
-    return 8;
-  }
-
   function formatRideMiles(value: number | string | null | undefined) {
     if (value === null || value === undefined) return "";
     const miles = Number(value);
@@ -1624,10 +1611,6 @@ export function HousingScreen({
       pickup ? `${pickup} from pickup` : "",
       dropoff ? `${dropoff} from drop-off` : ""
     ].filter(Boolean).join(" · ");
-  }
-
-  function shouldSuggestCarpool(origin: string, destination: string) {
-    return estimateRideMiles(origin, destination, []) >= 50;
   }
 
   function selectRideService(service: (typeof rideServicePosters)[number]) {
@@ -1654,6 +1637,10 @@ export function HousingScreen({
 
   async function planRideRoute(selectedDestination?: RidePlaceSuggestion, requestedRideType: RideType = rideForm.rideType) {
     if (ridePlanSubmittingRef.current) return;
+    if (ridePickupIsInPast(rideForm.pickupDate, rideForm.pickupTime)) {
+      Alert.alert("Choose a future pickup", "Pickup date and time must be later than the current time.");
+      return;
+    }
     const submittedDestination = selectedDestination?.label || rideForm.destination.trim();
     if (!submittedDestination) {
       Alert.alert("Destination needed", "Enter where you want to go.");
@@ -1751,7 +1738,8 @@ export function HousingScreen({
         originLat: rideForm.originLat,
         originLng: rideForm.originLng,
         destinationLat: destinationPoint?.lat ?? rideForm.destinationLat,
-        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng
+        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng,
+        pickupDate: rideForm.pickupDate
       });
       setRideRows(rides);
       setSelectedRideChoice("");
@@ -1896,7 +1884,7 @@ export function HousingScreen({
       const status = String(ride.dispatchStatus || ride.status || "PENDING").toUpperCase();
       return ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
     }).slice(0, 8);
-    const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER").slice(0, 4);
+    const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER");
     const requestRows = rideOwnerOpenTarget === "listings"
       ? listedRouteRows
       : rideOwnerOpenTarget === "requests"
@@ -2743,7 +2731,8 @@ export function HousingScreen({
         originLat: rideForm.originLat,
         originLng: rideForm.originLng,
         destinationLat: rideForm.destinationLat,
-        destinationLng: rideForm.destinationLng
+        destinationLng: rideForm.destinationLng,
+        pickupDate: rideForm.pickupDate
       });
       setRideRows(rides);
     } catch (error) {
@@ -2843,12 +2832,27 @@ export function HousingScreen({
 
               {!listingRide ? (
                 <View style={styles.ridePlannerPillRow}>
-                  <TouchableOpacity style={styles.ridePlannerPill}>
-                    <Text style={styles.ridePlannerPillText}>◷ Pickup now</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.ridePlannerPill}>
-                    <Text style={styles.ridePlannerPillText}>♙ For me</Text>
-                  </TouchableOpacity>
+                  <DateTimeField
+                    darkSurface
+                    style={styles.rideRequestScheduleField}
+                    label="Pickup date"
+                    mode="date"
+                    minimumDate={todayIsoDate()}
+                    value={rideForm.pickupDate}
+                    onChange={(value) => setRideForm((current) => ({
+                      ...current,
+                      pickupDate: value,
+                      pickupTime: ridePickupIsInPast(value, current.pickupTime) ? firstAllowedPickupTime(value) : current.pickupTime
+                    }))}
+                  />
+                  <DateTimeField
+                    darkSurface
+                    style={styles.rideRequestScheduleField}
+                    label="Pickup time"
+                    mode="time"
+                    value={rideForm.pickupTime}
+                    onChange={(value) => updateRideForm("pickupTime", value)}
+                  />
                 </View>
               ) : (
                 <Text style={styles.ridePlannerOwnerHint}>Enter where you are going first. Trip time, seats, luggage, and contribution come next.</Text>
@@ -2862,6 +2866,7 @@ export function HousingScreen({
                 </View>
                 <View style={styles.rideRouteInputs}>
                   <TextInput
+                    ref={rideOriginInputRef}
                     value={rideForm.origin}
                     onFocus={() => { setRideFocusedField("origin"); setRideSuggestionsEnabled(true); }}
                     onChangeText={(text) => {
@@ -2875,6 +2880,7 @@ export function HousingScreen({
                     style={[styles.rideRouteInput, rideFocusedField === "origin" && styles.rideRouteInputActive]}
                   />
                   <TextInput
+                    ref={rideDestinationInputRef}
                     value={rideForm.destination}
                     onFocus={() => { setRideFocusedField("destination"); setRideSuggestionsEnabled(true); }}
                     onChangeText={(text) => {
@@ -2889,7 +2895,16 @@ export function HousingScreen({
                     style={[styles.rideRouteInput, rideFocusedField === "destination" && styles.rideRouteInputActive]}
                   />
                 </View>
-                <TouchableOpacity style={styles.rideRoutePlus} onPress={() => setRideFocusedField("destination")}>
+                <TouchableOpacity
+                  style={styles.rideRoutePlus}
+                  accessibilityRole="button"
+                  accessibilityLabel="Enter destination"
+                  onPress={() => {
+                    setRideFocusedField("destination");
+                    setRideSuggestionsEnabled(true);
+                    rideDestinationInputRef.current?.focus();
+                  }}
+                >
                   <Text style={styles.rideRoutePlusText}>+</Text>
                 </TouchableOpacity>
               </View>
@@ -2905,7 +2920,11 @@ export function HousingScreen({
                         mode="date"
                         minimumDate={todayIsoDate()}
                         value={rideForm.pickupDate}
-                        onChange={(value) => updateRideForm("pickupDate", value)}
+                        onChange={(value) => setRideForm((current) => ({
+                          ...current,
+                          pickupDate: value,
+                          pickupTime: ridePickupIsInPast(value, current.pickupTime) ? firstAllowedPickupTime(value) : current.pickupTime
+                        }))}
                       />
                     </View>
                     <View style={styles.rideTripField}>
@@ -2973,12 +2992,6 @@ export function HousingScreen({
                     </Text>
                   </View>
                 </TouchableOpacity>
-                {!listingRide ? (
-                  <TouchableOpacity style={styles.rideSavedItem}>
-                    <Text style={styles.rideSavedIcon}>☆</Text>
-                    <Text style={styles.rideSavedTitle}>Saved places</Text>
-                  </TouchableOpacity>
-                ) : null}
               </View>
 
               <View style={styles.rideSuggestionList}>
@@ -3008,6 +3021,8 @@ export function HousingScreen({
                       onPress={() => {
                         updateRideForm("city", "");
                         setRideFocusedField("origin");
+                        setRideSuggestionsEnabled(true);
+                        rideOriginInputRef.current?.focus();
                       }}
                     >
                       <Text style={styles.rideUtilityIcon}>◎</Text>
@@ -3015,13 +3030,13 @@ export function HousingScreen({
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.rideUtilityRow} onPress={openRideGoogleMaps}>
                       <Text style={styles.rideUtilityIcon}>⌖</Text>
-                      <Text style={styles.rideUtilityText}>Set location on map</Text>
+                      <Text style={styles.rideUtilityText}>Preview route in Maps</Text>
                     </TouchableOpacity>
                   </>
                 ) : null}
               </View>
 
-              {listingRide ? (
+              {listingRide || editingRideId ? (
                 <Pressable style={styles.ridePlannerSearchButton} onPress={() => void planRideRoute()} disabled={rideBusy}>
                   <Text style={styles.ridePlannerSearchText}>{rideBusy ? (editingRideId ? "Saving..." : "Listing ride...") : plannerActionText}</Text>
                 </Pressable>
@@ -3166,7 +3181,7 @@ export function HousingScreen({
               </ScrollView>
             </View>
           )}
-          {ridePlannerStage === "plan" && ridePlanBusy && !listingRide ? (
+          {ridePlannerStage === "plan" && ridePlanBusy ? (
             <BlurView
               tint="dark"
               intensity={38}
@@ -3175,8 +3190,8 @@ export function HousingScreen({
             >
               <View style={styles.rideSearchLoadingCard}>
                 <ActivityIndicator size="large" color="#f7f7f8" />
-                <Text style={styles.rideSearchLoadingTitle}>Finding rides</Text>
-                <Text style={styles.rideSearchLoadingCopy}>Checking routes and nearby listings for {rideForm.destination || "your destination"}…</Text>
+                <Text style={styles.rideSearchLoadingTitle}>{editingRideId ? "Saving ride changes" : listingRide ? (rideDestinationPicked ? "Listing your ride" : "Checking route") : "Finding rides"}</Text>
+                <Text style={styles.rideSearchLoadingCopy}>{editingRideId ? "Updating your pickup, destination, and schedule…" : listingRide ? `Preparing ${rideForm.origin || "your starting point"} to ${rideForm.destination || "your destination"}…` : `Checking routes and nearby listings for ${rideForm.destination || "your destination"}…`}</Text>
                 <Image source={appAssets.rideEarnLoading} style={styles.rideSearchLoadingPromo} resizeMode="contain" />
               </View>
             </BlurView>
@@ -5328,6 +5343,7 @@ const styles = StyleSheet.create({
   ridePlannerBackText: { color: "#f7f7f8", fontSize: 32, lineHeight: 34, fontWeight: "500" },
   ridePlannerTitle: { color: "#f7f7f8", fontSize: 24, fontWeight: "900" },
   ridePlannerPillRow: { flexDirection: "row", gap: 10 },
+  rideRequestScheduleField: { flex: 1, minWidth: 0 },
   ridePlannerPill: { backgroundColor: theme.colors.panel2, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 10 },
   ridePlannerPillText: { color: "#202124", fontWeight: "900", fontSize: 15 },
   ridePlannerOwnerHint: { color: "#c7c9cc", fontSize: 14, lineHeight: 20, fontWeight: "800" },

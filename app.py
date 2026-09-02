@@ -7913,6 +7913,8 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_author ON ask_community_posts(author_id, id DESC)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_posts_source ON ask_community_posts(source_kind, source_public_id) WHERE source_kind != '' AND source_public_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_answers_post ON ask_community_answers(post_id, status, id ASC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_post_reaction ON ask_community_reactions(post_id, reaction) WHERE post_id IS NOT NULL")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_answer_reaction ON ask_community_reactions(answer_id, reaction) WHERE answer_id IS NOT NULL")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reports_status ON ask_community_reports(status, created_at DESC)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_reports_one_per_target ON ask_community_reports(COALESCE(post_id, 0), COALESCE(answer_id, 0), reporter_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_reactions_message ON chat_message_reactions(message_id, emoji)")
@@ -16484,9 +16486,28 @@ def accommodation_form_location_query(form: dict[str, str]) -> str:
 
 
 def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: str, search_metro: str) -> dict[str, object]:
-    center = accommodation_location_point(selected_location, search_metro)
-    if not float(center.get("lat") or 0) or not float(center.get("lng") or 0):
-        center = accommodation_location_point(search_metro or "Denver, CO", search_metro)
+    center_query = (selected_location or search_metro or "").strip()
+    center = accommodation_location_point(center_query, search_metro) if center_query else {}
+    if (
+        (not float(center.get("lat") or 0) or not float(center.get("lng") or 0))
+        and search_metro
+        and search_metro.strip().casefold() != center_query.casefold()
+    ):
+        center = accommodation_location_point(search_metro, search_metro)
+    # Never silently move an unresolved search to Denver. If possible, center
+    # the map on the first returned listing; otherwise leave it unpositioned so
+    # the client can show the selected-area state without a false city label.
+    if (not float(center.get("lat") or 0) or not float(center.get("lng") or 0)) and posts:
+        first_post = posts[0]
+        first_lat = float(row_value(first_post, "lat") or 0)
+        first_lng = float(row_value(first_post, "lng") or 0)
+        first_label = accommodation_address_label(first_post, selected_location)
+        if first_lat and first_lng:
+            center = {"label": first_label, "lat": first_lat, "lng": first_lng}
+        elif first_label:
+            listing_point = accommodation_location_point(first_label, search_metro, allow_refresh=False)
+            if float(listing_point.get("lat") or 0) and float(listing_point.get("lng") or 0):
+                center = listing_point
     payload_posts: list[dict[str, object]] = []
     center_lat = float(center.get("lat") or 0)
     center_lng = float(center.get("lng") or 0)
@@ -16577,7 +16598,7 @@ def accommodation_post_map_payload(posts: list[sqlite3.Row], selected_location: 
         )
     return {
         "center": {
-            "label": center.get("label") or selected_location or search_metro or "Denver, CO",
+            "label": center.get("label") or selected_location or search_metro or "Selected area",
             "lat": center_lat,
             "lng": center_lng,
         },
@@ -17120,7 +17141,7 @@ def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float =
 
 
 def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False) -> list[dict[str, object]]:
-    city = normalize_accommodation_place_label(city or "Denver, CO")
+    city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
     labels: list[tuple[str, str]] = []
@@ -17135,7 +17156,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         labels.append((clean, source))
 
     normalized_query = re.sub(r"[^a-z0-9]+", " ", query.lower()).strip()
-    if re.search(r"\b(unin|unio|union)\b", normalized_query):
+    if "denver" in city.lower() and re.search(r"\b(unin|unio|union)\b", normalized_query):
         add_label("Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
         add_label("Denver Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
 
@@ -17166,7 +17187,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         "Tracks, 3500 Walnut St, Denver, CO",
         "Larimer Lounge, 2721 Larimer St, Denver, CO",
     ]
-    use_denver_fallbacks = not city or "denver" in city.lower()
+    use_denver_fallbacks = "denver" in city.lower()
     for label in (fallback_places if use_denver_fallbacks and not cities_only else []):
         normalized_label = re.sub(r"[^a-z0-9]+", " ", label.lower())
         if not normalized_query:
@@ -17665,7 +17686,7 @@ def mobile_ride_posts(
     offset: int = 0,
     ride_public_id: str = "",
 ) -> list[dict[str, object]]:
-    city = normalize_accommodation_place_label(city or "Denver, CO")
+    city = normalize_accommodation_place_label(city)
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
     pickup_date = clean_text_value(pickup_date, 30)
     if origin_lat and origin_lng:
@@ -17673,7 +17694,7 @@ def mobile_ride_posts(
         if not origin_point or not float(origin_point.get("lat") or 0) or not float(origin_point.get("lng") or 0):
             origin_point = {"label": origin or city, "lat": float(origin_lat), "lng": float(origin_lng), "source": "CLIENT"}
     else:
-        origin_point = ride_point(origin, city) if origin else ride_point(city)
+        origin_point = ride_point(origin, city) if origin else (ride_point(city) if city else {})
     if destination_lat and destination_lng:
         destination_point = accommodation_location_point(destination, city, allow_refresh=False)
         if not destination_point or not float(destination_point.get("lat") or 0) or not float(destination_point.get("lng") or 0):
@@ -17802,7 +17823,12 @@ def create_ride_instances(con: sqlite3.Connection, ride_post_id: int, start_date
         current += timedelta(days=1)
 
 
-def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sqlite3.Row, requester_user_id: int) -> dict[str, object]:
+def create_ride_dispatch_notifications(
+    con: sqlite3.Connection,
+    request_row: sqlite3.Row,
+    requester_user_id: int,
+    driver_ride_post_id: int = 0,
+) -> dict[str, object]:
     if row_value(request_row, "ride_type") not in {"SCHEDULED_REQUEST", "GENERAL_REQUEST", "CARPOOL_REQUEST"}:
         return {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
     request_lat = float(row_value(request_row, "origin_lat") or 0)
@@ -17815,8 +17841,17 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
     request_destination_point = {"lat": request_dest_lat, "lng": request_dest_lng, "label": row_value(request_row, "destination_label")}
     today_iso = datetime.now(FAIRFARES_TZ).date().isoformat()
     request_trip_date = ride_effective_trip_date(request_row)
+    driver_filter = " AND id = ?" if driver_ride_post_id else ""
+    driver_values: list[object] = [
+        requester_user_id,
+        today_iso,
+        request_trip_date.isoformat() if request_trip_date else "",
+        request_trip_date.isoformat() if request_trip_date else "",
+    ]
+    if driver_ride_post_id:
+        driver_values.append(driver_ride_post_id)
     driver_rows = con.execute(
-        """
+        f"""
         SELECT *
         FROM ride_posts
         WHERE status = 'ACTIVE'
@@ -17826,8 +17861,9 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
           AND origin_lng != 0
           AND substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) >= ?
           AND (? = '' OR substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) = ?)
+          {driver_filter}
         """,
-        (requester_user_id, today_iso, request_trip_date.isoformat() if request_trip_date else "", request_trip_date.isoformat() if request_trip_date else ""),
+        driver_values,
     ).fetchall()
     buckets: list[dict[str, object]] = []
     notified_count = 0
@@ -17883,6 +17919,40 @@ def create_ride_dispatch_notifications(con: sqlite3.Connection, request_row: sql
         "driverUserIds": [user_id for user_id in dict.fromkeys(notified_driver_user_ids) if user_id],
         "driverDetours": driver_detours,
     }
+
+
+def create_dispatch_for_ride_offer(con: sqlite3.Connection, offer_row: sqlite3.Row) -> int:
+    """Back-match a newly created or edited offer to requests that already exist."""
+    if row_value(offer_row, "ride_type") != "CARPOOL_OFFER":
+        return 0
+    offer_id = int(row_value(offer_row, "id") or 0)
+    offer_user_id = int(row_value(offer_row, "user_id") or 0)
+    trip_date = ride_effective_trip_date(offer_row)
+    if not offer_id or not offer_user_id or not trip_date:
+        return 0
+    requests = con.execute(
+        """
+        SELECT * FROM ride_posts
+        WHERE status = 'ACTIVE'
+          AND ride_type IN ('CARPOOL_REQUEST', 'GENERAL_REQUEST', 'SCHEDULED_REQUEST')
+          AND user_id != ?
+          AND origin_lat != 0 AND origin_lng != 0
+          AND destination_lat != 0 AND destination_lng != 0
+          AND substr(COALESCE(NULLIF(pickup_date, ''), NULLIF(start_date, '')), 1, 10) = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT 500
+        """,
+        (offer_user_id, trip_date.isoformat()),
+    ).fetchall()
+    return sum(
+        int(create_ride_dispatch_notifications(
+            con,
+            request_row,
+            int(row_value(request_row, "user_id") or 0),
+            driver_ride_post_id=offer_id,
+        ).get("notifiedCount") or 0)
+        for request_row in requests
+    )
 
 
 def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -> tuple[int, dict[str, object]]:
@@ -18256,6 +18326,24 @@ def mobile_housing_posts(
 ) -> list[dict[str, object]]:
     expire_accommodation_posts(force=False)
     repair_active_housing_city_labels()
+    typed_city_region = re.search(
+        r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$",
+        clean_text_value(city, 120),
+        re.IGNORECASE,
+    )
+    typed_area_region = re.search(
+        r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$",
+        clean_text_value(area, 140),
+        re.IGNORECASE,
+    )
+    if any(
+        match and match.group(1).upper() not in COMMUNITY_US_STATE_CODES
+        for match in (typed_city_region, typed_area_region)
+    ):
+        # Do this before consulting geocoder/location caches. Otherwise an
+        # invalid label such as Denver, CE can inherit a previously cached
+        # Denver point and broaden into listings from valid Denver states.
+        return []
     requested_city_region = explicit_us_state_from_label(city)
     requested_area_region = explicit_us_state_from_label(area)
     if (
@@ -20412,6 +20500,12 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         bit for bit in (row_value(row, "ride_origin_label"), row_value(row, "ride_destination_label")) if bit
     )
     other_online = int(row_value(row, "other_online") or 0) > 0
+    conversation_kind = str(
+        row_value(row, "conversation_type")
+        or ("GROUP" if community_public_id else "RIDE" if ride_public_id else "DIRECT")
+    ).upper()
+    is_group = bool(community_public_id) or conversation_kind in {"GROUP", "COMMUNITY"}
+    group_name = community_name or (row_value(row, "subject") if is_group else "") or "FairFares group"
     calculated_unread = max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0
     unread = int(row_value(row, "unread_count", str(calculated_unread)) or 0)
     return {
@@ -20423,7 +20517,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         # Keep the public group identifier above as the client-facing ID. The
         # numeric record ID is used only for server-generated avatar URLs.
         "_communityRecordId": int(row_value(row, "community_id") or 0),
-        "kind": row_value(row, "conversation_type") or ("GROUP" if community_public_id else "RIDE" if ride_public_id else "DIRECT"),
+        "kind": conversation_kind,
         "status": row_value(row, "status") or "ACTIVE",
         "subject": community_name or row_value(row, "subject") or row_value(row, "post_title") or row_value(row, "ride_title") or "FairFares chat",
         "postTitle": row_value(row, "post_title"),
@@ -20431,11 +20525,17 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "rideTitle": row_value(row, "ride_title"),
         "rideType": row_value(row, "ride_type"),
         "rideRoute": ride_route,
-        "otherName": community_name or row_value(row, "other_name") or "FairFares member",
-        "otherUserId": int(row_value(row, "other_user_id") or 0),
-        "otherPhotoUrl": row_value(row, "community_photo_url") if community_public_id else row_value(row, "other_photo_url"),
-        "otherOnline": other_online if not community_public_id else False,
-        "otherLastSeenAt": row_value(row, "other_last_seen_at") if not community_public_id else "",
+        # Legacy group rows can predate the community_id relationship. Never
+        # serialize an arbitrary joined participant as the apparent direct-chat
+        # peer merely because that relationship is absent.
+        "otherName": group_name if is_group else row_value(row, "other_name") or "FairFares member",
+        "otherUserId": 0 if is_group else int(row_value(row, "other_user_id") or 0),
+        "otherPhone": canonical_e164_phone(row_value(row, "other_phone"))
+        if not is_group and int(row_value(row, "other_user_id") or 0) not in {0, current_user_id}
+        else "",
+        "otherPhotoUrl": row_value(row, "community_photo_url") if community_public_id else "" if is_group else row_value(row, "other_photo_url"),
+        "otherOnline": other_online if not is_group else False,
+        "otherLastSeenAt": row_value(row, "other_last_seen_at") if not is_group else "",
         "lastMessageId": last_message_id,
         "historyStartMessageId": int(row_value(row, "visible_from_message_id") or 0),
         "lastMessage": row_value(row, "last_message"),
@@ -20483,6 +20583,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                (SELECT created_at FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_created_at,
                COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+               COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
@@ -20537,6 +20638,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                (SELECT created_at FROM chat_messages WHERE conversation_id = conversations.id AND deleted_at IS NULL AND id >= participant.visible_from_message_id ORDER BY id DESC LIMIT 1) AS last_message_created_at,
                COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+               COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
@@ -21375,13 +21477,15 @@ def chat_notification_conversation_context(
     # marker and rendered them as personal letters.  Recover only an exact
     # match to a registered GROUP/COMMUNITY name; arbitrary direct-chat
     # subjects must remain direct.
-    if not is_group:
+    if community_id <= 0:
         legacy_subject = clean_text_value(row_value(source, "subject"), 120)
         matched_community = con.execute(
-            """SELECT id, name FROM chat_communities
+            """SELECT MIN(id) AS id, MIN(name) AS name FROM chat_communities
                WHERE UPPER(kind) IN ('GROUP', 'COMMUNITY')
                  AND LOWER(TRIM(name)) = LOWER(TRIM(?))
-               ORDER BY id LIMIT 1""",
+               GROUP BY LOWER(TRIM(name))
+               HAVING COUNT(*) = 1
+               LIMIT 1""",
             (legacy_subject,),
         ).fetchone() if legacy_subject else None
         if matched_community is not None:
@@ -22026,6 +22130,7 @@ def get_chat_conversations_for_user(
                    last_message.created_at AS last_message_created_at,
                    COALESCE(other_user.id, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END) AS other_user_id,
                    COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
+                   COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                    COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
                    MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                    MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
@@ -25745,6 +25850,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 values,
             ).fetchall()
+        requested_web_state = explicit_us_state_from_label(search_area) or explicit_us_state_from_label(search_city)
+        if requested_web_state:
+            posts = [
+                post for post in posts
+                if all(
+                    state == requested_web_state
+                    for state in (
+                        explicit_us_state_from_label(row_value(post, "city")),
+                        explicit_us_state_from_label(row_value(post, "city_area_zip")),
+                        explicit_us_state_from_label(row_value(post, "street_address")),
+                    )
+                    if state
+                )
+            ]
         search_focus = search_area or search_city or metro_context["selected_location"]
         map_payload = accommodation_post_map_payload(posts, search_focus, search_metro)
         if search_radius:
@@ -28035,7 +28154,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_response(200)
                     self.send_header("Content-Type", content_type)
                     self.send_header("Content-Length", str(len(payload)))
-                    self.send_header("Cache-Control", "public, max-age=300" if public_avatar_allowed else "private, max-age=300")
+                    self.send_header("Cache-Control", "private, no-store" if signed_request_valid else "public, max-age=300" if public_avatar_allowed else "private, max-age=300")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+        if photo.startswith("local://uploads/"):
+            local_avatar = local_upload_parts(photo)
+            if local_avatar:
+                _filename, content_type, payload = local_avatar
+                if len(payload) <= 2_000_000 and content_type in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "private, no-store" if signed_request_valid else "private, max-age=300")
                     self.send_header("X-Content-Type-Options", "nosniff")
                     self.end_headers()
                     self.wfile.write(payload)
@@ -28046,7 +28178,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime_type)
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Cache-Control", "public, max-age=600" if public_avatar_allowed else "private, max-age=600")
+            self.send_header("Cache-Control", "private, no-store" if signed_request_valid else "public, max-age=600" if public_avatar_allowed else "private, max-age=600")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(payload)
@@ -36623,7 +36755,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
-        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         query = clean_text_value((params.get("q", params.get("query", [""]))[0] or ""), 180)
         try:
             limit = int(params.get("limit", ["10"])[0] or 10)
@@ -36798,9 +36930,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_ride_map(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
-        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         origin = clean_text_value((params.get("origin", [""])[0] or ""), 180)
         destination = clean_text_value((params.get("destination", [""])[0] or ""), 180)
+        if not origin or not destination:
+            self.send_json({"ok": False, "error": "Pickup and destination are required to show a route."}, 400)
+            return
         origin_point = ride_point(origin or city, city)
         destination_point = ride_point(destination or city, city)
         origin_lat = float(origin_point.get("lat") or 0)
@@ -37007,7 +37142,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_rides(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
-        city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
+        city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         origin = clean_text_value((params.get("origin", [""])[0] or ""), 180)
         destination = clean_text_value((params.get("destination", [""])[0] or ""), 180)
         origin_lat = float_from_value(params.get("originLat", params.get("origin_lat", ["0"]))[0])
@@ -38099,9 +38234,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         ride_type = normalize_ride_type(payload.get("rideType") or payload.get("type"))
         rider_role = ride_role_for_type(ride_type)
-        city = clean_text_value(payload.get("city") or "Denver, CO", 120) or "Denver, CO"
         origin = clean_text_value(payload.get("origin") or payload.get("pickup") or "", 180)
         destination = clean_text_value(payload.get("destination") or payload.get("dropoff") or "", 180)
+        city = clean_text_value(payload.get("city") or origin, 120)
         origin_lat = float_from_value(payload.get("originLat") or payload.get("origin_lat") or "0")
         origin_lng = float_from_value(payload.get("originLng") or payload.get("origin_lng") or "0")
         destination_lat = float_from_value(payload.get("destinationLat") or payload.get("destination_lat") or "0")
@@ -38131,6 +38266,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not pickup_time:
             self.send_json({"ok": False, "error": "Pickup time is required."}, 400)
             return
+        try:
+            datetime.strptime(pickup_time, "%I:%M %p")
+        except ValueError:
+            self.send_json({"ok": False, "error": "Pickup time is invalid."}, 400)
+            return
         if ride_type == "SCHEDULED_REQUEST":
             if not start_date or not days_of_week:
                 self.send_json({"ok": False, "error": "Scheduled rides need start date and days of week."}, 400)
@@ -38138,6 +38278,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         elif not pickup_date:
             self.send_json({"ok": False, "error": "Pickup date is required."}, 400)
             return
+        if pickup_date:
+            try:
+                requested_pickup = datetime.combine(
+                    datetime.strptime(pickup_date, "%Y-%m-%d").date(),
+                    datetime.strptime(pickup_time, "%I:%M %p").time(),
+                )
+            except ValueError:
+                self.send_json({"ok": False, "error": "Pickup date is invalid."}, 400)
+                return
+            # The pickup can be in any timezone. Without a verified timezone
+            # for its geocoded location, comparing wall-clock times against the
+            # server's Denver timezone would reject valid same-day trips.
+            # Native clients enforce the precise local time; the API safely
+            # rejects calendar dates that are already past.
+            if requested_pickup.date() < datetime.now(FAIRFARES_TZ).date():
+                self.send_json({"ok": False, "error": "Pickup date must not be in the past."}, 400)
+                return
         if ride_type == "CARPOOL_OFFER":
             profile = get_ride_driver_profile(int(row_value(user, "id") or 0))
             if not profile.get("readyForOffers"):
@@ -38201,8 +38358,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     con.execute("DELETE FROM ride_instances WHERE ride_post_id = ?", (int(row_value(existing, "id") or 0),))
                     create_ride_instances(con, int(row_value(existing, "id") or 0), start_date, end_date, days_of_week, pickup_time)
                 row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (int(row_value(existing, "id") or 0),)).fetchone()
+                matched_request_count = 0
+                if row and ride_type == "CARPOOL_OFFER":
+                    # Route/date edits invalidate pending matches for this offer.
+                    # Preserve declined/completed history, then calculate fresh
+                    # pending matches against requests that may predate it.
+                    con.execute(
+                        "DELETE FROM ride_dispatch_notifications WHERE driver_ride_post_id = ? AND status = 'PENDING'",
+                        (int(row_value(existing, "id") or 0),),
+                    )
+                    matched_request_count = create_dispatch_for_ride_offer(con, row)
             invalidate_mobile_search_cache("rides")
-            self.send_json({"ok": True, "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None})
+            self.send_json({
+                "ok": True,
+                "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None,
+                "matchedRequestCount": matched_request_count,
+            })
             return
         with db() as con:
             while con.execute("SELECT 1 FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone():
@@ -38251,7 +38422,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if ride_type == "SCHEDULED_REQUEST":
                 create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
-            dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
+            if row and ride_type == "CARPOOL_OFFER":
+                matched_request_count = create_dispatch_for_ride_offer(con, row)
+                dispatch = {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": [], "matchedRequestCount": matched_request_count}
+            else:
+                dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
         invalidate_mobile_search_cache("rides")
         notified_driver_user_ids = list(dispatch.pop("driverUserIds", []))
         driver_detours = dict(dispatch.pop("driverDetours", {}))
@@ -38418,7 +38593,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if len(title) < 6 or len(body) < 12:
             self.send_json({"ok": False, "error": "Add a clear title and at least 12 characters of detail."}, 400)
             return
-        raw_images = payload.get("images") if isinstance(payload.get("images"), list) else []
+        images_supplied = isinstance(payload.get("images"), list)
+        raw_images = payload.get("images") if images_supplied else []
         valid_images = [
             str(value) for value in raw_images[:4]
             if data_url_upload_parts(str(value or ""), "community-image", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
@@ -38905,11 +39081,70 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
         detail_limits = {"budget": 40, "moveInDate": 20, "preference": 160, "rent": 40, "availableDate": 20, "roomType": 60, "origin": 120, "destination": 120, "travelDate": 20, "travelTime": 20, "seats": 3}
         details = {key: clean_text_value(raw_details.get(key), limit) for key, limit in detail_limits.items() if clean_text_value(raw_details.get(key), limit)}
+        images_supplied = isinstance(payload.get("images"), list)
+        raw_images = payload.get("images") if images_supplied else []
         if len(title) < 6 or len(body) < 12:
             self.send_json({"ok": False, "error": "Add a clear title and description."}, 400)
             return
         with db() as con:
-            cursor = con.execute("UPDATE ask_community_posts SET title = ?, body = ?, link_url = ?, details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE public_id = ? AND author_id = ? AND status = 'PUBLISHED'", (title, body, link_url, json.dumps(details, separators=(",", ":")), clean_text_value(payload.get("postId"), 80), int(user["id"])))
+            post_public_id = clean_text_value(payload.get("postId"), 80)
+            post = con.execute(
+                "SELECT id FROM ask_community_posts WHERE public_id = ? AND author_id = ? AND status = 'PUBLISHED'",
+                (post_public_id, int(user["id"])),
+            ).fetchone()
+            if not post:
+                self.send_json({"ok": False, "error": "You can only edit your own active post."}, 403)
+                return
+            database_id = int(post["id"])
+            existing_rows = con.execute(
+                "SELECT image_url FROM ask_community_post_images WHERE post_id = ? ORDER BY sort_order, id",
+                (database_id,),
+            ).fetchall() if images_supplied else []
+            existing_by_path = {
+                urllib.parse.urlparse(public_upload_url(row_value(image_row, "image_url"))).path: str(row_value(image_row, "image_url") or "")
+                for image_row in existing_rows
+                if row_value(image_row, "image_url")
+            }
+            existing_by_value = {
+                str(row_value(image_row, "image_url") or ""): str(row_value(image_row, "image_url") or "")
+                for image_row in existing_rows
+                if row_value(image_row, "image_url")
+            }
+            next_images: list[str] = []
+            for index, raw_image in enumerate(raw_images[:4], start=1):
+                image_value = str(raw_image or "").strip()
+                image_path = urllib.parse.urlparse(image_value).path
+                if image_value in existing_by_value:
+                    next_images.append(existing_by_value[image_value])
+                    continue
+                if image_path in existing_by_path:
+                    next_images.append(existing_by_path[image_path])
+                    continue
+                if not data_url_upload_parts(
+                    image_value,
+                    f"community-image-{index}",
+                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
+                ):
+                    continue
+                saved_url = save_data_url_payload_locally(
+                    folder_name="community",
+                    data_url=image_value,
+                    fallback_name=f"{post_public_id.lower()}-{index}",
+                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
+                )
+                if saved_url:
+                    next_images.append(saved_url)
+            cursor = con.execute("UPDATE ask_community_posts SET title = ?, body = ?, link_url = ?, details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (title, body, link_url, json.dumps(details, separators=(",", ":")), database_id))
+            if images_supplied:
+                con.execute("DELETE FROM ask_community_post_images WHERE post_id = ?", (database_id,))
+                now = datetime.utcnow().isoformat(timespec="seconds")
+                for index, image_url in enumerate(next_images, start=1):
+                    con.execute(
+                        "INSERT INTO ask_community_post_images (post_id, image_url, sort_order, created_at) VALUES (?, ?, ?, ?)",
+                        (database_id, image_url, index, now),
+                    )
         if not cursor.rowcount:
             self.send_json({"ok": False, "error": "You can only edit your own active post."}, 403)
             return
@@ -39047,6 +39282,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not valid_contact_email(contact_email) or not valid_contact_phone(contact_phone):
             self.send_json({"ok": False, "error": "Use a valid contact email and phone number."}, 400)
             return
+        try:
+            parsed_move_in_date = datetime.strptime(move_in_date, "%Y-%m-%d").date()
+        except ValueError:
+            self.send_json({"ok": False, "error": "Choose a valid move-in date."}, 400)
+            return
+        if parsed_move_in_date < datetime.now(FAIRFARES_TZ).date():
+            self.send_json({"ok": False, "error": "Move-in date cannot be in the past."}, 400)
+            return
+        if rent_max and rent_max < rent_min:
+            self.send_json({"ok": False, "error": "Maximum rent cannot be lower than minimum rent."}, 400)
+            return
         if mode == "HAVE_PLACE" and not (street_address or primary_neighborhood or apartment_name or area):
             self.send_json({"ok": False, "error": "Street address, neighborhood, apartment, or area is required when listing a place."}, 400)
             return
@@ -39070,6 +39316,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         public_id = editing_public_id or accommodation_public_id()
         category_label = option_label(ACCOMMODATION_CATEGORIES, category, "Housing")
+        typed_us_region = re.search(r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$", city, re.IGNORECASE)
+        # Reject an impossible U.S. state before any network-backed geocoding.
+        # Besides being faster, this prevents a broad geocoder fallback from
+        # silently turning a typo such as "Denver, CE" into a different city.
+        if (
+            typed_us_region
+            and typed_us_region.group(1).upper() not in COMMUNITY_US_STATE_CODES
+            and (
+                bool(re.fullmatch(r"\d{5}(?:-\d{4})?", zip_code))
+                or bool(re.search(r",\s*(?:US|USA|United States)\s*$", city, re.IGNORECASE))
+                or resolve_accommodation_country(city, allow_refresh=False) == "US"
+            )
+        ):
+            self.send_json({"ok": False, "error": "Choose a valid U.S. state for this city."}, 400)
+            return
         location_query = ", ".join(
             value for value in (
                 street_address or primary_neighborhood or apartment_name or area or work_school_location,
@@ -39089,6 +39350,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         post_country = resolve_accommodation_country(", ".join(value for value in (city, resolved_location_label) if value))
         if not post_country:
             self.send_json({"ok": False, "error": "Choose a valid city and country before publishing this listing."}, 400)
+            return
+        if post_country == "US" and typed_us_region and typed_us_region.group(1).upper() not in COMMUNITY_US_STATE_CODES:
+            self.send_json({"ok": False, "error": "Choose a valid U.S. state for this city."}, 400)
             return
         # Persist the canonical city/state now, rather than relying on card
         # fallback text and repairing it only when the community feed loads.

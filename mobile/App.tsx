@@ -395,6 +395,7 @@ function FairFaresApp() {
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [notificationMessageId, setNotificationMessageId] = useState(0);
+  const handledNotificationResponseRef = useRef("");
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerEditId, setRideOwnerEditId] = useState("");
@@ -1013,6 +1014,10 @@ function FairFaresApp() {
 
   useEffect(() => {
     const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const responseKey = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+      if (handledNotificationResponseRef.current === responseKey) return;
+      handledNotificationResponseRef.current = responseKey;
       const type = String(response?.notification.request.content.data?.type || "");
       if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
         setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
@@ -1285,6 +1290,7 @@ function FairFaresApp() {
       setPendingPost(null);
       setPendingRide(null);
       setNotificationConversationId(String(opened.conversation.id));
+      setNotificationMessageId(0);
       setActiveTab("messenger");
     } catch (error) {
       Alert.alert("Conversation unavailable", error instanceof Error ? error.message : "Could not open this conversation.");
@@ -1562,26 +1568,26 @@ function FairFaresApp() {
 
   async function selectArea(nextArea: string) {
     const requestGeneration = ++housingRequestGenerationRef.current;
-    const areaHasRegion = /,\s*[A-Za-z]{2}(?:\s*,|\s*$)/.test(nextArea);
-    const lookupQuery = nextArea
-      ? (areaHasRegion ? nextArea : `${nextArea}, ${city}`)
-      : city;
-    const [lookup, options] = await Promise.all([
-      lookupAccommodationLocation(lookupQuery),
-      getAccommodationLocationOptions(city, nextArea)
-    ]);
-    if (housingRequestGenerationRef.current !== requestGeneration) return;
-    // Preserve the locality chosen in the current city. A geocoder's broader
-    // canonical label must not silently replace it with a same-named place.
-    const resolvedArea = nextArea;
-    const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
-    const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
-    setArea(resolvedArea);
-    setCity(resolvedCity);
-    setChitthiSuggestionCity(resolvedCity);
-    setHousingSearchCoordinates(nextCoordinates);
     setLoading(true);
     try {
+      const areaHasRegion = /,\s*[A-Za-z]{2}(?:\s*,|\s*$)/.test(nextArea);
+      const lookupQuery = nextArea
+        ? (areaHasRegion ? nextArea : `${nextArea}, ${city}`)
+        : city;
+      const [lookup, options] = await Promise.all([
+        lookupAccommodationLocation(lookupQuery),
+        getAccommodationLocationOptions(city, nextArea)
+      ]);
+      if (housingRequestGenerationRef.current !== requestGeneration) return;
+      // Preserve the locality chosen in the current city. A geocoder's broader
+      // canonical label must not silently replace it with a same-named place.
+      const resolvedArea = nextArea;
+      const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
+      const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
+      setArea(resolvedArea);
+      setCity(resolvedCity);
+      setChitthiSuggestionCity(resolvedCity);
+      setHousingSearchCoordinates(nextCoordinates);
       const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, nextCoordinates);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       setVisiblePosts(posts);
@@ -1611,38 +1617,38 @@ function FairFaresApp() {
 
   async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius, nextNeed = searchNeed) {
     const requestGeneration = ++housingRequestGenerationRef.current;
-    const cleanCity = normalizeCityInput(nextCity);
-    const requestedArea = nextArea.trim();
-    const cityRegion = cleanCity.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
-    const areaRegion = requestedArea.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
-    // An area chosen under a previous city must not determine coordinates for
-    // a newly entered city in another state.
-    const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
-    const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-    const [lookup, options] = await Promise.all([
-      lookupAccommodationLocation(cleanArea || cleanCity),
-      getAccommodationLocationOptions(cleanCity, cleanArea)
-    ]);
-    if (housingRequestGenerationRef.current !== requestGeneration) return;
-    // Keep the place the user typed or selected. A broad geocoder fallback (for
-    // example, Dayton) must not replace a specific query such as Wilmington Pike.
-    const resolvedArea = cleanArea;
-    const hasExplicitRegion = /^[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?$/i.test(cleanCity);
-    const selectedSuggestion = selectedCitySuggestionRef.current.trim().toLowerCase();
-    const preserveSelectedCity = hasExplicitRegion || selectedSuggestion === cleanCity.trim().toLowerCase();
-    const resolvedCity = cleanArea || preserveSelectedCity
-      ? cleanCity
-      : normalizeCityInput(lookup?.selectedLocation || cleanCity);
-    const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
-    setCity(resolvedCity);
-    setArea(resolvedArea);
-    setChitthiSuggestionCity(resolvedCity);
-    setSearchRadius(cleanRadius);
-    setSelectedNeed(nextNeed);
-    setHousingSearchCoordinates(nextCoordinates);
-    setSearchOpen(false);
     setLoading(true);
     try {
+      const cleanCity = normalizeCityInput(nextCity);
+      const requestedArea = nextArea.trim();
+      const cityRegion = cleanCity.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
+      const areaRegion = requestedArea.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
+      // An area chosen under a previous city must not determine coordinates for
+      // a newly entered city in another state.
+      const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
+      const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
+      const [lookup, options] = await Promise.all([
+        lookupAccommodationLocation(cleanArea || cleanCity),
+        getAccommodationLocationOptions(cleanCity, cleanArea)
+      ]);
+      if (housingRequestGenerationRef.current !== requestGeneration) return;
+      // Keep the place the user typed or selected. A broad geocoder fallback (for
+      // example, Dayton) must not replace a specific query such as Wilmington Pike.
+      const resolvedArea = cleanArea;
+      const hasExplicitRegion = /^[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?$/i.test(cleanCity);
+      const selectedSuggestion = selectedCitySuggestionRef.current.trim().toLowerCase();
+      const preserveSelectedCity = hasExplicitRegion || selectedSuggestion === cleanCity.trim().toLowerCase();
+      const resolvedCity = cleanArea || preserveSelectedCity
+        ? cleanCity
+        : normalizeCityInput(lookup?.selectedLocation || cleanCity);
+      const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
+      setCity(resolvedCity);
+      setArea(resolvedArea);
+      setChitthiSuggestionCity(resolvedCity);
+      setSearchRadius(cleanRadius);
+      setSelectedNeed(nextNeed);
+      setHousingSearchCoordinates(nextCoordinates);
+      setSearchOpen(false);
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       setVisiblePosts(posts);
@@ -1790,7 +1796,6 @@ function FairFaresApp() {
         Alert.alert("Listing unavailable", "This listing is no longer available.");
         return;
       }
-      setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
       editHousingListing(post);
     } catch (error) {
       Alert.alert("Listing unavailable", error instanceof Error ? error.message : "This listing could not be loaded. Please try again.");
@@ -1985,18 +1990,32 @@ function FairFaresApp() {
     try {
       const payload = await createMobileHousingPost(listingPayload);
       setListingOpen(false);
-      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
-      setVisiblePosts(posts.some((post) => post.id === payload.post.id) ? posts : [payload.post, ...posts]);
+      setHousingListingSuccess(payload.post);
+      setVisiblePosts((current) => current.map((post) => post.id === payload.post.id ? payload.post : post));
       setData((current) =>
         current
           ? {
               ...current,
-              housing: [payload.post, ...current.housing.filter((post) => post.id !== payload.post.id)],
+              // Update an already-visible edited card immediately, but do not
+              // inject a new listing until the active server filter includes it.
+              housing: current.housing.map((post) => post.id === payload.post.id ? payload.post : post),
               dashboard: { ...current.dashboard, housingPosts: current.dashboard.housingPosts + (listingPayload.listingId ? 0 : 1) }
             }
           : current
       );
-      setHousingListingSuccess(payload.post);
+      try {
+        const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
+        // The saved listing may belong to another city or may not satisfy the
+        // active filters. Trust the authoritative filtered response instead of
+        // force-inserting it into an unrelated feed.
+        setVisiblePosts(posts);
+        setData((current) => current ? { ...current, housing: posts } : current);
+      } catch (refreshError) {
+        Alert.alert(
+          listingPayload.listingId ? "Changes saved" : "Listing posted",
+          `Your listing was saved, but this feed could not refresh. Pull to refresh or reopen Housing. ${refreshError instanceof Error ? refreshError.message : ""}`.trim()
+        );
+      }
     } catch (error) {
       Alert.alert("Post failed", error instanceof Error ? error.message : "Unable to post this listing.");
     } finally {
@@ -2641,6 +2660,7 @@ function FairFaresApp() {
               setPendingPost(null);
               setPendingRide(null);
               setNotificationConversationId(String(opened.conversation.id));
+              setNotificationMessageId(0);
               setActiveTab("messenger");
             } catch (error) {
               Alert.alert("Chitthi unavailable", error instanceof Error ? error.message : "Could not open this connection.");
@@ -2686,6 +2706,7 @@ function FairFaresApp() {
         }}
         onOpenRideOwner={(target = "workspace") => {
           setRideOwnerOpenTarget(target);
+          setRideOwnerEditId("");
           setRideOwnerReturnTab("activity");
           setSelectedNeed("ride_offer");
           setActiveTab("housing");

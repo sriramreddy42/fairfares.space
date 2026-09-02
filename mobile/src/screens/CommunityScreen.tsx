@@ -213,7 +213,7 @@ function SharedLinkCard({ url }: { url: string }) {
     <TouchableOpacity
       style={[styles.linkCard, { backgroundColor: theme.colors.panel2, borderColor: theme.colors.line }]}
       activeOpacity={0.84}
-      onPress={(event) => { event.stopPropagation(); void Linking.openURL(destinationUrl); }}
+      onPress={(event) => { event.stopPropagation(); void Linking.openURL(destinationUrl).catch((error) => Alert.alert("Link not opened", message(error))); }}
       accessibilityRole="link"
       accessibilityLabel={`Open helpful link from ${host}`}
     >
@@ -722,7 +722,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     setPublishing(true);
     try {
       if (editingPostId) {
-        await updateCommunityPost(editingPostId, { title: form.title.trim(), body: form.body.trim(), linkUrl: form.linkUrl.trim(), details: form.details });
+        await updateCommunityPost(editingPostId, { title: form.title.trim(), body: form.body.trim(), linkUrl: form.linkUrl.trim(), details: form.details, images: form.images });
         await load(true);
       } else {
         const result = await createCommunityPost({ ...form, city: groupSuggestionCity, title: form.title.trim(), body: form.body.trim(), area: form.area.trim(), linkUrl: form.linkUrl.trim() });
@@ -786,6 +786,20 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     }
   };
 
+  const acceptAnswer = async (answerId: string) => {
+    if (!detail || detailBusy) return;
+    setDetailBusy(true);
+    try {
+      await acceptCommunityAnswer(detail.id, answerId);
+      setDetail(await getCommunityPost(detail.id));
+      await load(true);
+    } catch (error) {
+      Alert.alert("Answer not accepted", message(error));
+    } finally {
+      setDetailBusy(false);
+    }
+  };
+
   const editableAnswerBody = (item: CommunityAnswer, bodyStyle: object) => editingAnswerId === item.id ? (
     <View style={styles.answerEditBox}>
       <TextInput autoFocus style={[styles.inlineReplyInput, styles.answerEditInput]} value={answer} onChangeText={setAnswer} multiline maxLength={1800} placeholder="Edit your comment…" placeholderTextColor={theme.colors.muted} />
@@ -824,7 +838,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const completedStatus = (post: CommunityPost): CommunityPost["fulfillmentStatus"] => post.category === "HAVE_PLACE" ? "FILLED" : post.category === "CARPOOL_RIDE" ? "ARRANGED" : post.category === "NEED_PLACE" || post.category === "NEED_ROOMMATE" ? "FOUND" : "RESOLVED";
   const managePost = (post: CommunityPost) => Alert.alert("Manage post", "Choose an action.", [
     { text: post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now() ? "Renew for 45 days" : post.fulfillmentStatus === "OPEN" ? `Mark ${completedStatus(post).toLowerCase()}` : "Reopen post", onPress: async () => { try { const expired = Boolean(post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now()); const status = expired || post.fulfillmentStatus !== "OPEN" ? "OPEN" : completedStatus(post); await updateCommunityPostStatus(post.id, status); mutatePost(post.id, (value) => ({ ...value, fulfillmentStatus: status, canAnswer: status === "OPEN", expiresAt: expired ? new Date(Date.now() + 45 * 86400000).toISOString() : value.expiresAt })); } catch (error) { Alert.alert("Status not changed", message(error)); } } },
-    { text: "Edit", onPress: () => { setEditingPostId(post.id); setForm({ type: post.type, category: post.category, title: post.title, body: post.body, area: post.area, linkUrl: post.linkUrl, communityId: post.community?.id || "", images: [], details: { ...emptyDetails, ...post.details }, expiresInDays: 45 }); setDetail(null); setComposerOpen(true); } },
+    { text: "Edit", onPress: () => { setEditingPostId(post.id); setForm({ type: post.type, category: post.category, title: post.title, body: post.body, area: post.area, linkUrl: post.linkUrl, communityId: post.community?.id || "", images: [...post.images], details: { ...emptyDetails, ...post.details }, expiresInDays: 45 }); setDetail(null); setComposerOpen(true); } },
     { text: "Delete", style: "destructive", onPress: () => confirmDelete(post) },
     { text: "Cancel", style: "cancel" },
   ]);
@@ -1013,7 +1027,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       <View style={styles.postHead}><TouchableOpacity style={styles.answerAuthorButton} onPress={() => void openMemberProfile(item.author)} accessibilityRole="button" accessibilityLabel={`View ${item.author.name}'s profile`}><UserAvatar photoUrl={item.author.photoUrl} style={styles.answerAvatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(item.author.name)}</Text>} /><View style={styles.postAuthor}><Text style={styles.author}>{item.author.name}</Text><Text style={styles.meta}>{relativeTime(item.createdAt)}</Text></View></TouchableOpacity>{item.accepted ? <Text style={styles.accepted}>✓ Accepted</Text> : null}</View>
       {editableAnswerBody(item, styles.answerBody)}
       {reactionStats(item.reactionCounts, item.reactionCount, item.viewerReaction)}
-      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}{item.canEdit ? <TouchableOpacity onPress={() => beginAnswerEdit(item)}><Text style={styles.replyAction}>Edit</Text></TouchableOpacity> : null}<TouchableOpacity onPress={() => { setEditingAnswerId(""); setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity onPress={async () => { await acceptCommunityAnswer(detail.id, item.id); setDetail(await getCommunityPost(detail.id)); }}><Text style={styles.acceptAction}>Accept answer</Text></TouchableOpacity> : null}</View>
+      <View style={styles.answerActions}>{reactionPicker(`answer-${item.id}`, item.viewerReaction, item.reactionCount, item.reactionCounts, (reaction) => void reactAnswer(item, reaction))}{item.canEdit ? <TouchableOpacity onPress={() => beginAnswerEdit(item)}><Text style={styles.replyAction}>Edit</Text></TouchableOpacity> : null}<TouchableOpacity onPress={() => { setEditingAnswerId(""); setAnswerReplyTarget({ id: item.id, name: item.author.name }); setAnswer(""); }}><Text style={styles.replyAction}>Reply</Text></TouchableOpacity>{detail?.canEdit && detail.type === "QUESTION" && !item.accepted ? <TouchableOpacity disabled={detailBusy} onPress={() => void acceptAnswer(item.id)}><Text style={[styles.acceptAction, detailBusy && styles.disabled]}>Accept answer</Text></TouchableOpacity> : null}</View>
       {replies.length ? <View style={styles.inlineReplies}>{visibleReplies.map((reply) => renderNestedReply(reply, allAnswers, 1))}{hiddenReplyCount ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => new Set([...current, item.id]))}><Text style={styles.moreRepliesText}>View {hiddenReplyCount} more {hiddenReplyCount === 1 ? "reply" : "replies"}</Text></TouchableOpacity> : expanded && replies.length > 2 ? <TouchableOpacity style={styles.moreRepliesButton} onPress={() => setExpandedReplyThreads((current) => { const next = new Set(current); next.delete(item.id); return next; })}><Text style={styles.moreRepliesText}>Show fewer replies</Text></TouchableOpacity> : null}</View> : null}
       {renderInlineReplyComposer(item)}
     </View>
@@ -1098,7 +1112,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         <View style={[styles.attachmentPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
           <View><Text style={styles.attachmentTitle}>Add to your post</Text><Text style={styles.attachmentHint}>Share a helpful link or up to 4 photos</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
-          {form.images.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.images.map((image, index) => <TouchableOpacity key={index} onPress={() => setForm((current) => ({ ...current, images: current.images.filter((_, target) => target !== index) }))}><Image source={{ uri: image }} style={styles.previewImage} /><View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
+          {form.images.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.images.map((image, index) => <TouchableOpacity key={index} onPress={() => setForm((current) => ({ ...current, images: current.images.filter((_, target) => target !== index) }))}><Image source={{ uri: absoluteUrl(image) }} style={styles.previewImage} /><View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
           <TouchableOpacity style={styles.addPhoto} onPress={async () => { try { const images = await pickCompressedImages(4 - form.images.length); setForm((current) => ({ ...current, images: [...current.images, ...images].slice(0, 4) })); } catch (error) { Alert.alert("Photos not added", message(error)); } }} accessibilityRole="button" accessibilityLabel="Add up to four photos"><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos</Text><Text style={styles.addPhotoBody}>{form.images.length ? `${form.images.length} of 4 selected · Tap a photo to remove it` : "Choose up to 4 clear, relevant images"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
         </View>
         <TextInput style={styles.input} value={form.area} onChangeText={(area) => setForm((current) => ({ ...current, area }))} placeholder={`Location or area · ${city}`} placeholderTextColor={theme.colors.muted} />

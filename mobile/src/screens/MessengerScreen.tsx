@@ -301,8 +301,37 @@ function recentChatConversations(conversations: ChatConversation[]) {
     .slice(0, 50);
 }
 
+function isGroupConversation(conversation: ChatConversation | null | undefined) {
+  return Boolean(conversation?.communityId) || conversation?.kind === "GROUP";
+}
+
+function hydrateLegacyGroupConversation(conversation: ChatConversation, communities: Community[]) {
+  if (!isGroupConversation(conversation) || conversation.communityId) return conversation;
+  const identity = (conversation.subject || conversation.otherName || "").normalize("NFKC").trim().toLocaleLowerCase();
+  if (!identity) return conversation;
+  const matches = communities.filter((community) => community.joined &&
+    (community.kind === "GROUP" || community.kind === "COMMUNITY") &&
+    community.name.normalize("NFKC").trim().toLocaleLowerCase() === identity);
+  // Never attach a legacy conversation by a fuzzy or ambiguous name. Exact,
+  // unique membership is required before adopting a community photo/ID.
+  if (matches.length !== 1) return conversation;
+  const community = matches[0];
+  return {
+    ...conversation,
+    communityId: community.id,
+    kind: "GROUP" as const,
+    subject: community.name,
+    otherName: community.name,
+    otherUserId: 0,
+    otherPhone: "",
+    otherPhotoUrl: community.photoUrl || "",
+    otherOnline: false,
+    otherLastSeenAt: ""
+  };
+}
+
 function isVisibleInboxConversation(conversation: ChatConversation, currentUserId: number) {
-  const isGroup = Boolean(conversation.communityId) || conversation.kind === "GROUP";
+  const isGroup = isGroupConversation(conversation);
   const isSavedMessages = Number(conversation.otherUserId || 0) === currentUserId;
   return isGroup || isSavedMessages || Number(conversation.lastMessageId || 0) > 0;
 }
@@ -754,6 +783,7 @@ function safeConversationPreview(conversation: ChatConversation) {
 }
 
 function conversationAvatarUrl(conversation: ChatConversation | null | undefined, currentUserId: number, currentUserPhotoUrl = "", currentUserName = "") {
+  if (conversation?.kind === "GROUP" && !conversation.communityId) return "";
   const isCurrentUser = conversation?.otherUserId === currentUserId
     || (!conversation?.otherUserId && !conversation?.communityId && conversation?.otherName.trim().toLocaleLowerCase() === currentUserName.trim().toLocaleLowerCase());
   if (isCurrentUser) return currentUserPhotoUrl;
@@ -773,28 +803,29 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
   const unread = chat.unread > 0;
   const conversationKind = chat.communityId || chat.kind === "GROUP" ? "Group letters" : "Direct letters";
   const avatarUrl = conversationAvatarUrl(chat, currentUserId, currentUserPhotoUrl, currentUserName);
+  const displayName = isGroupConversation(chat) ? chat.subject || chat.otherName : chat.otherName || chat.subject;
   return (
     <TouchableOpacity
       style={[styles.chatRow, isLight && styles.chatRowLight, isLight && unread && styles.chatRowUnreadLight]}
       onPress={() => onOpen(chat)}
-      accessibilityLabel={`${chat.otherName || chat.subject}. ${unread ? `${chat.unread} unread. ` : ""}${preview}`}
+      accessibilityLabel={`${displayName}. ${unread ? `${chat.unread} unread. ` : ""}${preview}`}
     >
       {unread ? <View style={styles.unreadAccent} /> : null}
       <TouchableOpacity
         style={styles.avatarWrap}
         disabled={!avatarUrl}
-        onPress={(event) => { event.stopPropagation(); onOpenAvatar(avatarUrl, chat.otherName || chat.subject || "Profile photo"); }}
+        onPress={(event) => { event.stopPropagation(); onOpenAvatar(avatarUrl, displayName || "Group photo"); }}
         accessibilityRole={avatarUrl ? "button" : undefined}
-        accessibilityLabel={avatarUrl ? `Open ${chat.otherName || chat.subject || "user"} profile photo` : undefined}
+        accessibilityLabel={avatarUrl ? `Open ${displayName || "group"} photo` : undefined}
       >
         <View style={styles.avatar}>
-          <InitialsAvatar photoUrl={avatarUrl} label={chat.otherName || chat.subject || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
+          <InitialsAvatar photoUrl={avatarUrl} label={displayName || "Chat"} imageStyle={styles.avatarImage} textStyle={styles.avatarText} />
         </View>
-        {chat.otherOnline ? <View style={styles.inboxOnlineDot} /> : null}
+        {chat.otherOnline && !isGroupConversation(chat) ? <View style={styles.inboxOnlineDot} /> : null}
       </TouchableOpacity>
       <View style={styles.chatCopy}>
         <View style={styles.chatTitleRow}>
-          <Text style={[styles.chatName, isLight && styles.chatNameLight, unread && styles.chatNameUnread, isLight && unread && styles.chatNameUnreadLight]} numberOfLines={1}>{chat.otherName || chat.subject}</Text>
+          <Text style={[styles.chatName, isLight && styles.chatNameLight, unread && styles.chatNameUnread, isLight && unread && styles.chatNameUnreadLight]} numberOfLines={1}>{displayName}</Text>
           <Text style={[styles.chatTime, unread && styles.chatTimeUnread, isLight && styles.chatTimeLight]}>{relativeTime(chat.lastMessageAt)}</Text>
         </View>
         <View style={styles.chatPreviewRow}>
@@ -1076,7 +1107,7 @@ function DiscoveredMessageText({ message, mine, mentionNames = [], hiddenUrl = "
 
 function presenceLabel(conversation: ChatConversation | null) {
   if (!conversation) return "New conversation";
-  if (conversation.communityId) return "Group chat";
+  if (isGroupConversation(conversation)) return "Group chat";
   if (conversation.otherOnline) return "Active now";
   const lastSeen = relativeTime(conversation.otherLastSeenAt || "");
   return lastSeen ? `Active ${lastSeen} ago` : "Offline";
@@ -1786,6 +1817,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const latestScrollFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const replyHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTargetHandledRef = useRef("");
+  const notificationLoadCompletedRef = useRef("");
   const replyKeyboardFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingOlderMessagesRef = useRef(false);
   const messagesUserDraggingRef = useRef(false);
@@ -3154,8 +3186,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     if (!notificationConversationId || !signedIn) return;
     let cancelled = false;
-    const knownConversation = conversations.find((item) => item.id === notificationConversationId)
+    const notificationTargetKey = `${notificationConversationId}:${Number(notificationMessageId || 0)}`;
+    notificationLoadCompletedRef.current = "";
+    setHydratedConversationId("");
+    const knownConversationRaw = conversations.find((item) => item.id === notificationConversationId)
       || data?.chat.conversations.find((item) => item.id === notificationConversationId);
+    const knownConversation = knownConversationRaw ? hydrateLegacyGroupConversation(knownConversationRaw, communities) : undefined;
     if (knownConversation) {
       setActiveConversation(knownConversation);
       setActiveSubject(knownConversation.subject || knownConversation.otherName || "");
@@ -3173,7 +3209,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       .then(async (payload) => {
         if (cancelled) return;
         if (activeConversationIdRef.current && activeConversationIdRef.current !== notificationConversationId) return;
-        const conversation = payload.conversation;
+        const conversation = hydrateLegacyGroupConversation(payload.conversation, communities);
         if (Number(conversation.historyStartMessageId || 0) > 0) {
           messageCache.current.delete(notificationConversationId);
           void clearCachedChatMessages(currentUserId, notificationConversationId);
@@ -3182,8 +3218,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setActiveConversation(conversation);
         setActiveSubject(conversation.subject || "Chitthi");
         const decryptedMessages = await decryptMessages(notificationConversationId, payload.messages || []);
+        if (cancelled || activeConversationIdRef.current !== notificationConversationId) return;
         prepareThreadForLatestLayout();
         mergeThreadMessages(notificationConversationId, decryptedMessages, Number(conversation.historyStartMessageId || 0));
+        notificationLoadCompletedRef.current = notificationTargetKey;
         setHydratedConversationId(notificationConversationId);
         updateMessagePagination(payload);
         setConversations((current) => current.map((item) => item.id === notificationConversationId ? { ...item, unread: 0 } : item));
@@ -3201,7 +3239,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [currentUserId, notificationConversationId, notificationMessageId, signedIn]);
 
   useEffect(() => {
-    if (!notificationConversationId) notificationTargetHandledRef.current = "";
+    if (!notificationConversationId) {
+      notificationTargetHandledRef.current = "";
+      notificationLoadCompletedRef.current = "";
+    }
   }, [notificationConversationId]);
 
   useEffect(() => {
@@ -3209,6 +3250,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (activeConversationId !== notificationConversationId || hydratedConversationId !== notificationConversationId) return;
     const targetMessageId = Number(notificationMessageId || 0);
     const targetKey = `${notificationConversationId}:${targetMessageId}`;
+    if (notificationLoadCompletedRef.current !== targetKey) return;
     if (notificationTargetHandledRef.current === targetKey) return;
     notificationTargetHandledRef.current = targetKey;
     if (targetMessageId) {
@@ -3477,7 +3519,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const personConversations = useMemo(() => {
     const rows: ChatConversation[] = [];
     const rowByPerson = new Map<number, ChatConversation>();
-    conversations.forEach((conversation) => {
+    conversations.forEach((storedConversation) => {
+      const conversation = hydrateLegacyGroupConversation(storedConversation, communities);
       // Opening a profile, listing, or group can provision a conversation on
       // the server. It is not an inbox item until it contains a visible message.
       if (!isVisibleInboxConversation(conversation, currentUserId)) return;
@@ -3496,7 +3539,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       existing.unread += conversation.unread || 0;
     });
     return rows;
-  }, [conversations, currentUserId]);
+  }, [communities, conversations, currentUserId]);
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -3653,6 +3696,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       onRequireLogin();
       return;
     }
+    conversation = hydrateLegacyGroupConversation(conversation, communities);
     const operationUserId = currentUserId;
     onThreadModeChange?.(true);
     userTouchedThreadRef.current = false;
@@ -3671,11 +3715,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const identityPromise = ensureChatDeviceIdentity();
     // Group history must be authorized by the current membership boundary
     // before anything is rendered. Never flash a stale pre-join disk cache.
-    if (conversation.communityId) {
+    if (isGroupConversation(conversation)) {
       messageCache.current.delete(conversation.id);
       void clearCachedChatMessages(currentUserId, conversation.id);
     }
-    const cachedMessages = conversation.communityId ? [] : await loadCachedThreadMessages(conversation.id);
+    const cachedMessages = isGroupConversation(conversation) ? [] : await loadCachedThreadMessages(conversation.id);
     if (messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== conversation.id) return;
     const displayedCachedMessages = showCachedThreadMessages(conversation.id, cachedMessages);
     if (!displayedCachedMessages) replaceThreadMessages(conversation.id, []);
@@ -3707,19 +3751,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         });
       const payload = await getChatMessages(conversation.id, 0, 20, identity.deviceId);
       if (messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== conversation.id) return;
-      setActiveSubject(payload.conversation.subject || conversation.subject);
+      const hydratedPayloadConversation = hydrateLegacyGroupConversation(payload.conversation, communities);
+      setActiveSubject(hydratedPayloadConversation.subject || conversation.subject);
       setActiveConversation({
         ...conversation,
-        ...payload.conversation,
-        kind: (payload.conversation.kind as ChatConversation["kind"]) || conversation.kind,
-        status: payload.conversation.status || conversation.status,
-        communityId: payload.conversation.communityId || conversation.communityId,
-        otherName: payload.conversation.otherName || conversation.otherName,
-        otherPhotoUrl: payload.conversation.otherPhotoUrl || conversation.otherPhotoUrl,
-        otherOnline: payload.conversation.otherOnline ?? conversation.otherOnline,
-        otherLastSeenAt: payload.conversation.otherLastSeenAt || conversation.otherLastSeenAt,
-        mutedAt: payload.conversation.mutedAt || conversation.mutedAt,
-        blockedAt: payload.conversation.blockedAt || conversation.blockedAt
+        ...hydratedPayloadConversation,
+        kind: (hydratedPayloadConversation.kind as ChatConversation["kind"]) || conversation.kind,
+        status: hydratedPayloadConversation.status || conversation.status,
+        communityId: hydratedPayloadConversation.communityId || conversation.communityId,
+        otherName: hydratedPayloadConversation.otherName || conversation.otherName,
+        otherPhotoUrl: hydratedPayloadConversation.otherPhotoUrl || conversation.otherPhotoUrl,
+        otherOnline: hydratedPayloadConversation.otherOnline ?? conversation.otherOnline,
+        otherLastSeenAt: hydratedPayloadConversation.otherLastSeenAt || conversation.otherLastSeenAt,
+        mutedAt: hydratedPayloadConversation.mutedAt || conversation.mutedAt,
+        blockedAt: hydratedPayloadConversation.blockedAt || conversation.blockedAt
       });
       // During rolling deploys an older backend does not include page-scoped
       // envelopes yet. Fall back to the established endpoint instead of
@@ -5063,7 +5108,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   async function toggleBlock() {
-    if (!activeConversationId || activeConversation?.communityId) return;
+    if (!activeConversationId || isGroupConversation(activeConversation)) return;
     const targetUserId = activeConversation?.otherUserId || 0;
     const nextBlocked = !activeConversation?.blockedAt;
     try {
@@ -5086,7 +5131,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
-      const media = await pickChatMedia(4, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
+      const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
       if (!media.length) return;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       if (media.length === 1 && media[0].kind === "VIDEO") {
@@ -5108,18 +5153,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       } else {
         setPendingAttachment(null);
         setPendingImages(media);
-        const selectedVideo = media.find((item) => item.kind === "VIDEO");
-        if (selectedVideo) {
-          const previewThumbnail = selectedVideo.pickerAssetId
-            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
-            : createLightweightVideoThumbnail(selectedVideo.uri);
-          void previewThumbnail.then((thumbnailBase64) => {
-            if (!thumbnailBase64) return;
+        const selectedVideos = media.filter((item) => item.kind === "VIDEO");
+        // Keep thumbnail decoding serial as well. Several simultaneous native
+        // video decoders can evict each other's image context on iOS and cause
+        // the renderAsync "Image context has been lost" failure.
+        void (async () => {
+          for (const selectedVideo of selectedVideos) {
+            const thumbnailBase64 = await (selectedVideo.pickerAssetId
+              ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+              : createLightweightVideoThumbnail(selectedVideo.uri)).catch(() => "");
+            if (!thumbnailBase64) continue;
             setPendingImages((current) => current.map((item) => item.kind === "VIDEO" && item.uri === selectedVideo.uri
               ? { ...item, thumbnailBase64 }
               : item));
-          }).catch(() => undefined);
-        }
+          }
+        })();
       }
     } catch (error) {
       setAttachmentStatus("");
@@ -6077,6 +6125,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onThreadModeChange?.(false);
   }
 
+  async function callActiveConversationMember() {
+    const phone = String(activeConversation?.otherPhone || "").trim();
+    const dialablePhone = phone.startsWith("+")
+      ? `+${phone.slice(1).replace(/\D/g, "")}`
+      : phone.replace(/\D/g, "");
+    setChatOptionsOpen(false);
+    if (!dialablePhone || isGroupConversation(activeConversation) || Number(activeConversation?.otherUserId || 0) === currentUserId) {
+      Alert.alert("Call unavailable", "This member does not have a valid phone number available.");
+      return;
+    }
+    try {
+      await Linking.openURL(`tel:${dialablePhone}`);
+    } catch {
+      Alert.alert("Call unavailable", "This device could not open the phone dialer.");
+    }
+  }
+
   const handledAndroidBackRequestRef = useRef(androidBackRequestToken);
   useEffect(() => {
     if (Platform.OS !== "android" || androidBackRequestToken === handledAndroidBackRequestRef.current) return;
@@ -6098,28 +6163,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.threadAvatar}
-            disabled={!activeConversation?.communityId && !conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) && !pendingPost?.photoUrl && !pendingRide?.ownerPhotoUrl}
+            disabled={!isGroupConversation(activeConversation) && !conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) && !pendingPost?.photoUrl && !pendingRide?.ownerPhotoUrl}
             onPress={() => {
-              if (activeConversation?.communityId) {
+              if (isGroupConversation(activeConversation)) {
                 void showGroupMembers();
                 return;
               }
               const uri = conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl || "";
               if (uri) setProfilePhotoPreview({ uri, label: activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Profile photo" });
             }}
-            accessibilityLabel={activeConversation?.communityId ? "Open group info" : "Open profile photo"}
+            accessibilityLabel={isGroupConversation(activeConversation) ? "Open group info" : "Open profile photo"}
           >
-            <InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl} label={activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat"} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} />
-            {activeConversation?.otherOnline && !activeConversation?.communityId ? <View style={styles.activeDot} /> : null}
+            <InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name) || pendingPost?.photoUrl || pendingRide?.ownerPhotoUrl} label={(isGroupConversation(activeConversation) ? activeConversation?.subject : activeConversation?.otherName) || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || activeSubject || "Chat"} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} />
+            {activeConversation?.otherOnline && !isGroupConversation(activeConversation) ? <View style={styles.activeDot} /> : null}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.threadHeaderCopy} disabled={!activeConversation?.communityId} onPress={() => void showGroupMembers()} accessibilityLabel={activeConversation?.communityId ? "Open group info" : undefined}>
+          <TouchableOpacity style={styles.threadHeaderCopy} disabled={!isGroupConversation(activeConversation)} onPress={() => void showGroupMembers()} accessibilityLabel={isGroupConversation(activeConversation) ? "Open group info" : undefined}>
             <Text style={styles.threadHeaderTitle} numberOfLines={1}>
-              {activeConversation?.otherName || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
+              {(isGroupConversation(activeConversation) ? activeConversation?.subject : activeConversation?.otherName) || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
               {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : encryptionStatusDetail || "Encryption setup pending"}`}
             </Text>
           </TouchableOpacity>
+          {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
+            <TouchableOpacity style={styles.headerAction} onPress={() => void callActiveConversationMember()} accessibilityRole="button" accessibilityLabel={`Call ${activeConversation.otherName || "member"}`}>
+              <Text style={styles.headerCallIcon}>☎</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </View>
 
@@ -6148,7 +6218,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           />
           <View style={styles.chatOptionsPanel}>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
-            {!activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
+            {!isGroupConversation(activeConversation) ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Group info</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
@@ -6379,11 +6449,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             return (
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
-              {!message.mine && Boolean(activeConversation?.communityId) && messageRunEnds ? (
+              {!message.mine && isGroupConversation(activeConversation) && messageRunEnds ? (
                 <TouchableOpacity style={styles.smallAvatar} disabled={!message.senderPhotoUrl} onPress={() => setProfilePhotoPreview({ uri: message.senderPhotoUrl || "", label: message.senderName || "Profile photo" })} accessibilityRole={message.senderPhotoUrl ? "button" : undefined} accessibilityLabel={message.senderPhotoUrl ? `Open ${message.senderName || "sender"} profile photo` : undefined}>
                   <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
                 </TouchableOpacity>
-              ) : !message.mine && Boolean(activeConversation?.communityId) ? <View style={styles.smallAvatarSpacer} /> : null}
+              ) : !message.mine && isGroupConversation(activeConversation) ? <View style={styles.smallAvatarSpacer} /> : null}
               <TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
@@ -6401,7 +6471,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
-                {!message.mine && Boolean(activeConversation?.communityId) ? <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
+                {!message.mine && isGroupConversation(activeConversation) ? <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}><Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text></View> : null}
                 {message.metadata?.forwarded ? <View style={styles.forwardedLabel}><Text style={[styles.forwardedLabelText, message.mine && styles.myForwardedLabelText]}>↪ Forwarded</Text></View> : null}
                 {message.metadata?.privateReply ? <PrivateReplyCard context={message.metadata.privateReply} mine={message.mine} /> : null}
                 {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
@@ -6565,7 +6635,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 </Pressable>
                 <Pressable onPress={(event) => event.stopPropagation()} style={[styles.messageActionSheet, actionMessage.mine && styles.messageActionSheetMine]} accessible={false}>
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginReply(actionMessage)} accessibilityRole="button" accessibilityLabel="Reply"><Text style={styles.messageActionGlyph}>↩</Text><Text style={styles.messageActionLabel}>Reply</Text></TouchableOpacity>
-                  {!actionMessage.mine && Boolean(activeConversation?.communityId) && Number(actionMessage.senderId || 0) > 0 ? <TouchableOpacity style={styles.messageActionRow} onPress={() => void replyToGroupMessagePrivately(actionMessage)} accessibilityRole="button" accessibilityLabel={`Reply privately to ${actionMessage.senderName || "member"}`}><Text style={styles.messageActionGlyph}>✉</Text><Text style={styles.messageActionLabel}>Reply privately</Text></TouchableOpacity> : null}
+                  {!actionMessage.mine && isGroupConversation(activeConversation) && Boolean(activeConversation?.communityId) && Number(actionMessage.senderId || 0) > 0 ? <TouchableOpacity style={styles.messageActionRow} onPress={() => void replyToGroupMessagePrivately(actionMessage)} accessibilityRole="button" accessibilityLabel={`Reply privately to ${actionMessage.senderName || "member"}`}><Text style={styles.messageActionGlyph}>✉</Text><Text style={styles.messageActionLabel}>Reply privately</Text></TouchableOpacity> : null}
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => forwardActionMessage(actionMessage)} accessibilityRole="button" accessibilityLabel="Forward"><Text style={styles.messageActionGlyph}>↗</Text><Text style={styles.messageActionLabel}>Forward</Text></TouchableOpacity>
                   {actionMessage.mine && actionMessage.id > 0 ? <TouchableOpacity style={styles.messageActionRow} onPress={() => void openMessageInfo(actionMessage)} accessibilityRole="button" accessibilityLabel="Message info"><Text style={styles.messageActionGlyph}>ⓘ</Text><Text style={styles.messageActionLabel}>Info</Text></TouchableOpacity> : null}
                   {actionMessage.text ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { void Clipboard.setStringAsync(actionMessage.text); setActionMessage(null); }} accessibilityRole="button" accessibilityLabel="Copy"><Text style={styles.messageActionGlyph}>▣</Text><Text style={styles.messageActionLabel}>Copy</Text></TouchableOpacity> : null}
@@ -6701,7 +6771,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   const selected = selectedForwardConversationIds.includes(conversation.id);
                   return <TouchableOpacity key={conversation.id} disabled={forwardingMessages} style={[styles.forwardPickerRow, selected && styles.forwardPickerRowSelected]} onPress={() => toggleForwardConversation(conversation.id)}>
                     <View style={styles.forwardPickerAvatar}><InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject} imageStyle={styles.forwardPickerAvatarImage} textStyle={styles.forwardPickerAvatarText} /></View>
-                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{conversation.communityId ? "Group" : safeConversationPreview(conversation)}</Text></View>
+                    <View style={styles.forwardPickerCopy}><Text style={styles.forwardPickerName} numberOfLines={1}>{isGroupConversation(conversation) ? conversation.subject || conversation.otherName : conversation.otherName || conversation.subject}</Text><Text style={styles.forwardPickerMeta} numberOfLines={1}>{isGroupConversation(conversation) ? "Group" : safeConversationPreview(conversation)}</Text></View>
                     <View style={[styles.forwardPickerCheck, selected && styles.forwardPickerCheckSelected]}><Text style={styles.forwardPickerCheckText}>{selected ? "✓" : ""}</Text></View>
                   </TouchableOpacity>;
                 })}
@@ -6863,7 +6933,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {!visibleMessages.length && !threadLoading && !quickReplyDismissedConversationIds.includes(activeConversationId) && !messageText.trim() && !typingPeople.length && !pendingAttachment && !pendingImages.length && !editingMessageId && !emojiPickerOpen ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickReplies} contentContainerStyle={styles.quickRepliesContent}>
-            {[`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"].map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => { if (activeConversationId) setQuickReplyDismissedConversationIds((current) => current.includes(activeConversationId) ? current : [...current, activeConversationId]); setMessageText(reply); }}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
+            {(isGroupConversation(activeConversation) ? ["Hi, everyone", "Hello, group", "👍"] : [`Hi, ${(activeConversation?.otherName || "there").split(" ")[0]}`, `Hello, ${(activeConversation?.otherName || "there").split(" ")[0]}`, "👍"]).map((reply) => <TouchableOpacity key={reply} style={styles.quickReply} onPress={() => { if (activeConversationId) setQuickReplyDismissedConversationIds((current) => current.includes(activeConversationId) ? current : [...current, activeConversationId]); setMessageText(reply); }}><Text style={styles.quickReplyText}>{reply}</Text></TouchableOpacity>)}
           </ScrollView>
         ) : null}
 
@@ -7371,6 +7441,7 @@ const styles = StyleSheet.create({
   threadHeaderTitle: { color: "#153D31", fontSize: 16.5, fontWeight: "700" },
   threadHeaderMeta: { color: "#4D675D", fontSize: 11.5, fontWeight: "500", marginTop: 2 },
   headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  headerCallIcon: { color: "#866525", fontSize: 25, lineHeight: 28, fontWeight: "600" },
   messageSelectionBar: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, backgroundColor: "rgba(9,18,33,0.98)", zIndex: 12 },
   messageSelectionCancel: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
   messageSelectionCancelText: { color: theme.colors.text, fontSize: 25, lineHeight: 27, marginTop: -2 },

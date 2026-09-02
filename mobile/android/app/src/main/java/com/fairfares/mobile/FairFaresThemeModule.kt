@@ -19,10 +19,11 @@ class FairFaresThemeModule(private val reactContext: ReactApplicationContext) : 
     UiThreadUtil.runOnUiThread {
       if (AppCompatDelegate.getDefaultNightMode() != nightMode) {
         AppCompatDelegate.setDefaultNightMode(nightMode)
-        // MainActivity is a ReactActivity, so AppCompat cannot reliably
-        // recreate it for us. Recreate once to clear resolved PlatformColor
-        // values and ensure every mounted surface uses one configuration.
-        reactContext.currentActivity?.recreate()
+        // MainActivity handles uiMode as a configuration change. Recreating it
+        // here invalidates Expo ActivityResult launchers that may already be
+        // registered for the photo picker, camera, documents, or contacts.
+        // FairFares surfaces react to the selected appearance in JavaScript,
+        // so no Activity restart is required.
       }
     }
   }

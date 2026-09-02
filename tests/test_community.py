@@ -112,6 +112,62 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
 
+    def test_post_photos_are_limited_ordered_and_editable(self):
+        png = "data:image/png;base64," + base64.b64encode(
+            base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        ).decode("ascii")
+        status, created = self.create_post(images=[png, png, png, png, png])
+        self.assertEqual(status, 201)
+        post_id = created["post"]["id"]
+        original_images = created["post"]["images"]
+        self.assertEqual(len(original_images), 4)
+        self.assertTrue(all("/community/" in urllib.parse.urlparse(image).path for image in original_images))
+
+        status, updated = self.request(
+            "POST", "/api/mobile/community/update", "owner-token",
+            {
+                "postId": post_id,
+                "title": "Updated post with photos",
+                "body": "The retained and replacement photos should remain in order.",
+                "linkUrl": "",
+                "details": {},
+                "images": [original_images[1], "not-an-image", png, original_images[0]],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(updated["ok"])
+        _, detail = self.request("GET", f"/api/mobile/community?postId={post_id}", "owner-token")
+        edited_images = detail["posts"][0]["images"]
+        self.assertEqual(len(edited_images), 3)
+        self.assertEqual(edited_images[0], original_images[1])
+        self.assertEqual(edited_images[2], original_images[0])
+        self.assertNotIn(original_images[2], edited_images)
+        self.assertNotIn(original_images[3], edited_images)
+
+        for image in edited_images:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{self.server.server_port}{app.public_upload_url(image)}"
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "image/png")
+                self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
+                self.assertTrue(response.read())
+
+        status, _ = self.request(
+            "POST", "/api/mobile/community/update", "owner-token",
+            {
+                "postId": post_id,
+                "title": "Updated by an older client",
+                "body": "Omitting the images field must preserve every existing photo.",
+                "linkUrl": "",
+                "details": {},
+            },
+        )
+        self.assertEqual(status, 200)
+        _, preserved = self.request("GET", f"/api/mobile/community?postId={post_id}", "owner-token")
+        self.assertEqual(preserved["posts"][0]["images"], edited_images)
+
     def test_comment_author_can_edit_but_other_users_cannot(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]

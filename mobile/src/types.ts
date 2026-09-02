@@ -113,6 +113,7 @@ export type ChatConversation = {
   rideRoute?: string;
   otherName: string;
   otherUserId?: number;
+  otherPhone?: string;
   otherPhotoUrl?: string;
   otherOnline?: boolean;
   otherLastSeenAt?: string;
@@ -374,6 +375,7 @@ export type RidePost = {
 export type RideDispatchSummary = {
   notifiedCount: number;
   nearestRadius: number;
+  matchedRequestCount?: number;
   radiusBuckets: Array<{
     radiusMiles: number;
     notifiedCount: number;

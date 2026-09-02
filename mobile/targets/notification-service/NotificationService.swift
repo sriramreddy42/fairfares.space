@@ -256,12 +256,15 @@ final class NotificationService: UNNotificationServiceExtension {
             completion(nil)
             return
         }
-        var request = URLRequest(url: url)
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 2.5
+        )
         // Leave ample time for the initials-based communication fallback and
         // Intents enrichment before iOS terminates the service extension.
         // A slow avatar host must never turn a group notification into the
         // generic FairFares app icon.
-        request.timeoutInterval = 2.5
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let http = response as? HTTPURLResponse
             guard let data,

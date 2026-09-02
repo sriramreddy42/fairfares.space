@@ -218,6 +218,25 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(is_group)
         self.assertEqual(name, "Legacy housing group")
 
+    def test_legacy_group_with_duplicate_name_does_not_borrow_another_groups_photo(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('FFG-DUP-A', 'GROUP', 'Same Name', '/wrong-a.jpg')"
+            )
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('FFG-DUP-B', 'GROUP', 'Same Name', '/wrong-b.jpg')"
+            )
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('FFC-DUP-NAME', 'GROUP', 'Same Name')"
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone()
+            is_group, name, community_id = app.chat_notification_conversation_context(con, conversation)
+
+        self.assertTrue(is_group)
+        self.assertEqual(name, "Same Name")
+        self.assertEqual(community_id, 0)
+
     def test_legacy_group_with_missing_link_recovers_from_registered_group_name(self):
         with app.db() as con:
             community_id = int(con.execute(
