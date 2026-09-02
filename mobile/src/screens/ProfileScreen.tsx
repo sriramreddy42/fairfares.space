@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
@@ -19,6 +19,7 @@ type Props = {
   onLogout: () => void;
   onProfileUpdated: (user: BootstrapPayload["user"]) => void;
   onOpenHousing?: () => void;
+  onEditHousing?: (postId: string) => Promise<void> | void;
   onOpenRide?: (target?: "workspace" | "requests" | "listings", rideId?: string) => void;
   onOpenServices?: (bookingId?: string) => void;
   onOpenMessenger?: () => void;
@@ -47,6 +48,7 @@ export function ProfileScreen({
   onLogout,
   onProfileUpdated,
   onOpenHousing,
+  onEditHousing,
   onOpenRide,
   onOpenServices,
   onOpenMessenger,
@@ -83,6 +85,8 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
+  const [accountActivityLoading, setAccountActivityLoading] = useState(Boolean(user));
+  const [historyOpeningId, setHistoryOpeningId] = useState("");
 
   useEffect(() => {
     if (!openProfileDetails || !user) return;
@@ -141,13 +145,16 @@ export function ProfileScreen({
         setRideActivity([]);
         setHousingActivity([]);
         setRentalActivity([]);
+        setAccountActivityLoading(false);
         return;
       }
+      setAccountActivityLoading(true);
       const [activityResult, housingResult, rentalResult] = await Promise.allSettled([getRideActivity(), getHousingActivity(), getRentalBookings()]);
       if (cancelled) return;
       setRideActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
       setHousingActivity(housingResult.status === "fulfilled" ? housingResult.value : []);
       setRentalActivity(rentalResult.status === "fulfilled" ? rentalResult.value : []);
+      setAccountActivityLoading(false);
     }
     void loadAccountActivity();
     return () => {
@@ -171,7 +178,7 @@ export function ProfileScreen({
       status: post.expiryLabel,
       current: post.status === "ACTIVE" && post.expiryLabel !== "Expired",
       kind: /need|looking|request/i.test(post.modeLabel) ? "Request" : "Listing",
-      editable: false
+      editable: true
     }));
     if (historySection === "carpool") return rideActivity.filter((ride) => carpoolHistoryView === "listings"
       ? ride.activityRole === "MINE" && ride.role === "DRIVER"
@@ -388,6 +395,7 @@ export function ProfileScreen({
             imageStyle={styles.avatarImage}
             fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>}
           />
+          {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
         </TouchableOpacity>
       </View>
 
@@ -434,10 +442,10 @@ export function ProfileScreen({
             ) : null}
             <View style={styles.actionRow}>
               <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto} disabled={saving}>
-                <Text style={styles.secondaryButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text>
+                <View style={styles.buttonContent}>{savingMode === "photo" ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}<Text style={styles.secondaryButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text></View>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
-                <Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving..." : profileDirty && sensitiveChanged && !completingInitialPhone && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text>
+                <View style={styles.buttonContent}>{savingMode === "details" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving…" : profileDirty && sensitiveChanged && !completingInitialPhone && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text></View>
               </TouchableOpacity>
             </View>
           </> : null}
@@ -518,11 +526,17 @@ export function ProfileScreen({
               </View>
             ) : null}
             <ScrollView style={styles.historyScroll} contentContainerStyle={styles.historyContent} showsVerticalScrollIndicator={false}>
+              {accountActivityLoading ? (
+                <View style={styles.historyLoading} accessibilityRole="progressbar">
+                  <ActivityIndicator size="large" color={theme.colors.brand} />
+                  <Text style={styles.historyLoadingText}>Loading your {historySection === "housing" ? "listings" : historySection === "rentals" ? "rentals" : "carpool activity"}…</Text>
+                </View>
+              ) : <>
               <Text style={styles.historySectionTitle}>Current · {currentHistoryItems.length}</Text>
               {currentHistoryItems.length ? currentHistoryItems.map((item) => (
                 <View key={`current-${item.id}`} style={styles.historyRow}>
                   <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Current</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
-                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView, item.editable ? item.sourceId : undefined) : historySection === "rentals" ? onOpenServices?.(item.sourceId) : historyAction?.(); }}><Text style={styles.historyEditText}>{item.editable ? "Edit" : "Manage"}</Text></TouchableOpacity></View>
+                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} disabled={Boolean(historyOpeningId)} onPress={() => void (async () => { setHistoryOpeningId(item.id); try { if (historySection === "housing") { await onEditHousing?.(item.sourceId); } else { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView, item.editable ? item.sourceId : undefined) : onOpenServices?.(item.sourceId); } setHistorySection(null); } finally { setHistoryOpeningId(""); } })()}>{historyOpeningId === item.id ? <ActivityIndicator size="small" color={theme.colors.brand} /> : <Text style={styles.historyEditText}>{item.editable ? "Edit" : "Manage"}</Text>}</TouchableOpacity></View>
                 </View>
               )) : <Text style={styles.historyEmpty}>No current records.</Text>}
               <Text style={styles.historySectionTitle}>Expired / completed · {previousHistoryItems.length}</Text>
@@ -532,9 +546,10 @@ export function ProfileScreen({
                   <Text style={styles.historyPreviousBadge}>{item.status}</Text>
                 </View>
               )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}
+              </>}
             </ScrollView>
-            <TouchableOpacity style={styles.historyManageButton} onPress={() => { setHistorySection(null); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); }}>
-              <Text style={styles.primaryButtonText}>Manage {historySection === "carpool" ? carpoolHistoryView : historySection === "rentals" ? "rentals" : "listings"}</Text>
+            <TouchableOpacity style={styles.historyManageButton} disabled={Boolean(historyOpeningId)} onPress={() => void (async () => { setHistoryOpeningId("manage"); try { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView) : historyAction?.(); setHistorySection(null); } finally { setHistoryOpeningId(""); } })()}>
+              <View style={styles.buttonContent}>{historyOpeningId === "manage" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>Manage {historySection === "carpool" ? carpoolHistoryView : historySection === "rentals" ? "rentals" : "listings"}</Text></View>
             </TouchableOpacity>
           </View>
         </View>
@@ -580,7 +595,7 @@ export function ProfileScreen({
                 <Switch value={supportUrgent} onValueChange={setSupportUrgent} />
               </View>
               <TouchableOpacity style={[styles.primaryButton, (supportSending || supportMessage.trim().length < 10) && styles.disabled]} disabled={supportSending || supportMessage.trim().length < 10} onPress={() => void submitIssue()}>
-                <Text style={styles.primaryButtonText}>{supportSending ? "Sending…" : "Send issue report"}</Text>
+                <View style={styles.buttonContent}>{supportSending ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{supportSending ? "Sending…" : "Send issue report"}</Text></View>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -591,6 +606,8 @@ export function ProfileScreen({
 }
 
 const styles = StyleSheet.create({
+  historyLoading: { minHeight: 220, alignItems: "center", justifyContent: "center", gap: 12 },
+  historyLoadingText: { color: theme.colors.muted, fontSize: 14, fontWeight: "700" },
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { width: "100%", maxWidth: 980, alignSelf: "center", padding: 14, paddingBottom: 108, gap: 12 },
   hero: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 14 },
@@ -600,6 +617,7 @@ const styles = StyleSheet.create({
   badgeText: { color: theme.colors.soft, fontWeight: "700", fontSize: 11 },
   avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   avatarImage: { width: "100%", height: "100%" },
+  avatarLoading: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.48)" },
   avatarText: { color: theme.colors.text, fontSize: 26, fontWeight: "800" },
   selector: { backgroundColor: theme.colors.panel2, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 11, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   selectorText: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
@@ -626,6 +644,7 @@ const styles = StyleSheet.create({
   privacyCopy: { flex: 1 },
   primaryButton: { flex: 1, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
+  buttonContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   secondaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   disabled: { opacity: 0.7 },

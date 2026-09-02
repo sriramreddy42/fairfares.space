@@ -16,7 +16,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -260,12 +260,25 @@ function FairFaresApp() {
   const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("community");
+  const [gasPriceRefreshKey, setGasPriceRefreshKey] = useState(0);
   const [messengerBackRequestToken, setMessengerBackRequestToken] = useState(0);
   const androidTabHistoryRef = useRef<TabKey[]>(["community"]);
   const androidBackTargetRef = useRef<TabKey | null>(null);
   const [updatePolicy, setUpdatePolicy] = useState<(AppVersionPolicy & { required: boolean }) | null>(null);
   const updateCheckRunningRef = useRef(false);
   const lastUpdateCheckRef = useRef(0);
+  const lastAnalyticsOpenRef = useRef(Date.now());
+
+  useEffect(() => {
+    void trackAppLaunch();
+    const subscription = AppState.addEventListener("change", (state) => {
+      const now = Date.now();
+      if (state !== "active" || now - lastAnalyticsOpenRef.current < 30_000) return;
+      lastAnalyticsOpenRef.current = now;
+      void trackProductEvent("app_open", { source: "native_foreground" });
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== "ios" && Platform.OS !== "android") return;
@@ -397,6 +410,7 @@ function FairFaresApp() {
     });
   }, []);
   const [visiblePosts, setVisiblePosts] = useState<HousingPost[]>([]);
+  const housingRequestGenerationRef = useRef(0);
   const [selectedNeed, setSelectedNeed] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedGender, setSelectedGender] = useState("");
@@ -1191,6 +1205,7 @@ function FairFaresApp() {
         // Ignore malformed external URLs.
       }
       if (url.includes("payment/success")) {
+        void trackProductEvent("rental_booking_completed", { source: "stripe_deep_link" });
         setPaymentUrl("");
         setPaymentMessage("");
         void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
@@ -1419,6 +1434,7 @@ function FairFaresApp() {
         setPaymentUrl("");
         const browserResult = await WebBrowser.openAuthSessionAsync(payload.url, "fairfares://payment");
         if (browserResult.type === "success" && browserResult.url?.includes("payment/success")) {
+          void trackProductEvent("rental_booking_completed", { source: `stripe_${paymentOption}` });
           setPaymentMessage("");
           await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
           setPaymentStatus({
@@ -1457,7 +1473,16 @@ function FairFaresApp() {
       }
       setPaymentUrl("");
       const browserResult = await WebBrowser.openAuthSessionAsync(pending.url, "fairfares://payment");
-      if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
+      if (browserResult.type === "success" && browserResult.url?.includes("payment/success")) {
+        void trackProductEvent("rental_booking_completed", { source: `stripe_${pending.paymentOption}_resumed` });
+        await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
+        setPaymentStatus({
+          title: "Payment completed",
+          body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
+          action: "View booking"
+        });
+        void load();
+      } else if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
         await returnToRentalCars();
       }
     } catch {
@@ -1493,6 +1518,7 @@ function FairFaresApp() {
       return;
     }
     try {
+      void trackProductEvent("rental_booking_started", { carId: car.id, source: "rental_checkout" });
       const payload = await bookRentalCar(Number(car.id), details);
       if (paymentOption) {
         await openRentalCheckout(paymentOption, String(payload.booking.id || ""));
@@ -1522,22 +1548,32 @@ function FairFaresApp() {
       return;
     }
     setSelectedNeed(need);
+    const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates));
+      const posts = await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
+      if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
   async function selectArea(nextArea: string) {
+    const requestGeneration = ++housingRequestGenerationRef.current;
+    const areaHasRegion = /,\s*[A-Za-z]{2}(?:\s*,|\s*$)/.test(nextArea);
+    const lookupQuery = nextArea
+      ? (areaHasRegion ? nextArea : `${nextArea}, ${city}`)
+      : city;
     const [lookup, options] = await Promise.all([
-      lookupAccommodationLocation(nextArea || city),
+      lookupAccommodationLocation(lookupQuery),
       getAccommodationLocationOptions(city, nextArea)
     ]);
-    const resolvedArea = nextArea ? lookup?.selectedLocation || nextArea : "";
+    if (housingRequestGenerationRef.current !== requestGeneration) return;
+    // Preserve the locality chosen in the current city. A geocoder's broader
+    // canonical label must not silently replace it with a same-named place.
+    const resolvedArea = nextArea;
     const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
     const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
     setArea(resolvedArea);
@@ -1547,6 +1583,7 @@ function FairFaresApp() {
     setLoading(true);
     try {
       const posts = await getHousing(resolvedCity, resolvedArea, selectedNeed, selectedCategory, selectedGender, selectedBudget, searchRadius, nextCoordinates);
+      if (housingRequestGenerationRef.current !== requestGeneration) return;
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
       setData((current) =>
@@ -1568,18 +1605,25 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
   async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius, nextNeed = searchNeed) {
+    const requestGeneration = ++housingRequestGenerationRef.current;
     const cleanCity = normalizeCityInput(nextCity);
-    const cleanArea = nextArea.trim();
+    const requestedArea = nextArea.trim();
+    const cityRegion = cleanCity.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
+    const areaRegion = requestedArea.match(/,\s*([A-Za-z]{2})(?:\s*,|\s*$)/)?.[1]?.toUpperCase() || "";
+    // An area chosen under a previous city must not determine coordinates for
+    // a newly entered city in another state.
+    const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
     const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
     const [lookup, options] = await Promise.all([
       lookupAccommodationLocation(cleanArea || cleanCity),
       getAccommodationLocationOptions(cleanCity, cleanArea)
     ]);
+    if (housingRequestGenerationRef.current !== requestGeneration) return;
     // Keep the place the user typed or selected. A broad geocoder fallback (for
     // example, Dayton) must not replace a specific query such as Wilmington Pike.
     const resolvedArea = cleanArea;
@@ -1600,6 +1644,7 @@ function FairFaresApp() {
     setLoading(true);
     try {
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
+      if (housingRequestGenerationRef.current !== requestGeneration) return;
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
       setActiveTab("housing");
@@ -1622,7 +1667,7 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("Search failed", error instanceof Error ? error.message : "Unable to search this location.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
@@ -1731,6 +1776,25 @@ function FairFaresApp() {
     setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
     setHousingListingSuccess(null);
     setListingOpen(true);
+  }
+
+  async function openHousingListingEditor(postId: string) {
+    const existing = visiblePosts.find((post) => post.id === postId);
+    if (existing) {
+      editHousingListing(existing);
+      return;
+    }
+    try {
+      const post = await getHousingListing(postId);
+      if (!post) {
+        Alert.alert("Listing unavailable", "This listing is no longer available.");
+        return;
+      }
+      setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+      editHousingListing(post);
+    } catch (error) {
+      Alert.alert("Listing unavailable", error instanceof Error ? error.message : "This listing could not be loaded. Please try again.");
+    }
   }
 
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
@@ -1964,37 +2028,43 @@ function FairFaresApp() {
 
   async function selectCategory(category: string) {
     setSelectedCategory(category);
+    const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates));
+      const posts = await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
+      if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
   async function selectGender(gender: string) {
     setSelectedGender(gender);
+    const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius, housingSearchCoordinates));
+      const posts = await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius, housingSearchCoordinates);
+      if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Gender preference", error instanceof Error ? error.message : "Unable to filter by preference.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
   async function selectBudget(budget: string) {
     setSelectedBudget(budget);
+    const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      setVisiblePosts(await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius, housingSearchCoordinates));
+      const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius, housingSearchCoordinates);
+      if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Budget", error instanceof Error ? error.message : "Unable to filter by budget.");
     } finally {
-      setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
     }
   }
 
@@ -2120,6 +2190,9 @@ function FairFaresApp() {
   }
 
   function acceptSocialAuth(payload: MobileSocialAuthPayload) {
+    if (payload.accountCreated) {
+      void trackProductEvent("signup_completed", { source: "social_signup" });
+    }
     if (payload.phoneRequired && payload.continuationToken) {
       // Social signup consent is collected only beside the required phone
       // number. Never inherit a checkbox previously used by manual signup.
@@ -2327,6 +2400,7 @@ function FairFaresApp() {
     setAuthMessage("Creating account...");
     try {
       const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupCallingCode, signupConsentAccepted);
+      void trackProductEvent("signup_completed", { source: "email_signup" });
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
       setSignupName("");
@@ -2497,8 +2571,10 @@ function FairFaresApp() {
       null
     ) : activeTab === "gas" ? (
       <GasStationsScreen
-        onBack={() => setActiveTab("community")}
-        fallbackCity={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
+        onBack={() => {
+          setGasPriceRefreshKey((value) => value + 1);
+          setActiveTab("community");
+        }}
       />
     ) : activeTab === "community" ? (
       <CommunityScreen
@@ -2550,6 +2626,7 @@ function FairFaresApp() {
           setActiveTab("housing");
         }}
         onOpenGas={() => setActiveTab("gas")}
+        gasPriceRefreshKey={gasPriceRefreshKey}
         onOpenCommunity={(communityId) => {
           setPendingPost(null);
           setPendingRide(null);
@@ -2601,17 +2678,7 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
-        onEditHousing={(postId) => {
-          const existing = visiblePosts.find((post) => post.id === postId);
-          if (existing) {
-            editHousingListing(existing);
-            return;
-          }
-          void getHousingListing(postId).then((post) => {
-            if (post) editHousingListing(post);
-            else Alert.alert("Listing unavailable", "This listing is no longer available.");
-          });
-        }}
+        onEditHousing={openHousingListingEditor}
         onOpenServices={(bookingId = "") => {
           setRentalEditBookingId(bookingId);
           setSelectedService("cars");
@@ -2641,6 +2708,7 @@ function FairFaresApp() {
           setActiveTab("housing");
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
+        onEditHousing={openHousingListingEditor}
         onOpenRide={(target = "workspace", rideId = "") => {
           setRideOwnerOpenTarget(target);
           setRideOwnerEditId(rideId);
@@ -2837,7 +2905,7 @@ function FairFaresApp() {
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView
       style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
-      edges={activeTab === "messenger" && bottomTabsHidden ? ["top", "right", "left"] : ["top", "right", "bottom", "left"]}
+      edges={["top", "right", "left"]}
     >
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
@@ -2856,6 +2924,7 @@ function FairFaresApp() {
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}
           user={data?.user || null}
+          appearance={effectiveColorScheme === "light" ? "light" : "dark"}
           onChange={changeTab}
           hidden={staffPickupOpen || bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
         />
@@ -3136,9 +3205,9 @@ function FairFaresApp() {
               accessibilityRole="button"
               accessibilityLabel={authMode === "login" ? "Log in" : "Create account"}
             >
-              <Text style={styles.primaryButtonText}>
-                {authBusy ? (authMode === "login" ? "Signing in..." : "Creating...") : authMode === "login" ? "Login" : "Sign up"}
-              </Text>
+              <View style={styles.buttonLoadingContent}>{authBusy ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>
+                {authBusy ? (authMode === "login" ? "Signing in…" : "Creating…") : authMode === "login" ? "Login" : "Sign up"}
+              </Text></View>
             </TouchableOpacity>
             {authMode === "login" ? (
               <TouchableOpacity style={styles.secondaryButton} onPress={() => void Linking.openURL("https://www.fairfare.space/forgot-password")}>
@@ -3669,7 +3738,7 @@ function FairFaresApp() {
               </>
             )}
             <TouchableOpacity style={[styles.primaryButton, listingSubmitting && { opacity: 0.6 }]} onPress={submitListing} disabled={listingSubmitting}>
-              <Text style={styles.primaryButtonText}>{listingSubmitting ? "Posting…" : listingForm.listingId ? "Save changes" : "Post listing"}</Text>
+              <View style={styles.buttonLoadingContent}>{listingSubmitting ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{listingSubmitting ? (listingForm.listingId ? "Saving changes…" : "Posting…") : listingForm.listingId ? "Save changes" : "Post listing"}</Text></View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setListingOpen(false)}>
               <Text style={styles.switchText}>Cancel</Text>
@@ -3705,7 +3774,14 @@ function FairFaresApp() {
               <View style={styles.searchInputWrap}>
                 <TextInput
                   value={searchCity}
-                  onChangeText={(value) => { selectedCitySuggestionRef.current = ""; setSearchCity(value); setSearchCitySuggestions([]); }}
+                  onChangeText={(value) => {
+                    selectedCitySuggestionRef.current = "";
+                    setSearchCity(value);
+                    setSearchArea("");
+                    setSearchCitySuggestions([]);
+                    setSearchSuggestions([]);
+                    setSearchSuggestionMetro("");
+                  }}
                   placeholder="City or metro"
                   placeholderTextColor={theme.colors.muted}
                   style={[styles.input, styles.searchInputWithClear]}
@@ -3713,7 +3789,14 @@ function FairFaresApp() {
                 {searchCity ? (
                   <TouchableOpacity
                     style={styles.searchInputClear}
-                    onPress={() => { selectedCitySuggestionRef.current = ""; setSearchCity(""); setSearchCitySuggestions([]); }}
+                    onPress={() => {
+                      selectedCitySuggestionRef.current = "";
+                      setSearchCity("");
+                      setSearchArea("");
+                      setSearchCitySuggestions([]);
+                      setSearchSuggestions([]);
+                      setSearchSuggestionMetro("");
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel="Clear city search"
                   >
@@ -4038,6 +4121,7 @@ const styles = StyleSheet.create({
   searchPrimaryButton: { backgroundColor: "rgba(79,124,255,0.68)", borderWidth: 1, borderColor: "rgba(143,174,255,0.34)" },
   disabledButton: { opacity: 0.65 },
   primaryButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 15 },
+  buttonLoadingContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   secondaryButton: { alignItems: "center", paddingVertical: 8 },
   secondaryButtonText: { color: theme.colors.muted, fontWeight: "900" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

@@ -1,3 +1,5 @@
+import base64
+import io
 import socket
 import unittest
 from unittest.mock import patch
@@ -51,7 +53,50 @@ class ChatLinkPreviewTest(unittest.TestCase):
         )
         self.assertEqual(parser.metadata["og:title"], "World Happiness Report - Wikipedia")
         self.assertEqual(parser.metadata["og:image"], "/preview.jpg")
-        self.assertEqual(parser.metadata["icon"], "/favicon.ico")
+        self.assertEqual(parser.icon_candidates, [(0, "/favicon.ico")])
+
+    def test_metadata_parser_prefers_native_friendly_favicon_candidates(self):
+        parser = app.ChatLinkMetadataParser()
+        parser.feed(
+            """<link rel="icon" type="image/svg+xml" href="/mark.svg">
+            <link rel="icon" type="image/png" href="/favicon.png">
+            <link rel="apple-touch-icon" href="/touch.png">"""
+        )
+        self.assertEqual(
+            sorted(parser.icon_candidates, reverse=True),
+            [(50, "/touch.png"), (20, "/favicon.png"), (-20, "/mark.svg")],
+        )
+
+    @unittest.skipIf(app.Image is None, "Pillow is unavailable")
+    def test_favicon_is_normalized_to_small_png_data_url(self):
+        source = io.BytesIO()
+        app.Image.new("RGB", (256, 128), "#00c997").save(source, format="JPEG")
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return source.getvalue()
+
+        class Opener:
+            def open(self, _request, timeout=0):
+                self.timeout = timeout
+                return Response()
+
+        with patch.object(app, "safe_chat_preview_url", side_effect=lambda value: value):
+            result = app.chat_favicon_data_url(
+                "https://example.com/article",
+                [(20, "/favicon.jpg")],
+                Opener(),
+            )
+        self.assertTrue(result.startswith("data:image/png;base64,"))
+        normalized = app.Image.open(io.BytesIO(base64.b64decode(result.split(",", 1)[1])))
+        self.assertLessEqual(normalized.width, 64)
+        self.assertLessEqual(normalized.height, 64)
 
     def test_preview_url_rejects_private_network_addresses(self):
         private_result = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]

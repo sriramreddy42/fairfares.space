@@ -11,6 +11,7 @@ type Props = {
   maximumDate?: string;
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
+  darkSurface?: boolean;
 };
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -46,7 +47,7 @@ function timeLabel(hour: number, minute: number) {
 
 const timeOptions = Array.from({ length: 48 }, (_item, index) => timeLabel(Math.floor(index / 2), (index % 2) * 30));
 
-export function DateTimeField({ label, value, mode, onChange, minimumDate = "", maximumDate = "", placeholder, style }: Props) {
+export function DateTimeField({ label, value, mode, onChange, minimumDate = "", maximumDate = "", placeholder, style, darkSurface = false }: Props) {
   const [open, setOpen] = useState(false);
   const initialDate = parseIso(value) || parseIso(minimumDate) || new Date();
   const [visibleMonth, setVisibleMonth] = useState(new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
@@ -78,10 +79,10 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
 
   return (
     <>
-      <TouchableOpacity style={[styles.field, style]} onPress={() => setOpen(true)} accessibilityLabel={`${label}: ${display}`}>
+      <TouchableOpacity style={[styles.field, darkSurface && styles.darkField, style]} onPress={() => setOpen(true)} accessibilityLabel={`${label}: ${display}`}>
         <View style={styles.fieldCopy}>
-          <Text style={styles.fieldLabel}>{label}</Text>
-          <Text style={[styles.fieldValue, !value && styles.placeholder]}>{display}</Text>
+          <Text style={[styles.fieldLabel, darkSurface && styles.darkFieldLabel]}>{label}</Text>
+          <Text style={[styles.fieldValue, darkSurface && styles.darkFieldValue, !value && styles.placeholder, !value && darkSurface && styles.darkPlaceholder]}>{display}</Text>
         </View>
         <Text style={styles.fieldIcon}>{mode === "date" ? "▣" : "◷"}</Text>
       </TouchableOpacity>
@@ -124,10 +125,14 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
 
 const styles = StyleSheet.create({
   field: { minHeight: 58, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, paddingHorizontal: 14, paddingVertical: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  darkField: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   fieldCopy: { flex: 1, gap: 3 },
   fieldLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
+  darkFieldLabel: { color: "#94a3b8" },
   fieldValue: { color: theme.colors.text, fontSize: 15, fontWeight: "700" },
+  darkFieldValue: { color: "#f8fafc" },
   placeholder: { color: theme.colors.muted, fontWeight: "500" },
+  darkPlaceholder: { color: "#94a3b8" },
   fieldIcon: { color: theme.colors.blue, fontSize: 22 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.82)", alignItems: "center", justifyContent: "center", padding: 16 },
   panel: { width: "100%", maxWidth: 430, maxHeight: "84%", borderRadius: 24, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, padding: 16, gap: 14 },

@@ -1,8 +1,18 @@
 diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
-index 610d303..efbb1d3 100644
+index 610d303..5199711 100644
 --- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
 +++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
-@@ -11,7 +11,9 @@ import android.os.Parcel
+@@ -5,13 +5,19 @@ import android.content.Context
+ import android.content.pm.PackageManager
+ import android.graphics.Bitmap
+ import android.graphics.BitmapFactory
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.Typeface
+ import android.os.Build
+ import android.os.Bundle
+ import android.os.Parcel
  import android.provider.Settings
  import android.util.Log
  import androidx.core.app.NotificationCompat
@@ -12,9 +22,9 @@ index 610d303..efbb1d3 100644
  import expo.modules.notifications.notifications.SoundResolver
  import expo.modules.notifications.notifications.enums.NotificationPriority
  import expo.modules.notifications.notifications.interfaces.INotificationContent
-@@ -96,6 +98,10 @@ open class ExpoNotificationBuilder(
+@@ -96,6 +102,10 @@ open class ExpoNotificationBuilder(
      builder.setPriority(priority)
- 
+
      val content = notificationContent
 +    val notificationImage = if (content.containsImage()) content.getImage(context) else null
 +    val notificationType = content.body?.optString("type").orEmpty().uppercase()
@@ -23,7 +33,7 @@ index 610d303..efbb1d3 100644
  
      builder.setAutoCancel(content.isAutoDismiss)
      builder.setOngoing(content.isSticky)
-@@ -104,9 +110,35 @@ open class ExpoNotificationBuilder(
+@@ -104,9 +114,36 @@ open class ExpoNotificationBuilder(
      builder.setContentTitle(content.title)
      builder.setContentText(content.text)
      builder.setSubText(content.subText)
@@ -37,6 +47,7 @@ index 610d303..efbb1d3 100644
 +      val senderId = content.body?.optString("senderId")?.takeIf { it.isNotBlank() }
 +      val conversationName = content.body?.optString("conversationName").orEmpty().trim()
 +      val isGroup = content.body?.optBoolean("isGroup", false) == true || conversationName.isNotBlank()
++      val conversationImage = notificationImage ?: if (isGroup) initialsAvatar(conversationName.ifBlank { "Chitthi group" }) else null
 +      val renderedText = content.text.orEmpty()
 +      val messageText = if (isGroup && conversationName.isNotBlank()) {
 +        renderedText.removePrefix("$conversationName\n")
@@ -45,7 +56,7 @@ index 610d303..efbb1d3 100644
 +      }.ifBlank { "New Chitthi letter" }
 +      val senderBuilder = Person.Builder().setName(senderName)
 +      senderId?.let { senderBuilder.setKey("fairfares-user-$it") }
-+      notificationImage?.let { senderBuilder.setIcon(IconCompat.createWithBitmap(it)) }
++      conversationImage?.let { senderBuilder.setIcon(IconCompat.createWithBitmap(it)) }
 +      val style = NotificationCompat.MessagingStyle(
 +        Person.Builder().setName("You").setKey("fairfares-current-user").build()
 +      )
@@ -62,15 +73,47 @@ index 610d303..efbb1d3 100644
  
      color?.let { builder.color = it.toInt() }
      notificationContent.badgeCount?.toInt()?.let { builder.setNumber(it) }
-@@ -147,9 +179,8 @@ open class ExpoNotificationBuilder(
+@@ -147,15 +184,41 @@ open class ExpoNotificationBuilder(
        )
      )
  
 -    if (notificationContent.containsImage()) {
 -      val bitmap = notificationContent.getImage(context)
 -      bitmap?.let { builder.setLargeIcon(it) }
-+    if (notificationImage != null) {
-+      builder.setLargeIcon(notificationImage)
++    val groupFallbackImage = if (isChitthiNotification) {
++      val name = content.body?.optString("conversationName").orEmpty().trim()
++      val isGroup = content.body?.optBoolean("isGroup", false) == true || name.isNotBlank()
++      if (isGroup) initialsAvatar(name.ifBlank { "Chitthi group" }) else null
++    } else null
++    if (notificationImage != null || groupFallbackImage != null) {
++      builder.setLargeIcon(notificationImage ?: groupFallbackImage)
      } else {
        builder.setLargeIcon(largeIcon)
      }
+     return builder.build()
+   }
++  private fun initialsAvatar(name: String): Bitmap? {
++    val initials = name.trim().split(Regex("\\s+"))
++      .filter { it.isNotBlank() }
++      .take(2)
++      .mapNotNull { word -> word.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar() }
++      .joinToString("")
++      .ifBlank { return null }
++    val size = 192
++    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
++    val canvas = Canvas(bitmap)
++    canvas.drawColor(Color.rgb(26, 64, 140))
++    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
++      color = Color.WHITE
++      textAlign = Paint.Align.CENTER
++      textSize = 70f
++      typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
++    }
++    val baseline = size / 2f - (paint.ascent() + paint.descent()) / 2f
++    canvas.drawText(initials, size / 2f, baseline, paint)
++    return bitmap
++  }
++
+   private fun applySoundsAndVibrations(content: INotificationContent, builder: NotificationCompat.Builder) {
+     val shouldPlaySound = shouldPlaySound()
+     val shouldVibrate = shouldVibrate()

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Product Analytics | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen analytics-admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero analytics-hero">
+      <div>
+        <p class="eyebrow">Product analytics</p>
+        <h1>FairFares user funnel</h1>
+        <span>Privacy-safe product activity for the last $selected_period · $admin_name</span>
+      </div>
+      <nav class="analytics-periods" aria-label="Analytics period">$period_links</nav>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <div>
+          <h2>Installs → Opens → Signups → Searches → Car views → Messages → Bookings → Repeat</h2>
+          <p>Stage reach counts unique users independently because guests may search before signup and bookings do not require a Chitthi message. Percentages use active users as the common baseline. First installs are measured by the first successful app open. Collection starts with the analytics-enabled app release; historical activity is not backfilled. Exact store downloads can be connected when store reporting credentials are available.</p>
+        </div>
+      </div>
+      <div class="analytics-funnel">$funnel_rows</div>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head"><div><h2>Active users by platform</h2><p>Unique installations or signed-in users with activity during the selected period.</p></div></div>
+      <div class="admin-metrics analytics-platforms">$platform_cards</div>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head"><div><h2>Daily product activity</h2><p>Unique users per day. Message contents, names, emails, phone numbers, and precise addresses are never collected here.</p></div></div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Day</th><th>Opens</th><th>Rental searches</th><th>Car views</th><th>Messages</th><th>Bookings</th></tr></thead>
+          <tbody>$daily_rows</tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

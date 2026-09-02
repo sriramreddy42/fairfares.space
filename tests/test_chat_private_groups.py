@@ -288,7 +288,7 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         self.assertIn("Invitation unavailable", response["body"])
         self.assertNotIn("Open in Chitthi", response["body"])
 
-    def test_valid_invite_landing_keeps_token_and_both_store_fallbacks(self):
+    def test_valid_invite_landing_keeps_token_and_uses_one_smart_cta(self):
         group = self.create_group()
         token, error = app.create_chat_group_invite(group["id"], self.owner)
         self.assertFalse(error)
@@ -304,10 +304,15 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         handler.chitthi_invite_landing(parsed)
 
         self.assertEqual(response["status"], 200)
-        self.assertIn("Open in Chitthi", response["body"])
+        self.assertIn("Continue in FairFares", response["body"])
+        self.assertEqual(response["body"].count('id="continue-fairfares"'), 1)
+        self.assertNotIn("Install or update FairFares", response["body"])
         self.assertIn(urllib.parse.quote(token), response["body"])
         self.assertIn("apps.apple.com/us/app/fairfares-ltd/id6797162820", response["body"])
-        self.assertIn("play.google.com/store/apps/details?id=com.fairfares.mobile", response["body"])
+        self.assertIn(
+            urllib.parse.quote("https://play.google.com/store/apps/details?id=com.fairfares.mobile", safe=""),
+            response["body"],
+        )
 
     def test_membership_changes_create_durable_system_timeline_events_once(self):
         public_group = next(
@@ -386,11 +391,17 @@ class ChatPrivateGroupsTest(unittest.TestCase):
 
     def test_invite_preview_does_not_join_or_consume_invitation(self):
         group = self.create_group()
+        with app.db() as con:
+            con.execute(
+                "UPDATE chat_communities SET photo_url = '/uploads/groups/private-travelers.jpg' WHERE public_id = ?",
+                (group["id"],),
+            )
         token, error = app.create_chat_group_invite(group["id"], self.owner, max_uses=1)
         self.assertFalse(error)
         preview, error = app.preview_chat_group_invite(token, self.member)
         self.assertFalse(error)
         self.assertEqual(preview["name"], "Private travelers")
+        self.assertEqual(preview["photoUrl"], "/uploads/groups/private-travelers.jpg")
         self.assertEqual(preview["memberCount"], 1)
         self.assertFalse(preview["alreadyMember"])
         with app.db() as con:
@@ -418,6 +429,7 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         preview, error = app.preview_chat_group_invite(token, self.member)
         self.assertFalse(error)
         self.assertEqual(preview["id"], "FFG-LEGACY-PUBLIC")
+        self.assertEqual(preview["photoUrl"], "/uploads/groups/legacy.jpg")
         self.assertFalse(preview["alreadyMember"])
 
         joined, error = app.join_chat_group_by_invite(token, self.member)
@@ -426,6 +438,41 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         preview, error = app.preview_chat_group_invite(token, self.member)
         self.assertFalse(error)
         self.assertTrue(preview["alreadyMember"])
+
+    def test_legacy_public_community_id_invite_preview_returns_group_photo(self):
+        with app.db() as con:
+            con.execute(
+                """INSERT INTO chat_communities
+                   (public_id, kind, name, description, area_label, visibility, photo_url)
+                   VALUES ('FFG-LEGACY-ID', 'GROUP', 'Legacy id group', 'Older shared message', 'Dayton, OH', 'PUBLIC', '/uploads/groups/legacy-id.jpg')"""
+            )
+            member = con.execute("SELECT * FROM users WHERE id = ?", (self.member,)).fetchone()
+        responses = []
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: member
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+        handler.api_chat_group_invite_preview(urllib.parse.urlparse(
+            "/api/chat/groups/invite-preview?community_id=FFG-LEGACY-ID"
+        ))
+        payload, status = responses.pop()
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["group"]["name"], "Legacy id group")
+        self.assertEqual(payload["group"]["photoUrl"], "/uploads/groups/legacy-id.jpg")
+
+    def test_legacy_private_community_id_is_not_disclosed_by_invite_preview(self):
+        group = self.create_group()
+        with app.db() as con:
+            member = con.execute("SELECT * FROM users WHERE id = ?", (self.member,)).fetchone()
+        responses = []
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: member
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+        handler.api_chat_group_invite_preview(urllib.parse.urlparse(
+            f"/api/chat/groups/invite-preview?community_id={urllib.parse.quote(group['id'])}"
+        ))
+        payload, status = responses.pop()
+        self.assertEqual(status, 400)
+        self.assertNotIn("Private travelers", str(payload))
 
     def test_signed_public_invite_rejects_tampering_and_private_groups(self):
         group = self.create_group()
@@ -579,7 +626,10 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             self.assertIsNone(rejected)
             self.assertIn("sender", error.lower())
 
-            sharper_preview_envelopes = [{**item, "ciphertext": "x" * 30_000} for item in envelopes]
+            # A 32 KB JPEG becomes roughly 59 KB after thumbnail base64, JSON,
+            # authenticated encryption and envelope base64. Exercise that real
+            # expansion instead of only the former compact-preview size.
+            sharper_preview_envelopes = [{**item, "ciphertext": "x" * 60_000} for item in envelopes]
             sharper_message, error = app.save_encrypted_chat_message(
                 con, conversation, owner, sharper_preview_envelopes, "encrypted-sharp-preview"
             )

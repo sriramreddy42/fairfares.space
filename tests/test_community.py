@@ -20,6 +20,11 @@ class QuietHandler(app.FairFaresHandler):
         return
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class CommunityFeatureTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -504,10 +509,29 @@ class CommunityFeatureTest(unittest.TestCase):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}/community/{dayton['post']['id']}", timeout=5) as response:
             markup = response.read().decode()
         self.assertIn("Best groceries in Brookville?", markup)
-        self.assertIn("Open in FairFares", markup)
-        self.assertIn(f"https://fairfare.space/community/{dayton['post']['id']}", markup)
-        self.assertIn("Install FairFares", markup)
+        self.assertIn("Open / Install FairFares", markup)
+        self.assertIn(f"https://www.fairfare.space/community/{dayton['post']['id']}?open_or_install=1", markup)
+        self.assertNotIn("Visit FairFares", markup)
+        self.assertEqual(markup.count('id=\"open-or-install-fairfares\"'), 1)
         self.assertNotIn("fairfares://", markup)
+
+    def test_public_share_open_or_install_falls_back_to_the_device_store(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        opener = urllib.request.build_opener(NoRedirect())
+        cases = (
+            ("Mozilla/5.0 (Linux; Android 15)", "https://play.google.com/store/apps/details?id=com.fairfares.mobile"),
+            ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)", "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"),
+        )
+        for user_agent, expected_location in cases:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{self.server.server_port}/community/{post_id}?open_or_install=1",
+                headers={"User-Agent": user_agent},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as redirected:
+                opener.open(request, timeout=5)
+            self.assertEqual(redirected.exception.code, 303)
+            self.assertEqual(redirected.exception.headers.get("Location"), expected_location)
 
     def test_creation_rejects_short_content_and_unsafe_link(self):
         status, rejected = self.create_post(title="Bad", body="short")

@@ -11,6 +11,7 @@ import { md5 } from "@noble/hashes/legacy";
 import * as naclUtil from "tweetnacl-util";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { logDevelopmentPerformance, startDevelopmentPerformanceOperation } from "../utils/performanceDiagnostics";
+import { explicitUsState } from "../utils/locationRegion";
 
 declare const process: {
   env: {
@@ -77,6 +78,10 @@ const API_CANDIDATES = uniqueUrls(
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
 const COMMUNITY_GUEST_TOKEN_KEY = "fairfares.mobile.communityGuestToken";
 const COMMUNITY_GUEST_INSTALLATION_KEY = "fairfares.mobile.communityGuestInstallation";
+const PRODUCT_ANALYTICS_INSTALLATION_KEY = "fairfares.mobile.analyticsInstallation";
+const PRODUCT_ANALYTICS_FIRST_OPEN_KEY = "fairfares.mobile.analyticsFirstOpenRecorded";
+const PRODUCT_ANALYTICS_QUEUE_KEY = "fairfares.mobile.analyticsQueue.v1";
+const PRODUCT_ANALYTICS_SESSION_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 const API_REQUEST_TIMEOUT_MS = 10000;
 const REMOTE_API_REQUEST_TIMEOUT_MS = 30000;
 
@@ -189,6 +194,86 @@ export function isAuthenticationRejection(error: unknown) {
 
 export function hasAuthToken() {
   return Boolean(authToken);
+}
+
+async function productAnalyticsInstallationId() {
+  const existing = await AsyncStorage.getItem(PRODUCT_ANALYTICS_INSTALLATION_KEY).catch(() => null);
+  if (existing) return existing;
+  const created = `ff-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+  await AsyncStorage.setItem(PRODUCT_ANALYTICS_INSTALLATION_KEY, created).catch(() => undefined);
+  return created;
+}
+
+type QueuedProductAnalyticsEvent = {
+  eventName: "app_first_open" | "app_open" | "rental_search" | "rental_car_view" | "signup_completed" | "message_sent" | "rental_booking_started" | "rental_booking_completed";
+  anonymousId: string;
+  platform: string;
+  appVersion: string;
+  buildVersion: string;
+  sessionId: string;
+  eventId: string;
+  occurredAt: string;
+  metadata: { carId?: string | number; resultCount?: number; source?: string };
+};
+
+let productAnalyticsQueueOperation: Promise<unknown> = Promise.resolve();
+
+function withProductAnalyticsQueue<T>(operation: () => Promise<T>): Promise<T> {
+  const next = productAnalyticsQueueOperation.then(operation, operation);
+  productAnalyticsQueueOperation = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+async function readProductAnalyticsQueue() {
+  const stored = await AsyncStorage.getItem(PRODUCT_ANALYTICS_QUEUE_KEY).catch(() => null);
+  if (!stored) return [] as QueuedProductAnalyticsEvent[];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.slice(-100) as QueuedProductAnalyticsEvent[] : [];
+  } catch {
+    return [] as QueuedProductAnalyticsEvent[];
+  }
+}
+
+export async function trackProductEvent(
+  eventName: "app_first_open" | "app_open" | "rental_search" | "rental_car_view" | "signup_completed" | "message_sent" | "rental_booking_started" | "rental_booking_completed",
+  metadata: { carId?: string | number; resultCount?: number; source?: string } = {}
+) {
+  if (Platform.OS !== "ios" && Platform.OS !== "android") return;
+  const anonymousId = await productAnalyticsInstallationId();
+  const event: QueuedProductAnalyticsEvent = {
+    eventName, anonymousId, platform: Platform.OS,
+    appVersion: String(Constants.nativeAppVersion || Constants.expoConfig?.version || ""),
+    buildVersion: String(Constants.nativeBuildVersion || (Platform.OS === "ios" ? Constants.expoConfig?.ios?.buildNumber : Constants.expoConfig?.android?.versionCode) || ""),
+    sessionId: PRODUCT_ANALYTICS_SESSION_ID,
+    eventId: eventName === "app_first_open" ? `${anonymousId}-app-first-open` : `${PRODUCT_ANALYTICS_SESSION_ID}-${eventName}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    occurredAt: new Date().toISOString(),
+    metadata
+  };
+  return withProductAnalyticsQueue(async () => {
+    const queue = await readProductAnalyticsQueue();
+    if (!queue.some((item) => item.eventId === event.eventId)) queue.push(event);
+    let remaining = queue.slice(-100);
+    await AsyncStorage.setItem(PRODUCT_ANALYTICS_QUEUE_KEY, JSON.stringify(remaining)).catch(() => undefined);
+    for (const queued of remaining.slice(0, 20)) {
+      const delivered = await request<{ ok: boolean }>("/api/mobile/analytics/events", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(queued)
+      }, { silentNetworkFailure: true, silentServerFailure: true }).then(() => true).catch(() => false);
+      if (!delivered) break;
+      remaining = remaining.filter((item) => item.eventId !== queued.eventId);
+      await AsyncStorage.setItem(PRODUCT_ANALYTICS_QUEUE_KEY, JSON.stringify(remaining)).catch(() => undefined);
+    }
+    return !remaining.some((item) => item.eventId === event.eventId);
+  });
+}
+
+export async function trackAppLaunch() {
+  const firstOpenRecorded = await AsyncStorage.getItem(PRODUCT_ANALYTICS_FIRST_OPEN_KEY).catch(() => null);
+  if (!firstOpenRecorded) {
+    const recorded = await trackProductEvent("app_first_open", { source: "native_launch" });
+    if (recorded) await AsyncStorage.setItem(PRODUCT_ANALYTICS_FIRST_OPEN_KEY, "1").catch(() => undefined);
+  }
+  await trackProductEvent("app_open", { source: "native_launch" });
 }
 
 export async function getStaffPickupBookings() {
@@ -557,7 +642,17 @@ export async function getHousing(
   addFiniteParam(query, "lat", coordinates.lat);
   addFiniteParam(query, "lng", coordinates.lng);
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);
-  return payload.posts;
+  // Defense in depth for ambiguous US city names. The server applies the same
+  // rule, but a stale edge/app response must never combine a Denver, NE search
+  // origin with an explicitly Denver, CO listing and then label it "4 mi away."
+  const requestedState = explicitUsState(area) || explicitUsState(city);
+  if (!requestedState) return payload.posts;
+  return payload.posts.filter((post) => {
+    const listingStates = [post.city, post.addressLabel, post.location]
+      .map((value) => explicitUsState(value || ""))
+      .filter(Boolean);
+    return listingStates.every((state) => state === requestedState);
+  });
 }
 
 export async function getHousingListing(postId: string) {
@@ -1352,10 +1447,12 @@ export async function getChatEncryptedPreviewEnvelopes(messageIds: number[], dev
 }
 
 export async function sendEncryptedChatMessage(conversationId: string, envelopes: Array<Record<string, unknown>>, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent = false, replyToMessageId = 0, contextPostId = "", mentionedUserIds: number[] = []) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
+  const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/messages", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId, contextPostId, mentionedUserIds })
   });
+  void trackProductEvent("message_sent", { source: "chitthi" });
+  return result;
 }
 
 export async function reactToChatMessage(conversationId: string, messageId: number, emoji: string) {
@@ -1365,10 +1462,12 @@ export async function reactToChatMessage(conversationId: string, messageId: numb
 }
 
 export async function sendEncryptedChatAttachment(conversationId: string, ciphertextBase64: string, envelopes: Array<Record<string, unknown>>, silent = false) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments", {
+  const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ conversationId, ciphertextBase64, envelopes, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent })
   });
+  void trackProductEvent("message_sent", { source: "chitthi_attachment" });
+  return result;
 }
 
 type EncryptedUploadAuthorization = {
@@ -1732,10 +1831,12 @@ export async function uploadEncryptedFile(
 }
 
 export async function finalizeEncryptedChatAttachment(uploadId: string, envelopes: Array<Record<string, unknown>>, silent = false, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
+  const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/finalize", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId, envelopes, clientMessageId, silent })
   }, { attempts: 3 });
+  void trackProductEvent("message_sent", { source: "chitthi_attachment" });
+  return result;
 }
 
 async function abortEncryptedChatAttachmentMultipart(uploadId: string) {
@@ -1750,7 +1851,7 @@ export async function forwardEncryptedChatAttachment(
   envelopes: Array<Record<string, unknown>>,
   silent = false
 ) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/forward", {
+  const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/forward", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1761,6 +1862,8 @@ export async function forwardEncryptedChatAttachment(
       clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
     })
   }, { attempts: 3 });
+  void trackProductEvent("message_sent", { source: "chitthi_forward" });
+  return result;
 }
 
 export async function sendDirectEncryptedChatAttachment(
@@ -2282,11 +2385,13 @@ export async function openCommunityChat(communityId: string) {
 }
 
 export async function sendChatRichMessage(conversationId: string, type: "POLL" | "EVENT" | "CONTACT", metadata: Record<string, unknown>) {
-  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/rich-messages", {
+  const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/rich-messages", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ conversationId, type, metadata, clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}` })
   });
+  void trackProductEvent("message_sent", { source: `chitthi_${type.toLowerCase()}` });
+  return result;
 }
 
 export async function voteChatPoll(messageId: number, optionIndex: number) {
@@ -2406,9 +2511,18 @@ export async function joinChatGroupInvite(value: string) {
 }
 
 export async function previewChatGroupInvite(value: string) {
+  let communityId = "";
+  try {
+    communityId = new URL(value.trim()).searchParams.get("community_id") || "";
+  } catch {
+    // Raw invitation tokens and custom-scheme values continue below.
+  }
   const token = groupInviteToken(value);
-  return request<{ ok: boolean; group: { id: string; name: string; description: string; area: string; memberCount: number; alreadyMember: boolean } }>(
-    `/api/chat/groups/invite-preview?token=${encodeURIComponent(token)}`
+  const query = communityId
+    ? `community_id=${encodeURIComponent(communityId)}`
+    : `token=${encodeURIComponent(token)}`;
+  return request<{ ok: boolean; group: { id: string; name: string; description: string; area: string; photoUrl: string; memberCount: number; alreadyMember: boolean } }>(
+    `/api/chat/groups/invite-preview?${query}`
   );
 }
 
@@ -2496,6 +2610,7 @@ export type MobileSocialAuthPayload = {
   user?: BootstrapPayload["user"];
   phoneRequired?: boolean;
   continuationToken?: string;
+  accountCreated?: boolean;
 };
 
 export async function mobileSocialLogin(provider: "google" | "apple", identityToken: string, name = "", consentAccepted = false) {

@@ -121,8 +121,9 @@ MAX_CHAT_FILE_BYTES = 8_000_000
 MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
 # Attachment descriptors include a small end-to-end encrypted chat preview.
 # Keep accepting the original compact envelopes while leaving enough room for
-# newer clients to embed a sharper 18 KB thumbnail after encryption/base64.
-MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS = 40_000
+# newer clients to embed a sharp 32 KB thumbnail after JSON, encryption and
+# base64 expansion. This remains tiny compared with the encrypted media itself.
+MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS = 72_000
 CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
 CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 100)))
@@ -198,6 +199,10 @@ _SESSION_TOUCHES: dict[str, float] = {}
 _SESSION_TOUCHES_LOCK = threading.Lock()
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
 _CHAT_TYPING_LOCK = threading.Lock()
+_CHAT_LINK_PREVIEW_CACHE: OrderedDict[str, tuple[float, dict[str, str]]] = OrderedDict()
+_CHAT_LINK_PREVIEW_CACHE_LOCK = threading.Lock()
+CHAT_LINK_PREVIEW_CACHE_TTL_SECONDS = 6 * 60 * 60
+CHAT_LINK_PREVIEW_CACHE_MAX_ENTRIES = 512
 _DIAGNOSTIC_REPORTS: dict[str, list[float]] = {}
 _DIAGNOSTIC_REPORTS_LOCK = threading.Lock()
 DIAGNOSTIC_REPORT_LIMIT = positive_int_env("FAIRFARES_DIAGNOSTIC_REPORTS_PER_HOUR", 30)
@@ -3240,6 +3245,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/mobile/push-token": ("account-preference", 60, 60),
     "/api/mobile/notification-preferences": ("account-preference", 60, 60),
     "/api/mobile/rentals/quote": ("rental-quote", 60, 60),
+    "/api/mobile/analytics/events": ("product-analytics", 120, 60),
 }
 
 for _rate_limited_group_path in (
@@ -6104,6 +6110,32 @@ def init_db() -> None:
                 last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS product_analytics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_name TEXT NOT NULL,
+                anonymous_id TEXT NOT NULL DEFAULT '',
+                user_id INTEGER,
+                platform TEXT NOT NULL DEFAULT '',
+                app_version TEXT NOT NULL DEFAULT '',
+                build_version TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                city TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                dedupe_key TEXT NOT NULL UNIQUE,
+                occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_product_analytics_event_time
+            ON product_analytics_events(event_name, occurred_at);
+
+            CREATE INDEX IF NOT EXISTS idx_product_analytics_actor_time
+            ON product_analytics_events(anonymous_id, user_id, occurred_at);
+
+            DELETE FROM product_analytics_events
+            WHERE datetime(received_at) < datetime('now', '-400 days');
 
             CREATE TABLE IF NOT EXISTS security_rate_limits (
                 scope TEXT NOT NULL,
@@ -12298,6 +12330,43 @@ def sync_housing_into_community() -> None:
                 con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)", (projected_id, row_value(image_row, "image_url"), int(row_value(image_row, "sort_order") or 0)))
 
 
+_COMMUNITY_HOUSING_SYNC_LOCK = threading.Lock()
+
+
+def housing_community_projection_needs_sync() -> bool:
+    """Return quickly when every active housing row already has a fresh projection."""
+    with db() as con:
+        return bool(con.execute(
+            """
+            SELECT 1
+            FROM accommodation_posts listings
+            LEFT JOIN ask_community_posts projected
+              ON projected.source_kind = 'HOUSING'
+             AND projected.source_public_id = listings.public_id
+            WHERE listings.visibility_status = 'ACTIVE'
+              AND listings.public_id IS NOT NULL
+              AND listings.public_id != ''
+              AND (
+                    projected.id IS NULL
+                 OR COALESCE(projected.updated_at, '') != COALESCE(listings.updated_at, listings.created_at, '')
+                 OR COALESCE(projected.title, '') != COALESCE(listings.title, '')
+                 OR COALESCE(projected.body, '') != COALESCE(listings.description, '')
+              )
+            LIMIT 1
+            """
+        ).fetchone())
+
+
+def ensure_housing_community_projection_current() -> None:
+    """Synchronize only after housing changed, never on every feed read."""
+    if not housing_community_projection_needs_sync():
+        return
+    with _COMMUNITY_HOUSING_SYNC_LOCK:
+        # Another request may have completed the work while this one waited.
+        if housing_community_projection_needs_sync():
+            sync_housing_into_community()
+
+
 COMMUNITY_US_STATE_NAMES = {
     "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA", "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD", "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS", "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC", "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC",
 }
@@ -12604,13 +12673,26 @@ def get_website_feedback(limit: int = 25) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def public_city_from_profile_address(value: object) -> str:
+    """Return only City, ST from a saved address; never expose its street."""
+    parts = [part.strip() for part in str(value or "").split(",") if part.strip()]
+    if len(parts) < 2:
+        return ""
+    for index in range(len(parts) - 1, 0, -1):
+        region = re.sub(r"\s+\d{5}(?:-\d{4})?$", "", parts[index]).strip()
+        variants = community_us_city_variants(f"{parts[index - 1]}, {region}")
+        if variants:
+            return variants[0]
+    return ""
+
+
 def get_mobile_housing_testimonials(city: str = "", limit: int = 6, public_origin: str = "") -> list[dict[str, object]]:
     city_name = (city or "").split(",", 1)[0].strip()
     with db() as con:
         rows = con.execute(
             """
             SELECT testimonials.id, testimonials.rating, testimonials.message, testimonials.city,
-                   users.id AS user_id, users.name AS user_name, users.profile_photo_url
+                   users.id AS user_id, users.name AS user_name, users.profile_photo_url, users.address AS user_address
             FROM testimonials
             JOIN users ON users.id = testimonials.user_id
             WHERE testimonials.status = 'PUBLISHED'
@@ -12640,7 +12722,7 @@ def get_mobile_housing_testimonials(city: str = "", limit: int = 6, public_origi
                 "id": int(row_value(row, "id") or 0),
                 "userId": user_id,
                 "name": str(row_value(row, "user_name") or "FairFares member"),
-                "city": str(row_value(row, "city") or "FairFares community")[:80],
+                "city": (public_city_from_profile_address(row_value(row, "user_address")) or str(row_value(row, "city") or "FairFares community"))[:80],
                 "photoUrl": photo_url,
                 "rating": int(row_value(row, "rating") or 5),
                 "message": str(row_value(row, "message") or "")[:300],
@@ -15394,6 +15476,19 @@ def split_city_state(value: str) -> tuple[str, str]:
     return (parts[0] if parts else "", "")
 
 
+def explicit_us_state_from_label(value: object) -> str:
+    """Extract a comma-delimited US state without mistaking city prefixes."""
+    matches = re.findall(
+        r"(?:^|,\s*)([A-Za-z]{2})(?=\s*(?:,|\d{5}(?:-\d{4})?|$))",
+        str(value or ""),
+    )
+    for candidate in reversed(matches):
+        state = candidate.upper()
+        if state in COMMUNITY_US_STATE_CODES:
+            return state
+    return ""
+
+
 def normalize_accommodation_place_label(value: str) -> str:
     value = re.sub(r"\s+", " ", (value or "").strip())
     value = re.sub(r",\s*US$", "", value, flags=re.IGNORECASE)
@@ -15429,7 +15524,16 @@ def static_accommodation_point(value: str) -> tuple[float, float]:
 def accommodation_metro_name_from_place(value: str) -> str:
     city, state = split_city_state(value)
     if city and state:
-        return f"{city} Metro Area"
+        conventional_name = f"{city} Metro Area"
+        fallback_group = ACCOMMODATION_METRO_GROUPS.get(conventional_name)
+        if fallback_group:
+            sample_place = next(iter(fallback_group.get("suggested", ()) or ()), "")
+            _sample_city, sample_state = split_city_state(str(sample_place))
+            if sample_state.upper() == state.upper():
+                return conventional_name
+        # Metro display names are not globally unique. Preserve the state for
+        # same-named cities so Denver, NE can never reuse Denver, CO's metro.
+        return f"{city}, {state} Metro Area"
     if city:
         return city if "metro" in city.lower() or city.lower() in {"bay area", "new jersey"} else f"{city} Metro Area"
     return "Denver Metro Area"
@@ -15576,9 +15680,10 @@ def cached_accommodation_metro_for_place(place: str) -> str:
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE (lower(area.name) = lower(?) OR area.zip_code = ?)
                   AND (? = '' OR upper(area.state) = upper(?))
+                  AND (? = '' OR metro.state = '' OR upper(metro.state) = upper(?))
                 LIMIT 1
                 """,
-                (place, place, requested_state, requested_state),
+                (place, place, requested_state, requested_state, requested_state, requested_state),
             ).fetchone()
             if exact:
                 return row_value(exact, "name")
@@ -15590,9 +15695,10 @@ def cached_accommodation_metro_for_place(place: str) -> str:
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE lower(area.city) = lower(?)
                   AND (? = '' OR upper(area.state) = upper(?))
+                  AND (? = '' OR metro.state = '' OR upper(metro.state) = upper(?))
                 LIMIT 1
                 """,
-                (city, requested_state, requested_state),
+                (city, requested_state, requested_state, requested_state, requested_state),
             ).fetchone()
             return row_value(city_match, "name") if city_match else ""
     except sqlite3.Error:
@@ -15614,9 +15720,10 @@ def cached_accommodation_country_for_place(place: str) -> str:
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE (lower(area.name) = lower(?) OR lower(area.city) = lower(?) OR area.zip_code = ?)
                   AND (? = '' OR upper(area.state) = upper(?))
+                  AND (? = '' OR metro.state = '' OR upper(metro.state) = upper(?))
                 LIMIT 1
                 """,
-                (place, city, place, requested_state, requested_state),
+                (place, city, place, requested_state, requested_state, requested_state, requested_state),
             ).fetchone()
         return str(row_value(row, "country") or "").upper()
     except sqlite3.Error:
@@ -15628,6 +15735,9 @@ def resolve_accommodation_country(place: str, *, allow_refresh: bool = True) -> 
     place = normalize_accommodation_place_label(place)
     if not place:
         return ""
+    _city, explicit_region = split_city_state(place)
+    if explicit_region.upper() in COMMUNITY_US_STATE_CODES:
+        return "US"
     cached = cached_accommodation_country_for_place(place)
     if cached:
         return cached
@@ -15665,7 +15775,35 @@ def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     if payload.get("status") != "OK":
         return None
     results = payload.get("results") or []
-    return results[0] if results and isinstance(results[0], dict) else None
+    result = results[0] if results and isinstance(results[0], dict) else None
+    if not result:
+        return None
+    requested_city, requested_region = split_city_state(query)
+    is_exact_us_city = bool(
+        requested_region.upper() in COMMUNITY_US_STATE_CODES
+        and re.fullmatch(r"[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?", query, re.I)
+    )
+    if is_exact_us_city:
+        result_city = ""
+        result_region = ""
+        for component in result.get("address_components") or []:
+            if not isinstance(component, dict):
+                continue
+            types = set(component.get("types") or [])
+            if types.intersection({"locality", "postal_town", "administrative_area_level_3"}) and not result_city:
+                result_city = str(component.get("long_name") or component.get("short_name") or "").strip()
+            if "administrative_area_level_1" in types:
+                result_region = str(component.get("short_name") or "").strip().upper()
+        # A city selection must resolve to that city, not merely to a POI in
+        # the same state. Accepting the latter poisoned radius searches with
+        # labels such as "Big Apple Fun Center, NE" for Denver, NE.
+        if (
+            not result_city
+            or result_city.casefold() != requested_city.strip().casefold()
+            or result_region != requested_region.upper()
+        ):
+            return None
+    return result
 
 
 def precise_accommodation_location_point(query: str) -> dict[str, object]:
@@ -16210,10 +16348,11 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
                 JOIN accommodation_metros metro ON metro.id = area.metro_id
                 WHERE (lower(area.name) = lower(?) OR area.zip_code = ?)
                   AND (? = '' OR upper(area.state) = upper(?))
+                  AND (? = '' OR metro.state = '' OR upper(metro.state) = upper(?))
                 ORDER BY CASE WHEN area.lat != 0 AND area.lng != 0 THEN 0 ELSE 1 END
                 LIMIT 1
                 """,
-                (query, query, requested_state, requested_state),
+                (query, query, requested_state, requested_state, requested_state, requested_state),
             ).fetchone()
             # For an unqualified search, match the structured city field only.
             # Substring matching makes Miami collide with Miamisburg.
@@ -16251,7 +16390,12 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
             static_lat, static_lng = static_accommodation_point(query)
             if static_lat and static_lng:
                 return {"label": query, "metro": search_metro, "lat": static_lat, "lng": static_lng, "source": "static"}
-            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (search_metro or query,)).fetchone()
+            metro = con.execute(
+                """SELECT * FROM accommodation_metros
+                   WHERE name = ? AND (? = '' OR state = '' OR upper(state) = upper(?))
+                   LIMIT 1""",
+                (search_metro or query, requested_state, requested_state),
+            ).fetchone()
             if metro and float(metro["lat"] or 0) and float(metro["lng"] or 0):
                 return {
                     "label": row_value(metro, "center_city") or row_value(metro, "name") or query,
@@ -18112,6 +18256,16 @@ def mobile_housing_posts(
 ) -> list[dict[str, object]]:
     expire_accommodation_posts(force=False)
     repair_active_housing_city_labels()
+    requested_city_region = explicit_us_state_from_label(city)
+    requested_area_region = explicit_us_state_from_label(area)
+    if (
+        requested_city_region in COMMUNITY_US_STATE_CODES
+        and requested_area_region in COMMUNITY_US_STATE_CODES
+        and requested_city_region != requested_area_region
+    ):
+        # Older clients could retain an area from the previous city. Never let
+        # that stale area choose the search center or generated fallback cards.
+        area = ""
     clauses = [
         "visibility_status = 'ACTIVE'",
         "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
@@ -18207,7 +18361,12 @@ def mobile_housing_posts(
         if not term:
             continue
         candidates = {term, term.replace(", ", ","), term.replace(",", ", ")}
-        if "," in term:
+        # Keep the region on a state-qualified city. Adding the bare city here
+        # made Denver, NE searches retrieve Denver, CO rows (and similarly for
+        # every same-named city in different states).
+        _term_city, term_state = split_city_state(term)
+        state_qualified = term_state.upper() in COMMUNITY_US_STATE_CODES
+        if "," in term and not state_qualified:
             candidates.add(term.split(",", 1)[0].strip())
         group = [candidate for candidate in candidates if candidate]
         if group:
@@ -18293,7 +18452,29 @@ def mobile_housing_posts(
         city_terms = [term for term in dict.fromkeys(term for term in city_terms if term)]
     ranked_payloads: list[tuple[int, float, dict[str, object]]] = []
     repaired_coordinates: list[tuple[float, float, int]] = []
+    requested_city_name, _requested_region = split_city_state(city or area)
+    requested_city_name = requested_city_name.strip().lower()
+    requested_us_state = explicit_us_state_from_label(area) or explicit_us_state_from_label(city)
     for row in rows:
+        listing_city_name, listing_region = split_city_state(row_value(row, "city"))
+        listing_states = {
+            state for state in (
+                explicit_us_state_from_label(row_value(row, "city")),
+                explicit_us_state_from_label(row_value(row, "city_area_zip")),
+                explicit_us_state_from_label(row_value(row, "street_address")),
+            ) if state
+        }
+        if listing_region.upper() not in COMMUNITY_US_STATE_CODES:
+            fallback_city_name, fallback_region = split_city_state(row_value(row, "city_area_zip"))
+            if fallback_region.upper() in COMMUNITY_US_STATE_CODES:
+                listing_city_name, listing_region = fallback_city_name, fallback_region
+        listing_city_name = listing_city_name.strip().lower()
+        listing_region = explicit_us_state_from_label(row_value(row, "city")) or explicit_us_state_from_label(row_value(row, "city_area_zip"))
+        # Coordinates and free-text matches must never override a known state
+        # conflict. This is especially important for ambiguous names such as
+        # Denver, Portland, Springfield, and Columbus.
+        if requested_us_state and any(state != requested_us_state for state in listing_states):
+            continue
         item = mobile_housing_post_payload(row)
         lat, lng, used_city_fallback = accommodation_post_search_point(row)
         if used_city_fallback and row_value(row, "street_address"):
@@ -18530,11 +18711,11 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
         search_metro = search_metro or refreshed
     elif search_metro and search_metro not in {row[0] for row in accommodation_metro_filter_options()}:
         search_metro = refresh_accommodation_location_cache(search_metro) or search_metro
-    metro_name = search_metro or "Denver Metro Area"
+    metro_name = search_metro or ("" if search_area else "Denver Metro Area")
     try:
         with db() as con:
-            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone()
-            if not metro:
+            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone() if metro_name else None
+            if not metro and not search_area:
                 metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", ("Denver Metro Area",)).fetchone()
             if metro:
                 metro_name = row_value(metro, "name", "Denver Metro Area")
@@ -18552,13 +18733,13 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
         area_rows = []
     suggested = tuple(row_value(row, "name") for row in area_rows if row_value(row, "place_type") != "ZIP")[:18]
     zips = tuple(row_value(row, "zip_code") or row_value(row, "name") for row in area_rows if row_value(row, "place_type") == "ZIP")[:12]
-    if not suggested:
+    if not suggested and not search_area:
         suggested = tuple(ACCOMMODATION_METRO_GROUPS["Denver Metro Area"]["suggested"])
-    if not zips:
+    if not zips and not search_area:
         zips = tuple(ACCOMMODATION_METRO_GROUPS["Denver Metro Area"]["zips"])
     return {
         "selected_location": search_area or "Denver, CO",
-        "suggested_location": suggested[0] if suggested else "Denver, CO",
+        "suggested_location": suggested[0] if suggested else search_area,
         "suggested_areas": list(suggested[:18]),
         "suggested_place_chips": render_accommodation_place_chips(suggested, search_area),
         "zip_chips": render_accommodation_place_chips(zips, search_area),
@@ -18612,18 +18793,26 @@ def accommodation_location_options(query: str, area: str = "", limit: int = 18) 
     zips: list[str] = []
     try:
         with db() as con:
-            metro = con.execute("SELECT * FROM accommodation_metros WHERE name = ?", (metro_name,)).fetchone()
+            _query_city, query_state = split_city_state(query)
+            metro = con.execute(
+                """SELECT * FROM accommodation_metros
+                   WHERE name = ? AND (? = '' OR state = '' OR upper(state) = upper(?))
+                   LIMIT 1""",
+                (metro_name, query_state, query_state),
+            ).fetchone()
             if not metro and query:
                 city = query.split(",", 1)[0].strip()
+                _query_city, query_state = split_city_state(query)
                 metro = con.execute(
                     """
                     SELECT DISTINCT metro.*
                     FROM accommodation_metros metro
                     JOIN accommodation_local_areas area ON area.metro_id = metro.id
-                    WHERE lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?)
+                    WHERE (lower(area.name) LIKE lower(?) OR lower(area.city) = lower(?))
+                      AND (? = '' OR upper(area.state) = upper(?))
                     LIMIT 1
                     """,
-                    (f"%{city}%", city),
+                    (f"%{city}%", city, query_state, query_state),
                 ).fetchone()
             if not metro and metro_name in ACCOMMODATION_METRO_GROUPS:
                 fallback_group = ACCOMMODATION_METRO_GROUPS[metro_name]
@@ -19534,6 +19723,7 @@ def preview_chat_group_invite(token: str, user_id: int) -> tuple[dict[str, objec
             "name": str(row_value(community, "name") or "Public group"),
             "description": str(row_value(community, "description") or ""),
             "area": str(row_value(community, "area_label") or ""),
+            "photoUrl": group_avatar_delivery_path(row_value(community, "photo_url"), int(row_value(community, "id") or 0)),
             "memberCount": int(row_value(community, "member_count") or 0),
             "alreadyMember": bool(int(row_value(community, "already_member") or 0)),
         }, ""
@@ -19542,7 +19732,7 @@ def preview_chat_group_invite(token: str, user_id: int) -> tuple[dict[str, objec
     with db() as con:
         invite = con.execute(
             """SELECT invites.*, communities.public_id, communities.name,
-                      communities.description, communities.area_label
+                      communities.description, communities.area_label, communities.photo_url
                FROM chat_group_invites invites
                JOIN chat_communities communities ON communities.id = invites.community_id
                WHERE invites.token_hash = ? LIMIT 1""",
@@ -19572,6 +19762,7 @@ def preview_chat_group_invite(token: str, user_id: int) -> tuple[dict[str, objec
             "name": str(row_value(invite, "name") or "Private group"),
             "description": str(row_value(invite, "description") or ""),
             "area": str(row_value(invite, "area_label") or ""),
+            "photoUrl": group_avatar_delivery_path(row_value(invite, "photo_url"), int(row_value(invite, "community_id") or 0)),
             "memberCount": member_count,
             "alreadyMember": already_member,
         }, ""
@@ -19762,6 +19953,7 @@ class ChatLinkMetadataParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.metadata: dict[str, str] = {}
         self.title_parts: list[str] = []
+        self.icon_candidates: list[tuple[int, str]] = []
         self.in_title = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -19776,8 +19968,20 @@ class ChatLinkMetadataParser(HTMLParser):
         elif tag.lower() == "link":
             relations = values.get("rel", "").lower().split()
             href = values.get("href") or ""
-            if href and ("icon" in relations or "shortcut" in relations) and "icon" not in self.metadata:
-                self.metadata["icon"] = href
+            if href and ("icon" in relations or "shortcut" in relations or "apple-touch-icon" in relations):
+                # Prefer touch/PNG icons over SVG/ICO because native iOS and
+                # Android image decoders do not consistently support raw web
+                # favicon formats. Preserve alternatives for server-side PNG
+                # normalization below.
+                mime_type = values.get("type", "").lower()
+                score = 0
+                if "apple-touch-icon" in relations:
+                    score += 30
+                if "png" in mime_type or href.lower().split("?", 1)[0].endswith(".png"):
+                    score += 20
+                if "svg" in mime_type or href.lower().split("?", 1)[0].endswith(".svg"):
+                    score -= 20
+                self.icon_candidates.append((score, href))
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
@@ -19811,10 +20015,54 @@ class SafeChatPreviewRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, safe_url)
 
 
+def chat_favicon_data_url(page_url: str, icon_candidates: list[tuple[int, str]], opener: urllib.request.OpenerDirector) -> str:
+    if Image is None:
+        return ""
+    ranked: list[tuple[int, str]] = []
+    for score, href in icon_candidates:
+        absolute = urllib.parse.urljoin(page_url, href)
+        if absolute and safe_chat_preview_url(absolute):
+            ranked.append((score, absolute))
+    fallback = urllib.parse.urljoin(page_url, "/favicon.ico")
+    if safe_chat_preview_url(fallback):
+        ranked.append((-10, fallback))
+    seen: set[str] = set()
+    for _, icon_url in sorted(ranked, key=lambda item: item[0], reverse=True):
+        if icon_url in seen:
+            continue
+        seen.add(icon_url)
+        try:
+            request = urllib.request.Request(
+                icon_url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; FairFares-LinkPreview/1.0)", "Accept": "image/*"},
+            )
+            with opener.open(request, timeout=4) as response:
+                payload = response.read(262_145)
+            if not payload or len(payload) > 262_144:
+                continue
+            favicon = Image.open(io.BytesIO(payload)).convert("RGBA")
+            favicon.thumbnail((64, 64), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            favicon.save(output, format="PNG", optimize=True)
+            encoded = base64.b64encode(output.getvalue()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except Exception:
+            continue
+    return ""
+
+
 def chat_link_preview(value: str) -> tuple[dict[str, str] | None, str]:
     safe_url = safe_chat_preview_url(value)
     if not safe_url:
         return None, "This link cannot be previewed."
+    now = time.monotonic()
+    with _CHAT_LINK_PREVIEW_CACHE_LOCK:
+        cached = _CHAT_LINK_PREVIEW_CACHE.get(safe_url)
+        if cached and now - cached[0] < CHAT_LINK_PREVIEW_CACHE_TTL_SECONDS:
+            _CHAT_LINK_PREVIEW_CACHE.move_to_end(safe_url)
+            return dict(cached[1]), ""
+        if cached:
+            _CHAT_LINK_PREVIEW_CACHE.pop(safe_url, None)
     try:
         request = urllib.request.Request(
             safe_url,
@@ -19838,23 +20086,26 @@ def chat_link_preview(value: str) -> tuple[dict[str, str] | None, str]:
         title = metadata.get("og:title") or metadata.get("twitter:title") or " ".join(parser.title_parts)
         description = metadata.get("og:description") or metadata.get("twitter:description") or metadata.get("description") or ""
         image = metadata.get("og:image:secure_url") or metadata.get("og:image") or metadata.get("twitter:image") or ""
-        icon = metadata.get("icon") or "/favicon.ico"
         parsed_final = urllib.parse.urlparse(final_url)
         absolute_image = urllib.parse.urljoin(final_url, image) if image else ""
-        absolute_icon = urllib.parse.urljoin(final_url, icon) if icon else ""
         if absolute_image and not safe_chat_preview_url(absolute_image):
             absolute_image = ""
-        if absolute_icon and not safe_chat_preview_url(absolute_icon):
-            absolute_icon = ""
-        return {
+        favicon_data_url = chat_favicon_data_url(final_url, parser.icon_candidates, opener)
+        preview = {
             "url": final_url,
             "host": (parsed_final.hostname or "Website").removeprefix("www."),
             "title": html.unescape(title).strip()[:180],
             "description": html.unescape(description).strip()[:280],
             "imageUrl": absolute_image,
-            "faviconUrl": absolute_icon,
+            "faviconUrl": favicon_data_url,
             "siteName": html.unescape(metadata.get("og:site_name") or "").strip()[:100],
-        }, ""
+        }
+        with _CHAT_LINK_PREVIEW_CACHE_LOCK:
+            _CHAT_LINK_PREVIEW_CACHE[safe_url] = (time.monotonic(), preview)
+            _CHAT_LINK_PREVIEW_CACHE.move_to_end(safe_url)
+            while len(_CHAT_LINK_PREVIEW_CACHE) > CHAT_LINK_PREVIEW_CACHE_MAX_ENTRIES:
+                _CHAT_LINK_PREVIEW_CACHE.popitem(last=False)
+        return dict(preview), ""
     except Exception:
         return None, "This website preview is temporarily unavailable."
 
@@ -20964,10 +21215,13 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     is_group_notification = bool(notification_data.get("isGroup")) or bool(
         str(notification_data.get("conversationName") or "").strip()
     )
-    allow_native_enrichment = (
-        is_chitthi_notification
-        and (not is_group_notification or bool(notification_data.get("nativeGroupEnrichment")))
-    )
+    # Every Chitthi delivery must reach the notification-service extension.
+    # Older token rows can retain a stale notification schema after an app
+    # restore or token rotation; gating group enrichment on that row made the
+    # same group intermittently render with the FairFares app icon. Builds
+    # without the extension safely ignore mutable-content, while current builds
+    # resolve the group photo or generate initials.
+    allow_native_enrichment = is_chitthi_notification
     image_url = str(notification_data.get("imageUrl") or "").strip()
     # Expo maps richContent.image to Android's expanded notification image and
     # to the iOS notification-service extension. Chat payloads already carry
@@ -21192,12 +21446,18 @@ def refresh_queued_chitthi_notification(
     refreshed["isGroup"] = is_group
     refreshed["conversationName"] = conversation_name if is_group else ""
     refreshed["subtitle"] = conversation_name if is_group else ""
-    if is_group and community_id and not str(refreshed.get("groupAvatarUrl") or "").startswith("https://"):
+    refreshed["nativeGroupEnrichment"] = is_group
+    if is_group and community_id:
+        # Pushes can remain in the durable outbox across retries or a deploy.
+        # Always mint the short-lived avatar URL immediately before delivery;
+        # preserving an older, syntactically valid HTTPS URL can leave the
+        # notification-service extension with an expired signature and make it
+        # fall back to the generic FairFares app icon instead of the group.
         refreshed["groupAvatarUrl"] = chat_notification_group_avatar_url(schema_origin(), community_id)
     elif not is_group:
         refreshed["groupAvatarUrl"] = ""
     sender_id = int(float_from_value(refreshed.get("senderId")) or 0)
-    if sender_id and not str(refreshed.get("senderAvatarUrl") or "").startswith("https://"):
+    if sender_id:
         refreshed["senderAvatarUrl"] = chat_notification_avatar_url(schema_origin(), sender_id)
     refreshed["notificationSchema"] = 2
     canonical_title, canonical_body, _subtitle = chitthi_notification_copy(
@@ -21448,13 +21708,7 @@ def send_mobile_push_for_users(
         token_data = dict(data or {})
         token_data["targetPlatform"] = str(row_value(row, "platform") or "").strip().lower()
         if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
-            # Reaction enrichment has been supported since the first native
-            # reaction build. Do not let a stale per-token schema suppress the
-            # group avatar; retain schema gating for ordinary group messages.
-            token_data["nativeGroupEnrichment"] = (
-                str(token_data.get("type") or "").upper() == "CHITTHI_REACTION"
-                or int(row_value(row, "notification_schema") or 0) >= 3
-            )
+            token_data["nativeGroupEnrichment"] = True
         enqueue_mobile_pushes(
             [(int(row_value(row, "user_id") or 0), str(row_value(row, "token") or ""))],
             title,
@@ -23651,6 +23905,78 @@ def guest_offer_modal() -> str:
 """
 
 
+PRODUCT_ANALYTICS_EVENTS = {
+    "app_first_open",
+    "app_open",
+    "rental_search",
+    "rental_car_view",
+    "signup_completed",
+    "message_sent",
+    "rental_booking_started",
+    "rental_booking_completed",
+}
+
+
+def product_analytics_summary(days: int = 30) -> dict[str, object]:
+    days = days if days in {1, 7, 30, 90} else 30
+    window = f"-{days} days"
+    event_stages = {
+        "installs": "app_first_open",
+        "opens": "app_open",
+        "signups": "signup_completed",
+        "searches": "rental_search",
+        "car_views": "rental_car_view",
+        "messages": "message_sent",
+        "bookings": "rental_booking_completed",
+    }
+    with db() as con:
+        stage_counts: dict[str, int] = {}
+        for stage, event_name in event_stages.items():
+            row = con.execute(
+                """SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
+                   FROM product_analytics_events
+                   WHERE event_name = ? AND datetime(occurred_at) >= datetime('now', ?)""",
+                (event_name, window),
+            ).fetchone()
+            stage_counts[stage] = int(row_value(row, "total") or 0)
+        repeat_row = con.execute(
+            """SELECT COUNT(*) AS total FROM (
+                   SELECT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END AS actor
+                   FROM product_analytics_events
+                   WHERE event_name = 'app_open' AND datetime(occurred_at) >= datetime('now', ?)
+                   GROUP BY actor HAVING COUNT(DISTINCT date(occurred_at)) >= 2
+               )""",
+            (window,),
+        ).fetchone()
+        stage_counts["repeat_users"] = int(row_value(repeat_row, "total") or 0)
+        platform_rows = con.execute(
+            """SELECT COALESCE(NULLIF(platform, ''), 'unknown') AS platform,
+                      COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS users
+               FROM product_analytics_events
+               WHERE datetime(occurred_at) >= datetime('now', ?)
+               GROUP BY platform ORDER BY users DESC""",
+            (window,),
+        ).fetchall()
+        daily_rows = con.execute(
+            """SELECT date(occurred_at) AS day,
+                      COUNT(DISTINCT CASE WHEN event_name = 'app_open' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS opens,
+                      COUNT(DISTINCT CASE WHEN event_name = 'rental_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS searches,
+                      COUNT(DISTINCT CASE WHEN event_name = 'rental_car_view' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS views,
+                      COUNT(DISTINCT CASE WHEN event_name = 'message_sent' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS messages,
+                      COUNT(DISTINCT CASE WHEN event_name = 'rental_booking_completed' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS bookings
+               FROM product_analytics_events
+               WHERE datetime(occurred_at) >= datetime('now', ?)
+               GROUP BY date(occurred_at) ORDER BY day""",
+            (window,),
+        ).fetchall()
+    return {
+        "days": days,
+        "stages": stage_counts,
+        "platforms": [dict(row) for row in platform_rows],
+        "daily": [dict(row) for row in daily_rows],
+    }
+
+
 class FairFaresHandler(SimpleHTTPRequestHandler):
     server_version = "FairFares/1.0"
     sys_version = ""
@@ -24100,6 +24426,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/pickup": self.admin_pickup_page,
             "/admin/agreement/customer": self.admin_customer_agreement_page,
             "/admin/system": self.admin_system_page,
+            "/admin/analytics": self.admin_analytics_page,
             "/admin/backups/download": self.download_admin_backup,
             "/logout": self.logout,
             "/api/site": self.api_site,
@@ -24195,6 +24522,65 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_json({"ok": True, "referenceId": event["reference_id"]}, 202)
 
+    def api_mobile_product_analytics(self) -> None:
+        """Store an allow-listed product event without personal or message content."""
+        payload = self.read_json_body()
+        event_name = clean_text_value(payload.get("eventName"), 60).lower()
+        if event_name not in PRODUCT_ANALYTICS_EVENTS:
+            self.send_json({"ok": False, "error": "Unsupported analytics event."}, 400)
+            return
+        anonymous_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(payload.get("anonymousId"), 100))
+        if not anonymous_id:
+            self.send_json({"ok": False, "error": "An anonymous installation identifier is required."}, 400)
+            return
+        platform = clean_text_value(payload.get("platform"), 20).lower()
+        if platform not in {"ios", "android", "web"}:
+            platform = "unknown"
+        app_version = clean_text_value(payload.get("appVersion"), 30)
+        build_version = clean_text_value(payload.get("buildVersion"), 30)
+        session_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(payload.get("sessionId"), 100))
+        event_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(payload.get("eventId"), 120))
+        dedupe_key = event_id or f"{anonymous_id}:{event_name}:{uuid.uuid4().hex}"
+        occurred_at = datetime.now(UTC)
+        supplied_occurred_at = clean_text_value(payload.get("occurredAt"), 40)
+        if supplied_occurred_at:
+            try:
+                parsed_occurred_at = datetime.fromisoformat(supplied_occurred_at.replace("Z", "+00:00"))
+                if parsed_occurred_at.tzinfo is None:
+                    parsed_occurred_at = parsed_occurred_at.replace(tzinfo=UTC)
+                parsed_occurred_at = parsed_occurred_at.astimezone(UTC)
+                now_utc = datetime.now(UTC)
+                if now_utc - timedelta(days=400) <= parsed_occurred_at <= now_utc + timedelta(minutes=5):
+                    occurred_at = parsed_occurred_at
+            except ValueError:
+                pass
+        supplied_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        metadata: dict[str, object] = {}
+        for key in ("carId", "resultCount", "source"):
+            value = supplied_metadata.get(key)
+            if isinstance(value, (str, int, float, bool)):
+                metadata[key] = str(value)[:80]
+        user = self.current_user()
+        user_id = int(row_value(user, "id") or 0) or None
+        with db() as con:
+            # Once an installation signs in, merge its earlier anonymous events
+            # into the same actor so the funnel does not count one device twice.
+            if user_id:
+                con.execute(
+                    "UPDATE product_analytics_events SET user_id = ? WHERE anonymous_id = ? AND user_id IS NULL",
+                    (user_id, anonymous_id),
+                )
+            con.execute(
+                """INSERT OR IGNORE INTO product_analytics_events
+                   (event_name, anonymous_id, user_id, platform, app_version, build_version,
+                    session_id, metadata_json, dedupe_key, occurred_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (event_name, anonymous_id, user_id, platform, app_version, build_version,
+                 session_id, json.dumps(metadata, separators=(",", ":")), dedupe_key,
+                 occurred_at.strftime("%Y-%m-%d %H:%M:%S")),
+            )
+        self.send_json({"ok": True}, 202)
+
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         routes = {
@@ -24262,6 +24648,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/chat/messages/react": self.api_react_chat_message,
             "/api/maintenance/chitthi-media": self.api_run_chitthi_media_cleanup,
             "/api/mobile/diagnostics": self.api_mobile_diagnostics,
+            "/api/mobile/analytics/events": self.api_mobile_product_analytics,
             "/api/chat/read": self.api_mark_chat_read,
             "/api/chat/typing": self.api_chat_typing,
             "/api/chat/mute": self.api_mute_chat_conversation,
@@ -24728,7 +25115,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         (public_id,),
                     ).fetchone()
                 if row:
-                    primary_image = row_value(row, "photo_url")
+                    # Never generate an apparently broken blank image panel.
+                    # A group-owned photo wins; Chitthi artwork is the explicit
+                    # identity fallback for groups that have not uploaded one.
+                    primary_image = row_value(row, "photo_url") or "/static/img/chitthi-mascot.png"
                     title = row_value(row, "name") or "Chitthi group"
                     count = int(row_value(row, "member_count") or 0)
                     subtitle = row_value(row, "area_label") or "Chitthi by FairFares"
@@ -24783,15 +25173,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         share_card_query = f"kind=group&token={urllib.parse.quote(token)}" if token else f"kind=group&id={urllib.parse.quote(community_id)}"
         share_image = f"{schema_origin()}/api/share-card?{share_card_query}"
         share_url = f"{schema_origin()}{parsed.path}?{parsed.query}"
-        # Use the apex host as a cross-site Universal Link from the canonical
-        # www landing page. iOS can hand this HTTPS URL to FairFares without
-        # showing the alarming "application couldn't be opened" dialog that
-        # an unavailable custom URL scheme produces. Devices without the app
-        # simply follow the normal apex-to-www redirect back to this page.
+        # Keep the Universal Link for metadata and direct OS handoff. The one
+        # visible CTA below uses a platform-aware open-with-store-fallback flow.
         app_invite_token = token or public_chat_group_invite_token(community_id)
         app_invite_query = urllib.parse.urlencode({"group_invite": app_invite_token})
         universal_app_link = f"https://fairfare.space/chitthi/invite?{app_invite_query}"
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
+        ios_app_link = f"fairfares://chitthi/invite?{app_invite_query}"
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         group_query = app_invite_query
         android_app_link = android_chitthi_invite_intent(group_query)
@@ -24813,7 +25201,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else ""
         )
         body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"robots\" content=\"noindex,nofollow\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{escaped_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_image}\"><meta property=\"og:image:type\" content=\"image/png\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(group_name + ' Chitthi group preview', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_image}\"></head>
-<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a id=\"open-chitthi-app\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Open in Chitthi</a><a id=\"install-fairfares\" href=\"{safe_app_store_url}\" style=\"display:block;color:#b7c2d4;margin-top:18px\">Install or update FairFares</a></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var link=document.getElementById('open-chitthi-app'),install=document.getElementById('install-fairfares');if(link)link.href={json.dumps(android_app_link)};if(install)install.href={json.dumps(android_store_url)}}}}})()</script></body></html>"""
+<body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 18px\"><img src=\"{html.escape(chitthi_wordmark, quote=True)}\" alt=\"Chitthi Letters\" style=\"display:block;width:220px;max-height:90px;object-fit:contain;margin:0 auto 14px\"><div style=\"display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px\"><img src=\"{html.escape(chitthi_mascot, quote=True)}\" alt=\"Chitthi mascot\" style=\"width:76px;height:92px;object-fit:contain\">{group_photo_html}</div><h1>Join {html.escape(group_name)} on Chitthi</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(group_description)} · {html.escape(member_text)}</p><p style=\"color:#b7c2d4;line-height:1.5\">For your privacy, group membership is confirmed inside the FairFares app.</p><a id=\"continue-fairfares\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#4f7cff;color:#fff;text-decoration:none;padding:15px;border-radius:999px;font-weight:700\">Continue in FairFares</a><p style=\"color:#8493aa;font-size:13px;line-height:1.4;margin:12px 0 0\">Opens the app, or takes you to the correct store when needed.</p></main><script>(function(){{var button=document.getElementById('continue-fairfares');if(!button)return;var isAndroid=/android/i.test(navigator.userAgent);if(isAndroid){{button.href={json.dumps(android_app_link)};return}}var appLink={json.dumps(ios_app_link)},storeLink={json.dumps(app_store_url)},timer=0;button.href=appLink;button.addEventListener('click',function(event){{event.preventDefault();var started=Date.now();window.location.href=appLink;timer=window.setTimeout(function(){{if(!document.hidden&&Date.now()-started<2600)window.location.href=storeLink}},1500)}});document.addEventListener('visibilitychange',function(){{if(document.hidden&&timer){{window.clearTimeout(timer);timer=0}}}})}})()</script></body></html>"""
         self.send_text(
             body,
             "text/html; charset=utf-8",
@@ -26338,7 +26726,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",
                         "previewNonce": str(row_value(envelope, "preview_nonce") or "") if envelope else "",
                         "previewCiphertext": str(row_value(envelope, "preview_ciphertext") or "") if envelope else "",
-                        "nativeGroupEnrichment": int(row_value(token_row, "notification_schema") or 0) >= 3,
+                        "nativeGroupEnrichment": True,
                         "badge": unread_badge,
                         "isMention": is_mention,
                     }))
@@ -26664,7 +27052,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to open this private group invitation."}, 401)
             return
-        token = (urllib.parse.parse_qs(parsed.query).get("token") or [""])[0].strip()
+        params = urllib.parse.parse_qs(parsed.query)
+        token = (params.get("token") or [""])[0].strip()
+        community_id = clean_text_value((params.get("community_id") or [""])[0], 80)
+        if community_id:
+            # Legacy public invite messages used community_id rather than a
+            # signed group_invite token. Convert only an existing PUBLIC group
+            # into the same signed preview flow; private ids remain hidden.
+            with db() as con:
+                public_group = con.execute(
+                    "SELECT public_id FROM chat_communities WHERE public_id = ? AND visibility = 'PUBLIC' LIMIT 1",
+                    (community_id,),
+                ).fetchone()
+            token = public_chat_group_invite_token(community_id) if public_group else ""
         preview, error = preview_chat_group_invite(token, int(user["id"]))
         if not preview:
             self.send_json({"ok": False, "message": error or "Could not open this invitation."}, 400)
@@ -30620,7 +31020,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("fleet", "Fleet", "/admin/inventory", [("portal", "/admin/inventory", "Inventory"), ("roi", "/admin/roi", "ROI")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
             ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("community", "/admin/community", "Community"), ("requests", "/admin/requests", "Staff Requests")]),
-            ("marketing", "Marketing", "/admin/discounts", [("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
+            ("marketing", "Marketing", "/admin/analytics", [("analytics", "/admin/analytics", "Product Analytics"), ("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
             ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
             ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
         ]
@@ -31316,6 +31716,72 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             staff_create_card=self.render_staff_create_card(),
             staff_rows=staff_rows or '<tr><td colspan="5">No staff accounts yet.</td></tr>',
             staff_request_rows=request_rows or '<tr><td colspan="6">No pending staff requests.</td></tr>',
+        )
+        self.send_html(body)
+
+    def admin_analytics_page(self) -> None:
+        user = self.require_owner_admin("/admin")
+        if not user:
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        try:
+            days = int(query.get("days", ["30"])[0])
+        except ValueError:
+            days = 30
+        summary = product_analytics_summary(days)
+        stages = summary["stages"]
+        stage_definitions = [
+            ("installs", "Downloads / first installs"),
+            ("opens", "Active users"),
+            ("signups", "Signups"),
+            ("searches", "Rental searches"),
+            ("car_views", "Car views"),
+            ("messages", "Message senders"),
+            ("bookings", "Bookers"),
+            ("repeat_users", "Repeat users"),
+        ]
+        maximum = max([int(stages.get(key, 0)) for key, _label in stage_definitions] + [1])
+        funnel_rows: list[str] = []
+        active_users = int(stages.get("opens", 0))
+        for key, label in stage_definitions:
+            value = int(stages.get(key, 0))
+            if key == "installs":
+                conversion_copy = "New installations in this period"
+            elif key == "opens":
+                conversion_copy = "Unique active users in this period"
+            elif active_users:
+                conversion_copy = f"{value / active_users * 100:.1f}% of active users"
+            else:
+                conversion_copy = "Awaiting active-user data"
+            width = max(3, value / maximum * 100) if value else 0
+            funnel_rows.append(
+                f'<article class="analytics-funnel-row"><div><span>{escape(label)}</span><b>{value:,}</b>'
+                f'<small>{conversion_copy}</small></div>'
+                f'<i style="--analytics-width:{width:.2f}%"></i></article>'
+            )
+        platform_cards = "".join(
+            f'<article><span>{escape(str(row.get("platform") or "unknown").title())}</span><b>{int(row.get("users") or 0):,}</b></article>'
+            for row in summary["platforms"]
+        ) or '<article><span>Platforms</span><b>0</b></article>'
+        daily_rows = "".join(
+            f'<tr><td data-label="Day">{escape(str(row.get("day") or ""))}</td><td data-label="Opens">{int(row.get("opens") or 0):,}</td>'
+            f'<td data-label="Rental searches">{int(row.get("searches") or 0):,}</td><td data-label="Car views">{int(row.get("views") or 0):,}</td>'
+            f'<td data-label="Messages">{int(row.get("messages") or 0):,}</td><td data-label="Bookings">{int(row.get("bookings") or 0):,}</td></tr>'
+            for row in reversed(summary["daily"])
+        ) or '<tr><td colspan="6">No analytics events received for this period.</td></tr>'
+        period_links = "".join(
+            f'<a class="{"active" if option == summary["days"] else ""}" href="/admin/analytics?days={option}">{"24 hours" if option == 1 else str(option) + " days"}</a>'
+            for option in (1, 7, 30, 90)
+        )
+        body = render_template(
+            "admin_analytics.html",
+            admin_name=escape(str(row_value(user, "name") or "Admin")),
+            admin_nav=self.render_admin_nav(user, "analytics"),
+            period_links=period_links,
+            funnel_rows="".join(funnel_rows),
+            platform_cards=platform_cards,
+            daily_rows=daily_rows,
+            selected_period="24 hours" if summary["days"] == 1 else f'{summary["days"]} days',
         )
         self.send_html(body)
 
@@ -35196,6 +35662,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not subject:
             self.send_json({"ok": False, "error": "The identity provider did not return an account identifier."}, 401)
             return
+        account_created = False
         try:
             with db() as con:
                 con.execute("DELETE FROM auth_phone_continuations WHERE used_at IS NOT NULL OR datetime(expires_at) <= datetime('now')")
@@ -35212,11 +35679,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     if existing:
                         user_id = int(existing["id"])
                         if int(row_value(existing, "guest_account") or 0):
+                            account_created = True
                             con.execute(
                                 "UPDATE users SET name = ?, guest_account = 0, is_verified = 1, verified_at = CURRENT_TIMESTAMP, consented_at = ?, terms_version = ?, privacy_version = ?, community_guidelines_version = ? WHERE id = ?",
                                 (display_name, consented_at, TERMS_VERSION if consented else None, PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None, user_id),
                             )
                     elif community_guest:
+                        account_created = True
                         user_id = int(community_guest["user_id"])
                         con.execute(
                             """UPDATE users
@@ -35230,6 +35699,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         )
                         con.execute("DELETE FROM ask_community_guest_sessions WHERE user_id = ?", (user_id,))
                     else:
+                        account_created = True
                         con.execute(
                             "INSERT INTO users (name, email, password_hash, is_verified, verified_at, consented_at, terms_version, privacy_version, community_guidelines_version) VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
                             (display_name, email, hash_password(secrets.token_urlsafe(48)), consented_at, TERMS_VERSION if consented else None, PRIVACY_VERSION if consented else None, COMMUNITY_GUIDELINES_VERSION if consented else None),
@@ -35257,7 +35727,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
                     refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-                    self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(refreshed)})
+                    # Do not expose a usable session until the identity/user/session
+                    # transaction is visible to follow-up requests on other threads.
+                    con.commit()
+                    self.send_json({"ok": True, "token": session_token, "user": mobile_user_payload(refreshed), "accountCreated": account_created})
                     return
                 # Installed clients predating the social consent/phone modal can
                 # deadlock iOS while replacing the login modal. During the
@@ -35268,12 +35741,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
                     refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+                    # The client can immediately request account and Chitthi data
+                    # after receiving this token, so commit before responding.
+                    con.commit()
                     self.send_json({
                         "ok": True,
                         "token": session_token,
                         "user": mobile_user_payload(refreshed),
                         "consentPending": not has_current_consent,
                         "phonePending": not bool(canonical_e164_phone(row_value(refreshed, "phone"))),
+                        "accountCreated": account_created,
                     })
                     return
                 continuation = secrets.token_urlsafe(32)
@@ -35287,6 +35764,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "phoneRequired": True,
                 "continuationToken": continuation,
                 "user": mobile_user_payload(user),
+                "accountCreated": account_created,
             })
         except sqlite3.IntegrityError:
             self.send_json({"ok": False, "error": "This social account is already linked to another FairFares account."}, 409)
@@ -36414,6 +36892,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = (params.get("city", ["Denver, CO"])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
+        city_region = explicit_us_state_from_label(city)
+        area_region = explicit_us_state_from_label(area)
+        if city_region and area_region and city_region != area_region:
+            area = ""
         need = (params.get("need", [""])[0] or "").strip()
         category = (params.get("category", [""])[0] or "").strip()
         gender = (params.get("gender", [""])[0] or "").strip()
@@ -37798,6 +38280,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def community_share_page(self, parsed: urllib.parse.ParseResult) -> None:
         public_id = clean_text_value(parsed.path.rsplit("/", 1)[-1] if parsed.path != "/community" else "", 80)
+        params = urllib.parse.parse_qs(parsed.query)
+        if (params.get("open_or_install") or [""])[0] == "1":
+            # Installed clients claim this associated-domain link before it
+            # reaches the server. A browser reaching this branch therefore
+            # needs the platform store, not another copy of the landing page.
+            user_agent = self.headers.get("User-Agent", "")
+            store_url = (
+                "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+                if re.search(r"android", user_agent, re.IGNORECASE)
+                else "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+            )
+            self.redirect(store_url)
+            return
         rows = community_post_rows(0, post_public_id=public_id, limit=1) if public_id else []
         post = community_post_payload(rows[0], 0) if rows else None
         raw_title = str(post["title"]) if post else "Ask Community on FairFares"
@@ -37811,20 +38306,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         share_image = f"{schema_origin()}/api/share-card?kind=community&id={urllib.parse.quote(public_id)}" if post else absolute_public_url("/static/img/appicon.png")
         metadata = f"""<title>{share_title}</title><meta name=\"description\" content=\"{share_description}\"><link rel=\"canonical\" href=\"{html.escape(share_url, quote=True)}\"><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/static/img/favicon-32.png?v={ASSET_VERSION}\"><link rel=\"icon\" type=\"image/png\" sizes=\"512x512\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><link rel=\"apple-touch-icon\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><meta name=\"theme-color\" content=\"#00c997\"><meta property=\"og:type\" content=\"article\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:title\" content=\"{share_title}\"><meta property=\"og:description\" content=\"{share_description}\"><meta property=\"og:url\" content=\"{html.escape(share_url, quote=True)}\"><meta property=\"og:image\" content=\"{html.escape(share_image, quote=True)}\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\"><meta property=\"og:image:alt\" content=\"{html.escape(raw_title + ' on FairFares', quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{share_title}\"><meta name=\"twitter:description\" content=\"{share_description}\"><meta name=\"twitter:image\" content=\"{html.escape(share_image, quote=True)}\">"""
         app_path = f"/community/{urllib.parse.quote(public_id)}" if public_id else "/community"
-        # Cross from the canonical www landing page to the associated apex
-        # domain only after a user gesture. Installed apps claim this Universal
-        # Link; browsers without FairFares return to the readable web preview.
-        app_link = f"https://fairfare.space{app_path}"
-        ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
-        android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+        # The script switches to the other associated host so Safari treats the
+        # tap as navigation rather than same-site browsing. Installed clients
+        # claim the link; otherwise the server's open_or_install branch sends
+        # the browser directly to the appropriate store.
+        app_link = f"https://www.fairfare.space{app_path}?open_or_install=1"
         status = 200 if post or not public_id else 404
-        markup = f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\"><style>body{{margin:0;background:#07140f;color:#f4fff9;font:16px system-ui,-apple-system,sans-serif}}main{{max-width:680px;margin:auto;padding:56px 20px}}.brand{{color:#62d8a6;font-weight:850;letter-spacing:.08em}}article{{margin-top:22px;padding:28px;background:#10291f;border:1px solid #285641;border-radius:26px}}h1{{font-size:clamp(28px,6vw,44px);line-height:1.08;margin:12px 0}}p{{color:#c5dbd2;line-height:1.65;white-space:pre-wrap}}.by{{color:#7fc7a8;font-size:14px}}.actions{{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}}a{{padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:800}}.open{{background:#62d8a6;color:#06291e}}.home{{border:1px solid #46705e;color:#dff8ed}}</style></head><body><main><div class=\"brand\">FAIRFARES · ASK COMMUNITY</div><article><div class=\"by\">Shared by {author}</div><h1>{title}</h1><p>{body}</p><div class=\"actions\"><a class=\"open\" href=\"{html.escape(app_link)}\">Open in FairFares</a><a class=\"home\" id=\"install-fairfares\" href=\"{ios_store}\">Install FairFares</a><a class=\"home\" href=\"/\">Visit FairFares</a></div></article></main><script>(function(){{if(/android/i.test(navigator.userAgent)){{var install=document.getElementById('install-fairfares');if(install)install.href={json.dumps(android_store)}}}}})()</script></body></html>"""
+        markup = f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\"><style>body{{margin:0;background:#07140f;color:#f4fff9;font:16px system-ui,-apple-system,sans-serif}}main{{max-width:680px;margin:auto;padding:56px 20px}}.brand{{color:#62d8a6;font-weight:850;letter-spacing:.08em}}article{{margin-top:22px;padding:28px;background:#10291f;border:1px solid #285641;border-radius:26px}}h1{{font-size:clamp(28px,6vw,44px);line-height:1.08;margin:12px 0}}p{{color:#c5dbd2;line-height:1.65;white-space:pre-wrap}}.by{{color:#7fc7a8;font-size:14px}}.actions{{display:flex;margin-top:26px}}a{{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:999px;text-decoration:none;font-weight:800}}.open{{background:#62d8a6;color:#06291e}}</style></head><body><main><div class=\"brand\">FAIRFARES · ASK COMMUNITY</div><article><div class=\"by\">Shared by {author}</div><h1>{title}</h1><p>{body}</p><div class=\"actions\"><a class=\"open\" id=\"open-or-install-fairfares\" href=\"{html.escape(app_link)}\">Open / Install FairFares</a></div></article></main><script>(function(){{var button=document.getElementById('open-or-install-fairfares');if(!button)return;try{{var target=new URL(button.href);target.hostname=location.hostname==='www.fairfare.space'?'fairfare.space':'www.fairfare.space';button.href=target.toString()}}catch(_error){{}}}})()</script></body></html>"""
         legacy_head = f"<title>{title} · FairFares</title><meta name=\"description\" content=\"{html.escape(body[:180])}\">"
         markup = markup.replace(legacy_head, metadata, 1)
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
-        sync_housing_into_community()
+        ensure_housing_community_projection_current()
         user = self.current_user()
         guest = None if user else self.current_community_guest()
         viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)

@@ -2,6 +2,7 @@ import { ImageSourcePropType } from "react-native";
 
 export const appAssets = {
   logo: require("../assets/fairfares-logo-mobile.png") as ImageSourcePropType,
+  appIcon: require("../assets/app-icon.png") as ImageSourcePropType,
   explorer: require("../assets/fairfares-explorer-button.png") as ImageSourcePropType,
   navHome: require("../assets/nav-home.png") as ImageSourcePropType,
   navServices: require("../assets/nav-services.png") as ImageSourcePropType,

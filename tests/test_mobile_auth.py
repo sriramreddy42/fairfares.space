@@ -107,6 +107,22 @@ class MobileAuthTest(unittest.TestCase):
         self.assertFalse(query.get("signature"))
         self.assertNotIn("public-testimonial.png", testimonial["photoUrl"])
 
+    def test_testimonial_uses_profile_city_without_exposing_street_address(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, address) VALUES (?, ?, ?, 1, ?)",
+                ("Dayton Reviewer", "dayton-reviewer@example.com", "unused", "125 Main Street, Dayton, OH 45402"),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                "INSERT INTO testimonials (user_id, city, rating, message, status, published_at) VALUES (?, 'Denver, CO', 5, ?, 'PUBLISHED', CURRENT_TIMESTAMP)",
+                (user_id, "Very good app and useful for finding housing."),
+            )
+
+        testimonial = next(item for item in app.get_mobile_housing_testimonials("Denver, CO") if item["userId"] == user_id)
+        self.assertEqual(testimonial["city"], "Dayton, OH")
+        self.assertNotIn("125 Main", testimonial["city"])
+
     def test_published_testimonial_avatar_is_available_without_login(self):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         stored_photo = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
@@ -812,6 +828,7 @@ class MobileAuthTest(unittest.TestCase):
                 })
             self.assertEqual(status, 200)
             self.assertTrue(social["phoneRequired"])
+            self.assertTrue(social["accountCreated"])
             self.assertFalse(social.get("token"))
             continuation = social["continuationToken"]
 
@@ -850,6 +867,7 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(repeat_status, 200)
             self.assertTrue(repeat["token"])
             self.assertFalse(repeat.get("phoneRequired", False))
+            self.assertFalse(repeat["accountCreated"])
         finally:
             server.shutdown()
             server.server_close()

@@ -164,7 +164,7 @@ test("manage booking page desktop and mobile visual smoke", async ({ page }) => 
 
 test("uploaded Explorer avatar follows the user into the header", async ({ page }) => {
   const avatarData =
-    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+PHJlY3Qgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBmaWxsPSIjMDBjMmZmIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTIiIGZpbGw9IiNlZDAwMWMiLz48L3N2Zz4=";
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   await loginAsAdmin(page);
   await page.goto("/explorer");
   const saveResult = await page.evaluate(async (src) => {
@@ -177,7 +177,7 @@ test("uploaded Explorer avatar follows the user into the header", async ({ page 
   }, avatarData);
   expect(saveResult.ok).toBeTruthy();
   await page.goto("/manage-booking");
-  await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /data:image/);
+  await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /url\(/);
 });
 
 test("deals page visual smoke", async ({ page }) => {

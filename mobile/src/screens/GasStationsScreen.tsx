@@ -1,11 +1,11 @@
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Linking, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from "react-native";
-import { getNearbyGasPrices, lookupAccommodationLocation, nearbyGasMapUrl } from "../api/client";
+import { getNearbyGasPrices, nearbyGasMapUrl } from "../api/client";
 import { GasFuelType, GasStation } from "../types";
 import { readGasCache, writeGasCache } from "../utils/gasPriceCache";
 
-type Props = { onBack: () => void; fallbackCity?: string };
+type Props = { onBack: () => void };
 type Coordinates = { latitude: number; longitude: number };
 
 async function currentLocationWithTimeout(timeoutMs = 15_000) {
@@ -94,7 +94,7 @@ function freshnessLabel(value: string) {
   return `Updated ${Math.floor(hours / 24)}d ago`;
 }
 
-export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
+export function GasStationsScreen({ onBack }: Props) {
   const isLight = useColorScheme() === "light";
   const [fuel, setFuel] = useState<GasFuelType>("regular");
   const [position, setPosition] = useState<Coordinates | null>(null);
@@ -105,7 +105,6 @@ export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
   const [error, setError] = useState("");
   const [showingCached, setShowingCached] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
-  const [usingFallbackCity, setUsingFallbackCity] = useState("");
   const requestGeneration = useRef(0);
 
   const load = useCallback(async (refresh = false, nextFuel = fuel) => {
@@ -119,19 +118,9 @@ export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
     try {
       // Resolve the device first. Showing an unvalidated cache here previously
       // let users briefly scroll station cards from a location they had left.
-      // Prefer the device position. Android emulators and indoor devices can
-      // fail to deliver a fresh fix even with permission granted, so fall back
-      // to the selected FairFares city instead of withholding all prices.
-      let coordinates: Coordinates;
-      try {
-        coordinates = await resolveDeviceCoordinates();
-        setUsingFallbackCity("");
-      } catch (locationCause) {
-        const fallback = await lookupAccommodationLocation(fallbackCity);
-        if (!fallback || !Number.isFinite(fallback.lat) || !Number.isFinite(fallback.lng)) throw locationCause;
-        coordinates = { latitude: fallback.lat, longitude: fallback.lng };
-        setUsingFallbackCity(fallback.suggestedLocation || fallbackCity);
-      }
+      // Housing and Ask locations are independent and must never influence
+      // this origin, even when the device cannot provide a fresh fix.
+      const coordinates = await resolveDeviceCoordinates();
       if (requestGeneration.current !== generation) return;
       setPosition(coordinates);
       const cached = refresh ? null : await readGasCache(nextFuel, coordinates);
@@ -165,14 +154,19 @@ export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [fallbackCity, fuel]);
+  }, [fuel]);
 
   useEffect(() => { void load(false, fuel); }, [fuel]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { requestGeneration.current += 1; }, []);
 
   const mapUrl = useMemo(() => position ? nearbyGasMapUrl(position.latitude, position.longitude, stations) : "", [position, stations]);
-  const pricedStations = stations.filter((station) => station.price != null);
-  const lowestId = pricedStations[0]?.id || "";
+  // Determine the highlight locally instead of trusting provider/cache order.
+  // This keeps the badge correct if a future response arrives unsorted.
+  const lowestId = stations.reduce<{ id: string; price: number } | null>((lowest, station) => {
+    const price = Number(station.price);
+    if (!station.id || !Number.isFinite(price) || price <= 0) return lowest;
+    return !lowest || price < lowest.price ? { id: station.id, price } : lowest;
+  }, null)?.id || "";
   const locationPermissionBlocked = error.toLowerCase().includes("location access in settings");
 
   return (
@@ -203,7 +197,6 @@ export function GasStationsScreen({ onBack, fallbackCity = "" }: Props) {
       ) : <View style={[styles.mapFrame, styles.mapLoading]}>{loading ? <ActivityIndicator color="#18b981" /> : <><Text style={styles.mapEmptyGlyph}>⛽</Text><Text style={styles.mapEmptyTitle}>{mapFailed ? "Map preview unavailable" : "Location needed for the map"}</Text><Text style={styles.mapEmptyBody}>{mapFailed ? "Station results and directions remain available below." : "Turn on location access, then try again."}</Text></>}</View>}
 
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor="#18b981" />}>
-        {usingFallbackCity && !loading ? <View style={styles.locationNotice}><Text style={styles.locationNoticeTitle}>Showing prices near {usingFallbackCity}</Text><Text style={styles.locationNoticeBody}>Precise device location was unavailable. Pull to refresh when GPS is ready.</Text></View> : null}
         {loading ? <View style={styles.state}><ActivityIndicator color="#18b981" /><Text style={styles.muted}>Checking nearby stations…</Text></View> : null}
         {!loading && (!configured || error) ? (
           <View style={[styles.notice, isLight ? styles.cardLight : styles.cardDark]}>
@@ -246,7 +239,6 @@ const styles = StyleSheet.create({
   mapFrame: { height: 278, marginHorizontal: 12, borderRadius: 20, overflow: "hidden", borderWidth: 1, borderColor: "rgba(19,122,87,0.24)", backgroundColor: "#dce6df" }, mapLoading: { alignItems: "center", justifyContent: "center" },
   mapEmptyGlyph: { fontSize: 38 }, mapEmptyTitle: { color: "#27443a", fontSize: 15, fontWeight: "800", marginTop: 8 }, mapEmptyBody: { color: "#6f827b", fontSize: 11, marginTop: 3 },
   list: { flex: 1 }, listContent: { padding: 12, paddingBottom: 108, gap: 9 }, state: { minHeight: 90, alignItems: "center", justifyContent: "center", gap: 10 }, notice: { padding: 18, borderRadius: 18, gap: 8 }, noticeTitle: { fontSize: 17, fontWeight: "800" }, retryButton: { alignSelf: "flex-start", marginTop: 5, borderRadius: 18, backgroundColor: "#18b981", paddingHorizontal: 18, paddingVertical: 9 }, retryText: { color: "#06291e", fontWeight: "900" },
-  locationNotice: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(20,122,88,0.22)", backgroundColor: "#e2f5ed", paddingHorizontal: 13, paddingVertical: 10 }, locationNoticeTitle: { color: "#145c45", fontSize: 12, fontWeight: "900" }, locationNoticeBody: { color: "#567068", fontSize: 10, lineHeight: 14, marginTop: 2 },
   stationCard: { minHeight: 92, flexDirection: "row", alignItems: "center", padding: 12, borderRadius: 18, borderWidth: 1 }, cardLight: { backgroundColor: "#fff", borderColor: "rgba(15,23,42,0.06)" }, cardDark: { backgroundColor: "#191b1c", borderColor: "#303335" }, cardShadow: { shadowColor: "#14251f", shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
   stationIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: "#fff2dc" }, stationIconLowest: { backgroundColor: "#dff8ec" }, stationGlyph: { fontSize: 25 }, stationCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, stationName: { fontSize: 16, fontWeight: "800" }, address: { color: "#778087", fontSize: 11, lineHeight: 15, marginTop: 3 }, lowestLabel: { color: "#12935f", fontSize: 8, fontWeight: "900", letterSpacing: .5, marginTop: 4 }, priceCopy: { minWidth: 78, alignItems: "flex-end" }, price: { color: "#12935f", fontSize: 18, fontWeight: "900" }, noPrice: { color: "#8b9299", fontSize: 12 }, distance: { color: "#778087", fontSize: 11, marginTop: 2 }, updated: { color: "#92999e", fontSize: 8, marginTop: 2 }, chevron: { color: "#778087", fontSize: 24, lineHeight: 24 },
   muted: { color: "#7f878d", fontSize: 12, lineHeight: 17 }, darkText: { color: "#151719" }, lightText: { color: "#f5f7f6" }, googleAttribution: { color: "#5e5e5e", fontSize: 12, fontWeight: "400", textAlign: "center", paddingTop: 8 }, disclaimer: { color: "#7f878d", fontSize: 10, lineHeight: 15, textAlign: "center", paddingHorizontal: 14, paddingTop: 5 },

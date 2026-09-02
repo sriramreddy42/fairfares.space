@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
-import { Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -14,11 +14,24 @@ type Props = {
   onReserveRide?: () => void;
   onRideMessage?: (ride: RidePost) => void;
   onOpenHousing?: (postId?: string) => void;
-  onEditHousing?: (postId: string) => void;
+  onEditHousing?: (postId: string) => Promise<void> | void;
   onOpenServices?: () => void;
   onOpenRideOwner?: (target?: "workspace" | "requests" | "listings") => void;
   onRequireLogin?: () => void;
 };
+
+type ActivitySnapshot = {
+  rides: RidePost[];
+  bookings: RentalServiceBooking[];
+  housing: HousingActivityPost[];
+  updatedAt: number;
+};
+
+// Tabs are intentionally mounted on demand in App.tsx. Keep the latest
+// account-scoped activity snapshot outside the screen so returning to Activity
+// paints immediately while the network refresh happens in the background.
+// The user id in the key prevents data from ever crossing accounts.
+const activitySnapshots = new Map<number, ActivitySnapshot>();
 
 const ACTIVE_RIDE_STATUSES = new Set(["ACTIVE", "REQUESTED", "MATCHING", "ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS", "OPEN", "PENDING"]);
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
@@ -227,12 +240,15 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const isLight = useColorScheme() === "light";
   const { width: windowWidth } = useWindowDimensions();
   const layout = useResponsiveLayout();
-  const [rides, setRides] = useState<RidePost[]>([]);
-  const [bookings, setBookings] = useState<RentalServiceBooking[]>([]);
-  const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>([]);
-  const [loading, setLoading] = useState(false);
+  const userId = Number(data?.user?.id || 0);
+  const initialSnapshot = userId ? activitySnapshots.get(userId) : undefined;
+  const [rides, setRides] = useState<RidePost[]>(() => initialSnapshot?.rides || []);
+  const [bookings, setBookings] = useState<RentalServiceBooking[]>(() => initialSnapshot?.bookings || []);
+  const [housingActivity, setHousingActivity] = useState<HousingActivityPost[]>(() => initialSnapshot?.housing || []);
+  const [loading, setLoading] = useState(Boolean(userId && !initialSnapshot));
   const [refreshError, setRefreshError] = useState("");
   const [rideActionBusyId, setRideActionBusyId] = useState("");
+  const [housingEditBusyId, setHousingEditBusyId] = useState("");
   const [ratingRide, setRatingRide] = useState<RidePost | null>(null);
   const [ratingScore, setRatingScore] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
@@ -249,27 +265,39 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         setRefreshError("");
         return;
       }
-      setLoading(true);
+      const cached = activitySnapshots.get(Number(data.user.id));
+      if (cached) {
+        setRides(cached.rides);
+        setBookings(cached.bookings);
+        setHousingActivity(cached.housing);
+      }
+      setLoading(!cached);
       setRefreshError("");
       const [rideResult, bookingResult, housingResult] = await Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]);
       if (cancelled) return;
+      const nextRides = rideResult.status === "fulfilled" ? rideResult.value : cached?.rides || [];
+      const nextBookings = bookingResult.status === "fulfilled" ? bookingResult.value : cached?.bookings || [];
+      const nextHousing = housingResult.status === "fulfilled" ? housingResult.value : cached?.housing || [];
       if (rideResult.status === "fulfilled") {
-        setRides(rideResult.value);
+        setRides(nextRides);
       } else {
-        setRides([]);
+        setRides(nextRides);
         setRefreshError(rideResult.reason instanceof Error ? rideResult.reason.message : "Ride activity could not be refreshed.");
       }
       if (bookingResult.status === "fulfilled") {
-        setBookings(bookingResult.value);
+        setBookings(nextBookings);
       } else {
-        setBookings([]);
+        setBookings(nextBookings);
         setRefreshError((current) => current || (bookingResult.reason instanceof Error ? bookingResult.reason.message : "Rental bookings could not be refreshed."));
       }
       if (housingResult.status === "fulfilled") {
-        setHousingActivity(housingResult.value);
+        setHousingActivity(nextHousing);
       } else {
-        setHousingActivity([]);
+        setHousingActivity(nextHousing);
         setRefreshError((current) => current || (housingResult.reason instanceof Error ? housingResult.reason.message : "Housing activity could not be refreshed."));
+      }
+      if (rideResult.status === "fulfilled" || bookingResult.status === "fulfilled" || housingResult.status === "fulfilled") {
+        activitySnapshots.set(Number(data.user.id), { rides: nextRides, bookings: nextBookings, housing: nextHousing, updatedAt: Date.now() });
       }
       setLoading(false);
     }
@@ -483,6 +511,14 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     >
       <Text style={styles.title}>Activity</Text>
 
+      {loading && !rides.length && !bookings.length && !housingActivity.length ? (
+        <View style={[styles.activityLoadingCard, isLight && styles.flatLightCard]} accessibilityRole="progressbar">
+          <ActivityIndicator size="large" color={theme.colors.brand} />
+          <Text style={styles.activityLoadingTitle}>Loading your activity…</Text>
+          <Text style={styles.activityLoadingCopy}>Checking trips, rentals, and housing listings.</Text>
+        </View>
+      ) : null}
+
       {!data?.user ? (
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Login to see your trips</Text>
@@ -495,7 +531,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Upcoming</Text>
-        {loading ? <Text style={styles.sectionMeta}>Refreshing...</Text> : null}
+        {loading ? <View style={styles.inlineLoading}><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.sectionMeta}>Refreshing…</Text></View> : null}
       </View>
 
       {upcomingRides.length ? (
@@ -590,20 +626,20 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             </View>
           </TouchableOpacity>
           <View style={styles.listingActions}>
-            <TouchableOpacity style={styles.listingAction} onPress={() => onEditHousing?.(post.id)} accessibilityRole="button" accessibilityLabel={`Edit ${post.title}`}>
-              <Text style={styles.listingActionText}>✎ Edit</Text>
+            <TouchableOpacity style={styles.listingAction} disabled={Boolean(housingEditBusyId)} onPress={() => void (async () => { setHousingEditBusyId(post.id); try { await onEditHousing?.(post.id); } finally { setHousingEditBusyId(""); } })()} accessibilityRole="button" accessibilityLabel={`Edit ${post.title}`}>
+              {housingEditBusyId === post.id ? <ActivityIndicator size="small" color={theme.colors.brand} /> : <Text style={styles.listingActionText}>✎ Edit</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={styles.listingAction} onPress={() => void shareHousingListing(post)} accessibilityRole="button" accessibilityLabel={`Share ${post.title}`}>
               <Text style={styles.listingActionText}>↗ Share</Text>
             </TouchableOpacity>
           </View>
         </View>
-      )) : (
+      )) : !loading ? (
         <TouchableOpacity style={styles.emptyPast} onPress={() => onOpenHousing?.()}>
           <Text style={styles.emptyTitle}>No current listings</Text>
           <Text style={styles.emptyCopy}>Homes, rooms, and roommate searches you post will appear here.</Text>
         </TouchableOpacity>
-      )}
+      ) : null}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Carpool</Text>
@@ -763,7 +799,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         </TouchableOpacity>
       ))}
 
-      {!pastRides.length && !pastBookings.length && !pastHousing.length ? (
+      {!loading && !pastRides.length && !pastBookings.length && !pastHousing.length ? (
         <View style={styles.emptyPast}>
           <Text style={styles.emptyTitle}>No past activity yet</Text>
           <Text style={styles.emptyCopy}>Completed rides, rental bookings, and housing actions will collect here.</Text>
@@ -796,6 +832,10 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
 }
 
 const styles = StyleSheet.create({
+  inlineLoading: { flexDirection: "row", alignItems: "center", gap: 7 },
+  activityLoadingCard: { minHeight: 150, alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, padding: 20 },
+  activityLoadingTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "800" },
+  activityLoadingCopy: { color: theme.colors.muted, fontSize: 13, textAlign: "center" },
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: theme.spacing.md, paddingBottom: 104, gap: 12 },
   title: { color: theme.colors.text, ...theme.typography.screenTitle },

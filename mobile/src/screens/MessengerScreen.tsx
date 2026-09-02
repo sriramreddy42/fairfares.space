@@ -853,6 +853,19 @@ function firstDiscoveredUrl(value: string) {
   return discoveredMessageParts(value).find((part) => part.url)?.url || "";
 }
 
+function isFairFaresInviteUrl(value: string) {
+  const normalized = value.trim();
+  if (/^fairfares:(?:\/\/)?/i.test(normalized)) return true;
+  try {
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (host !== "fairfare.space" && host !== "fairfares.space") return false;
+    return /^\/(?:chitthi|fchat)\/(?:invite|group)(?:\/|$)/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function websiteCardDetails(value: string) {
   try {
     const parsed = new URL(value);
@@ -860,7 +873,7 @@ function websiteCardDetails(value: string) {
       return { host: "FairFares", label: "Private Chitthi group invitation", detail: "Open securely in the FairFares app" };
     }
     const host = parsed.hostname.replace(/^www\./i, "");
-    if (/fairfare\.space$/i.test(host) && /^\/(?:chitthi|fchat)\/(?:invite|group)/i.test(parsed.pathname)) {
+    if (isFairFaresInviteUrl(value)) {
       return { host: "FairFares", label: "Chitthi group invitation", detail: "Open and confirm inside the app" };
     }
     const path = decodeURIComponent(parsed.pathname).replace(/\/$/, "");
@@ -899,12 +912,53 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
 function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: string; mine: boolean; onOpen: () => void; onFaviconResolved?: (url: string, available: boolean) => void }) {
   const details = websiteCardDetails(url);
   const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
-  const isFairFaresInvitation = url.startsWith("fairfares:") || /fairfare\.space\/(?:(?:chitthi|fchat)\/)?(?:invite|group)/i.test(url);
+  const [previewImageFailed, setPreviewImageFailed] = useState(false);
+  const [faviconFailed, setFaviconFailed] = useState(false);
+  const isFairFaresInvitation = isFairFaresInviteUrl(url);
   useEffect(() => {
     let cancelled = false;
     setPreview(null);
+    setPreviewImageFailed(false);
+    setFaviconFailed(false);
     if (isFairFaresInvitation) {
-      onFaviconResolved?.(url, false);
+      onFaviconResolved?.(url, true);
+      // Keep the previous release's Open Graph path as a compatibility source.
+      // It supplies the generated group share card (group photo + Chitthi
+      // branding) even while a device is still talking to an older backend
+      // whose authenticated invite response does not yet expose photoUrl.
+      void getChatLinkPreview(url).then((payload) => {
+        if (cancelled || !payload.preview) return;
+        setPreview((current) => ({
+          ...payload.preview,
+          title: current?.title || payload.preview.title,
+          description: current?.description || payload.preview.description,
+          imageUrl: current?.imageUrl || payload.preview.imageUrl,
+          faviconUrl: "",
+          siteName: "Chitthi · FairFares"
+        }));
+      }).catch(() => undefined);
+      // Resolve invitation data from the authenticated group endpoint. Unlike
+      // generic Open Graph scraping, this reliably returns the current group
+      // photo, name, description and member count for private invitations.
+      void previewChatGroupInvite(url).then((payload) => {
+        if (cancelled) return;
+        const group = payload.group;
+        const facts = [
+          group.description || group.area,
+          `${group.memberCount} member${group.memberCount === 1 ? "" : "s"}`
+        ].filter(Boolean).join(" · ");
+        setPreview((current) => ({
+          url,
+          host: "FairFares",
+          title: `Join ${group.name} on Chitthi`,
+          description: facts || "Open and confirm this invitation inside Chitthi.",
+          imageUrl: absoluteAssetUrl(group.photoUrl || "") || current?.imageUrl || "",
+          faviconUrl: "",
+          siteName: "Chitthi · FairFares"
+        }));
+      }).catch(() => {
+        // Keep the branded offline fallback already rendered by the card.
+      });
       return () => { cancelled = true; };
     }
     void getChatLinkPreview(url)
@@ -915,7 +969,8 @@ function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: str
           onFaviconResolved?.(url, false);
           return;
         }
-        const faviconAvailable = await Image.prefetch(resolvedPreview.faviconUrl).catch(() => false);
+        const faviconAvailable = resolvedPreview.faviconUrl.startsWith("data:image/")
+          || await Image.prefetch(resolvedPreview.faviconUrl).catch(() => false);
         if (cancelled) return;
         if (!faviconAvailable) {
           onFaviconResolved?.(url, false);
@@ -930,10 +985,17 @@ function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: str
   const cardTitle = preview?.title || details.label;
   const cardHost = preview?.siteName || preview?.host || details.host;
   const cardDetail = preview?.description || details.detail;
+  const faviconSource = isFairFaresInvitation ? appAssets.appIcon : { uri: preview?.faviconUrl || "" };
+  useEffect(() => {
+    // The authenticated group photo and the Open Graph compatibility image
+    // race intentionally. A failed first source must not suppress a valid
+    // source that resolves afterward.
+    setPreviewImageFailed(false);
+  }, [preview?.imageUrl]);
   // Do not manufacture a generic rich card. A verified favicon is the signal
   // that the destination supplied usable site identity; otherwise the message
   // falls back to its ordinary clickable URL.
-  if (!preview?.faviconUrl) return null;
+  if (!isFairFaresInvitation && !preview?.faviconUrl) return null;
   return (
     <TouchableOpacity
       style={[styles.websitePreviewCard, mine ? styles.myWebsitePreviewCard : styles.theirWebsitePreviewCard]}
@@ -942,13 +1004,28 @@ function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: str
       accessibilityLabel={`Open ${cardTitle}`}
     >
       <View style={styles.websitePreviewImageSlot}>
-        {preview?.imageUrl ? <Image source={{ uri: preview.imageUrl }} style={styles.websitePreviewImage} resizeMode="cover" /> : <View style={styles.websitePreviewImagePlaceholder}><Text style={styles.websitePreviewImagePlaceholderText}>↗</Text></View>}
+        {preview?.imageUrl && !previewImageFailed
+          ? <View style={styles.websitePreviewGroupImageWrap}>
+              <Image source={isFairFaresInvitation ? authenticatedAssetSource(preview.imageUrl) : { uri: preview.imageUrl }} style={styles.websitePreviewImage} resizeMode="cover" onError={() => setPreviewImageFailed(true)} />
+              {isFairFaresInvitation ? <View style={styles.websitePreviewChitthiBadge}><Image source={appAssets.chittiLettersGold} style={styles.websitePreviewChitthiBadgeImage} resizeMode="contain" /></View> : null}
+            </View>
+          : <View style={styles.websitePreviewFaviconStage}>{faviconFailed
+            ? <View style={styles.websitePreviewHeroFallback}><Text style={styles.websitePreviewHeroFallbackText}>F</Text></View>
+            : <Image source={isFairFaresInvitation ? appAssets.chittiLettersGold : faviconSource} style={isFairFaresInvitation ? styles.websitePreviewHeroChitthi : styles.websitePreviewHeroFavicon} resizeMode="contain" onError={() => { setFaviconFailed(true); if (!isFairFaresInvitation) { setPreview(null); onFaviconResolved?.(url, false); } }} />}
+            </View>}
       </View>
       <View style={styles.websitePreviewContent}>
         <Text style={[styles.websitePreviewTitle, mine && styles.myWebsitePreviewText]} numberOfLines={2}>{cardTitle}</Text>
         {cardDetail ? <Text style={[styles.websitePreviewDetail, mine && styles.myWebsitePreviewDetail]} numberOfLines={2}>{cardDetail}</Text> : null}
         <View style={styles.websitePreviewSource}>
-          <Image source={{ uri: preview.faviconUrl }} style={styles.websitePreviewFavicon} resizeMode="contain" onError={() => { setPreview(null); onFaviconResolved?.(url, false); }} />
+          {faviconFailed
+            ? <View style={styles.websitePreviewFaviconFallback}><Text style={styles.websitePreviewFaviconFallbackText}>F</Text></View>
+            : <Image
+                source={faviconSource}
+                style={styles.websitePreviewFavicon}
+                resizeMode="contain"
+                onError={() => { setFaviconFailed(true); if (!isFairFaresInvitation) { setPreview(null); onFaviconResolved?.(url, false); } }}
+              />}
           <Text style={[styles.websitePreviewHost, mine && styles.myWebsitePreviewText]} numberOfLines={1}>{cardHost}</Text>
         </View>
       </View>
@@ -1771,6 +1848,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [hydratedConversationId, setHydratedConversationId] = useState("");
   const [activeSubject, setActiveSubject] = useState(initialDirectConversation?.subject || initialDirectConversation?.otherName || pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(initialDirectConversation);
+  const activeCommunityIdRef = useRef(activeConversation?.communityId || "");
+  activeCommunityIdRef.current = activeConversation?.communityId || "";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [highlightedMessageId, setHighlightedMessageId] = useState(0);
   const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
@@ -1791,6 +1870,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [emojiGroup, setEmojiGroup] = useState("recent");
   const [recentEmojis, setRecentEmojis] = useState<string[]>(["❤️", "👍", "😂", "😊", "🙏", "🎉", "🔥", "😍"]);
   const [richComposer, setRichComposer] = useState<"POLL" | "EVENT" | "CONTACT" | "">("");
+
+  function replaceCommunitiesPreservingOpenGroup(incoming: Community[]) {
+    setCommunities((current) => {
+      const activeCommunity = current.find((community) => community.id === activeCommunityIdRef.current);
+      return activeCommunity && !incoming.some((community) => community.id === activeCommunity.id)
+        ? [activeCommunity, ...incoming]
+        : incoming;
+    });
+  }
   const [richDraft, setRichDraft] = useState({ primary: "", secondary: "", tertiary: "", fourth: "" });
   const [pollMultiple, setPollMultiple] = useState(false);
   const [pollClosesInHours, setPollClosesInHours] = useState(24);
@@ -2147,6 +2235,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   function showCachedThreadMessages(conversationId: string, cachedMessages: ChatMessage[]) {
     if (!cachedMessages.length) return false;
+    // Encrypted rows are intentionally persisted without plaintext. Rendering
+    // that safe disk representation would briefly expose a wall of
+    // "End-to-end encrypted message" bubbles before envelope hydration
+    // replaces them. Keep the neutral loading shell visible until the initial
+    // decrypt pass completes. In-memory caches still contain plaintext and can
+    // be shown immediately on a warm reopen.
+    if (cachedMessages.some((message) => isEncryptedPlaceholder(message.text))) return false;
     prepareThreadForLatestLayout();
     replaceThreadMessages(conversationId, cachedMessages);
     setThreadLoading(false);
@@ -2481,9 +2576,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setHasMoreConversations(bootstrapConversations.length >= 30);
     // A later bootstrap refresh may contain the default/current-city groups.
     // Do not let that stale payload replace an explicit searched-city result.
-    if (!String(preferredSuggestionCity || "").trim()) setCommunities(data?.communities || []);
+    if (!String(preferredSuggestionCity || "").trim()) {
+      // Bootstrap can complete with a snapshot requested before a group was
+      // created or edited. Never let that older snapshot remove the group
+      // backing the conversation that is already open on screen.
+      replaceCommunitiesPreservingOpenGroup(data?.communities || []);
+    }
     return () => { cancelled = true; };
-  }, [currentUserId, data?.chat.conversations, data?.communities, preferredSuggestionCity]);
+  }, [currentUserId, data?.chat.conversations, data?.communities, preferredSuggestionCity, activeConversation?.communityId]);
 
   useEffect(() => {
     AsyncStorage.getItem("fairfares.chitthi.recent-emojis").then((stored) => stored || AsyncStorage.getItem("fairfares.fchat.recent-emojis"))
@@ -2517,7 +2617,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // suggestions from the previous city while the searched city loads.
       setCommunities((current) => current.filter((community) => community.joined || community.visibility === "PRIVATE"));
       void getChatCommunities(searchedCity)
-        .then((nextCommunities) => { if (isCurrentRequest()) setCommunities(nextCommunities); })
+        .then((nextCommunities) => { if (isCurrentRequest()) replaceCommunitiesPreservingOpenGroup(nextCommunities); })
         .catch(() => undefined);
       return () => { cancelled = true; };
     }
@@ -2538,7 +2638,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const nextCommunities = await getChatCommunities(localCity);
         if (!isCurrentRequest()) return;
         setSuggestionCity(localCity);
-        setCommunities(nextCommunities);
+        replaceCommunitiesPreservingOpenGroup(nextCommunities);
       } catch {
         // The selected FairFares city remains the privacy-friendly fallback.
       }
@@ -3061,6 +3161,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setActiveSubject(knownConversation.subject || knownConversation.otherName || "");
     }
     onThreadModeChange?.(true);
+    activateThreadConversation(notificationConversationId);
+    clearThreadMessages();
     setThreadLoading(true);
     // A notification can target a group whose membership boundary changed
     // since the last app session. Wait for the authorized server page instead
@@ -3138,6 +3240,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           activateThreadConversation(conversation.id);
           setActiveConversation(conversation);
           setActiveSubject(conversation.subject || pendingPost.title);
+          setThreadLoading(true);
           const cachedMessages = await loadCachedThreadMessages(conversation.id);
           if (!cancelled) showCachedThreadMessages(conversation.id, cachedMessages);
           const payload = await getChatMessages(conversation.id, 0, 20);
@@ -3181,6 +3284,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           activateThreadConversation(conversation.id);
           setActiveConversation(conversation);
           setActiveSubject(conversation.subject || rideContextLabel(pendingRide));
+          setThreadLoading(true);
           const cachedMessages = await loadCachedThreadMessages(conversation.id);
           if (!cancelled) showCachedThreadMessages(conversation.id, cachedMessages);
           const payload = await getChatMessages(conversation.id, 0, 20);
@@ -3456,7 +3560,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setConversations(immediateConversations);
       setHasMoreConversations(conversationPage.hasMore);
       setConversationCursor(conversationPage.nextCursor);
-      setCommunities(nextCommunities);
+      replaceCommunitiesPreservingOpenGroup(nextCommunities);
       onUnreadCountChange?.(immediateConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
       // Encrypted preview decryption can require one envelope request per thread.
       // Do that after the list is visible so a large inbox never blocks Chitthi opening.
@@ -3556,6 +3660,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     activateThreadConversation(conversation.id);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
+    // Clear the previous thread synchronously. AsyncStorage can otherwise
+    // leave old or encrypted placeholder rows mounted for a frame while this
+    // conversation's cache is being read.
+    clearThreadMessages();
+    setThreadLoading(true);
     // Disk-cache hydration and secure identity preparation are independent.
     // Start both at tap time so a cold AsyncStorage read never delays the
     // message/envelope request that unlocks encrypted photo previews.
@@ -3568,11 +3677,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     const cachedMessages = conversation.communityId ? [] : await loadCachedThreadMessages(conversation.id);
     if (messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== conversation.id) return;
-    showCachedThreadMessages(conversation.id, cachedMessages);
-    if (!cachedMessages.length) replaceThreadMessages(conversation.id, []);
+    const displayedCachedMessages = showCachedThreadMessages(conversation.id, cachedMessages);
+    if (!displayedCachedMessages) replaceThreadMessages(conversation.id, []);
     setHasMoreMessages(false);
     setNextBeforeMessageId(0);
-    setThreadLoading(!cachedMessages.length);
+    setThreadLoading(!displayedCachedMessages);
     try {
       // Fetch only this device's envelopes for the visible page in the same
       // bounded response as its message rows. This avoids downloading the
@@ -3711,7 +3820,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
         return;
       }
-      const selectedVideo = attachments.length === 1 && attachments[0].kind === "VIDEO" ? attachments[0] : null;
+      const selectedVideo = attachments.find((attachment) => attachment.kind === "VIDEO") || null;
       const attachmentOperationStartedAt = Date.now();
       if (selectedVideo) logDevelopmentPerformance("media-send-start", {
         kind: "VIDEO",
@@ -3817,7 +3926,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
           }
           publishMediaProgress(optimisticAttachmentId, null);
-          releasePendingAttachments([selectedVideo]);
+          releasePendingAttachments(attachments);
           setAttachmentSending(false);
           if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
           activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
@@ -3864,7 +3973,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               videoQuality: profile === "hd" ? "original" : "data-saver"
             };
             releasePendingAttachments([selectedVideo]);
-            attachments = [preparedVideo];
+            attachments = attachments.map((attachment) => attachment.uri === selectedVideo.uri ? preparedVideo : attachment);
             updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
               ...message,
               attachmentUrl: preparedVideo.uri,
@@ -3878,7 +3987,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           } else {
             await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
             const originalVideo = { ...selectedVideo, videoQuality: "original" as const };
-            attachments = [originalVideo];
+            attachments = attachments.map((attachment) => attachment.uri === selectedVideo.uri ? originalVideo : attachment);
           }
         } catch (error) {
           await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
@@ -3889,7 +3998,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (preparationConversationStillActive) setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
           publishMediaProgress(optimisticAttachmentId, null);
           if (!preparationWasCancelled && preparationConversationStillActive) {
-            setPendingAttachment(selectedVideo);
+            if (attachments.length > 1) {
+              setPendingImages(attachments);
+              setPendingAttachment(null);
+            } else {
+              setPendingAttachment(selectedVideo);
+            }
             Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
           } else {
             releasePendingAttachments([selectedVideo]);
@@ -3904,7 +4018,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           return;
         }
       }
-      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} photos…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "" : "Sending file…");
+      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} items…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "" : "Sending file…");
+      let completedAttachmentCount = 0;
       try {
         await allowBusyUiToPaint();
         ensureSendContext();
@@ -4043,7 +4158,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 : attachment.kind === "IMAGE" ? senderLocalUri || attachment.uri : undefined
             }
           });
-          setAttachmentStatus(attachments.length > 1 ? `Sending photo ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "" : "Sending file…");
+          completedAttachmentCount = index + 1;
+          setAttachmentStatus(attachments.length > 1 ? `Sending item ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "" : "Sending file…");
         }
         if (activeConversationIdRef.current === operationConversationId) {
           setMessages((current) => mergeThreadHistoryMessages(current.filter((item) => item.id !== optimisticAttachmentId), sentMessages));
@@ -4054,7 +4170,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         releasePendingAttachments(attachments);
         setPendingPhotoPreviewOpen(false);
         if (activeConversationIdRef.current === operationConversationId) {
-          setAttachmentStatus(attachments.length > 1 ? `${attachments.length} photos sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
+          setAttachmentStatus(attachments.length > 1 ? `${attachments.length} items sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
           setTimeout(() => setAttachmentStatus(""), 1600);
         }
         if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
@@ -4068,6 +4184,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           errorType: error instanceof Error ? error.name : "UnknownError",
         }, true);
         const sendContextStillActive = messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId;
+        const completedAttachments = attachments.slice(0, completedAttachmentCount);
+        const remainingAttachments = attachments.slice(completedAttachmentCount);
+        releasePendingAttachments(completedAttachments);
         removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
         if (optimisticAttachment && sendContextStillActive) {
           setMessages((current) => current.filter((item) => item.id !== optimisticAttachmentId));
@@ -4081,10 +4200,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         }
         publishMediaProgress(optimisticAttachmentId, null);
         if (sendWasCancelled) {
-          releasePendingAttachments(attachments);
+          releasePendingAttachments(remainingAttachments);
         } else if (sendContextStillActive) {
           setAttachmentStatus("");
-          Alert.alert(attachments[0].kind === "IMAGE" ? "Image failed" : attachments[0].kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
+          if (!optimisticAttachment && remainingAttachments.length) {
+            if (remainingAttachments.length === 1) {
+              setPendingAttachment(remainingAttachments[0]);
+              setPendingImages([]);
+            } else {
+              setPendingAttachment(null);
+              setPendingImages(remainingAttachments);
+            }
+            setMessageText(completedAttachmentCount ? "" : cleanMessage);
+          }
+          const failedAttachment = remainingAttachments[0] || attachments[attachments.length - 1];
+          Alert.alert(failedAttachment.kind === "IMAGE" ? "Image failed" : failedAttachment.kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
+        } else {
+          releasePendingAttachments(remainingAttachments);
         }
       } finally {
         if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
@@ -4265,20 +4397,27 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Group name required", "Add a name so people know what they are joining.");
       return;
     }
-    if (!selectedGroupPeople.length) {
-      await findPeopleFromContacts("create");
-      return;
-    }
     setLoading(true);
     try {
       const response = await createChatCommunity(name, "GROUP", "", "", groupPhoto);
-      await Promise.all(selectedGroupPeople.map((personId) => addChatGroupMember(response.community.id, personId)));
+      // Contacts access is optional. Create an owner-only group when nobody
+      // was selected; members can still be added later or join by invite link.
+      const memberResults = selectedGroupPeople.length
+        ? await Promise.allSettled(selectedGroupPeople.map((personId) => addChatGroupMember(response.community.id, personId)))
+        : [];
+      const membersNotAdded = memberResults.filter((result) => result.status === "rejected").length;
       setCommunities((current) => [response.community, ...current.filter((community) => community.id !== response.community.id)]);
       setGroupDraft(blankGroup);
       setGroupPhoto("");
       setSelectedGroupPeople([]);
       setCreatingGroup(false);
       await openCommunityThread({ ...response.community, joined: true });
+      if (membersNotAdded) {
+        Alert.alert(
+          "Group created",
+          `${membersNotAdded} selected ${membersNotAdded === 1 ? "person was" : "people were"} not added. You can retry from Group info.`
+        );
+      }
     } catch (error) {
       Alert.alert("Group failed", error instanceof Error ? error.message : "Could not create this group.");
     } finally {
@@ -4312,7 +4451,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const images = await pickCompressedImages(1, 720, 0.7);
       if (!images[0]) return;
       const response = await updateChatGroupPhoto(communityId, images[0]);
-      setCommunities((current) => current.map((item) => item.id === communityId ? response.community : item));
+      // Upsert instead of replacing in place. A simultaneous city/community
+      // refresh can briefly omit a private group; discarding this successful
+      // response leaves the open conversation valid but its invite metadata
+      // missing until the next full refresh.
+      setCommunities((current) => [response.community, ...current.filter((item) => item.id !== communityId)]);
       setActiveConversation((current) => current ? { ...current, otherPhotoUrl: response.community.photoUrl || "" } : current);
       setConversations((current) => current.map((item) => item.communityId === communityId ? { ...item, otherPhotoUrl: response.community.photoUrl || "" } : item));
       Alert.alert("Group image updated", "Everyone in the group will now see this image.");
@@ -4366,7 +4509,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         groupDetailsDraft.description.trim(),
         groupDetailsDraft.area.trim()
       );
-      setCommunities((current) => current.map((item) => item.id === communityId ? response.community : item));
+      setCommunities((current) => [response.community, ...current.filter((item) => item.id !== communityId)]);
       setActiveConversation((current) => current ? { ...current, otherName: response.community.name } : current);
       setConversations((current) => current.map((item) => item.communityId === communityId
         ? { ...item, otherName: response.community.name }
@@ -4450,10 +4593,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     setLoading(true);
+    let openingConversationId = "";
     try {
       const found = await findChatPersonByPhone(value);
       const response = await openChatWithPerson(found.person.id);
+      openingConversationId = response.conversation.id;
       activateThreadConversation(response.conversation.id);
+      clearThreadMessages();
+      setThreadLoading(true);
       setActiveConversation(response.conversation);
       setActiveSubject(found.person.name);
       setSearch("");
@@ -4464,11 +4611,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
+      setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       await refreshMessenger();
     } catch (error) {
       Alert.alert("Contact not found", error instanceof Error ? error.message : "Could not find this FairFares member.");
     } finally {
+      if (activeConversationIdRef.current === openingConversationId) setThreadLoading(false);
       setLoading(false);
     }
   }
@@ -4476,9 +4625,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function openContactChat(person: { id: number; name: string }, privateReply: PrivateReplyContext | null = null) {
     setContactPickerOpen(false);
     setLoading(true);
+    let openingConversationId = "";
     try {
       const response = await openChatWithPerson(person.id);
+      openingConversationId = response.conversation.id;
       activateThreadConversation(response.conversation.id);
+      clearThreadMessages();
+      setThreadLoading(true);
       setActiveConversation(response.conversation);
       setActiveSubject(person.name);
       onThreadModeChange?.(true);
@@ -4487,6 +4640,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages);
+      setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       if (privateReply) {
         setReplyingTo(null);
@@ -4498,6 +4652,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     } catch (error) {
       Alert.alert("Could not open chat", error instanceof Error ? error.message : "Try again shortly.");
     } finally {
+      if (activeConversationIdRef.current === openingConversationId) setThreadLoading(false);
       setLoading(false);
     }
   }
@@ -4576,7 +4731,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     } catch (error) {
       if (error instanceof Error && error.name === "ContactsPermissionDenied") {
         setContactPickerOpen(false);
-        Alert.alert("Contacts permission not enabled", "You can still find a member by entering their full phone number in Chitthi search.");
+        Alert.alert(
+          "Allow Contacts access",
+          "Enable Contacts access in Settings to choose people from your contact list. You can also find a member by entering their full phone number in Chitthi search.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() }
+          ]
+        );
       } else {
         Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");
       }
@@ -4648,7 +4810,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return;
       }
       setSuggestionCity(resolvedCity);
-      setCommunities(nextCommunities);
+      replaceCommunitiesPreservingOpenGroup(nextCommunities);
       setGroupSuggestionsDismissed(false);
       setTab("Groups");
       setSearch("");
@@ -4682,11 +4844,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     onThreadModeChange?.(true);
     setLoading(true);
+    let openingConversationId = "";
     try {
       const joinedCommunity = community.joined ? community : (await joinChatCommunity(community.id, community.suggestionCity, community.suggestionPurpose)).community;
-      setCommunities((current) => current.map((item) => (item.id === joinedCommunity.id ? joinedCommunity : item)));
+      setCommunities((current) => [joinedCommunity, ...current.filter((item) => item.id !== joinedCommunity.id)]);
       const response = await openCommunityChat(joinedCommunity.id);
+      openingConversationId = response.conversation.id;
       activateThreadConversation(response.conversation.id);
+      clearThreadMessages();
       setActiveSubject(response.conversation.subject || joinedCommunity.name);
       setActiveConversation({
         id: response.conversation.id,
@@ -4706,6 +4871,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
+      setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
       if (lastMessage) {
@@ -4716,7 +4882,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     } catch (error) {
       Alert.alert("Group chat failed", error instanceof Error ? error.message : "Could not open this group chat.");
     } finally {
-      setThreadLoading(false);
+      if (activeConversationIdRef.current === openingConversationId) setThreadLoading(false);
       setLoading(false);
     }
   }
@@ -4771,12 +4937,42 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     // activate the invite row on devices that occasionally dispatch a second
     // responder event after the panel mounts.
     if (Date.now() - chatOptionsOpenedAtRef.current < 350) return;
-    const community = communities.find((item) => item.id === activeConversation?.communityId);
-    if (!community) {
-      Alert.alert("Group unavailable", "Refresh Chitthi and open the group again.");
+    const communityId = activeConversation?.communityId || "";
+    if (!communityId) {
+      Alert.alert("Invite unavailable", "This conversation is not linked to a group.");
       return;
     }
     setChatOptionsOpen(false);
+    let community = communities.find((item) => item.id === communityId);
+    // The open conversation is authoritative. A city/search refresh can
+    // temporarily omit its private group from the discovery cache, so resolve
+    // that exact group before presenting a false "unavailable" error.
+    if (!community && communityId) {
+      const refreshed = await getChatCommunity(communityId).catch(() => null);
+      if (refreshed) {
+        community = refreshed;
+        setCommunities((current) => [refreshed, ...current.filter((item) => item.id !== refreshed.id)]);
+      }
+    }
+    if (!community) {
+      // The open conversation already carries the durable public group ID,
+      // name and current image. Invitation creation is authorized by the
+      // backend membership row, not by the discovery cache, so continue with
+      // this safe record and let the invite endpoint be authoritative.
+      community = {
+        id: communityId,
+        kind: "GROUP",
+        name: activeConversation?.otherName || activeConversation?.subject || "Chitthi group",
+        description: "",
+        area: "",
+        photoUrl: activeConversation?.otherPhotoUrl || "",
+        memberCount: 0,
+        joined: true,
+        visibility: "PRIVATE",
+        memberRole: "",
+        canManageMembers: false,
+      };
+    }
     await shareCommunity(community);
   }
 
@@ -4893,7 +5089,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const media = await pickChatMedia(4, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
       if (!media.length) return;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
-      if (media[0].kind === "VIDEO") {
+      if (media.length === 1 && media[0].kind === "VIDEO") {
         const selectedVideo = media[0];
         setPendingImages([]);
         setPendingAttachment(selectedVideo);
@@ -4912,10 +5108,22 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       } else {
         setPendingAttachment(null);
         setPendingImages(media);
+        const selectedVideo = media.find((item) => item.kind === "VIDEO");
+        if (selectedVideo) {
+          const previewThumbnail = selectedVideo.pickerAssetId
+            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+            : createLightweightVideoThumbnail(selectedVideo.uri);
+          void previewThumbnail.then((thumbnailBase64) => {
+            if (!thumbnailBase64) return;
+            setPendingImages((current) => current.map((item) => item.kind === "VIDEO" && item.uri === selectedVideo.uri
+              ? { ...item, thumbnailBase64 }
+              : item));
+          }).catch(() => undefined);
+        }
       }
     } catch (error) {
       setAttachmentStatus("");
-      Alert.alert("Image failed", error instanceof Error ? error.message : "Could not send this image.");
+      Alert.alert("Media selection failed", error instanceof Error ? error.message : "Could not prepare the selected photos or video.");
     }
   }
 
@@ -4951,9 +5159,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function choosePhoneContact() {
     setAttachmentMenuOpen(false);
     try {
-      const permission = await Contacts.requestPermissionsAsync();
+      let permission = await Contacts.getPermissionsAsync();
+      if (permission.status !== "granted" && permission.canAskAgain) permission = await Contacts.requestPermissionsAsync();
       if (permission.status !== "granted") {
-        Alert.alert("Contacts permission needed", "Allow contact access to select a contact to share.");
+        Alert.alert(
+          "Allow Contacts access",
+          "Enable Contacts access in Settings to select a contact to share.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() }
+          ]
+        );
         return;
       }
       const response = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails], sort: Contacts.SortTypes.FirstName });
@@ -6277,7 +6493,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </View>
                   </View>
                 ) : null}
-                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] !== "none" ? discoveredUrl : ""} /> : null}
+                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} /> : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
                     url={discoveredUrl}
@@ -6341,7 +6557,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]} accessibilityRole="button" accessibilityLabel="Close message actions">
                   <View pointerEvents="box-none" style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
                     {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} resolvePreview={resolveEncryptedPhotoPreview} /> : null}
-                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={firstDiscoveredUrl(actionMessage.text) && linkPreviewFaviconState[firstDiscoveredUrl(actionMessage.text)] !== "none" ? firstDiscoveredUrl(actionMessage.text) : ""} /> : null}
+                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={firstDiscoveredUrl(actionMessage.text) && linkPreviewFaviconState[firstDiscoveredUrl(actionMessage.text)] === "favicon" ? firstDiscoveredUrl(actionMessage.text) : ""} /> : null}
                     {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
                     <View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, actionMessage.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(actionMessage.createdAt)}</Text>{actionMessage.mine && messageReceipt(actionMessage.status) ? <Text style={[styles.receiptMark, actionMessage.status === "seen" && styles.receiptSeen, actionMessage.status === "failed" && styles.receiptFailed]}>{messageReceipt(actionMessage.status)}</Text> : null}</View>
                     {(actionMessage.reactions || []).length ? <View style={styles.messagePreviewReactions}>{actionMessage.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(actionMessage, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
@@ -6432,27 +6648,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <View style={styles.pendingFullPreview}>
             <View style={styles.pendingFullPreviewHeader}>
               <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={() => setPendingPhotoPreviewOpen(false)} accessibilityLabel="Close selected photo preview"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
-              <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} photo{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
-              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected photos"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading ? "…" : "Send"}</Text></TouchableOpacity>
+              <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} item{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
+              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected media"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading ? "…" : "Send"}</Text></TouchableOpacity>
             </View>
             <ScrollView style={styles.pendingFullPreviewScroll} contentContainerStyle={styles.pendingFullPreviewContent} showsVerticalScrollIndicator={false}>
               {pendingImages.map((photo, index) => <View key={`${photo.uri}-${index}`} style={styles.pendingFullPreviewPhotoCard}>
-                <PendingPhotoPreview uri={photo.uri} full />
+                {photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
                 <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}</Text></View>
                 <TouchableOpacity
                   style={styles.pendingFullPreviewRemove}
-                  onPress={() => setPendingImages((current) => {
-                    const next = current.filter((_, photoIndex) => photoIndex !== index);
-                    if (!next.length) setPendingPhotoPreviewOpen(false);
-                    return next;
-                  })}
-                  accessibilityLabel={`Remove photo ${index + 1}`}
+                  onPress={() => {
+                    releasePendingAttachments([photo]);
+                    setPendingImages((current) => {
+                      const next = current.filter((item) => item.uri !== photo.uri);
+                      if (!next.length) setPendingPhotoPreviewOpen(false);
+                      return next;
+                    });
+                  }}
+                  accessibilityLabel={`Remove item ${index + 1}`}
                 ><Text style={styles.pendingFullPreviewRemoveText}>×</Text></TouchableOpacity>
               </View>)}
             </ScrollView>
             <View style={styles.pendingFullPreviewFooter}>
-              <Text style={styles.pendingFullPreviewFooterText}>{messageText.trim() ? "Your caption will be attached to the first photo." : "Add an optional caption from the message box."}</Text>
-              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading ? "Sending…" : `Send ${pendingImages.length} photo${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
+              <Text style={styles.pendingFullPreviewFooterText}>{messageText.trim() ? "Your caption will be attached to the first item." : "Add an optional caption from the message box."}</Text>
+              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading ? "Sending…" : `Send ${pendingImages.length} item${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -6593,12 +6812,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
         {pendingImages.length ? (
-          <TouchableOpacity style={styles.pendingAttachmentCard} onPress={() => setPendingPhotoPreviewOpen(true)} activeOpacity={0.84} accessibilityLabel={`Preview ${pendingImages.length} selected photos`}>
+          <TouchableOpacity style={styles.pendingAttachmentCard} onPress={() => setPendingPhotoPreviewOpen(true)} activeOpacity={0.84} accessibilityLabel={`Preview ${pendingImages.length} selected items`}>
             <View style={styles.pendingCollagePreview}>
-              {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}><PendingPhotoPreview uri={image.uri} compact />{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
+              {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}>{image.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{image.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${image.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={image.uri} compact />}{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
             </View>
-            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} photos selected</Text><Text style={styles.pendingAttachmentMeta}>Collage ready to send</Text></View>
-            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingImages); setPendingImages([]); }} accessibilityLabel="Remove selected photos"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
+            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} items selected</Text><Text style={styles.pendingAttachmentMeta}>Media ready to send</Text></View>
+            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingImages); setPendingImages([]); }} accessibilityLabel="Remove selected media"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </TouchableOpacity>
         ) : pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
@@ -6872,8 +7091,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             <Text style={styles.groupPeoplePickerArrow}>›</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.primaryButton} onPress={createGroup} disabled={loading} accessibilityRole="button" accessibilityLabel="Create group and add people" accessibilityState={{ disabled: loading }}>
-            <Text style={styles.primaryButtonText}>{loading ? "Creating..." : "Create group and add people"}</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={createGroup} disabled={loading} accessibilityRole="button" accessibilityLabel={selectedGroupPeople.length ? "Create group and add selected people" : "Create group"} accessibilityState={{ disabled: loading }}>
+            <Text style={styles.primaryButtonText}>{loading ? "Creating..." : selectedGroupPeople.length ? "Create group and add people" : "Create group"}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -7556,14 +7775,22 @@ const styles = StyleSheet.create({
   myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
   theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
   websitePreviewImageSlot: { width: "100%", height: 154, overflow: "hidden", backgroundColor: "#D7D8D4" },
+  websitePreviewGroupImageWrap: { flex: 1, position: "relative" },
   websitePreviewImage: { width: "100%", height: "100%", backgroundColor: "#D7D8D4" },
-  websitePreviewImagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(35,116,88,0.12)" },
-  websitePreviewImagePlaceholderText: { color: "rgba(35,116,88,0.55)", fontSize: 34, fontWeight: "700" },
+  websitePreviewChitthiBadge: { position: "absolute", left: 8, bottom: 8, width: 92, height: 30, borderRadius: 9, backgroundColor: "rgba(7,30,24,0.88)", paddingHorizontal: 7, alignItems: "center", justifyContent: "center" },
+  websitePreviewChitthiBadgeImage: { width: 78, height: 24 },
+  websitePreviewFaviconStage: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(35,116,88,0.12)" },
+  websitePreviewHeroFavicon: { width: 92, height: 92 },
+  websitePreviewHeroChitthi: { width: 188, height: 76 },
+  websitePreviewHeroFallback: { width: 92, height: 92, borderRadius: 22, backgroundColor: "#071E34", alignItems: "center", justifyContent: "center" },
+  websitePreviewHeroFallbackText: { color: "#39C9F4", fontSize: 48, lineHeight: 55, fontWeight: "900", fontStyle: "italic" },
   websitePreviewContent: { height: 120, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 11, overflow: "hidden" },
   websitePreviewSource: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 },
   websitePreviewIcon: { width: 22, height: 22, borderRadius: 6, backgroundColor: "#237458", alignItems: "center", justifyContent: "center" },
   websitePreviewIconText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   websitePreviewFavicon: { width: 22, height: 22, borderRadius: 5 },
+  websitePreviewFaviconFallback: { width: 22, height: 22, borderRadius: 5, backgroundColor: "#071E34", alignItems: "center", justifyContent: "center" },
+  websitePreviewFaviconFallbackText: { color: "#39C9F4", fontSize: 13, lineHeight: 15, fontWeight: "900", fontStyle: "italic" },
   websitePreviewHost: { flex: 1, color: "#526074", fontSize: 11.5, fontWeight: "600" },
   websitePreviewTitle: { color: "#17202d", fontSize: 14, lineHeight: 19, fontWeight: "700" },
   websitePreviewDetail: { color: "#667085", fontSize: 11.5, lineHeight: 16, marginTop: 4 },

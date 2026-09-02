@@ -475,6 +475,40 @@
   max-width: 1320px;
   padding: 22px 24px 48px;
 }
+
+.analytics-hero { align-items:end; display:flex; gap:24px; justify-content:space-between; }
+.analytics-periods { display:flex; flex-wrap:wrap; gap:8px; }
+.analytics-periods a { background:#fff; border:1px solid var(--line); border-radius:999px; color:var(--navy); font-weight:800; padding:9px 14px; text-decoration:none; }
+.analytics-periods a.active { background:var(--navy); color:#fff; }
+.analytics-funnel { display:grid; gap:12px; margin-top:18px; }
+.analytics-funnel-row { background:#f6f8fb; border:1px solid var(--line); border-radius:12px; display:grid; gap:10px; overflow:hidden; padding:14px; }
+.analytics-funnel-row div { align-items:baseline; display:grid; gap:6px; grid-template-columns:minmax(150px,1fr) auto auto; }
+.analytics-funnel-row span { color:var(--navy); font-weight:850; }
+.analytics-funnel-row b { color:var(--navy); font-size:1.35rem; }
+.analytics-funnel-row small { color:var(--muted); font-weight:700; min-width:180px; text-align:right; }
+.analytics-funnel-row i { background:linear-gradient(90deg,#10b981,#22c55e); border-radius:999px; display:block; height:10px; width:var(--analytics-width); }
+.analytics-platforms { margin-top:16px; }
+.analytics-admin-screen { overflow-x:hidden; }
+.analytics-admin-screen .app-feedback-widget,
+.analytics-admin-screen .fairfares-fixed-footer,
+.analytics-admin-screen .admin-oncall-dock,
+.analytics-admin-screen .wiki-agent-widget { display:none !important; }
+@media (max-width:760px) {
+  .analytics-admin-screen .admin-shell-header .logo-lockup { display:none !important; }
+  .analytics-admin-screen .admin-nav-stack { width:100%; }
+  .analytics-admin-screen .admin-nav-text { display:none !important; }
+  .analytics-hero { align-items:stretch; display:grid; }
+  .analytics-periods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .analytics-periods a { text-align:center; }
+  .analytics-funnel-row div { align-items:start; grid-template-columns:1fr auto; }
+  .analytics-funnel-row small { grid-column:1 / -1; min-width:0; text-align:left; }
+  .analytics-admin-screen .admin-table thead { display:none !important; }
+  .analytics-admin-screen .admin-table tbody,
+  .analytics-admin-screen .admin-table tr { display:grid !important; width:100% !important; }
+  .analytics-admin-screen .admin-table tr { gap:8px; padding:12px !important; }
+  .analytics-admin-screen .admin-table td { align-items:center; display:flex !important; justify-content:space-between; padding:6px 0 !important; width:100% !important; }
+  .analytics-admin-screen .admin-table td::before { color:var(--muted); content:attr(data-label); font-weight:800; }
+}
 .admin-hero {
   align-items: center;
   background: var(--navy);

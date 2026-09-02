@@ -172,7 +172,7 @@ public final class FairFaresCryptoModule: Module {
     let asset = AVURLAsset(url: source)
     let generator = AVAssetImageGenerator(asset: asset)
     generator.appliesPreferredTrackTransform = true
-    generator.maximumSize = CGSize(width: 240, height: 240)
+    generator.maximumSize = CGSize(width: 640, height: 640)
     generator.requestedTimeToleranceBefore = .positiveInfinity
     generator.requestedTimeToleranceAfter = .positiveInfinity
     // Long GOP videos often have no independently decodable frame at the
@@ -218,7 +218,7 @@ public final class FairFaresCryptoModule: Module {
     var poster: UIImage?
     PHImageManager.default().requestImage(
       for: asset,
-      targetSize: CGSize(width: 240, height: 240),
+      targetSize: CGSize(width: 640, height: 640),
       contentMode: .aspectFit,
       options: options
     ) { image, _ in poster = image }
@@ -230,8 +230,8 @@ public final class FairFaresCryptoModule: Module {
 
   private func encodeThumbnail(_ sourceImage: UIImage, _ maximumBytes: Int) throws -> String {
     var uiImage = sourceImage
-    var quality: CGFloat = 0.68
-    var width: CGFloat = min(320, uiImage.size.width)
+    var quality: CGFloat = 0.86
+    var width: CGFloat = min(640, uiImage.size.width)
     for _ in 0..<7 {
       let scale = width / max(1, uiImage.size.width)
       let size = CGSize(width: width, height: max(1, uiImage.size.height * scale))
@@ -241,8 +241,8 @@ public final class FairFaresCryptoModule: Module {
         return jpeg.base64EncodedString()
       }
       uiImage = resized
-      width = max(96, width * 0.82)
-      quality = max(0.28, quality - 0.07)
+      width = max(192, width * 0.86)
+      quality = max(0.46, quality - 0.06)
     }
     throw NSError(domain: "FairFaresCrypto", code: 16, userInfo: [NSLocalizedDescriptionKey: "The video thumbnail could not be reduced safely."])
   }

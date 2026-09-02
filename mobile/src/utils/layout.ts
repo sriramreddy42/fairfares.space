@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { useWindowDimensions } from "react-native";
+import { Platform, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Floating bottom navigation bar dimensions (see BottomTabs.tsx).
 export const BOTTOM_NAV_HEIGHT = 70;
@@ -24,32 +25,49 @@ export type ResponsiveLayout = {
   navClearance: number;
   /** Bottom offset for positioning the floating nav. */
   navBottomInset: number;
+  /** Protected system area painted beneath the nav. */
+  systemBottomInset: number;
+  /** Visual-only extension toward the screen edge; tab controls stay inset. */
+  navVisualOverlap: number;
   /** Width for the floating nav; undefined on phones (full-bleed with margins). */
   navWidth: number | undefined;
 };
 
 export function useResponsiveLayout(): ResponsiveLayout {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isTablet = width >= TABLET_BREAKPOINT;
 
   return useMemo(() => {
     const contentMaxWidth: number | "100%" = isTablet
       ? Math.min(width, TABLET_CONTENT_MAX_WIDTH)
       : "100%";
-    // The root SafeAreaView already ends above Android's gesture/three-button
-    // navigation area and the iOS home indicator. Never move controls back into
-    // that protected area: the size of Android's system navigation can change
-    // at runtime and negative offsets make the last tab partially untappable.
-    const navBottomInset = BOTTOM_NAV_BOTTOM_OFFSET;
+    // Position the floating bar from the actual runtime system inset. Android
+    // can switch between gesture navigation and three-button navigation while
+    // the app is installed, so a fixed offset is not safe. A small Android
+    // floor keeps the pill visually separated on devices that report zero
+    // while their navigation bar animates in.
+    const systemBottomInset = Math.max(0, insets.bottom);
+    const navVisualOverlap = Platform.OS === "ios"
+      ? Math.min(12, systemBottomInset)
+      : Platform.OS === "android" && systemBottomInset <= 32
+        ? Math.min(8, systemBottomInset)
+        : 0;
+    const navBottomInset = Math.max(
+      systemBottomInset - navVisualOverlap,
+      Platform.OS === "android" ? 6 : BOTTOM_NAV_BOTTOM_OFFSET,
+    );
     // Extra 14pt breathing room so the last card is fully visible above the pill.
     const navClearance =
-      BOTTOM_NAV_HEIGHT + BOTTOM_NAV_BOTTOM_OFFSET + 14;
+      BOTTOM_NAV_HEIGHT + systemBottomInset + 14;
     return {
       isTablet,
       contentMaxWidth,
       navClearance,
       navBottomInset,
+      systemBottomInset,
+      navVisualOverlap,
       navWidth: isTablet ? TABLET_NAV_MAX_WIDTH : undefined,
     };
-  }, [width, isTablet]);
+  }, [width, isTablet, insets.bottom]);
 }

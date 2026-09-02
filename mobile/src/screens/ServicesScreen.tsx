@@ -551,12 +551,12 @@ export function ServicesScreen({
                   <View style={styles.detailSection}>
                     <Text style={styles.sectionTitle}>Change dates</Text>
                     <View style={styles.twoColumn}>
-                      <DateTimeField style={{ flex: 1 }} label="Pickup date" value={pickupDate} mode="date" minimumDate={todayLocalIso()} onChange={setPickupDate} />
-                      <DateTimeField style={{ flex: 1 }} label="Pickup time" value={pickupTime} mode="time" onChange={setPickupTime} />
+                      <DateTimeField darkSurface style={{ flex: 1 }} label="Pickup date" value={pickupDate} mode="date" minimumDate={todayLocalIso()} onChange={setPickupDate} />
+                      <DateTimeField darkSurface style={{ flex: 1 }} label="Pickup time" value={pickupTime} mode="time" onChange={setPickupTime} />
                     </View>
                     <View style={styles.twoColumn}>
-                      <DateTimeField style={{ flex: 1 }} label="Return date" value={returnDate} mode="date" minimumDate={pickupDate || todayLocalIso()} onChange={setReturnDate} />
-                      <DateTimeField style={{ flex: 1 }} label="Return time" value={returnTime} mode="time" onChange={setReturnTime} />
+                      <DateTimeField darkSurface style={{ flex: 1 }} label="Return date" value={returnDate} mode="date" minimumDate={pickupDate || todayLocalIso()} onChange={setReturnDate} />
+                      <DateTimeField darkSurface style={{ flex: 1 }} label="Return time" value={returnTime} mode="time" onChange={setReturnTime} />
                     </View>
                   </View>
                   <View style={styles.detailSection}>
@@ -641,7 +641,7 @@ export function ServicesScreen({
                     <Text style={styles.greenNoteBody}>Eligible refunds return only to the original Stripe payment method. Any authorized security-deposit hold is released after cancellation is approved.</Text>
                   </View>
                   <Summary booking={selectedBooking} />
-                  <Text style={styles.fieldLabel}>Cancellation reason</Text>
+                  <Text style={styles.modalFieldLabel}>Cancellation reason</Text>
                   <View style={styles.chipWrap}>
                     {["Plans changed", "Found a better price", "Need a different vehicle", "Booked by mistake"].map((reason) => (
                       <TouchableOpacity key={reason} style={[styles.choiceChip, cancelReason === reason && styles.activeChoiceChip]} onPress={() => setCancelReason(reason)}>
@@ -649,7 +649,7 @@ export function ServicesScreen({
                       </TouchableOpacity>
                     ))}
                   </View>
-                  <Text style={styles.fieldLabel}>Refund destination</Text>
+                  <Text style={styles.modalFieldLabel}>Refund destination</Text>
                   <View style={[styles.choiceChip, styles.activeChoiceChip]}>
                     <Text style={[styles.choiceChipText, styles.activeChoiceChipText]}>Original Stripe payment method</Text>
                   </View>
@@ -675,7 +675,7 @@ export function ServicesScreen({
                     <Text style={styles.greenNoteTitle}>{selectedBooking.documentsLockedMessage || "Documents can be retrieved once pickup is completed."}</Text>
                   </View>
                   <InputField label="Send documents to" value={documentEmail} onChangeText={setDocumentEmail} placeholder="Email address" />
-                  <Text style={styles.fieldLabel}>Choose booking documents</Text>
+                  <Text style={styles.modalFieldLabel}>Choose booking documents</Text>
                   {(selectedBooking.documents || []).map((set) => (
                     <ChoiceRow
                       key={set.id}
@@ -901,7 +901,7 @@ function InputField({
 }) {
   return (
     <View style={styles.inputGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.modalFieldLabel}>{label}</Text>
       <TextInput
         style={[styles.input, multiline && styles.multilineInput]}
         value={value}
@@ -1103,17 +1103,17 @@ const styles = StyleSheet.create({
   exportsHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   exportsHeaderCopy: { flex: 1, minWidth: 0 },
   exportsEyebrow: { color: "#ffc329", fontSize: 11, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
-  exportsTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "700" },
+  exportsTitle: { color: "#f8fafc", fontSize: 22, lineHeight: 27, fontWeight: "700" },
   exportsClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
-  exportsCloseText: { color: theme.colors.text, fontSize: 28, lineHeight: 30 },
+  exportsCloseText: { color: "#f8fafc", fontSize: 28, lineHeight: 30 },
   exportsImageFrame: { width: "100%", aspectRatio: 1936 / 813, borderRadius: 12, overflow: "hidden", backgroundColor: "#06351f" },
   exportsImage: { width: "100%", height: "100%" },
-  exportsLead: { color: theme.colors.text, fontSize: 15, lineHeight: 22 },
+  exportsLead: { color: "#f8fafc", fontSize: 15, lineHeight: 22 },
   exportsNotice: { borderRadius: 14, padding: 13, gap: 5, backgroundColor: "rgba(255,190,0,0.10)", borderWidth: 1, borderColor: "rgba(255,190,0,0.38)" },
   exportsNoticeTitle: { color: "#ffc329", fontSize: 15, lineHeight: 19, fontWeight: "700" },
-  exportsSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
-  exportsBody: { color: theme.colors.soft, fontSize: 13, lineHeight: 20 },
-  exportsFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
+  exportsSectionTitle: { color: "#f8fafc", fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
+  exportsBody: { color: "#cbd5e1", fontSize: 13, lineHeight: 20 },
+  exportsFootnote: { color: "#94a3b8", fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
   exportsDone: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
   exportsDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
   tileBadgeText: {
@@ -1164,6 +1164,13 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     color: theme.colors.muted,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase"
+  },
+  modalFieldLabel: {
+    color: "#94a3b8",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
@@ -1257,9 +1264,9 @@ const styles = StyleSheet.create({
   paymentHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   paymentHeaderCopy: { flex: 1, gap: 4 },
   paymentEyebrow: { color: "#8fb0ff", fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
-  paymentTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" },
+  paymentTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "800" },
   paymentAmount: { color: "#4ade80", fontSize: 17, fontWeight: "800" },
-  paymentCopy: { color: theme.colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 19 },
+  paymentCopy: { color: "#94a3b8", fontSize: 13, fontWeight: "600", lineHeight: 19 },
   paymentButton: { minHeight: 48, borderRadius: 15, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
   paymentButtonText: { color: "#fff", fontSize: 14, fontWeight: "800", textAlign: "center" },
   depositButton: { minHeight: 48, borderRadius: 15, borderWidth: 1, borderColor: "#4ade80", backgroundColor: "rgba(34,197,94,0.10)", alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
@@ -1299,7 +1306,7 @@ const styles = StyleSheet.create({
     gap: 12
   },
   detailsTitle: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     flex: 1,
     fontSize: 21,
     fontWeight: "900"
@@ -1313,7 +1320,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   closeText: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 16,
     fontWeight: "900"
   },
@@ -1322,7 +1329,7 @@ const styles = StyleSheet.create({
     paddingBottom: 4
   },
   policyCopy: {
-    color: theme.colors.muted,
+    color: "#cbd5e1",
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20
@@ -1337,7 +1344,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 15,
     fontWeight: "800",
     paddingHorizontal: 14
@@ -1354,12 +1361,12 @@ const styles = StyleSheet.create({
     gap: 6
   },
   detailsCar: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 20,
     fontWeight: "900"
   },
   detailsLine: {
-    color: theme.colors.muted,
+    color: "#94a3b8",
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 20
@@ -1375,7 +1382,7 @@ const styles = StyleSheet.create({
     gap: 10
   },
   sectionTitle: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 16,
     fontWeight: "900"
   },
@@ -1392,13 +1399,13 @@ const styles = StyleSheet.create({
     gap: 4
   },
   amountLabel: {
-    color: theme.colors.muted,
+    color: "#94a3b8",
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase"
   },
   amountValue: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 16,
     fontWeight: "900"
   },
@@ -1441,12 +1448,12 @@ const styles = StyleSheet.create({
     gap: 4
   },
   choiceRowLabel: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 15,
     fontWeight: "900"
   },
   choiceRowDetail: {
-    color: theme.colors.muted,
+    color: "#94a3b8",
     fontSize: 12,
     fontWeight: "800",
     lineHeight: 16
@@ -1465,11 +1472,11 @@ const styles = StyleSheet.create({
     paddingVertical: 9
   },
   activeChoiceChip: {
-    backgroundColor: theme.colors.text,
-    borderColor: theme.colors.text
+    backgroundColor: "#f8fafc",
+    borderColor: "#f8fafc"
   },
   choiceChipText: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 12,
     fontWeight: "900"
   },
@@ -1500,11 +1507,11 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.blue
   },
   checkText: {
-    color: theme.colors.text,
+    color: "#ffffff",
     fontWeight: "900"
   },
   toggleText: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     flex: 1,
     fontSize: 14,
     fontWeight: "800",
@@ -1560,12 +1567,12 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.accent
   },
   detailTabText: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 12,
     fontWeight: "900"
   },
   activeDetailTabText: {
-    color: theme.colors.text
+    color: "#ffffff"
   },
   countdownRow: {
     flexDirection: "row",
@@ -1600,7 +1607,7 @@ const styles = StyleSheet.create({
     opacity: 0.58
   },
   panelButtonText: {
-    color: theme.colors.text,
+    color: "#ffffff",
     fontSize: 15,
     fontWeight: "900"
   },
@@ -1616,7 +1623,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   secondaryButtonText: {
-    color: theme.colors.text,
+    color: "#f8fafc",
     fontSize: 14,
     fontWeight: "900"
   }

@@ -37,6 +37,7 @@ type Props = {
   user: FairFaresUser | null;
   onChange: (tab: TabKey) => void;
   hidden?: boolean;
+  appearance?: "light" | "dark";
 };
 
 function visibleActiveTab(active: TabKey): VisibleTabKey {
@@ -45,9 +46,10 @@ function visibleActiveTab(active: TabKey): VisibleTabKey {
   return active;
 }
 
-export function BottomTabs({ active, unreadCount, user, onChange, hidden = false }: Props) {
+export function BottomTabs({ active, unreadCount, user, onChange, hidden = false, appearance }: Props) {
   const layout = useResponsiveLayout();
-  const colorScheme = useColorScheme();
+  const systemColorScheme = useColorScheme();
+  const colorScheme = appearance || systemColorScheme;
   const housingScale = useRef(new Animated.Value(1)).current;
 
   if (hidden) return null;
@@ -55,11 +57,20 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
   const selected = visibleActiveTab(active);
 
   return (
+    <>
+    <View
+      pointerEvents="none"
+      style={[
+        styles.systemNavigationSurface,
+        colorScheme === "light" && styles.systemNavigationSurfaceLight,
+        { height: layout.systemBottomInset },
+      ]}
+    />
     <View
       style={[
         styles.card,
         colorScheme === "light" && styles.cardLight,
-        { bottom: layout.navBottomInset },
+        { bottom: layout.navBottomInset, height: 70 + layout.navVisualOverlap },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
           : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
@@ -78,7 +89,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         <View style={styles.glassTopHighlight} />
         <View style={styles.glassBottomShade} />
       </View>
-      <View style={styles.itemsRow}>
+      <View style={[styles.itemsRow, { paddingBottom: layout.navVisualOverlap }]}>
         {navigationItems.map((item) => {
           const isSelected = selected === item.key;
           return (
@@ -143,13 +154,23 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         })}
       </View>
     </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  systemNavigationSurface: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#141515",
+  },
+  systemNavigationSurfaceLight: {
+    backgroundColor: "#f3f4f6",
+  },
   card: {
     position: "absolute",
-    height: 70,
     borderRadius: 35,
     borderWidth: 1,
     borderColor: theme.colors.line,

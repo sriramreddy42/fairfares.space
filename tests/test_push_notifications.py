@@ -160,7 +160,38 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(data["conversationName"], "DU Housing Board")
         self.assertEqual(data["subtitle"], "DU Housing Board")
         self.assertIn(f"community={community_id}", data["groupAvatarUrl"])
+        self.assertTrue(data["nativeGroupEnrichment"])
         self.assertEqual(data["notificationSchema"], 2)
+
+    def test_queued_group_push_replaces_stale_https_avatar_before_delivery(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-FRESH-AVATAR', 'GROUP', 'Fresh Avatar Group')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject)
+                   VALUES ('FFC-FRESH-AVATAR', 'GROUP', ?, 'Fresh Avatar Group')""",
+                (community_id,),
+            )
+
+        _, _, data = app.refresh_queued_chitthi_notification(
+            "Marisa",
+            "Hello group",
+            {
+                "type": "CHITTHI_MESSAGE",
+                "conversationId": "FFC-FRESH-AVATAR",
+                "senderId": self.user_id,
+                "senderName": "Marisa",
+                "groupAvatarUrl": "https://www.fairfare.space/api/chat/notification-avatar?community=1&expires=1&signature=stale",
+                "senderAvatarUrl": "https://www.fairfare.space/api/chat/notification-avatar?user=1&expires=1&signature=stale",
+            },
+        )
+
+        self.assertIn(f"community={community_id}", data["groupAvatarUrl"])
+        self.assertNotIn("signature=stale", data["groupAvatarUrl"])
+        self.assertIn(f"user={self.user_id}", data["senderAvatarUrl"])
+        self.assertNotIn("signature=stale", data["senderAvatarUrl"])
 
     def test_legacy_multi_member_conversation_is_never_notified_as_direct(self):
         with app.db() as con:
@@ -248,6 +279,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(data["conversationName"], "")
         self.assertEqual(data["groupAvatarUrl"], "")
         self.assertEqual(data["subtitle"], "")
+        self.assertFalse(data["nativeGroupEnrichment"])
 
     def test_first_chat_device_key_backfills_legacy_push_token_device_id(self):
         token = "ExpoPushToken[legacy-preview-device]"
@@ -329,7 +361,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["body"], "Are you available?")
         self.assertEqual(message["sound"], "default")
         self.assertEqual(message["channelId"], "chitthi-messages-v2")
-        self.assertNotIn("mutableContent", message)
+        self.assertTrue(message["mutableContent"])
         self.assertEqual(message["categoryId"], "CHITTHI_MESSAGE")
         self.assertEqual(message["data"]["groupAvatarUrl"], "https://fairfare.space/group.jpg")
         self.assertTrue(message["data"]["isGroup"])
@@ -381,7 +413,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["body"], "reacted 👍 to your message")
         self.assertEqual(message["data"]["type"], "CHITTHI_REACTION")
         self.assertTrue(message["data"]["isGroup"])
-        self.assertNotIn("mutableContent", message)
+        self.assertTrue(message["mutableContent"])
         self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
 
     def test_android_group_message_renders_person_group_and_message(self):
@@ -515,7 +547,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(mock_send.call_args.args[0], [enabled_token])
         self.assertEqual(mock_send.call_args.args[3]["type"], "CARPOOL_REQUEST")
 
-    def test_group_native_enrichment_is_enabled_only_for_capable_device(self):
+    def test_group_native_enrichment_is_enabled_for_every_registered_device(self):
         legacy_token = "ExpoPushToken[group-legacy-device]"
         current_token = "ExpoPushToken[group-schema-three-device]"
         self.add_token(legacy_token, notification_schema=0)
@@ -537,7 +569,7 @@ class PushNotificationTest(unittest.TestCase):
             row["token"]: json.loads(row["data_json"])["nativeGroupEnrichment"]
             for row in rows
         }
-        self.assertEqual(enrichment, {legacy_token: False, current_token: True})
+        self.assertEqual(enrichment, {legacy_token: True, current_token: True})
 
     def test_group_reaction_uses_native_enrichment_on_capable_device(self):
         token = "ExpoPushToken[group-reaction-schema-three-device]"
@@ -673,6 +705,47 @@ class PushNotificationTest(unittest.TestCase):
             row = con.execute("SELECT status, delivered_at FROM mobile_push_outbox").fetchone()
         self.assertEqual(row["status"], "DELIVERED")
         self.assertTrue(row["delivered_at"])
+
+    def test_outbox_mints_group_avatar_immediately_before_expo_delivery(self):
+        token = "ExpoPushToken[group-avatar-outbox]"
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-OUTBOX-AVATAR', 'GROUP', 'Outbox Avatar Group')"
+            )
+            community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject)
+                   VALUES ('FFC-OUTBOX-AVATAR', 'GROUP', ?, 'Outbox Avatar Group')""",
+                (community_id,),
+            )
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.enqueue_mobile_pushes(
+                [(self.user_id, token)],
+                "Marisa",
+                "Hello group",
+                {
+                    "type": "CHITTHI_MESSAGE",
+                    "messageId": 901,
+                    "conversationId": "FFC-OUTBOX-AVATAR",
+                    "senderId": self.user_id,
+                    "senderName": "Marisa",
+                    "groupAvatarUrl": "https://www.fairfare.space/stale-group-avatar.jpg",
+                },
+            )
+
+        with patch.object(
+            app,
+            "send_expo_push",
+            return_value={token: {"status": "ACCEPTED", "ticketId": "ticket-avatar", "error": ""}},
+        ) as mock_send:
+            result = app.process_mobile_push_outbox()
+
+        self.assertEqual(result["accepted"], 1)
+        delivered_data = mock_send.call_args.args[3]
+        self.assertIn(f"community={community_id}", delivered_data["groupAvatarUrl"])
+        self.assertNotEqual(delivered_data["groupAvatarUrl"], "https://www.fairfare.space/stale-group-avatar.jpg")
+        self.assertTrue(delivered_data["isGroup"])
+        self.assertEqual(delivered_data["conversationName"], "Outbox Avatar Group")
 
     def test_chitthi_avatar_urls_cover_delayed_delivery_and_are_tamper_evident(self):
         with patch.object(app.time, "time", return_value=2_000_000_000):

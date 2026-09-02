@@ -151,6 +151,67 @@ class HousingLocationSearchTest(unittest.TestCase):
                     f"{selected} incorrectly reused Denver, CO coordinates",
                 )
 
+    def test_denver_ne_search_never_returns_denver_colorado_listing(self):
+        self.insert_post("DENVER-NE", "Nebraska room", "Denver, NE", "Central", 40.6572, -96.7056)
+        # Deliberately place the Colorado row beside the Nebraska search point.
+        # A coordinate match must not override its explicit conflicting state.
+        self.insert_post("DENVER-CO", "Colorado room", "Denver, CO", "Central", 40.6573, -96.7055)
+
+        text_results = app.mobile_housing_posts(city="Denver, NE", limit=50)
+        text_ids = {item["id"] for item in text_results}
+        self.assertIn("DENVER-NE", text_ids)
+        self.assertNotIn("DENVER-CO", text_ids)
+
+        radius_results = app.mobile_housing_posts(
+            city="Denver, NE",
+            radius=10,
+            center_lat=40.6572,
+            center_lng=-96.7056,
+            limit=50,
+        )
+        radius_ids = {item["id"] for item in radius_results}
+        self.assertIn("DENVER-NE", radius_ids)
+        self.assertNotIn("DENVER-CO", radius_ids)
+
+    def test_conflicting_stale_area_cannot_override_selected_city_state(self):
+        self.insert_post("DENVER-NE-STALE-AREA", "Nebraska room", "Denver, NE", "Central", 40.6572, -96.7056)
+        self.insert_post("DENVER-CO-STALE-AREA", "Colorado room", "Denver, CO", "Central", 39.7392, -104.9903)
+
+        results = app.mobile_housing_posts(
+            city="Denver, NE",
+            area="Denver, CO",
+            radius=10,
+            center_lat=40.6572,
+            center_lng=-96.7056,
+            limit=50,
+        )
+
+        ids = {item["id"] for item in results}
+        self.assertIn("DENVER-NE-STALE-AREA", ids)
+        self.assertNotIn("DENVER-CO-STALE-AREA", ids)
+        self.assertTrue(all(explicit.get("location") != "Denver, CO" for explicit in results))
+
+    def test_area_only_and_contradictory_listing_states_are_rejected(self):
+        self.insert_post("DENVER-NE-AREA-ONLY", "Nebraska room", "Denver, NE", "Central", 40.6572, -96.7056)
+        self.insert_post("DENVER-CO-AREA-ONLY", "Colorado room", "Denver, CO", "Central", 40.6573, -96.7055)
+        with app.db() as con:
+            con.execute(
+                "UPDATE accommodation_posts SET street_address = '2310 East Asbury Avenue, Denver, CO 80210' WHERE public_id = 'DENVER-NE-AREA-ONLY'"
+            )
+
+        results = app.mobile_housing_posts(
+            city="",
+            area="Denver, NE",
+            radius=10,
+            center_lat=40.6572,
+            center_lng=-96.7056,
+            limit=50,
+        )
+
+        ids = {item["id"] for item in results}
+        self.assertNotIn("DENVER-CO-AREA-ONLY", ids)
+        self.assertNotIn("DENVER-NE-AREA-ONLY", ids)
+
     def test_brookville_oh_static_point_wins_over_poisoned_cache(self):
         with app.db() as con:
             metro_id = app.upsert_accommodation_metro(
@@ -199,6 +260,51 @@ class HousingLocationSearchTest(unittest.TestCase):
                 "SELECT 1 FROM accommodation_local_areas WHERE lower(name) = lower('Brookville, OH')"
             ).fetchone()
         self.assertIsNone(poisoned)
+
+    def test_exact_city_lookup_rejects_same_state_point_of_interest(self):
+        wrong_same_state_result = {
+            "formatted_address": "Big Apple Fun Center, Kearney, NE, USA",
+            "address_components": [
+                {"long_name": "Kearney", "short_name": "Kearney", "types": ["locality"]},
+                {"long_name": "Nebraska", "short_name": "NE", "types": ["administrative_area_level_1"]},
+                {"long_name": "United States", "short_name": "US", "types": ["country"]},
+            ],
+            "geometry": {"location": {"lat": 40.6993, "lng": -99.0817}},
+        }
+        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test-key"}), patch.object(
+            app, "google_api_get", return_value={"status": "OK", "results": [wrong_same_state_result]}
+        ):
+            self.assertIsNone(app.google_accommodation_geocode("Denver, NE"))
+            self.assertEqual(app.refresh_accommodation_location_cache("Denver, NE", force=True), "")
+
+        with app.db() as con:
+            poisoned = con.execute(
+                "SELECT 1 FROM accommodation_local_areas WHERE lower(name) = lower('Kearney, NE')"
+            ).fetchone()
+        self.assertIsNone(poisoned)
+
+    def test_unresolved_denver_ne_does_not_fall_back_to_colorado_metro(self):
+        with app.db() as con:
+            colorado_metro = app.upsert_accommodation_metro(
+                con, "Denver Metro Area", country="US", state="CO", center_city="Denver",
+                lat=39.7392, lng=-104.9903,
+            )
+            app.upsert_accommodation_local_area(
+                con, colorado_metro, "Denver, CO", city="Denver", state="CO",
+                lat=39.7392, lng=-104.9903,
+            )
+
+        self.assertEqual(app.accommodation_metro_name_from_place("Denver, NE"), "Denver, NE Metro Area")
+        with patch.object(app, "google_accommodation_geocode", return_value=None):
+            options = app.accommodation_location_options("Denver, NE")
+            context = app.accommodation_metro_context("", "Denver, NE")
+
+        self.assertEqual(options["selectedLocation"], "Denver, NE")
+        self.assertNotEqual(options["metro"], "Denver Metro Area")
+        self.assertNotIn("Denver, CO", options["suggested"])
+        self.assertEqual(context["selected_location"], "Denver, NE")
+        self.assertEqual(context["suggested_location"], "Denver, NE")
+        self.assertEqual(context["suggested_areas"], [])
 
     def test_state_qualified_lookup_ignores_same_label_cached_for_another_state(self):
         with app.db() as con:

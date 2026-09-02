@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, updateMobileRide } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -17,6 +17,7 @@ import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote,
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { activeFestivalCampaign } from "../utils/festivals";
 import { shareCarpoolListing } from "../utils/listingShare";
+import { explicitUsState } from "../utils/locationRegion";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -657,6 +658,8 @@ export function HousingScreen({
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
   const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
+  const [rideSuggestionsEnabled, setRideSuggestionsEnabled] = useState(false);
+  const [rideEditorLoading, setRideEditorLoading] = useState(false);
   const [ridePopularPlaces, setRidePopularPlaces] = useState<RidePlaceSuggestion[]>([]);
   const [currentRideLocation, setCurrentRideLocation] = useState<CurrentRideLocation | null>(null);
   const [currentRideLocationBusy, setCurrentRideLocationBusy] = useState(false);
@@ -685,6 +688,7 @@ export function HousingScreen({
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
+  const rideEditorRequestRef = useRef(0);
   const homeStoryScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
@@ -737,7 +741,7 @@ export function HousingScreen({
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
-    : data?.location.suggested || data?.location.city || "";
+    : selectedLocationText || data?.location.city || "";
 
   async function showExportsInterest() {
     setExportsInfoOpen(true);
@@ -801,6 +805,17 @@ export function HousingScreen({
   const searchBarText = activeSearchPhrase;
   const currentQuickLinkWord = quickLinkWords[quickLinkWordIndex % quickLinkWords.length] || quickLinkWords[0];
   const quickLinkAnimatedWord = currentQuickLinkWord.slice(0, quickLinkLetterCount);
+  const locationScopedPosts = useMemo(() => {
+    if (!hasExactLocationSearch) return posts;
+    const selectedState = explicitUsState(data?.location.city || "");
+    if (!selectedState) return posts;
+    return posts.filter((post) => {
+      const listingStates = [post.city, post.addressLabel, post.location]
+        .map((value) => explicitUsState(value || ""))
+        .filter(Boolean);
+      return listingStates.every((state) => state === selectedState);
+    });
+  }, [data?.location.city, hasExactLocationSearch, posts]);
   const sortedPosts = useMemo(() => {
     const compareOptionalNumber = (a: number | null | undefined, b: number | null | undefined, descending = false) => {
       const aKnown = a !== null && a !== undefined && Number.isFinite(Number(a));
@@ -809,15 +824,15 @@ export function HousingScreen({
       if (!aKnown || !bKnown) return 0;
       return descending ? Number(b) - Number(a) : Number(a) - Number(b);
     };
-    return [...posts].sort((a, b) => {
+    return [...locationScopedPosts].sort((a, b) => {
       if (Boolean(a.sample) !== Boolean(b.sample)) return a.sample ? 1 : -1;
       if (selectedSort === "distanceDesc") return compareOptionalNumber(a.distanceMiles, b.distanceMiles, true);
       if (selectedSort === "rentAsc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null);
       if (selectedSort === "rentDesc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null, true);
       return compareOptionalNumber(a.distanceMiles, b.distanceMiles);
     });
-  }, [posts, selectedSort]);
-  const housingCurrencySymbol = posts.find((post) => post.currencySymbol)?.currencySymbol || "$";
+  }, [locationScopedPosts, selectedSort]);
+  const housingCurrencySymbol = locationScopedPosts.find((post) => post.currencySymbol)?.currencySymbol || "$";
   const renderHousingPostCard = (post: HousingPost) => (
     <HousingCard
       key={post.id}
@@ -844,7 +859,7 @@ export function HousingScreen({
     baseLocalities.forEach((name) => {
       groups.set(normalizeLocalityKey(name), { name, total: 0, count: 0, offered: 0, needed: 0, preset: true });
     });
-    posts.filter((post) => !post.sample).forEach((post) => {
+    locationScopedPosts.filter((post) => !post.sample).forEach((post) => {
       const name = cleanLocalityName(post.area || "", city) || cleanLocalityName(post.location || "", city);
       if (!name) return;
       const key = normalizeLocalityKey(name);
@@ -868,7 +883,7 @@ export function HousingScreen({
         rent: value.count ? `${housingCurrencySymbol}${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
         preset: value.preset
       }));
-  }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, posts]);
+  }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, locationScopedPosts]);
   const rentalRows = rentalSearched ? rentalCars : [];
   const lowestRentalDailyPrice = useMemo(() => {
     const validRates = rentalCars
@@ -1100,9 +1115,17 @@ export function HousingScreen({
     if (!rideOwnerOpenToken || rideOwnerOpenToken === lastRideOwnerOpenTokenRef.current) return;
     lastRideOwnerOpenTokenRef.current = rideOwnerOpenToken;
     if (rideOwnerEditId) {
+      const requestId = rideEditorRequestRef.current + 1;
+      rideEditorRequestRef.current = requestId;
+      setRideEditorLoading(true);
+      setRideSuggestionsEnabled(false);
+      setRideSuggestions([]);
+      onBottomTabsHiddenChange?.(true);
       void getRideActivity().then((rows) => {
+        if (rideEditorRequestRef.current !== requestId) return;
         const ride = rows.find((item) => item.id === rideOwnerEditId && item.activityRole === "MINE" && !item.isExpired);
         if (!ride) {
+          onBottomTabsHiddenChange?.(false);
           Alert.alert("Ride unavailable", "Only your current ride listings and requests can be edited.");
           return;
         }
@@ -1137,14 +1160,25 @@ export function HousingScreen({
         setRidePlannerStage("plan");
         setRidePlannerOpen(true);
         onBottomTabsHiddenChange?.(true);
-      }).catch((error) => Alert.alert("Could not edit ride", error instanceof Error ? error.message : "Please try again."));
+      }).catch((error) => {
+        if (rideEditorRequestRef.current !== requestId) return;
+        onBottomTabsHiddenChange?.(false);
+        Alert.alert("Could not edit ride", error instanceof Error ? error.message : "Please try again.");
+      }).finally(() => {
+        if (rideEditorRequestRef.current === requestId) setRideEditorLoading(false);
+      });
       return;
     }
     void openRideOwnerTracker();
   }, [rideOwnerEditId, rideOwnerOpenTarget, rideOwnerOpenToken]);
 
   useEffect(() => {
-    if (!ridePlannerOpen || ridePlannerStage !== "plan") return;
+    let cancelled = false;
+    if (!ridePlannerOpen || ridePlannerStage !== "plan" || !rideSuggestionsEnabled) {
+      setRideSuggestions([]);
+      setRideSuggestionsBusy(false);
+      return;
+    }
     const query = (rideFocusedField === "origin" ? rideForm.origin : rideForm.destination).trim();
     if (!query || query === selectedRideSuggestionRef.current) {
       setRideSuggestions([]);
@@ -1158,12 +1192,12 @@ export function HousingScreen({
         query,
         rideFocusedField !== "origin"
       )
-        .then(setRideSuggestions)
-        .catch(() => setRideSuggestions([]))
-        .finally(() => setRideSuggestionsBusy(false));
+        .then((places) => { if (!cancelled) setRideSuggestions(places); })
+        .catch(() => { if (!cancelled) setRideSuggestions([]); })
+        .finally(() => { if (!cancelled) setRideSuggestionsBusy(false); });
     }, 260);
-    return () => clearTimeout(timer);
-  }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage, rideSuggestionsEnabled]);
 
   useEffect(() => {
     // Popular cities belong to the user's current country. Housing and ride
@@ -1300,6 +1334,11 @@ export function HousingScreen({
   }
 
   function closeRidePlanner() {
+    rideEditorRequestRef.current += 1;
+    setRideEditorLoading(false);
+    setRideSuggestionsEnabled(false);
+    setRideSuggestions([]);
+    setRideSuggestionsBusy(false);
     setRidePlannerOpen(false);
     onBottomTabsHiddenChange?.(false);
   }
@@ -1491,6 +1530,8 @@ export function HousingScreen({
   function selectRidePlace(place: RidePlaceSuggestion) {
     const selectedField = rideFocusedField;
     selectedRideSuggestionRef.current = place.label;
+    setRideSuggestionsEnabled(false);
+    setRideSuggestions([]);
     setRideForm((current) => ({
       ...current,
       [rideFocusedField]: place.label,
@@ -1886,6 +1927,14 @@ export function HousingScreen({
                 <Text style={styles.rideOwnerTitle}>{rideOwnerOpenTarget === "workspace" ? "Offer a ride" : trackerTitle}</Text>
               </View>
             </View>
+
+            {(rideDriverBusy || rideActivityBusy) && !rideActivityRows.length ? (
+              <View style={styles.rideOwnerLoadingCard} accessibilityRole="progressbar">
+                <ActivityIndicator size="large" color={theme.colors.brand} />
+                <Text style={styles.rideOwnerLoadingTitle}>Loading your carpool…</Text>
+                <Text style={styles.rideOwnerLoadingCopy}>Checking your driver profile, listings, and ride requests.</Text>
+              </View>
+            ) : null}
 
             {rideOwnerOpenTarget === "workspace" ? <>
             <View style={styles.rideOwnerHero}>
@@ -2432,6 +2481,7 @@ export function HousingScreen({
     setRentalBusy(true);
     try {
       const nextCars = await getCars(rentalSearch.pickupLocation, "", rentalSearch);
+      void trackProductEvent("rental_search", { resultCount: nextCars.length, source: "rental_search" });
       setRentalCars(nextCars);
       setRentalSearched(true);
       setSelectedRentalCar(null);
@@ -2444,6 +2494,7 @@ export function HousingScreen({
   }
 
   async function reviewRentalCar(car: Car) {
+    void trackProductEvent("rental_car_view", { carId: car.id, source: "rental_results" });
     setSelectedRentalCar(car);
     setRentalBusy(true);
     try {
@@ -2812,10 +2863,11 @@ export function HousingScreen({
                 <View style={styles.rideRouteInputs}>
                   <TextInput
                     value={rideForm.origin}
-                    onFocus={() => setRideFocusedField("origin")}
+                    onFocus={() => { setRideFocusedField("origin"); setRideSuggestionsEnabled(true); }}
                     onChangeText={(text) => {
                       selectedRideSuggestionRef.current = "";
                       setRideFocusedField("origin");
+                      setRideSuggestionsEnabled(true);
                       updateRideForm("origin", text);
                     }}
                     placeholder={listingRide ? "Starting point" : "Pickup location"}
@@ -2824,10 +2876,11 @@ export function HousingScreen({
                   />
                   <TextInput
                     value={rideForm.destination}
-                    onFocus={() => setRideFocusedField("destination")}
+                    onFocus={() => { setRideFocusedField("destination"); setRideSuggestionsEnabled(true); }}
                     onChangeText={(text) => {
                       selectedRideSuggestionRef.current = "";
                       setRideFocusedField("destination");
+                      setRideSuggestionsEnabled(true);
                       updateRideForm("destination", text);
                     }}
                     onSubmitEditing={() => void planRideRoute()}
@@ -2930,7 +2983,7 @@ export function HousingScreen({
 
               <View style={styles.rideSuggestionList}>
                 {currentRideLocationError ? <Text style={styles.rideSuggestionHelp}>{currentRideLocationError}</Text> : null}
-                {rideSuggestionsBusy ? <Text style={styles.rideSuggestionHelp}>Loading nearby places...</Text> : null}
+                {rideSuggestionsBusy ? <View style={styles.rideSuggestionLoading} accessibilityRole="progressbar"><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.rideSuggestionHelp}>Loading nearby places…</Text></View> : null}
                 {!rideSuggestionsBusy && !rideSuggestions.length && activeInputValue.trim() && !selectedSuggestionSettled ? (
                   <Text style={styles.rideSuggestionHelp}>No exact places yet. Try a landmark like Union Station or an address.</Text>
                 ) : null}
@@ -3394,6 +3447,15 @@ export function HousingScreen({
 
   return (
     <>
+    <Modal visible={rideEditorLoading} transparent animationType="fade" statusBarTranslucent onRequestClose={() => undefined}>
+      <View style={styles.rideEditorLoadingBackdrop} accessibilityRole="progressbar">
+        <View style={styles.rideEditorLoadingCard}>
+          <ActivityIndicator size="large" color={theme.colors.brand} />
+          <Text style={styles.rideEditorLoadingTitle}>Opening your ride…</Text>
+          <Text style={styles.rideEditorLoadingCopy}>Loading the latest route and trip details.</Text>
+        </View>
+      </View>
+    </Modal>
     {renderRideListingSuccess()}
     {renderRideOwnerTracker()}
     {renderRentalOwnerModal()}
@@ -3730,7 +3792,7 @@ export function HousingScreen({
         ) : (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No matching housing posts yet.</Text>
-            <Text style={styles.emptyText}>Try Denver, Union Station, DU, Aurora, or create the first post.</Text>
+            <Text style={styles.emptyText}>Try another area near {data?.location.city || discoveryLocation || "your current city"}, or create the first post.</Text>
           </View>
         )}
       </ScrollView>
@@ -4008,6 +4070,14 @@ export function HousingScreen({
 }
 
 const styles = StyleSheet.create({
+  rideEditorLoadingBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.68)", padding: 24 },
+  rideEditorLoadingCard: { width: "100%", maxWidth: 360, minHeight: 170, alignItems: "center", justifyContent: "center", gap: 10, padding: 24, borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "#111827" },
+  rideEditorLoadingTitle: { color: "#f7f7f8", fontSize: 18, fontWeight: "900" },
+  rideEditorLoadingCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 18, textAlign: "center" },
+  rideSuggestionLoading: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  rideOwnerLoadingCard: { minHeight: 160, alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", padding: 20 },
+  rideOwnerLoadingTitle: { color: "#f7f7f8", fontSize: 17, fontWeight: "900" },
+  rideOwnerLoadingCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 18, textAlign: "center" },
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: 14, paddingBottom: 112, gap: 20 },
   brandHeader: {
@@ -4260,22 +4330,22 @@ const styles = StyleSheet.create({
   exportsInfoHeadingCopy: { flex: 1, minWidth: 0 },
   exportsInfoEyebrow: { color: "#54d58b", fontSize: 11, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.7 },
   exportsInfoEyebrowError: { color: "#ff8d8d" },
-  exportsInfoTitle: { color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "700" },
+  exportsInfoTitle: { color: "#f8fafc", fontSize: 22, lineHeight: 27, fontWeight: "700" },
   exportsInfoClose: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)" },
-  exportsInfoCloseText: { color: theme.colors.text, fontSize: 28, lineHeight: 30, fontWeight: "400" },
-  exportsInfoLead: { color: theme.colors.text, fontSize: 15, lineHeight: 22 },
+  exportsInfoCloseText: { color: "#f8fafc", fontSize: 28, lineHeight: 30, fontWeight: "400" },
+  exportsInfoLead: { color: "#f8fafc", fontSize: 15, lineHeight: 22 },
   exportsInfoSaving: { color: "#ffc329", fontSize: 13, lineHeight: 18, fontWeight: "700" },
   exportsInfoErrorNotice: { borderRadius: 14, padding: 13, gap: 6, backgroundColor: "rgba(185,67,67,0.13)", borderWidth: 1, borderColor: "rgba(255,105,105,0.42)" },
   exportsInfoErrorTitle: { color: "#ff9c9c", fontSize: 14, lineHeight: 18, fontWeight: "700" },
-  exportsInfoErrorCopy: { color: theme.colors.soft, fontSize: 12, lineHeight: 17 },
+  exportsInfoErrorCopy: { color: "#cbd5e1", fontSize: 12, lineHeight: 17 },
   exportsInfoRetryButton: { alignSelf: "flex-start", borderRadius: theme.radius.pill, backgroundColor: "#ffffff", paddingHorizontal: 14, paddingVertical: 8, marginTop: 2 },
   exportsInfoRetryText: { color: "#161616", fontSize: 13, lineHeight: 16, fontWeight: "800" },
   exportsInfoNotice: { borderRadius: 14, padding: 13, gap: 5, backgroundColor: "rgba(255,190,0,0.10)", borderWidth: 1, borderColor: "rgba(255,190,0,0.38)" },
   exportsInfoNoticeTitle: { color: "#ffc329", fontSize: 15, lineHeight: 19, fontWeight: "700" },
-  exportsInfoNoticeCopy: { color: theme.colors.soft, fontSize: 13, lineHeight: 19 },
-  exportsInfoSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
-  exportsInfoBody: { color: theme.colors.soft, fontSize: 13, lineHeight: 20 },
-  exportsInfoFootnote: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
+  exportsInfoNoticeCopy: { color: "#cbd5e1", fontSize: 13, lineHeight: 19 },
+  exportsInfoSectionTitle: { color: "#f8fafc", fontSize: 15, lineHeight: 19, fontWeight: "700", marginTop: 2 },
+  exportsInfoBody: { color: "#cbd5e1", fontSize: 13, lineHeight: 20 },
+  exportsInfoFootnote: { color: "#94a3b8", fontSize: 12, lineHeight: 18, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.12)", paddingTop: 12 },
   exportsInfoDoneButton: { minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: "#f3b900", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 2 },
   exportsInfoDoneText: { color: "#07150e", fontSize: 15, lineHeight: 19, fontWeight: "800" },
   cityExperienceEyebrow: { color: "#56d99c", fontSize: 10, lineHeight: 14, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },

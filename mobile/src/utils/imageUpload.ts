@@ -10,9 +10,9 @@ import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 // The thumbnail stays inside the per-device end-to-end encrypted descriptor;
 // it is never stored as a public image. Start at a useful chat-bubble
 // resolution and progressively reduce it only when a detailed frame would
-// exceed the encrypted-envelope allowance. The 18 KB ceiling still leaves
-// room for descriptor JSON, NaCl and base64 overhead.
-const CHAT_THUMBNAIL_MAX_BYTES = 18_000;
+// exceed the encrypted-envelope allowance. Fine text in screenshots needs a
+// larger preview than ordinary photos, so use the native-safe 32 KB ceiling.
+const CHAT_THUMBNAIL_MAX_BYTES = 32_000;
 const IS_EXPO_GO = Constants.appOwnership === "expo";
 let mediaLibraryPickerActive = false;
 
@@ -101,8 +101,8 @@ function decodedBase64Size(value: string) {
 }
 
 export async function createLightweightChatThumbnail(uri: string) {
-  let width = 480;
-  let quality = 0.78;
+  let width = 720;
+  let quality = 0.88;
   for (let attempt = 0; attempt < 7; attempt += 1) {
     const thumbnail = await ImageManipulator.manipulateAsync(uri, [{ resize: { width } }], {
       base64: true,
@@ -117,8 +117,8 @@ export async function createLightweightChatThumbnail(uri: string) {
         await FileSystem.deleteAsync(thumbnail.uri, { idempotent: true }).catch(() => undefined);
       }
     }
-    width = Math.max(128, Math.round(width * 0.86));
-    quality = Math.max(0.36, quality - 0.06);
+    width = Math.max(192, Math.round(width * 0.88));
+    quality = Math.max(0.48, quality - 0.055);
   }
   // A thumbnail is an optimization, never a reason to block the attachment.
   return "";
@@ -151,7 +151,7 @@ export async function createLightweightVideoThumbnail(uri: string) {
     // thumbnail failure.
     for (const time of [0, 0.1, 1]) {
       try {
-        frames = await player.generateThumbnailsAsync(time, { maxWidth: 240, maxHeight: 240 });
+        frames = await player.generateThumbnailsAsync(time, { maxWidth: 640, maxHeight: 640 });
         if (frames[0]) break;
       } catch {
         frames.forEach((candidate) => candidate.release());
@@ -160,8 +160,8 @@ export async function createLightweightVideoThumbnail(uri: string) {
     }
     const frame = frames[0];
     if (!frame) return "";
-    let width = 480;
-    let quality = 0.78;
+    let width = 720;
+    let quality = 0.88;
     for (let attempt = 0; attempt < 7; attempt += 1) {
       const context = ImageManipulator.ImageManipulator.manipulate(frame);
       let rendered: Awaited<ReturnType<typeof context.renderAsync>> | undefined;
@@ -181,8 +181,8 @@ export async function createLightweightVideoThumbnail(uri: string) {
         context.release();
         if (savedUri) await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
       }
-      width = Math.max(128, Math.round(width * 0.86));
-      quality = Math.max(0.36, quality - 0.06);
+      width = Math.max(192, Math.round(width * 0.88));
+      quality = Math.max(0.48, quality - 0.055);
     }
     return "";
   } finally {
@@ -333,36 +333,54 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
     videoQuality: ImagePicker.UIImagePickerControllerQualityType.High
   });
   if (result.canceled || !result.assets.length) return [];
-  const selectedVideo = result.assets.find((asset) => asset.type === "video");
-  if (selectedVideo) {
-    const blob = Platform.OS === "web" ? await fetch(selectedVideo.uri).then((response) => response.blob()) : undefined;
-    const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(selectedVideo.uri);
-    const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(selectedVideo.fileSize || 0));
+  const selectedAssets = result.assets.slice(0, selectionLimit);
+  if (selectedAssets.filter((asset) => asset.type === "video").length > 1) {
+    if (Platform.OS !== "web") {
+      await Promise.all(selectedAssets.filter((asset) => asset.type === "video").map((asset) =>
+        FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined)
+      ));
+    }
+    throw new Error("Choose one video at a time. You can include photos with that video.");
+  }
+  const videoLimit = Math.max(1_000_000, Math.min(100_000_000, maxVideoBytes));
+  const results = await Promise.allSettled(selectedAssets.map(async (asset, index) => {
+    if (asset.type !== "video") {
+      return compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes);
+    }
+    const blob = Platform.OS === "web" ? await fetch(asset.uri).then((response) => response.blob()) : undefined;
+    const info = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(asset.uri);
+    const size = blob?.size || (info?.exists && "size" in info ? Number(info.size || 0) : Number(asset.fileSize || 0));
     if (!size) throw new Error("Could not determine the selected video size.");
-    const videoLimit = Math.max(1_000_000, Math.min(100_000_000, maxVideoBytes));
     if (size > videoLimit) {
-      if (Platform.OS !== "web") await FileSystem.deleteAsync(selectedVideo.uri, { idempotent: true }).catch(() => undefined);
+      if (Platform.OS !== "web") await FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined);
       throw new Error(`This video is larger than the ${Math.round(videoLimit / 1_000_000)} MB encrypted-transfer limit currently enabled for your account.`);
     }
-    const mimeType = selectedVideo.mimeType || "video/mp4";
-    return [{
-      uri: selectedVideo.uri,
+    const mimeType = asset.mimeType || "video/mp4";
+    return {
+      uri: asset.uri,
       blob,
-      name: selectedVideo.fileName || `chitthi-video-${Date.now()}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
+      name: asset.fileName || `chitthi-video-${Date.now()}${mimeType === "video/quicktime" ? ".mov" : ".mp4"}`,
       mimeType,
       size,
-      // Do not decode video on the picker-critical path. The composer can be
-      // shown immediately; iOS generates this preview asynchronously, and the
-      // final thumbnail is regenerated from the prepared SDR rendition.
       thumbnailBase64: "",
-      pickerAssetId: selectedVideo.assetId || undefined,
+      pickerAssetId: asset.assetId || undefined,
       ownedCacheFile: Platform.OS !== "web",
       kind: "VIDEO" as const
-    }];
+    };
+  }));
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) {
+    if (Platform.OS !== "web") {
+      await Promise.all(results.flatMap((result) => result.status === "fulfilled" && result.value.ownedCacheFile
+        ? [FileSystem.deleteAsync(result.value.uri, { idempotent: true }).catch(() => undefined)]
+        : []));
+    }
+    throw failed.reason;
   }
-  return await Promise.all(result.assets.slice(0, selectionLimit).map((asset, index) =>
-    compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes)
-  ));
+  const prepared = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  // Photos are small and complete quickly. Send them before the encrypted
+  // video so a long native transcode/upload cannot make the rest look lost.
+  return prepared.sort((left, right) => Number(left.kind === "VIDEO") - Number(right.kind === "VIDEO"));
 }
 
 export async function takeChatPhoto(maxWidth = 1280, quality = 0.64, maxBytes = 400_000) {

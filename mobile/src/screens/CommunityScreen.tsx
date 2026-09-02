@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
-  AccessibilityInfo, ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
+  AccessibilityInfo, ActivityIndicator, Alert, Animated, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
   StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View,
 } from "react-native";
 import {
@@ -33,6 +33,7 @@ type Props = {
   onOpenRides: () => void;
   onOpenRentalCars: () => void;
   onOpenGas: () => void;
+  gasPriceRefreshKey?: number;
   onOpenCommunity: (communityId: string) => void;
   onOpenUserChat: (userId: number) => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
@@ -73,6 +74,28 @@ const reactionOptions = [
   { value: "ANGRY", emoji: "😡", label: "Angry" },
 ] as const;
 const emptyDetails = { budget: "", moveInDate: "", preference: "", rent: "", availableDate: "", roomType: "", origin: "", destination: "", travelDate: "", travelTime: "", seats: "" };
+
+type CommunityFeedSnapshot = {
+  posts: CommunityPost[];
+  nationalPosts: CommunityPost[];
+  hasMore: boolean;
+  updatedAt: number;
+};
+
+type CommunityFeedRow =
+  | { key: string; kind: "post"; post: CommunityPost }
+  | { key: string; kind: "communities" }
+  | { key: string; kind: "local-empty" }
+  | { key: string; kind: "national-heading" }
+  | { key: string; kind: "rental" }
+  | { key: string; kind: "empty" };
+
+const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
+const communityGroupSnapshots = new Map<string, Community[]>();
+
+function communityFeedSnapshotKey(userId: number, city: string, category: string, query: string, groupId: string) {
+  return [userId || "guest", normalizedLocationLabel(city).toLocaleLowerCase(), category, query.trim().toLocaleLowerCase(), groupId].join("|");
+}
 
 function absoluteUrl(value: string) {
   return absoluteAssetUrl(value);
@@ -212,7 +235,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSignup, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenGas, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSignup, onOpenHousing, onCreateHousingPost, onOpenRides, onOpenRentalCars, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const safeAreaInsets = useSafeAreaInsets();
   // React Native's Android page-sheet Modal can report a zero top inset even
@@ -220,9 +243,11 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   // below that system region instead of only making the row taller.
   const modalHeaderTopInset = Platform.OS === "android" ? Math.max(safeAreaInsets.top, 32) : safeAreaInsets.top;
   const isLight = useColorScheme() === "light";
-  const [posts, setPosts] = useState<CommunityPost[]>([]);
-  const [nationalPosts, setNationalPosts] = useState<CommunityPost[]>([]);
-  const [groups, setGroups] = useState<Community[]>([]);
+  const initialFeedSnapshot = communityFeedSnapshots.get(communityFeedSnapshotKey(Number(user?.id || 0), city, "ALL", "", ""));
+  const initialGroups = communityGroupSnapshots.get(normalizedLocationLabel(city).toLocaleLowerCase());
+  const [posts, setPosts] = useState<CommunityPost[]>(() => initialFeedSnapshot?.posts || []);
+  const [nationalPosts, setNationalPosts] = useState<CommunityPost[]>(() => initialFeedSnapshot?.nationalPosts || []);
+  const [groups, setGroups] = useState<Community[]>(() => initialGroups || []);
   const [groupSuggestionCity, setGroupSuggestionCity] = useState(city);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [cityDraft, setCityDraft] = useState("");
@@ -240,7 +265,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   const heroEntrance = useRef(new Animated.Value(0)).current;
   const gasIconScale = useRef(new Animated.Value(1)).current;
   const gasIconShake = useRef(new Animated.Value(0)).current;
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialFeedSnapshot);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -311,7 +336,14 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     feedLoadGeneration.current = requestedFeedGeneration;
     fallbackNationalOffset.current = 0;
     setLoadingMore(false);
-    if (!quiet) setLoading(true);
+    const snapshotKey = communityFeedSnapshotKey(Number(user?.id || 0), groupSuggestionCity, category, appliedQuery, selectedGroup);
+    const cached = communityFeedSnapshots.get(snapshotKey);
+    if (cached) {
+      setPosts(cached.posts);
+      setNationalPosts(cached.nationalPosts);
+      setHasMore(cached.hasMore);
+    }
+    if (!quiet) setLoading(!cached);
     try {
       // Communities can be noticeably slower than the feed in production.
       // Load them independently so a slow Chitthi request never freezes Ask.
@@ -320,7 +352,9 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       void previewOrFallback(getChatCommunities(groupSuggestionCity), [] as Community[], 10000)
         .then((communityRows) => {
           if (groupLoadGeneration.current !== requestedGroupGeneration) return;
-          setGroups((communityRows || []).filter((group) => group.joined || group.visibility === "PUBLIC"));
+          const visibleGroups = (communityRows || []).filter((group) => group.joined || group.visibility === "PUBLIC");
+          setGroups(visibleGroups);
+          communityGroupSnapshots.set(normalizedLocationLabel(groupSuggestionCity).toLocaleLowerCase(), visibleGroups);
         })
         .catch(() => undefined);
       const feed = await previewOrFallback(
@@ -329,10 +363,13 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         10000,
       );
       if (feedLoadGeneration.current !== requestedFeedGeneration) return;
-      setPosts(feed.sections?.local?.posts || feed.posts || []);
+      const nextPosts = feed.sections?.local?.posts || feed.posts || [];
+      let nextNationalPosts: CommunityPost[] = [];
+      let nextHasMore = false;
+      setPosts(nextPosts);
       if (feed.sections) {
-        setNationalPosts(feed.sections.national?.posts || []);
-        setHasMore(Boolean(feed.pagination?.hasMore));
+        nextNationalPosts = feed.sections.national?.posts || [];
+        nextHasMore = Boolean(feed.pagination?.hasMore);
       } else if (!selectedGroup) {
         const nationwide = await previewOrFallback(
           getCommunityFeed({ q: appliedQuery, category: category === "ALL" ? "" : category, limit: 30 }),
@@ -342,12 +379,14 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         if (feedLoadGeneration.current !== requestedFeedGeneration) return;
         fallbackNationalOffset.current = nationwide.posts?.length || 0;
         const localIds = new Set((feed.posts || []).map((post) => post.id));
-        setNationalPosts((nationwide.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds)));
-        setHasMore(Boolean(feed.pagination?.hasMore || nationwide.pagination?.hasMore));
+        nextNationalPosts = (nationwide.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds));
+        nextHasMore = Boolean(feed.pagination?.hasMore || nationwide.pagination?.hasMore);
       } else {
-        setNationalPosts([]);
-        setHasMore(Boolean(feed.pagination?.hasMore));
+        nextHasMore = Boolean(feed.pagination?.hasMore);
       }
+      setNationalPosts(nextNationalPosts);
+      setHasMore(nextHasMore);
+      communityFeedSnapshots.set(snapshotKey, { posts: nextPosts, nationalPosts: nextNationalPosts, hasMore: nextHasMore, updatedAt: Date.now() });
     } catch { if (feedLoadGeneration.current === requestedFeedGeneration) { setPosts([]); setNationalPosts([]); } }
     finally { if (feedLoadGeneration.current === requestedFeedGeneration) { setLoading(false); setRefreshing(false); } }
   }, [appliedQuery, category, city, groupSuggestionCity, selectedGroup, user?.id]);
@@ -454,12 +493,12 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
   useEffect(() => {
     let cancelled = false;
     // Ask only reads the last result saved when Cheap Gas was explicitly
-    // opened. Merely loading this feed never contacts Google.
-    if (!gasPreviewCoordinates) {
-      setLowestGasPrice(null);
-      return () => { cancelled = true; };
-    }
-    void readGasCache("regular", gasPreviewCoordinates).then((result) => {
+    // opened. GasStationsScreen resolves the device location before writing
+    // this cache, so applying a second radius check here can incorrectly
+    // discard the valid result when the next GPS fix drifts. Housing and Ask
+    // city selections never write this device-scoped cache.
+    setLowestGasPrice(null);
+    void readGasCache("regular").then((result) => {
       if (cancelled) return;
       const prices = (result?.stations || [])
         .map((station) => Number(station.price))
@@ -467,7 +506,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       setLowestGasPrice(prices.length ? Math.min(...prices) : null);
     });
     return () => { cancelled = true; };
-  }, [gasPreviewCoordinates, locationRefreshKey, user?.id]);
+  }, [gasPriceRefreshKey, locationRefreshKey, user?.id]);
   useEffect(() => {
     if (!cityPickerOpen || cityDraft.trim().length < 2) { setCityOptions([]); return; }
     let cancelled = false;
@@ -910,6 +949,35 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     </TouchableOpacity>
   ) : null;
 
+  const feedRows = useMemo<CommunityFeedRow[]>(() => {
+    const rows: CommunityFeedRow[] = [];
+    posts.forEach((post, index) => {
+      rows.push({ key: `local-${post.id}`, kind: "post", post });
+      if (category === "ALL" && index === communityInsertIndex) rows.push({ key: "community-suggestions", kind: "communities" });
+    });
+    if (category === "ALL" && posts.length === 0) rows.push({ key: "community-suggestions", kind: "communities" });
+    if (!posts.length) rows.push({ key: "local-empty", kind: "local-empty" });
+    if (!selectedGroup && nationalPosts.length) rows.push({ key: "national-heading", kind: "national-heading" });
+    if (!selectedGroup) {
+      nationalPosts.forEach((post, index) => {
+        rows.push({ key: `national-${post.id}`, kind: "post", post });
+        if (index === 2 && lowestRental) rows.push({ key: "lowest-rental", kind: "rental" });
+      });
+      if (nationalPosts.length < 3 && lowestRental) rows.push({ key: "lowest-rental", kind: "rental" });
+    }
+    if (!posts.length && !nationalPosts.length) rows.push({ key: "feed-empty", kind: "empty" });
+    return rows;
+  }, [category, communityInsertIndex, lowestRental, nationalPosts, posts, selectedGroup]);
+
+  const renderFeedRow = ({ item }: { item: CommunityFeedRow }) => {
+    if (item.kind === "post") return renderPost(item.post);
+    if (item.kind === "communities") return renderCommunitySuggestions();
+    if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
+    if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across the USA</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>🇺🇸</Text></View>;
+    if (item.kind === "rental") return renderLowestRental();
+    return <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text>;
+  };
+
   const renderInlineReplyComposer = (parent: CommunityAnswer) => answerReplyTarget?.id === parent.id ? (
     <View style={styles.inlineReplyComposer}>
       <View style={styles.replyingTo}><Text style={styles.replyingToText}>Replying to {answerReplyTarget.name}</Text><TouchableOpacity onPress={() => { setAnswerReplyTarget(null); setAnswer(""); }}><Text style={styles.replyingToClose}>×</Text></TouchableOpacity></View>
@@ -954,13 +1022,22 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
 
   return <View style={styles.screen}>
     {expandedReactionTarget && !detail ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}
-    <Animated.ScrollView
+    <Animated.FlatList
+      data={loading ? [] : feedRows}
+      keyExtractor={(item) => item.key}
+      renderItem={renderFeedRow}
+      ItemSeparatorComponent={() => <View style={styles.feedRowSeparator} />}
+      initialNumToRender={5}
+      maxToRenderPerBatch={5}
+      windowSize={7}
+      updateCellsBatchingPeriod={40}
+      removeClippedSubviews={Platform.OS === "android"}
       contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
       alwaysBounceVertical
       scrollEventThrottle={16}
       onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: pullOffset } } }], { useNativeDriver: true })}
       refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}
-    >
+      ListHeaderComponent={<>
       <Animated.View
         style={[styles.heroPosterFrame, {
           opacity: heroEntrance.interpolate({ inputRange: [0, 0.45, 1], outputRange: [0.25, 0.9, 1] }),
@@ -992,17 +1069,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       <View><View style={styles.sectionRow}><Text style={[styles.sectionTitle, isLight && styles.textPrimaryLight]}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
       {category === "ALL" ? <View style={styles.quickLinksSection}><Text style={[styles.quickLinksHeading, isLight && styles.textPrimaryLight]}>Quick links</Text><View style={styles.quickLinksRow}>{housingQuickLinks.map((item) => <TouchableOpacity key={item.intent} style={[styles.quickLinkTextButton, { backgroundColor: theme.colors.panel, borderColor: item.accent }, isLight && styles.quickLinkTextButtonLight]} activeOpacity={0.7} onPress={() => onCreateHousingPost(item.intent)} accessibilityRole="button" accessibilityLabel={`Create post: ${item.title}`}><Text style={[styles.quickLinkIcon, { color: item.accent }]}>{item.icon}</Text><Text style={[styles.quickLinkText, { color: item.accent }]}>{item.title}</Text><Text style={[styles.quickLinkChevron, { color: item.accent }]}>›</Text></TouchableOpacity>)}</View></View> : null}
       <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={`Change feed city. Currently ${groupSuggestionCity}`}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>Near {groupSuggestionCity.split(",", 1)[0] || "you"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category === "ALL" ? "Current-city posts and listings · Tap to change" : categoryLabels[category]}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
-      {loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : <View style={styles.unifiedFeed}>
-        {posts.map((post, index) => <React.Fragment key={post.id}>{renderPost(post)}{category === "ALL" && index === communityInsertIndex ? renderCommunitySuggestions() : null}</React.Fragment>)}
-        {category === "ALL" && posts.length === 0 ? renderCommunitySuggestions() : null}
-        {!posts.length ? <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View> : null}
-        {!selectedGroup && nationalPosts.length ? <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across the USA</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>🇺🇸</Text></View> : null}
-        {!selectedGroup ? nationalPosts.map((post, index) => <React.Fragment key={`national-${post.id}`}>{renderPost(post)}{index === 2 ? renderLowestRental() : null}</React.Fragment>) : null}
-        {!selectedGroup && nationalPosts.length < 3 ? renderLowestRental() : null}
-        {!posts.length && !nationalPosts.length ? <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text> : null}
-        {hasMore ? <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()}><Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : "Load more conversations"}</Text></TouchableOpacity> : null}
-      </View>}
-    </Animated.ScrollView>
+      </>}
+      ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
+      ListFooterComponent={hasMore ? <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()}><Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : "Load more conversations"}</Text></TouchableOpacity> : null}
+    />
 
     <Modal visible={cityPickerOpen} transparent animationType="fade" onRequestClose={() => setCityPickerOpen(false)}>
       <View style={styles.cityPickerBackdrop}><View style={styles.cityPickerCard}>
@@ -1077,7 +1147,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
 }
 
 const styles = StyleSheet.create({
-  unifiedFeed: { gap: 3 }, housingSection: { gap: 3 }, housingPostCard: { backgroundColor: theme.colors.panel, borderTopColor: theme.colors.line, borderBottomColor: theme.colors.line, borderTopWidth: 1, borderBottomWidth: 1, paddingHorizontal: 13, paddingVertical: 16, gap: 12 }, housingPostBadge: { maxWidth: 128, backgroundColor: "#173a2d", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6 }, housingPostBadgeText: { color: "#8ee4bf", fontWeight: "900", fontSize: 9, textTransform: "uppercase" }, housingPostImage: { width: 280, height: 190, borderRadius: 5, backgroundColor: theme.colors.panel2 }, housingPostPhotoFallback: { height: 126, borderRadius: 5, alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: "#122d24", borderWidth: 1, borderColor: "#244c3d" }, housingPostPhotoIcon: { fontSize: 35 }, housingPostPhotoCopy: { color: "#9dd9c2", fontWeight: "800", fontSize: 12 }, housingFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 }, housingFact: { maxWidth: "48%", minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 10 }, housingFactIcon: { fontSize: 12 }, housingFactText: { flexShrink: 1, color: theme.colors.soft, fontWeight: "700", fontSize: 11 }, housingPostActions: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 11 }, housingDetailsButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.brand, paddingHorizontal: 15 }, housingDetailsButtonText: { color: "#06291e", fontWeight: "900", fontSize: 12 }, housingShareButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 13 }, housingShareButtonText: { color: theme.colors.soft, fontWeight: "800", fontSize: 12 }, housingExpiry: { marginLeft: "auto", color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, housingCopy: { flex: 1 }, housingArrow: { color: theme.colors.muted, fontSize: 28, fontWeight: "300" }, addHousingCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, padding: 11, marginTop: 8, borderRadius: 14, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.brand, backgroundColor: "rgba(24,168,120,.08)" }, addHousingIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, addHousingPlus: { color: "#06291e", fontSize: 25, fontWeight: "700" }, addHousingTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, addHousingBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
+  unifiedFeed: { gap: 3 }, feedRowSeparator: { height: 3 }, housingSection: { gap: 3 }, housingPostCard: { backgroundColor: theme.colors.panel, borderTopColor: theme.colors.line, borderBottomColor: theme.colors.line, borderTopWidth: 1, borderBottomWidth: 1, paddingHorizontal: 13, paddingVertical: 16, gap: 12 }, housingPostBadge: { maxWidth: 128, backgroundColor: "#173a2d", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6 }, housingPostBadgeText: { color: "#8ee4bf", fontWeight: "900", fontSize: 9, textTransform: "uppercase" }, housingPostImage: { width: 280, height: 190, borderRadius: 5, backgroundColor: theme.colors.panel2 }, housingPostPhotoFallback: { height: 126, borderRadius: 5, alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: "#122d24", borderWidth: 1, borderColor: "#244c3d" }, housingPostPhotoIcon: { fontSize: 35 }, housingPostPhotoCopy: { color: "#9dd9c2", fontWeight: "800", fontSize: 12 }, housingFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 }, housingFact: { maxWidth: "48%", minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 10 }, housingFactIcon: { fontSize: 12 }, housingFactText: { flexShrink: 1, color: theme.colors.soft, fontWeight: "700", fontSize: 11 }, housingPostActions: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 11 }, housingDetailsButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.brand, paddingHorizontal: 15 }, housingDetailsButtonText: { color: "#06291e", fontWeight: "900", fontSize: 12 }, housingShareButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 13 }, housingShareButtonText: { color: theme.colors.soft, fontWeight: "800", fontSize: 12 }, housingExpiry: { marginLeft: "auto", color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, housingCopy: { flex: 1 }, housingArrow: { color: theme.colors.muted, fontSize: 28, fontWeight: "300" }, addHousingCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, padding: 11, marginTop: 8, borderRadius: 14, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.brand, backgroundColor: "rgba(24,168,120,.08)" }, addHousingIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, addHousingPlus: { color: "#06291e", fontSize: 25, fontWeight: "700" }, addHousingTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, addHousingBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
   heroGlow: { position: "absolute", right: -40, bottom: -70, width: 260, height: 150, borderRadius: 130, backgroundColor: "rgba(16,108,87,.18)" }, accentLeft: { position: "absolute", left: 25, top: 19, color: "#ffad24", fontSize: 25, fontWeight: "900", transform: [{ rotate: "-25deg" }] }, accentRight: { position: "absolute", right: 87, top: 17, color: "#18a681", fontSize: 21, fontWeight: "900", transform: [{ rotate: "20deg" }] }, askBadgeTail: { position: "absolute", left: 9, bottom: -7, width: 18, height: 18, backgroundColor: "#ef3e42", transform: [{ rotate: "25deg" }] }, communityTagStitch: { position: "absolute", top: 4, bottom: 4, left: 5, right: 5, borderWidth: 1, borderStyle: "dashed", borderColor: "#ed9d38", borderRadius: 7 }, subtitleAccent: { color: theme.colors.brand, fontWeight: "900" },
   resolvedBadge: { alignSelf: "flex-start", borderRadius: 999, backgroundColor: "#173b2d", paddingHorizontal: 11, paddingVertical: 6 }, resolvedText: { color: "#8ce6bf", fontWeight: "800", fontSize: 12 }, detailFacts: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, fact: { minWidth: "30%", flexGrow: 1, borderRadius: 12, backgroundColor: theme.colors.panel2, padding: 10 }, factLabel: { color: theme.colors.muted, fontSize: 9, textTransform: "uppercase" }, factValue: { color: theme.colors.text, fontWeight: "800", fontSize: 12, marginTop: 3 }, inlineFields: { flexDirection: "row", gap: 8 }, inlineInput: { flex: 1 },
   postAuthorSoft: { fontWeight: "700" }, postTitleSoft: { fontWeight: "700" }, postBadgeSoft: { fontWeight: "600" },
