@@ -8,6 +8,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import smtplib
 import sqlite3
 import threading
@@ -2794,10 +2795,13 @@ def list_db_backups() -> list[Path]:
     return sorted(BACKUP_DIR.glob("fairfares-*.sqlite3"), key=lambda path: path.stat().st_mtime, reverse=True)
 
 
-def prune_db_backups() -> None:
-    keep = int(os.environ.get("FAIRFARES_BACKUP_KEEP", "20"))
+def prune_db_backups(keep: int | None = None) -> int:
+    keep = max(0, int(os.environ.get("FAIRFARES_BACKUP_KEEP", "5"))) if keep is None else max(0, keep)
+    removed = 0
     for backup in list_db_backups()[keep:]:
         backup.unlink(missing_ok=True)
+        removed += 1
+    return removed
 
 
 def create_db_backup(reason: str = "manual") -> Path:
@@ -3071,6 +3075,17 @@ def auto_backup_on_startup() -> None:
     if os.environ.get("FAIRFARES_AUTO_BACKUP", "1") == "0":
         return
     try:
+        prune_db_backups()
+        database_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+        free_bytes = shutil.disk_usage(DB_PATH.parent).free
+        required_bytes = database_bytes + max(64 * 1024 * 1024, database_bytes // 4)
+        if free_bytes < required_bytes:
+            print(json.dumps({
+                "event": "sqlite_backup_skipped_low_disk",
+                "free_bytes": free_bytes,
+                "required_bytes": required_bytes,
+            }, separators=(",", ":")), flush=True)
+            return
         backup_path = create_db_backup("startup")
         print(f"SQLite backup saved: {backup_path}")
     except Exception as exc:
@@ -39798,7 +39813,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     load_env_file()
     log_explorer_config_status()
-    init_db()
+    # Prune expired backups before SQLite needs space for its migration journal.
+    # If a previously over-retained backup set filled Render's persistent disk,
+    # keep the two newest recovery points and retry initialization once. Never
+    # remove the active database or its WAL/SHM files here.
+    prune_db_backups()
+    try:
+        init_db()
+    except sqlite3.OperationalError as exc:
+        if "disk i/o error" not in str(exc).lower():
+            raise
+        removed_backups = prune_db_backups(keep=2)
+        print(json.dumps({
+            "event": "sqlite_startup_disk_recovery",
+            "removed_backups": removed_backups,
+        }, separators=(",", ":")), flush=True)
+        if not removed_backups:
+            raise
+        init_db()
     auto_backup_on_startup()
     start_mobile_push_scheduler()
     start_promotional_push_scheduler()

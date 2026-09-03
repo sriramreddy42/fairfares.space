@@ -15,7 +15,7 @@ services:
       - key: FAIRFARES_BACKUP_DIR
         value: /var/data/backups
       - key: FAIRFARES_BACKUP_KEEP
-        value: "20"
+        value: "5"
       # Render terminates public traffic at its managed proxy. Enable forwarded
       # client IPs so abuse limits do not collapse every customer into the
       # proxy's private address. Never enable this on a directly exposed server.
