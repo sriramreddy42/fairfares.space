@@ -6821,24 +6821,33 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {attachmentMenuOpen ? (
           <View style={styles.attachmentPanel}>
+            <View style={styles.attachmentGrabber} />
             <View style={styles.attachmentPanelHeader}>
-              <Text style={styles.attachmentPanelTitle}>Add to Chitthi</Text>
+              <Text style={styles.attachmentPanelTitle}>Attach</Text>
               <TouchableOpacity style={styles.attachmentClose} onPress={() => setAttachmentMenuOpen(false)} accessibilityLabel="Close attachments">
                 <Text style={styles.attachmentCloseText}>×</Text>
               </TouchableOpacity>
             </View>
             <View style={styles.attachmentGrid}>
-              <TouchableOpacity style={styles.attachmentTile} onPress={() => void chooseAndSendFile()} accessibilityRole="button" accessibilityLabel="Choose a file">
-                <View style={[styles.attachmentIcon, styles.fileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>
-                <Text style={styles.attachmentLabel}>File</Text>
-              </TouchableOpacity>
               <TouchableOpacity style={styles.attachmentTile} onPress={() => void chooseAndSendImage()} accessibilityRole="button" accessibilityLabel="Choose photos or videos">
                 <View style={[styles.attachmentIcon, styles.photoIcon]}><Text style={styles.attachmentIconText}>▧</Text></View>
-              <Text style={styles.attachmentLabel}>Photos</Text>
+                <Text style={styles.attachmentLabel}>Photos</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.attachmentTile} onPress={() => void takeAndSendPhoto()} accessibilityRole="button" accessibilityLabel="Take a photo">
                 <View style={[styles.attachmentIcon, styles.cameraIcon]}><Text style={styles.attachmentIconText}>◉</Text></View>
                 <Text style={styles.attachmentLabel}>Camera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.attachmentTile} onPress={sharingLocation ? () => stopLiveLocation(true) : chooseLiveLocationDuration} accessibilityRole="button" accessibilityLabel={sharingLocation ? "Stop sharing live location" : "Share live location"}>
+                <View style={[styles.attachmentIcon, styles.locationAttachmentIcon]}><Text style={styles.attachmentIconText}>⌖</Text></View>
+                <Text style={styles.attachmentLabel}>{sharingLocation ? "Stop location" : "Location"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.attachmentTile} onPress={() => void choosePhoneContact()} accessibilityRole="button" accessibilityLabel="Share a phone contact">
+                <View style={[styles.attachmentIcon, styles.contactIcon]}><Text style={styles.attachmentIconText}>●</Text></View>
+                <Text style={styles.attachmentLabel}>Contact</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.attachmentTile} onPress={() => void chooseAndSendFile()} accessibilityRole="button" accessibilityLabel="Choose a document">
+                <View style={[styles.attachmentIcon, styles.fileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>
+                <Text style={styles.attachmentLabel}>Document</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.attachmentTile} onPress={() => openRichComposer("POLL")} accessibilityRole="button" accessibilityLabel="Create a poll">
                 <View style={[styles.attachmentIcon, styles.pollIcon]}><Text style={styles.attachmentIconText}>≡</Text></View>
@@ -6847,14 +6856,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <TouchableOpacity style={styles.attachmentTile} onPress={() => openRichComposer("EVENT")} accessibilityRole="button" accessibilityLabel="Create an event">
                 <View style={[styles.attachmentIcon, styles.eventIcon]}><Text style={styles.attachmentIconText}>▦</Text></View>
                 <Text style={styles.attachmentLabel}>Event</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.attachmentTile} onPress={() => void choosePhoneContact()} accessibilityRole="button" accessibilityLabel="Share a phone contact">
-                <View style={[styles.attachmentIcon, styles.contactIcon]}><Text style={styles.attachmentIconText}>●</Text></View>
-                <Text style={styles.attachmentLabel}>Contact</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.attachmentTile} onPress={sharingLocation ? () => stopLiveLocation(true) : chooseLiveLocationDuration} accessibilityRole="button" accessibilityLabel={sharingLocation ? "Stop sharing live location" : "Share live location"}>
-                <View style={[styles.attachmentIcon, styles.locationAttachmentIcon]}><Text style={styles.attachmentIconText}>⌖</Text></View>
-                <Text style={styles.attachmentLabel}>{sharingLocation ? "Stop location" : "Live location"}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -6897,10 +6898,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
-        {pendingAttachment ? (
+        {pendingAttachment?.kind === "FILE" ? (
           <View style={styles.pendingAttachmentCard}>
-            {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{pendingAttachment.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${pendingAttachment.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
-            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : pendingAttachment.kind === "VIDEO" ? `${(pendingAttachment.size / 1_000_000).toFixed(1)} MB · ${pendingAttachment.videoQuality === "data-saver" ? "Data saver" : "HD"}` : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text>{pendingAttachment.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.videoQualityChoices}><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality !== "data-saver" }} accessibilityLabel="HD video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "original" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality === "data-saver" }} accessibilityLabel="Data saver video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "data-saver" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity></View> : null}</View>
+            <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>
+            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send</Text></View>
             <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingAttachment ? [pendingAttachment] : []); setPendingAttachment(null); }} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </View>
         ) : null}
@@ -7553,23 +7554,24 @@ const styles = StyleSheet.create({
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },
   plusVertical: { position: "absolute", width: 5, height: 24, borderRadius: 3, backgroundColor: theme.colors.blue },
-  attachmentPanel: { position: "absolute", left: 8, bottom: 62, width: 340, maxWidth: "92%", backgroundColor: "#f7f3ed", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "#cbc7c0", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 14, zIndex: 20 },
-  attachmentPanelHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingHorizontal: 4 },
-  attachmentPanelTitle: { color: "#242424", fontSize: 15, fontWeight: "700" },
-  attachmentClose: { width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(0,0,0,0.06)", alignItems: "center", justifyContent: "center" },
-  attachmentCloseText: { color: "#333", fontSize: 22, lineHeight: 24, marginTop: -2 },
-  attachmentGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  attachmentTile: { width: 94, minHeight: 116, alignItems: "center", justifyContent: "flex-start" },
-  attachmentIcon: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", marginBottom: 7 },
-  attachmentIconText: { color: "#fff", fontSize: 27, fontWeight: "900" },
-  fileIcon: { backgroundColor: "#0aa3dc" },
-  photoIcon: { backgroundColor: "#1479f5" },
-  cameraIcon: { backgroundColor: "#3767d6" },
-  pollIcon: { backgroundColor: "#ffad32" },
-  eventIcon: { backgroundColor: "#f23d63" },
-  contactIcon: { backgroundColor: "#e45d2a" },
-  locationAttachmentIcon: { backgroundColor: "#16a36a" },
-  attachmentLabel: { color: "#242424", fontSize: 13, lineHeight: 17, fontWeight: "700", textAlign: "center" },
+  attachmentPanel: { position: "absolute", left: 10, right: 10, bottom: 58, backgroundColor: "#111615", borderRadius: 28, paddingHorizontal: 14, paddingTop: 9, paddingBottom: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.34, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 18, zIndex: 20 },
+  attachmentGrabber: { width: 42, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.24)", alignSelf: "center", marginBottom: 9 },
+  attachmentPanelHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 2 },
+  attachmentPanelTitle: { color: "rgba(255,255,255,0.92)", fontSize: 15, fontWeight: "800" },
+  attachmentClose: { width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" },
+  attachmentCloseText: { color: "rgba(255,255,255,0.88)", fontSize: 22, lineHeight: 24, marginTop: -2 },
+  attachmentGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 18, justifyContent: "space-between" },
+  attachmentTile: { width: "25%", minHeight: 92, alignItems: "center", justifyContent: "flex-start", paddingHorizontal: 3 },
+  attachmentIcon: { width: 58, height: 58, borderRadius: 22, alignItems: "center", justifyContent: "center", marginBottom: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)" },
+  attachmentIconText: { color: "#fff", fontSize: 24, fontWeight: "900" },
+  fileIcon: { backgroundColor: "#178fce" },
+  photoIcon: { backgroundColor: "#2378e5" },
+  cameraIcon: { backgroundColor: "#3d4652" },
+  pollIcon: { backgroundColor: "#d99625" },
+  eventIcon: { backgroundColor: "#e61f58" },
+  contactIcon: { backgroundColor: "#5b6573" },
+  locationAttachmentIcon: { backgroundColor: "#12a86b" },
+  attachmentLabel: { color: "rgba(255,255,255,0.86)", fontSize: 12, lineHeight: 16, fontWeight: "700", textAlign: "center" },
   wallpaperPanel: { position: "absolute", left: 8, bottom: 62, width: 350, maxWidth: "94%", backgroundColor: "#f7f3ed", borderRadius: 22, padding: 15, borderWidth: 1, borderColor: "#cbc7c0", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 15, zIndex: 25 },
   wallpaperHelp: { color: "#716b63", fontSize: 12, marginHorizontal: 4, marginBottom: 12 },
   wallpaperGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
