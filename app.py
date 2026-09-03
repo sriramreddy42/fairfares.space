@@ -22758,16 +22758,20 @@ def app_only_open_script(deep_link: str) -> str:
     ios_store = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
     android_store = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
     android_link = ""
+    universal_link = ""
     if deep_link.startswith("fairfares://"):
         parsed = urllib.parse.urlparse(deep_link)
         path = f"/{parsed.netloc}{parsed.path}"
-        query = f"?{parsed.query}" if parsed.query else ""
+        query_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        query_params.append(("open_or_install", "1"))
+        query = f"?{urllib.parse.urlencode(query_params)}" if query_params else "?open_or_install=1"
+        universal_link = f"https://www.fairfare.space{path}{query}"
         android_link = (
             f"intent://www.fairfare.space{path}{query}#Intent;"
             "scheme=https;package=com.fairfares.mobile;"
             f"S.browser_fallback_url={urllib.parse.quote(android_store, safe='')};end"
         )
-    return f"""<style>.ff-share-app-actions{{position:relative;z-index:20;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:#07140f;color:#f4fff9;font:700 14px system-ui,-apple-system,sans-serif}}.ff-share-app-actions a{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:999px;text-decoration:none}}.ff-share-app-open{{background:#00c997;color:#06291e}}.ff-share-app-install{{border:1px solid #547064;color:#f4fff9}}</style><script>(function(){{var ios={json.dumps(ios_store)},android={json.dumps(android_store)},deepLink={json.dumps(deep_link)},androidLink={json.dumps(android_link)};document.addEventListener('DOMContentLoaded',function(){{var isAndroid=/android/i.test(navigator.userAgent),store=isAndroid?android:ios,openTarget=isAndroid&&androidLink?androidLink:deepLink;var bar=document.createElement('aside');bar.className='ff-share-app-actions';bar.setAttribute('aria-label','FairFares app options');var open=document.createElement('a');open.className='ff-share-app-open';open.textContent='Open in FairFares';open.href=openTarget;if(isAndroid&&androidLink){{open.rel='noopener';}}else{{open.addEventListener('click',function(event){{event.preventDefault();var started=Date.now(),timer=window.setTimeout(function(){{if(!document.hidden&&Date.now()-started<2600)location.href=store}},1500);window.addEventListener('pagehide',function(){{window.clearTimeout(timer)}},{{once:true}});document.addEventListener('visibilitychange',function(){{if(document.hidden)window.clearTimeout(timer)}},{{once:true}});location.href=deepLink}});}}var install=document.createElement('a');install.className='ff-share-app-install';install.textContent='Install FairFares';install.href=store;bar.appendChild(open);bar.appendChild(install);document.body.insertBefore(bar,document.body.firstChild)}})}})()</script>"""
+    return f"""<style>.ff-share-app-actions{{position:relative;z-index:20;display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:#07140f;color:#f4fff9;font:700 14px system-ui,-apple-system,sans-serif}}.ff-share-app-actions a{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:999px;text-decoration:none}}.ff-share-app-open{{background:#00c997;color:#06291e}}.ff-share-app-install{{border:1px solid #547064;color:#f4fff9}}</style><script>(function(){{var ios={json.dumps(ios_store)},android={json.dumps(android_store)},deepLink={json.dumps(deep_link)},androidLink={json.dumps(android_link)},universalLink={json.dumps(universal_link)};document.addEventListener('DOMContentLoaded',function(){{var isAndroid=/android/i.test(navigator.userAgent),store=isAndroid?android:ios,openTarget=isAndroid&&androidLink?androidLink:universalLink||deepLink;var bar=document.createElement('aside');bar.className='ff-share-app-actions';bar.setAttribute('aria-label','FairFares app options');var open=document.createElement('a');open.className='ff-share-app-open';open.textContent='Open in FairFares';open.href=openTarget;if(isAndroid&&androidLink)open.rel='noopener';var install=document.createElement('a');install.className='ff-share-app-install';install.textContent='Install FairFares';install.href=store;bar.appendChild(open);bar.appendChild(install);document.body.insertBefore(bar,document.body.firstChild)}})}})()</script>"""
 
 
 def android_chitthi_invite_intent(invite_query: str) -> str:
@@ -25924,6 +25928,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.current_user()
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
+        if (params.get("open_or_install") or [""])[0] == "1":
+            # Installed iOS clients should claim the associated-domain
+            # /carpool link before it reaches this handler. If a browser gets
+            # here, FairFares is unavailable for that link, so send the user to
+            # the correct store instead of showing the web carpool page again.
+            user_agent = self.headers.get("User-Agent", "")
+            store_url = (
+                "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+                if re.search(r"android", user_agent, re.IGNORECASE)
+                else "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+            )
+            self.redirect(store_url)
+            return
         search_city = clean_text_value((params.get("city", ["Denver, CO"])[0] or ""), 120) or "Denver, CO"
         shared_ride_id = clean_text_value((params.get("rideId", params.get("ride_id", [""]))[0] or ""), 80)
         shared_ride = None
