@@ -12347,14 +12347,27 @@ def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
     repair_active_housing_city_labels()
     with db() as con:
+        # Only touch missing or changed projections. Rewriting every active
+        # listing (and all of its images) made an ordinary Ask read hold the
+        # SQLite writer lock long enough to starve unrelated Carpool reads.
         listings = con.execute(
             """
             SELECT accommodation_posts.*
             FROM accommodation_posts
             JOIN users ON users.id = accommodation_posts.user_id
+            LEFT JOIN ask_community_posts projected
+              ON projected.source_kind = 'HOUSING'
+             AND projected.source_public_id = accommodation_posts.public_id
             WHERE accommodation_posts.visibility_status = 'ACTIVE'
               AND accommodation_posts.public_id IS NOT NULL
               AND accommodation_posts.public_id != ''
+              AND (
+                    projected.id IS NULL
+                 OR COALESCE(projected.updated_at, '') != COALESCE(accommodation_posts.updated_at, accommodation_posts.created_at, '')
+                 OR COALESCE(projected.title, '') != COALESCE(accommodation_posts.title, '')
+                 OR COALESCE(projected.body, '') != COALESCE(accommodation_posts.description, '')
+                 OR COALESCE(projected.city, '') != COALESCE(accommodation_posts.city, '')
+              )
             """
         ).fetchall()
         for listing in listings:
@@ -12431,6 +12444,7 @@ def housing_community_projection_needs_sync() -> bool:
                  OR COALESCE(projected.updated_at, '') != COALESCE(listings.updated_at, listings.created_at, '')
                  OR COALESCE(projected.title, '') != COALESCE(listings.title, '')
                  OR COALESCE(projected.body, '') != COALESCE(listings.description, '')
+                 OR COALESCE(projected.city, '') != COALESCE(listings.city, '')
               )
             LIMIT 1
             """
@@ -24239,24 +24253,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "error_type": type(exc).__name__,
             }, separators=(",", ":")), flush=True)
         except sqlite3.OperationalError as exc:
-            # A busy SQLite database is temporary capacity pressure, not an
-            # unhandled application crash. Return an explicit retryable result
-            # before the mobile client's request timeout expires.
             message = str(exc).lower()
-            error_kind = "database_busy" if ("locked" in message or "busy" in message) else "database_operational_error"
+            database_busy = "locked" in message or "busy" in message
+            error_kind = "database_busy" if database_busy else "database_operational_error"
             print(json.dumps({
                 "event": error_kind,
                 "request_id": self.request_id,
                 "method": str(getattr(self, "command", "")),
                 "path": urllib.parse.urlparse(str(getattr(self, "path", ""))).path[:300],
+                "error": clean_text_value(str(exc), 300),
             }, separators=(",", ":")), flush=True)
             if int(getattr(self, "response_status", 0) or 0) == 0:
                 try:
-                    self.send_json(
-                        {"ok": False, "retryable": True, "message": "FairFares is temporarily busy. Please try again."},
-                        503,
-                        {"Retry-After": "1"},
-                    )
+                    if database_busy:
+                        # Lock contention is temporary capacity pressure. Let
+                        # idempotent mobile reads retry after a short delay.
+                        self.send_json(
+                            {"ok": False, "retryable": True, "message": "FairFares is temporarily busy. Please try again."},
+                            503,
+                            {"Retry-After": "1"},
+                        )
+                    else:
+                        # Missing tables/columns and malformed queries are not
+                        # retryable. Report them as server errors so deployment
+                        # monitoring exposes the real schema/query regression.
+                        self.send_json(
+                            {"ok": False, "retryable": False, "message": "FairFares could not complete this request."},
+                            500,
+                        )
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     self.client_disconnected = True
                     self.close_connection = True
@@ -38633,7 +38657,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
-        ensure_housing_community_projection_current()
+        try:
+            ensure_housing_community_projection_current()
+        except sqlite3.OperationalError as exc:
+            # Projection rows are derived. If another writer is briefly busy,
+            # serve the last complete Ask feed instead of failing the read.
+            message = str(exc).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
         user = self.current_user()
         guest = None if user else self.current_community_guest()
         viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)

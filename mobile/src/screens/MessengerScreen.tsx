@@ -3356,7 +3356,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   useEffect(() => {
     if (signedIn) {
-      refreshMessenger();
+      // Opening Chitthi can coincide with a brief bootstrap/upstream outage.
+      // Keep the automatic refresh quiet so cached/bootstrap conversations can
+      // remain usable instead of showing a false "unavailable" alert moments
+      // before a later background refresh succeeds. Explicit user refreshes
+      // still surface errors through refreshMessenger's default options.
+      refreshMessenger({ showError: false });
     }
   }, [signedIn, currentUserId]);
 
