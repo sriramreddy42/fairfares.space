@@ -25355,7 +25355,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             payload = {
                 "applinks": {
                     "apps": [],
-                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}, {"/": "/community/*"}, {"/": "/accommodations"}, {"/": "/carpool"}]}],
+                    "details": [{"appIDs": ["9RVTF77D2S.com.fairfares.mobile"], "components": [{"/": "/chitthi/*"}, {"/": "/fchat/*"}, {"/": "/community/*"}, {"/": "/accommodations"}, {"/": "/carpool"}, {"/": "/carpool/open"}]}],
                 }
             }
         else:

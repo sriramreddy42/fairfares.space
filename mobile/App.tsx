@@ -1180,7 +1180,7 @@ function FairFaresApp() {
           }
           return;
         }
-        const opensCarpool = (host === "fairfare.space" && parsed.pathname === "/carpool") || (parsed.protocol === "fairfares:" && host === "carpool");
+        const opensCarpool = (host === "fairfare.space" && (parsed.pathname === "/carpool" || parsed.pathname === "/carpool/open")) || (parsed.protocol === "fairfares:" && host === "carpool");
         if (opensCarpool) {
           const rideId = parsed.searchParams.get("rideId") || parsed.searchParams.get("ride_id") || "";
           setSelectedNeed("ride_need");
