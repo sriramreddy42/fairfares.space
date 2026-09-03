@@ -22762,10 +22762,16 @@ def app_only_open_script(deep_link: str) -> str:
     if deep_link.startswith("fairfares://"):
         parsed = urllib.parse.urlparse(deep_link)
         path = f"/{parsed.netloc}{parsed.path}"
-        query_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-        query_params.append(("open_or_install", "1"))
+        raw_query_params = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if path == "/carpool":
+            handoff_query = f"?{urllib.parse.urlencode(raw_query_params)}" if raw_query_params else ""
+            universal_link = f"https://www.fairfare.space/carpool/open{handoff_query}"
+        else:
+            query_params = [*raw_query_params, ("open_or_install", "1")]
+            query = f"?{urllib.parse.urlencode(query_params)}" if query_params else "?open_or_install=1"
+            universal_link = f"https://www.fairfare.space{path}{query}"
+        query_params = [*raw_query_params, ("open_or_install", "1")]
         query = f"?{urllib.parse.urlencode(query_params)}" if query_params else "?open_or_install=1"
-        universal_link = f"https://www.fairfare.space{path}{query}"
         android_link = (
             f"intent://www.fairfare.space{path}{query}#Intent;"
             "scheme=https;package=com.fairfares.mobile;"
@@ -24627,6 +24633,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rides/activity":
             self.api_mobile_ride_activity()
             return
+        if parsed.path == "/carpool/open":
+            self.carpool_open_landing(parsed)
+            return
         if parsed.path == "/api/mobile/rides/driver-location":
             self.api_mobile_ride_driver_location(parsed)
             return
@@ -24726,6 +24735,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/sitemap.xml": self.sitemap_xml,
             "/deals": self.deals_page,
             "/accommodations": self.accommodations_page,
+            "/carpool/open": self.carpool_open_landing,
             "/carpool": self.carpool_page,
             "/wiki": self.wiki_page,
             "/explorer": self.explorer_page,
@@ -25541,6 +25551,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "text/html; charset=utf-8",
             cache_control="private, no-store" if token else "public, max-age=300",
         )
+
+    def carpool_open_landing(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        ride_id = clean_text_value((params.get("rideId", params.get("ride_id", [""]))[0] or ""), 80)
+        ios_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
+        android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
+        app_query = urllib.parse.urlencode({"rideId": ride_id}) if ride_id else ""
+        ios_app_link = f"fairfares://carpool?{app_query}" if app_query else "fairfares://carpool"
+        universal_app_link = f"https://fairfare.space/carpool?{app_query}" if app_query else "https://fairfare.space/carpool"
+        android_app_link = (
+            f"intent://www.fairfare.space/carpool?{app_query}#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
+            if app_query else
+            f"intent://www.fairfare.space/carpool#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
+        )
+        fairfares_logo = absolute_public_url("/static/img/fairfares-glow-logo.png")
+        safe_universal_app_link = html.escape(universal_app_link, quote=True)
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><meta name=\"robots\" content=\"noindex,nofollow\"><title>Open FairFares Carpool</title><meta name=\"description\" content=\"Open FairFares Carpool to find or offer rides.\"></head><body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 22px\"><p style=\"color:#62d8a6;font-weight:850;letter-spacing:.1em;text-transform:uppercase\">FairFares Carpool</p><h1 style=\"font-size:34px;line-height:1.08;margin:10px 0\">Going the same way?</h1><p style=\"color:#b7c2d4;line-height:1.5\">Find people traveling your route, share seats, and coordinate privately in FairFares.</p><a id=\"continue-fairfares\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#00c997;color:#06291e;text-decoration:none;padding:15px;border-radius:999px;font-weight:900;margin-top:20px\">Open in FairFares</a><a id=\"install-fairfares\" href=\"{html.escape(ios_store_url, quote=True)}\" style=\"display:block;color:#c9d7d1;text-decoration:none;padding:14px;border-radius:999px;font-weight:800;margin-top:10px;border:1px solid #547064\">Install FairFares</a><p style=\"color:#8493aa;font-size:13px;line-height:1.4;margin:14px 0 0\">Opens the app if installed, or takes you to the correct store.</p></main><script>(function(){{var button=document.getElementById('continue-fairfares'),install=document.getElementById('install-fairfares');if(!button)return;var isAndroid=/android/i.test(navigator.userAgent),iosStore={json.dumps(ios_store_url)},androidStore={json.dumps(android_store_url)};if(install)install.href=isAndroid?androidStore:iosStore;if(isAndroid){{button.href={json.dumps(android_app_link)};return}}var appLink={json.dumps(ios_app_link)},storeLink=iosStore,timer=0;button.href=appLink;button.addEventListener('click',function(event){{event.preventDefault();var started=Date.now();window.location.href=appLink;timer=window.setTimeout(function(){{if(!document.hidden&&Date.now()-started<2600)window.location.href=storeLink}},1500)}});document.addEventListener('visibilitychange',function(){{if(document.hidden&&timer){{window.clearTimeout(timer);timer=0}}}})}})()</script></body></html>"""
+        self.send_text(body, "text/html; charset=utf-8", cache_control="private, no-store")
 
     def healthz(self) -> None:
         body = b"ok"
