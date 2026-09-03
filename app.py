@@ -214,11 +214,15 @@ _OPERATIONAL_ALERTS: dict[str, float] = {}
 _OPERATIONAL_ALERTS_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
+_ACCOMMODATION_CITY_REPAIR_LOCK = threading.Lock()
+_ACCOMMODATION_CITY_REPAIR_LAST_RUN: dict[str, float] = {}
 _CHITTHI_MEDIA_CLEANUP_LOCK = threading.Lock()
 _CHITTHI_MEDIA_CLEANUP_LAST_RUN: dict[str, float] = {}
 _CHITTHI_MESSAGE_CLEANUP_LOCK = threading.Lock()
 _CHITTHI_MESSAGE_CLEANUP_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
+_SESSION_CLEANUP_LOCK = threading.Lock()
+_SESSION_CLEANUP_LAST_RUN = 0.0
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
 _MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
@@ -228,8 +232,11 @@ _POPULAR_CITY_CACHE_LOCK = threading.Lock()
 _POPULAR_CITY_KEY_LOCKS: dict[str, threading.Lock] = {}
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
-MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 5)
+MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 30)
+MOBILE_SEARCH_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_SEARCH_CACHE_MAX_ENTRIES", 5_000)
 POPULAR_CITY_CACHE_SECONDS = positive_int_env("FAIRFARES_POPULAR_CITY_CACHE_SECONDS", 6 * 60 * 60)
+SESSION_CLEANUP_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_CLEANUP_SECONDS", 10 * 60)
+ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -2703,7 +2710,7 @@ def is_safe_mobile_return_url(url: str) -> bool:
 
 
 def cached_mobile_search(cache_key: tuple[object, ...], factory):
-    """Single-flight a short-lived public search result for burst traffic."""
+    """Single-flight short-lived public search results for burst traffic."""
     now = time.monotonic()
     with _MOBILE_SEARCH_CACHE_LOCK:
         cached = _MOBILE_SEARCH_CACHE.get(cache_key)
@@ -2719,11 +2726,15 @@ def cached_mobile_search(cache_key: tuple[object, ...], factory):
         value = factory()
         with _MOBILE_SEARCH_CACHE_LOCK:
             _MOBILE_SEARCH_CACHE[cache_key] = (time.monotonic() + MOBILE_SEARCH_CACHE_SECONDS, value)
-            if len(_MOBILE_SEARCH_CACHE) > 1_000:
+            if len(_MOBILE_SEARCH_CACHE) > MOBILE_SEARCH_CACHE_MAX_ENTRIES:
                 expired = [key for key, entry in _MOBILE_SEARCH_CACHE.items() if entry[0] <= time.monotonic()]
                 for key in expired:
                     _MOBILE_SEARCH_CACHE.pop(key, None)
                     _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
+            while len(_MOBILE_SEARCH_CACHE) > MOBILE_SEARCH_CACHE_MAX_ENTRIES:
+                oldest_key = next(iter(_MOBILE_SEARCH_CACHE))
+                _MOBILE_SEARCH_CACHE.pop(oldest_key, None)
+                _MOBILE_SEARCH_KEY_LOCKS.pop(oldest_key, None)
         return value, "MISS"
 
 
@@ -3200,6 +3211,12 @@ def persistent_rate_limit_record(
 
 def persistent_rate_limit_clear(scope: str, key: str) -> None:
     with db() as con:
+        exists = con.execute(
+            "SELECT 1 FROM security_rate_limits WHERE scope = ? AND rate_key = ? LIMIT 1",
+            (scope, key),
+        ).fetchone()
+        if not exists:
+            return
         con.execute("DELETE FROM security_rate_limits WHERE scope = ? AND rate_key = ?", (scope, key))
 
 
@@ -3624,11 +3641,14 @@ def find_user_by_login_identifier(con: sqlite3.Connection, identifier: object) -
     target_phone = normalize_phone(value)
     if not target_phone:
         return None
-    rows = con.execute("SELECT * FROM users WHERE phone IS NOT NULL AND phone != '' ORDER BY id DESC").fetchall()
-    for row in rows:
-        if normalize_phone(row_value(row, "phone")) == target_phone:
-            return row
-    return None
+    return con.execute(
+        f"""SELECT * FROM users
+            WHERE phone IS NOT NULL AND phone != ''
+              AND {normalized_phone_sql('phone')} = ?
+            ORDER BY id DESC
+            LIMIT 1""",
+        (target_phone,),
+    ).fetchone()
 
 
 def find_other_user_by_phone(con: sqlite3.Connection, phone: object, user_id: int) -> sqlite3.Row | None:
@@ -3728,6 +3748,23 @@ def cleanup_expired_sessions(con: sqlite3.Connection) -> None:
         """,
         (absolute_cutoff, idle_cutoff),
     )
+
+
+def cleanup_expired_sessions_periodically(con: sqlite3.Connection, *, force: bool = False) -> None:
+    """Keep login fast by pruning expired sessions at most once per interval."""
+    global _SESSION_CLEANUP_LAST_RUN
+    now = time.monotonic()
+    if not force and now - _SESSION_CLEANUP_LAST_RUN < SESSION_CLEANUP_INTERVAL_SECONDS:
+        return
+    if not _SESSION_CLEANUP_LOCK.acquire(blocking=False):
+        return
+    try:
+        if not force and now - _SESSION_CLEANUP_LAST_RUN < SESSION_CLEANUP_INTERVAL_SECONDS:
+            return
+        cleanup_expired_sessions(con)
+        _SESSION_CLEANUP_LAST_RUN = now
+    finally:
+        _SESSION_CLEANUP_LOCK.release()
 
 
 def repair_normalized_auth_emails(con: sqlite3.Connection) -> None:
@@ -7974,6 +8011,7 @@ def init_db() -> None:
         # High-traffic mobile lookup indexes. Keep these beside the schema
         # migrations so existing installations receive them on the next start.
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
+        con.execute(f"CREATE INDEX IF NOT EXISTS idx_users_phone_digits ON users({normalized_phone_sql('phone')}) WHERE phone IS NOT NULL AND phone != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
         con.execute("DELETE FROM security_rate_limits WHERE datetime(updated_at) < datetime('now', '-2 days')")
@@ -12329,8 +12367,15 @@ def housing_community_city_label(con: sqlite3.Connection, listing: sqlite3.Row |
     return raw_city
 
 
-def repair_active_housing_city_labels() -> int:
+def repair_active_housing_city_labels(*, force: bool = False) -> int:
     """Backfill safely resolvable US city/state values on active listings."""
+    repair_key = str(DB_PATH)
+    now = time.monotonic()
+    with _ACCOMMODATION_CITY_REPAIR_LOCK:
+        last_run = _ACCOMMODATION_CITY_REPAIR_LAST_RUN.get(repair_key, 0.0)
+        if not force and now - last_run < ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS:
+            return 0
+        _ACCOMMODATION_CITY_REPAIR_LAST_RUN[repair_key] = now
     repaired = 0
     with db() as con:
         rows = con.execute(
@@ -12360,7 +12405,7 @@ def repair_active_housing_city_labels() -> int:
 
 def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
-    repair_active_housing_city_labels()
+    repair_active_housing_city_labels(force=True)
     with db() as con:
         # Only touch missing or changed projections. Rewriting every active
         # listing (and all of its images) made an ordinary Ask read hold the
@@ -17868,10 +17913,9 @@ def mobile_ride_posts(
     page_limit = max(1, min(int(limit or 30), 50))
     page_offset = max(0, int(offset or 0))
     # Route searches require application-side geometry, but must never load an
-    # unlimited table into one HTTP worker. Two thousand active candidates is
-    # well above the expected 100-profile workload and bounds CPU/memory until
-    # route geometry moves to a spatial database.
-    route_candidate_limit = max(100, min(positive_int_env("FAIRFARES_RIDE_ROUTE_CANDIDATE_LIMIT", 2000), 10_000))
+    # unlimited table into one HTTP worker. Five hundred active candidates keeps
+    # interactive search bounded; dispatch performs deeper validation on demand.
+    route_candidate_limit = max(100, min(positive_int_env("FAIRFARES_RIDE_ROUTE_CANDIDATE_LIMIT", 500), 5_000))
     candidate_limit = route_candidate_limit if route_search else page_limit
     candidate_offset = 0 if route_search else page_offset
     values.extend([candidate_limit, candidate_offset])
@@ -36034,7 +36078,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     and row_value(user, "community_guidelines_version") == COMMUNITY_GUIDELINES_VERSION
                 )
                 if canonical_e164_phone(row_value(user, "phone")) and has_current_consent:
-                    cleanup_expired_sessions(con)
+                    cleanup_expired_sessions_periodically(con)
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
                     refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -36048,7 +36092,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # temporary compatibility window, keep consent explicitly
                 # pending and issue a session without entering that modal path.
                 if legacy_consent_grace:
-                    cleanup_expired_sessions(con)
+                    cleanup_expired_sessions_periodically(con)
                     session_token = secrets.token_urlsafe(32)
                     con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
                     refreshed = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -36131,7 +36175,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (phone, user_id),
                 )
             con.execute("UPDATE auth_phone_continuations SET phone = ?, used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (phone, token_hash))
-            cleanup_expired_sessions(con)
+            cleanup_expired_sessions_periodically(con)
             session_token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
             user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -36235,7 +36279,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (phone, user_id),
             )
             con.execute("UPDATE auth_phone_continuations SET used_at = CURRENT_TIMESTAMP WHERE token_hash = ?", (token_hash,))
-            cleanup_expired_sessions(con)
+            cleanup_expired_sessions_periodically(con)
             session_token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (session_token, user_id))
             user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -36287,7 +36331,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             clear_login_failures(account_rate_key)
             if password_hash_needs_upgrade(row_value(user, "password_hash")):
                 con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), int(row_value(user, "id") or 0)))
-            cleanup_expired_sessions(con)
+            cleanup_expired_sessions_periodically(con)
             token = secrets.token_urlsafe(32)
             con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, int(row_value(user, "id") or 0)))
         self.send_json({"ok": True, "token": token, "user": mobile_user_payload(user)})
@@ -36367,7 +36411,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     )
                     user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-                cleanup_expired_sessions(con)
+                cleanup_expired_sessions_periodically(con)
         except sqlite3.IntegrityError:
             self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
             return
