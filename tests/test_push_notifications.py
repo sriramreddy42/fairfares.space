@@ -159,20 +159,24 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(data["isGroup"])
         self.assertEqual(data["conversationName"], "DU Housing Board")
         self.assertEqual(data["subtitle"], "DU Housing Board")
-        self.assertIn(f"community={community_id}", data["groupAvatarUrl"])
+        self.assertEqual(data["groupAvatarUrl"], "")
         self.assertTrue(data["nativeGroupEnrichment"])
         self.assertEqual(data["notificationSchema"], 2)
 
     def test_queued_group_push_replaces_stale_https_avatar_before_delivery(self):
         with app.db() as con:
             con.execute(
-                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-FRESH-AVATAR', 'GROUP', 'Fresh Avatar Group')"
+                "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('FFG-FRESH-AVATAR', 'GROUP', 'Fresh Avatar Group', '/uploads/fresh-group.jpg')"
             )
             community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute(
                 """INSERT INTO chat_conversations (public_id, conversation_type, community_id, subject)
                    VALUES ('FFC-FRESH-AVATAR', 'GROUP', ?, 'Fresh Avatar Group')""",
                 (community_id,),
+            )
+            con.execute(
+                "UPDATE users SET profile_photo_url = '/uploads/fresh-sender.jpg' WHERE id = ?",
+                (self.user_id,),
             )
 
         _, _, data = app.refresh_queued_chitthi_notification(
@@ -192,6 +196,61 @@ class PushNotificationTest(unittest.TestCase):
         self.assertNotIn("signature=stale", data["groupAvatarUrl"])
         self.assertIn(f"user={self.user_id}", data["senderAvatarUrl"])
         self.assertNotIn("signature=stale", data["senderAvatarUrl"])
+
+    def test_missing_avatar_does_not_schedule_guaranteed_404_download(self):
+        with app.db() as con:
+            self.assertEqual(
+                app.chat_notification_avatar_url_if_present(
+                    con, "https://www.fairfare.space", user_id=self.user_id,
+                ),
+                "",
+            )
+            con.execute(
+                "UPDATE users SET profile_photo_url = 'http://legacy.example/avatar.jpg' WHERE id = ?",
+                (self.user_id,),
+            )
+            self.assertEqual(
+                app.chat_notification_avatar_url_if_present(
+                    con, "https://www.fairfare.space", user_id=self.user_id,
+                ),
+                "",
+            )
+            con.execute(
+                "UPDATE users SET profile_photo_url = '/uploads/present.jpg' WHERE id = ?",
+                (self.user_id,),
+            )
+            present = app.chat_notification_avatar_url_if_present(
+                con, "https://www.fairfare.space", user_id=self.user_id,
+            )
+        self.assertIn(f"user={self.user_id}", present)
+
+    def test_queued_direct_push_clears_stale_sender_avatar_when_photo_was_removed(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO chat_conversations (public_id, conversation_type, subject) VALUES ('FFC-NO-AVATAR', 'DIRECT', 'Private chat')"
+            )
+        _, _, data = app.refresh_queued_chitthi_notification(
+            "Push User",
+            "Hello",
+            {
+                "type": "CHITTHI_MESSAGE",
+                "conversationId": "FFC-NO-AVATAR",
+                "senderId": self.user_id,
+                "senderName": "Push User",
+                "senderAvatarUrl": "https://www.fairfare.space/stale-avatar.jpg",
+            },
+        )
+        self.assertFalse(data["isGroup"])
+        self.assertEqual(data["senderAvatarUrl"], "")
+
+        token = "ExpoPushToken[no-avatar-transport]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-no-avatar"}]})
+        data["targetPlatform"] = "android"
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], "Push User", "Hello", data)
+        delivered = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertNotIn("richContent", delivered)
+        self.assertEqual(delivered["data"]["senderAvatarUrl"], "")
 
     def test_legacy_multi_member_conversation_is_never_notified_as_direct(self):
         with app.db() as con:
@@ -729,7 +788,7 @@ class PushNotificationTest(unittest.TestCase):
         token = "ExpoPushToken[group-avatar-outbox]"
         with app.db() as con:
             con.execute(
-                "INSERT INTO chat_communities (public_id, kind, name) VALUES ('FFG-OUTBOX-AVATAR', 'GROUP', 'Outbox Avatar Group')"
+                "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('FFG-OUTBOX-AVATAR', 'GROUP', 'Outbox Avatar Group', '/uploads/outbox-group.jpg')"
             )
             community_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             con.execute(

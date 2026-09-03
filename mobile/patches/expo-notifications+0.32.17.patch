@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
-index 610d303..5199711 100644
+index 610d303..148fdc7 100644
 --- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
 +++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/presentation/builders/ExpoNotificationBuilder.kt
 @@ -5,13 +5,19 @@ import android.content.Context
@@ -33,7 +33,7 @@ index 610d303..5199711 100644
  
      builder.setAutoCancel(content.isAutoDismiss)
      builder.setOngoing(content.isSticky)
-@@ -104,9 +114,36 @@ open class ExpoNotificationBuilder(
+@@ -104,9 +114,42 @@ open class ExpoNotificationBuilder(
      builder.setContentTitle(content.title)
      builder.setContentText(content.text)
      builder.setSubText(content.subText)
@@ -47,7 +47,13 @@ index 610d303..5199711 100644
 +      val senderId = content.body?.optString("senderId")?.takeIf { it.isNotBlank() }
 +      val conversationName = content.body?.optString("conversationName").orEmpty().trim()
 +      val isGroup = content.body?.optBoolean("isGroup", false) == true || conversationName.isNotBlank()
-+      val conversationImage = notificationImage ?: if (isGroup) initialsAvatar(conversationName.ifBlank { "Chitthi group" }) else null
++      // A direct sender may legitimately have no profile photo, and a remote
++      // photo can be temporarily unavailable while Android builds the push.
++      // Always supply identity initials instead of falling through to the
++      // FairFares application icon. Groups continue to use the group name.
++      val conversationImage = notificationImage ?: initialsAvatar(
++        if (isGroup) conversationName.ifBlank { "Chitthi group" } else senderName
++      )
 +      val renderedText = content.text.orEmpty()
 +      val messageText = if (isGroup && conversationName.isNotBlank()) {
 +        renderedText.removePrefix("$conversationName\n")
@@ -73,25 +79,29 @@ index 610d303..5199711 100644
  
      color?.let { builder.color = it.toInt() }
      notificationContent.badgeCount?.toInt()?.let { builder.setNumber(it) }
-@@ -147,15 +184,41 @@ open class ExpoNotificationBuilder(
+@@ -147,15 +190,44 @@ open class ExpoNotificationBuilder(
        )
      )
  
 -    if (notificationContent.containsImage()) {
 -      val bitmap = notificationContent.getImage(context)
 -      bitmap?.let { builder.setLargeIcon(it) }
-+    val groupFallbackImage = if (isChitthiNotification) {
-+      val name = content.body?.optString("conversationName").orEmpty().trim()
-+      val isGroup = content.body?.optBoolean("isGroup", false) == true || name.isNotBlank()
-+      if (isGroup) initialsAvatar(name.ifBlank { "Chitthi group" }) else null
++    val chitthiFallbackImage = if (isChitthiNotification) {
++      val conversationName = content.body?.optString("conversationName").orEmpty().trim()
++      val isGroup = content.body?.optBoolean("isGroup", false) == true || conversationName.isNotBlank()
++      val senderName = content.body?.optString("senderName")?.takeIf { it.isNotBlank() }
++        ?: content.title?.takeIf { it.isNotBlank() }
++        ?: "FairFares member"
++      initialsAvatar(if (isGroup) conversationName.ifBlank { "Chitthi group" } else senderName)
 +    } else null
-+    if (notificationImage != null || groupFallbackImage != null) {
-+      builder.setLargeIcon(notificationImage ?: groupFallbackImage)
++    if (notificationImage != null || chitthiFallbackImage != null) {
++      builder.setLargeIcon(notificationImage ?: chitthiFallbackImage)
      } else {
        builder.setLargeIcon(largeIcon)
      }
      return builder.build()
    }
+
 +  private fun initialsAvatar(name: String): Bitmap? {
 +    val initials = name.trim().split(Regex("\\s+"))
 +      .filter { it.isNotBlank() }

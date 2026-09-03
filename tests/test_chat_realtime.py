@@ -474,7 +474,10 @@ class ChatRealtimeTest(unittest.TestCase):
             payload = push.call_args.args[3]
             self.assertTrue(payload["isGroup"])
             self.assertEqual(payload["conversationName"], "Reaction Group")
-            self.assertIn("community=", payload["groupAvatarUrl"])
+            # This group has no stored image. An empty URL lets Android/iOS
+            # render group initials immediately instead of downloading a URL
+            # that is guaranteed to return 404.
+            self.assertEqual(payload["groupAvatarUrl"], "")
             self.assertEqual(
                 payload["communicationRecipients"],
                 [{"id": self.outsider_id, "name": "Outsider"}],

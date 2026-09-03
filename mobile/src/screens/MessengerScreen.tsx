@@ -4043,12 +4043,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if (preparationConversationStillActive) setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
           publishMediaProgress(optimisticAttachmentId, null);
           if (!preparationWasCancelled && preparationConversationStillActive) {
-            if (attachments.length > 1) {
-              setPendingImages(attachments);
-              setPendingAttachment(null);
-            } else {
-              setPendingAttachment(selectedVideo);
-            }
+            setPendingImages(attachments);
+            setPendingAttachment(null);
             Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
           } else {
             releasePendingAttachments([selectedVideo]);
@@ -4239,7 +4235,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // Preparation may already have replaced and deleted the picker
             // source. Restore the current durable attachment, not that stale
             // original URI, so Retry can actually read the file.
-            setPendingAttachment(attachments[0] || optimisticAttachment);
+            const retryAttachment = attachments[0] || optimisticAttachment;
+            if (retryAttachment.kind === "IMAGE" || retryAttachment.kind === "VIDEO") {
+              setPendingImages([retryAttachment]);
+              setPendingAttachment(null);
+            } else {
+              setPendingAttachment(retryAttachment);
+              setPendingImages([]);
+            }
             setMessageText(cleanMessage);
           }
         }
@@ -4249,7 +4252,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         } else if (sendContextStillActive) {
           setAttachmentStatus("");
           if (!optimisticAttachment && remainingAttachments.length) {
-            if (remainingAttachments.length === 1) {
+            if (remainingAttachments.length === 1 && remainingAttachments[0].kind === "FILE") {
               setPendingAttachment(remainingAttachments[0]);
               setPendingImages([]);
             } else {
@@ -5131,44 +5134,31 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     try {
+      setAttachmentStatus("Preparing selected media…");
       const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
+      setAttachmentStatus("");
       if (!media.length) return;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
-      if (media.length === 1 && media[0].kind === "VIDEO") {
-        const selectedVideo = media[0];
-        setPendingImages([]);
-        setPendingAttachment(selectedVideo);
-        // Thumbnail extraction is optional and must never hold the picker open
-        // for a large video. Publish it only if this exact selection is still
-        // in the composer when native decoding completes.
-        const previewThumbnail = selectedVideo.pickerAssetId
-          ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
-          : createLightweightVideoThumbnail(selectedVideo.uri);
-        void previewThumbnail.then((thumbnailBase64) => {
-          if (!thumbnailBase64) return;
-          setPendingAttachment((current) => current?.kind === "VIDEO" && current.uri === selectedVideo.uri
-            ? { ...current, thumbnailBase64 }
-            : current);
-        }).catch(() => undefined);
-      } else {
-        setPendingAttachment(null);
-        setPendingImages(media);
-        const selectedVideos = media.filter((item) => item.kind === "VIDEO");
-        // Keep thumbnail decoding serial as well. Several simultaneous native
-        // video decoders can evict each other's image context on iOS and cause
-        // the renderAsync "Image context has been lost" failure.
-        void (async () => {
-          for (const selectedVideo of selectedVideos) {
-            const thumbnailBase64 = await (selectedVideo.pickerAssetId
-              ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
-              : createLightweightVideoThumbnail(selectedVideo.uri)).catch(() => "");
-            if (!thumbnailBase64) continue;
-            setPendingImages((current) => current.map((item) => item.kind === "VIDEO" && item.uri === selectedVideo.uri
-              ? { ...item, thumbnailBase64 }
-              : item));
-          }
-        })();
-      }
+      setPendingAttachment(null);
+      setPendingImages(media);
+      // Selected media lives in the dedicated review surface instead of a
+      // large preview card above the composer. The paperclip count reopens it.
+      setPendingPhotoPreviewOpen(true);
+      const selectedVideos = media.filter((item) => item.kind === "VIDEO");
+      // Keep thumbnail decoding serial as well. Several simultaneous native
+      // video decoders can evict each other's image context on iOS and cause
+      // the renderAsync "Image context has been lost" failure.
+      void (async () => {
+        for (const selectedVideo of selectedVideos) {
+          const thumbnailBase64 = await (selectedVideo.pickerAssetId
+            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+            : createLightweightVideoThumbnail(selectedVideo.uri)).catch(() => "");
+          if (!thumbnailBase64) continue;
+          setPendingImages((current) => current.map((item) => item.kind === "VIDEO" && item.uri === selectedVideo.uri
+            ? { ...item, thumbnailBase64 }
+            : item));
+        }
+      })();
     } catch (error) {
       setAttachmentStatus("");
       Alert.alert("Media selection failed", error instanceof Error ? error.message : "Could not prepare the selected photos or video.");
@@ -5189,8 +5179,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const photo = await takeChatPhoto();
       if (!photo) return;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
-      setPendingImages([]);
-      setPendingAttachment({ ...photo, kind: "IMAGE" });
+      setPendingAttachment(null);
+      setPendingImages([{ ...photo, kind: "IMAGE" }]);
+      setPendingPhotoPreviewOpen(true);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Could not take this photo.";
       if (reason === "CAMERA_SETTINGS_REQUIRED") {
@@ -5749,6 +5740,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function showComposerOptions() {
+    if (pendingImages.length) {
+      Keyboard.dismiss();
+      setPendingPhotoPreviewOpen(true);
+      return;
+    }
     const willOpen = !attachmentMenuOpen;
     Keyboard.dismiss();
     setEmojiPickerOpen(false);
@@ -6115,6 +6111,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
     setPendingAttachment(null);
     setPendingImages([]);
+    setPendingPhotoPreviewOpen(false);
     setAttachmentPreview(null);
     setShareContactPickerOpen(false);
     setShareableContacts([]);
@@ -6715,35 +6712,49 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </Modal>
 
         <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={() => setPendingPhotoPreviewOpen(false)}>
-          <View style={styles.pendingFullPreview}>
+          <KeyboardAvoidingView style={styles.pendingFullPreview} behavior={Platform.OS === "ios" ? "padding" : undefined}>
             <View style={styles.pendingFullPreviewHeader}>
               <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={() => setPendingPhotoPreviewOpen(false)} accessibilityLabel="Close selected photo preview"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
               <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} item{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
-              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected media"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading ? "…" : "Send"}</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading || attachmentSending} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected media"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading || attachmentSending ? "…" : "Send"}</Text></TouchableOpacity>
             </View>
-            <ScrollView style={styles.pendingFullPreviewScroll} contentContainerStyle={styles.pendingFullPreviewContent} showsVerticalScrollIndicator={false}>
-              {pendingImages.map((photo, index) => <View key={`${photo.uri}-${index}`} style={styles.pendingFullPreviewPhotoCard}>
+            <FlatList
+              style={styles.pendingFullPreviewScroll}
+              contentContainerStyle={styles.pendingFullPreviewContent}
+              data={pendingImages}
+              keyExtractor={(photo, index) => `${photo.uri}-${index}`}
+              initialNumToRender={2}
+              maxToRenderPerBatch={2}
+              windowSize={3}
+              removeClippedSubviews={Platform.OS === "android"}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item: photo, index }) => <View style={styles.pendingFullPreviewPhotoCard}>
                 {photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
+                {pendingImages.length === 1 && photo.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.pendingFullPreviewVideoOptions}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality !== "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "original" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity>
+                  <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality === "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "data-saver" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity>
+                </View> : null}
                 <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}</Text></View>
                 <TouchableOpacity
                   style={styles.pendingFullPreviewRemove}
                   onPress={() => {
-                    releasePendingAttachments([photo]);
+                    if (!pendingImages.some((item, itemIndex) => itemIndex !== index && item.uri === photo.uri)) releasePendingAttachments([photo]);
                     setPendingImages((current) => {
-                      const next = current.filter((item) => item.uri !== photo.uri);
+                      const next = current.filter((_, itemIndex) => itemIndex !== index);
                       if (!next.length) setPendingPhotoPreviewOpen(false);
                       return next;
                     });
                   }}
                   accessibilityLabel={`Remove item ${index + 1}`}
                 ><Text style={styles.pendingFullPreviewRemoveText}>×</Text></TouchableOpacity>
-              </View>)}
-            </ScrollView>
+              </View>}
+            />
             <View style={styles.pendingFullPreviewFooter}>
-              <Text style={styles.pendingFullPreviewFooterText}>{messageText.trim() ? "Your caption will be attached to the first item." : "Add an optional caption from the message box."}</Text>
-              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading ? "Sending…" : `Send ${pendingImages.length} item${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
+              <TextInput style={styles.pendingFullPreviewCaption} value={messageText} onChangeText={handleMessageTextChange} placeholder="Add a caption…" placeholderTextColor="rgba(255,255,255,0.45)" multiline maxLength={4000} accessibilityLabel="Media caption" />
+              <Text style={styles.pendingFullPreviewFooterText}>The caption is attached to the first item.</Text>
+              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || attachmentSending || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading || attachmentSending ? "Sending…" : `Send ${pendingImages.length} item${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal visible={attachmentPreviewGroup.length > 0} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreviewGroup([])}>
@@ -6881,15 +6892,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
-        {pendingImages.length ? (
-          <TouchableOpacity style={styles.pendingAttachmentCard} onPress={() => setPendingPhotoPreviewOpen(true)} activeOpacity={0.84} accessibilityLabel={`Preview ${pendingImages.length} selected items`}>
-            <View style={styles.pendingCollagePreview}>
-              {pendingImages.slice(0, 4).map((image, index) => <View key={`${image.uri}-${index}`} style={styles.pendingCollageCell}>{image.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{image.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${image.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={image.uri} compact />}{index === 3 && pendingImages.length > 4 ? <View style={styles.pendingCollageMore}><Text style={styles.pendingCollageMoreText}>+{pendingImages.length - 3}</Text></View> : null}</View>)}
-            </View>
-            <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName}>{pendingImages.length} items selected</Text><Text style={styles.pendingAttachmentMeta}>Media ready to send</Text></View>
-            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingImages); setPendingImages([]); }} accessibilityLabel="Remove selected media"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
-          </TouchableOpacity>
-        ) : pendingAttachment ? (
+        {pendingAttachment ? (
           <View style={styles.pendingAttachmentCard}>
             {pendingAttachment.kind === "IMAGE" ? <PendingPhotoPreview uri={pendingAttachment.uri} /> : pendingAttachment.kind === "VIDEO" ? <View style={styles.pendingVideoPreview}>{pendingAttachment.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${pendingAttachment.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>}
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.kind === "IMAGE" ? "Photo selected" : pendingAttachment.kind === "VIDEO" ? "Video selected" : pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{pendingAttachment.kind === "IMAGE" ? "Ready to send" : pendingAttachment.kind === "VIDEO" ? `${(pendingAttachment.size / 1_000_000).toFixed(1)} MB · ${pendingAttachment.videoQuality === "data-saver" ? "Data saver" : "HD"}` : `${Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send`}</Text>{pendingAttachment.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.videoQualityChoices}><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality !== "data-saver" }} accessibilityLabel="HD video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "original" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: pendingAttachment.videoQuality === "data-saver" }} accessibilityLabel="Data saver video quality" style={[styles.videoQualityChoice, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingAttachment((current) => current?.kind === "VIDEO" ? { ...current, videoQuality: "data-saver" } : current)}><Text style={[styles.videoQualityChoiceText, pendingAttachment.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity></View> : null}</View>
@@ -6950,7 +6953,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           {editingMessageId ? (
             <TouchableOpacity style={styles.editCancelIcon} onPress={() => { setEditingMessageId(null); setMessageText(""); }} accessibilityLabel="Cancel editing"><Text style={styles.editCancelIconText}>×</Text></TouchableOpacity>
           ) : <>
-            <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel="Add attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.composerIcon} onPress={showComposerOptions} accessibilityLabel={pendingImages.length ? `Review ${pendingImages.length} selected items` : "Add attachment"}>
+              <Text style={styles.paperclipIcon}>📎</Text>
+              {pendingImages.length ? <View style={styles.composerAttachmentBadge}><Text style={styles.composerAttachmentBadgeText}>{Math.min(99, pendingImages.length)}</Text></View> : null}
+            </TouchableOpacity>
             <TouchableOpacity style={styles.composerEmoji} onPress={toggleEmojiPicker} accessibilityLabel="Choose emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
           </>}
           <TextInput
@@ -7497,8 +7503,10 @@ const styles = StyleSheet.create({
   composerDock: { position: "relative", zIndex: 34, elevation: 18, overflow: "visible" },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 5, paddingHorizontal: 8, paddingTop: 7, paddingBottom: Platform.OS === "ios" ? 8 : 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#B6CABD", backgroundColor: "rgba(244,248,245,0.98)", overflow: "hidden" },
   composerSafeArea: { backgroundColor: "rgba(244,248,245,0.98)" },
-  composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center" },
+  composerIcon: { width: 36, height: 40, alignItems: "center", justifyContent: "center", position: "relative" },
   paperclipIcon: { color: "#6E6040", fontSize: 24 },
+  composerAttachmentBadge: { position: "absolute", right: -2, top: 0, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: "#159a68", borderWidth: 1.5, borderColor: "#fff", alignItems: "center", justifyContent: "center" },
+  composerAttachmentBadgeText: { color: "#fff", fontSize: 9, lineHeight: 11, fontWeight: "900" },
   composerEmoji: { width: 32, height: 40, alignItems: "center", justifyContent: "center" },
   composerEmojiText: { color: "#6E6040", fontSize: 25, lineHeight: 28 },
   replyComposerPreview: { position: "absolute", left: 8, right: 8, bottom: "100%", minHeight: 58, zIndex: 35, elevation: 19, flexDirection: "row", alignItems: "center", gap: 9, paddingLeft: 10, paddingRight: 6, paddingVertical: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#B6CABD", borderRadius: 14, backgroundColor: "rgba(248,251,249,0.99)", shadowColor: "#234238", shadowOpacity: 0.16, shadowRadius: 9, shadowOffset: { width: 0, height: 4 } },
@@ -7690,11 +7698,13 @@ const styles = StyleSheet.create({
   pendingFullPreviewContent: { paddingHorizontal: 12, paddingVertical: 12, gap: 12 },
   pendingFullPreviewPhotoCard: { width: "100%", minHeight: 480, borderRadius: 18, overflow: "hidden", position: "relative", backgroundColor: "#11151a", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   pendingFullPreviewImage: { width: "100%", height: 560, maxHeight: 560, borderRadius: 0, backgroundColor: "#080a0d" },
+  pendingFullPreviewVideoOptions: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 7, padding: 5, borderRadius: 18, backgroundColor: "rgba(0,0,0,0.72)" },
   pendingFullPreviewNumber: { position: "absolute", left: 12, top: 12, minWidth: 30, height: 30, borderRadius: 15, paddingHorizontal: 8, backgroundColor: "rgba(0,0,0,0.66)", alignItems: "center", justifyContent: "center" },
   pendingFullPreviewNumberText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   pendingFullPreviewRemove: { position: "absolute", right: 12, top: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(0,0,0,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", alignItems: "center", justifyContent: "center" },
   pendingFullPreviewRemoveText: { color: "#fff", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
   pendingFullPreviewFooter: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 28 : 14, gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(10,13,17,0.98)" },
+  pendingFullPreviewCaption: { minHeight: 46, maxHeight: 110, borderRadius: 23, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, color: "#fff", fontSize: 15, backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)" },
   pendingFullPreviewFooterText: { color: "rgba(255,255,255,0.62)", fontSize: 11, lineHeight: 16, fontWeight: "700", textAlign: "center" },
   pendingFullPreviewSend: { minHeight: 52, borderRadius: 26, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center" },
   pendingFullPreviewSendText: { color: "#fff", fontSize: 16, fontWeight: "900" },

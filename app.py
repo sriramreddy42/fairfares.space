@@ -21337,6 +21337,54 @@ def chat_notification_group_avatar_url(
     return f"{origin.rstrip('/')}/api/chat/notification-avatar?{query}"
 
 
+def chat_notification_avatar_url_if_present(
+    con: sqlite3.Connection,
+    origin: str,
+    *,
+    user_id: int = 0,
+    community_id: int = 0,
+) -> str:
+    """Mint a notification URL only when the identity has a stored image.
+
+    Android's notification image loader can wait for both its connect and read
+    timeout before falling back. Sending a signed URL for an empty avatar made
+    a normal no-photo account perform a guaranteed 404 request and delayed its
+    initials fallback. Keep the empty string authoritative so native renderers
+    can produce initials immediately.
+    """
+    def can_deliver(value: object) -> bool:
+        photo = str(value or "").strip()
+        return photo.startswith((
+            "data:image/",
+            f"r2://{R2_BUCKET_NAME}/",
+            "local://uploads/",
+            "https://",
+            "/",
+        ))
+
+    if community_id > 0:
+        row = con.execute(
+            "SELECT photo_url FROM chat_communities WHERE id = ? LIMIT 1",
+            (int(community_id),),
+        ).fetchone()
+        return (
+            chat_notification_group_avatar_url(origin, int(community_id))
+            if can_deliver(row_value(row, "photo_url"))
+            else ""
+        )
+    if user_id > 0:
+        row = con.execute(
+            "SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1",
+            (int(user_id),),
+        ).fetchone()
+        return (
+            chat_notification_avatar_url(origin, int(user_id))
+            if can_deliver(row_value(row, "profile_photo_url"))
+            else ""
+        )
+    return ""
+
+
 def avatar_delivery_path(photo: object, user_id: int) -> str:
     """Return a stable application URL for private object references."""
     value = str(photo or "").strip()
@@ -21635,12 +21683,18 @@ def refresh_queued_chitthi_notification(
         # preserving an older, syntactically valid HTTPS URL can leave the
         # notification-service extension with an expired signature and make it
         # fall back to the generic FairFares app icon instead of the group.
-        refreshed["groupAvatarUrl"] = chat_notification_group_avatar_url(schema_origin(), community_id)
+        with db() as con:
+            refreshed["groupAvatarUrl"] = chat_notification_avatar_url_if_present(
+                con, schema_origin(), community_id=community_id,
+            )
     elif not is_group:
         refreshed["groupAvatarUrl"] = ""
     sender_id = int(float_from_value(refreshed.get("senderId")) or 0)
     if sender_id:
-        refreshed["senderAvatarUrl"] = chat_notification_avatar_url(schema_origin(), sender_id)
+        with db() as con:
+            refreshed["senderAvatarUrl"] = chat_notification_avatar_url_if_present(
+                con, schema_origin(), user_id=sender_id,
+            )
     refreshed["notificationSchema"] = 2
     canonical_title, canonical_body, _subtitle = chitthi_notification_copy(
         refreshed.get("senderName") or title,
@@ -26944,8 +26998,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (int(row_value(conversation, "id") or 0), sender_id),
                 ).fetchall()
             ] if is_group else []
-            notification_sender_avatar_url = chat_notification_avatar_url(self.public_origin(), sender_id) if sender_id else ""
-            notification_group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
+            notification_sender_avatar_url = chat_notification_avatar_url_if_present(
+                con, self.public_origin(), user_id=sender_id,
+            ) if sender_id else ""
+            notification_group_avatar_url = chat_notification_avatar_url_if_present(
+                con, self.public_origin(), community_id=community_id,
+            ) if is_group and community_id else ""
             sender_display_name = row_value(sender, "name") or "FairFares member"
             push_title, push_body, push_subtitle = chitthi_notification_copy(
                 sender_display_name, notification_preview, conversation_name, is_group,
@@ -27557,8 +27615,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if target_participant and not row_value(target_participant, "muted_at") and chitthi_enabled:
                     is_group, conversation_name, community_id = chat_notification_conversation_context(con, conversation)
                     reactor_name = str(row_value(user, "name") or "FairFares member")
-                    sender_avatar_url = chat_notification_avatar_url(self.public_origin(), current_user_id)
-                    group_avatar_url = chat_notification_group_avatar_url(self.public_origin(), community_id) if is_group and community_id else ""
+                    sender_avatar_url = chat_notification_avatar_url_if_present(
+                        con, self.public_origin(), user_id=current_user_id,
+                    )
+                    group_avatar_url = chat_notification_avatar_url_if_present(
+                        con, self.public_origin(), community_id=community_id,
+                    ) if is_group and community_id else ""
                     # Match normal Chitthi notification conventions: the acting
                     # member is the title, the group is the subtitle, and the
                     # reaction is the body. Never include E2EE message content
