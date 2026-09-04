@@ -1304,9 +1304,10 @@ type ChatConversationPage = {
 
 const chatConversationPageRequests = new Map<string, Promise<ChatConversationPage>>();
 
-export async function getChatConversationsPage(cursor = "", offset = 0) {
+export async function getChatConversationsPage(cursor = "", offset = 0, query = "") {
   const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, offset)), compact_senders: "1" });
   if (cursor) params.set("cursor", cursor);
+  if (query.trim()) params.set("q", query.trim());
   const requestKey = `${authTokenGeneration}:${params.toString()}`;
   const existing = chatConversationPageRequests.get(requestKey);
   if (existing) return existing;

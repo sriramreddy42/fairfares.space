@@ -1874,6 +1874,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
   const [hasMoreConversations, setHasMoreConversations] = useState((data?.chat.conversations || []).length >= 30);
   const [conversationCursor, setConversationCursor] = useState("");
+  const [searchConversations, setSearchConversations] = useState<ChatConversation[]>([]);
+  const [searchingConversations, setSearchingConversations] = useState(false);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
@@ -3567,17 +3569,52 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return rows;
   }, [communities, conversations, currentUserId]);
 
+  const searchingInbox = search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups");
+  const visibleInboxConversations = searchingInbox ? searchConversations : personConversations;
+
+  useEffect(() => {
+    const query = search.trim();
+    if (!signedIn || query.length < 2 || !(tab === "All" || tab === "Unread" || tab === "Groups")) {
+      setSearchConversations([]);
+      setSearchingConversations(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setSearchingConversations(true);
+      void getChatConversationsPage("", 0, query)
+        .then((conversationPage) => decryptConversationPreviews(conversationPage.conversations))
+        .then((decrypted) => {
+          if (cancelled) return;
+          setSearchConversations(decrypted.map((conversation) => ({
+            ...conversation,
+            lastMessage: safeConversationPreview(conversation)
+          })));
+        })
+        .catch(() => {
+          if (!cancelled) setSearchConversations([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearchingConversations(false);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search, signedIn, tab]);
+
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return personConversations.filter((conversation) => {
-      const matchesSearch = !query || `${conversation.subject} ${conversation.otherName} ${conversation.lastMessage}`.toLowerCase().includes(query);
+    return visibleInboxConversations.filter((conversation) => {
+      const matchesSearch = searchingInbox || !query || `${conversation.subject} ${conversation.otherName} ${conversation.otherPhone} ${conversation.rideRoute} ${conversation.lastMessage}`.toLowerCase().includes(query);
       const matchesTab =
         tab === "All" ||
         (tab === "Unread" && conversation.unread > 0) ||
         (tab === "Groups" && (conversation.kind === "GROUP" || Boolean(conversation.communityId)));
       return matchesSearch && matchesTab;
     });
-  }, [personConversations, search, tab]);
+  }, [search, searchingInbox, tab, visibleInboxConversations]);
 
   const filteredCommunities = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -7342,7 +7379,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         windowSize={Platform.OS === "android" ? 9 : 7}
         removeClippedSubviews={Platform.OS === "android"}
         onEndReachedThreshold={0.25}
-        onEndReached={() => { if ((tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
+        onEndReached={() => { if (!searchingInbox && (tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
         ListHeaderComponent={<>
         {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} onOpenCommunityPost={onOpenCommunityPost} /> : null}
         {tab === "Contacts" ? (
@@ -7376,17 +7413,24 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ))}
 
-        {(tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
+        {searchingConversations ? (
+          <View style={styles.letterEmptyCard}>
+            <ActivityIndicator color={theme.colors.text} />
+            <Text style={styles.letterEmptyTitle}>Searching Chitthi…</Text>
+          </View>
+        ) : null}
+
+        {!searchingInbox && (tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
           <TouchableOpacity style={styles.loadMoreLetters} onPress={() => void loadMoreConversations()} disabled={loadingMoreConversations}>
             <Text style={styles.loadMoreLettersText}>{loadingMoreConversations ? "Opening more letters…" : "Load more letters"}</Text>
           </TouchableOpacity>
         ) : null}
 
-        {signedIn && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length ? (
+        {signedIn && tab !== "Contacts" && !searchingConversations && !filteredConversations.length && !filteredCommunities.length ? (
           <View style={styles.letterEmptyCard}>
             <Text style={styles.letterEmptyIcon}>📬</Text>
             <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
-            <Text style={styles.letterEmptyCopy}>{tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
+            <Text style={styles.letterEmptyCopy}>{searchingInbox ? "Try a name, phone, group, route, or listing title." : tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
           </View>
         ) : null}
 

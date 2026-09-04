@@ -22296,10 +22296,33 @@ def decode_chat_conversation_cursor(value: str) -> tuple[str, int] | None:
 
 
 def get_chat_conversations_for_user(
-    user_id: int, limit: int = 30, offset: int = 0, *, cursor_activity: str = "", cursor_id: int = 0,
+    user_id: int, limit: int = 30, offset: int = 0, *, cursor_activity: str = "", cursor_id: int = 0, search_query: str = "",
 ) -> list[dict[str, object]]:
     limit = max(1, min(int(limit or 30), 50))
     offset = max(0, int(offset or 0))
+    search_query = clean_text_value(search_query, 120).strip()
+    search_terms = [term for term in re.split(r"\s+", search_query.casefold()) if term]
+    search_clause = ""
+    search_values: list[object] = []
+    if search_terms:
+        searchable_fields = (
+            "COALESCE(conversations.subject, '')",
+            "COALESCE(other_user.name, participant_user.name, '')",
+            "COALESCE(other_user.phone, participant_user.phone, '')",
+            "COALESCE(posts.title, '')",
+            "COALESCE(rides.title, '')",
+            "COALESCE(rides.origin_label, '')",
+            "COALESCE(rides.destination_label, '')",
+            "COALESCE(communities.name, '')",
+            "COALESCE(communities.description, '')",
+            "COALESCE(communities.area, '')",
+            "COALESCE(last_message.message_text, '')",
+        )
+        term_clauses = []
+        for term in search_terms[:6]:
+            term_clauses.append("(" + " OR ".join(f"LOWER({field}) LIKE ?" for field in searchable_fields) + ")")
+            search_values.extend([f"%{term}%"] * len(searchable_fields))
+        search_clause = " AND " + " AND ".join(term_clauses)
     with db() as con:
         rows = con.execute(
             """
@@ -22387,11 +22410,12 @@ def get_chat_conversations_for_user(
                         AND current_membership.user_id = ?
                   )
               )
+              {search_clause}
             GROUP BY conversations.id
             ORDER BY datetime(COALESCE(last_message.created_at, conversations.updated_at)) DESC, conversations.id DESC
             LIMIT ? OFFSET ?
-            """,
-            (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, limit, offset),
+            """.format(search_clause=search_clause),
+            (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, *search_values, limit, offset),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
 
@@ -26496,6 +26520,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         params = urllib.parse.parse_qs(parsed.query)
         compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
+        search_query = clean_text_value((params.get("q", params.get("search", [""]))[0] or ""), 120)
         raw_cursor = (params.get("cursor", [""])[0] or "").strip()
         decoded_cursor = decode_chat_conversation_cursor(raw_cursor) if raw_cursor else None
         if raw_cursor and not decoded_cursor:
@@ -26509,7 +26534,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         cursor_activity, cursor_id = decoded_cursor or ("", 0)
         conversations = get_chat_conversations_for_user(
             int(user["id"]), limit=limit, offset=0 if decoded_cursor else offset,
-            cursor_activity=cursor_activity, cursor_id=cursor_id,
+            cursor_activity=cursor_activity, cursor_id=cursor_id, search_query=search_query,
         )
         for conversation in conversations:
             other_user_id = int(conversation.get("otherUserId") or 0)
