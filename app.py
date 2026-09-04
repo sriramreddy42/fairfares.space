@@ -18949,7 +18949,7 @@ def mobile_sample_housing_posts(
                 "accommodates": accommodates,
                 "roommateCount": roommate_count,
                 "amenities": [item.strip() for item in amenities.split(",")],
-                "sample": True,
+                "sample": False,
             }
         )
     return samples
