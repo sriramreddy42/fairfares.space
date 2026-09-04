@@ -1,0 +1,38 @@
+.expo/
+.env
+.env.local
+.env.*.local
+node_modules/
+
+# Mobile generated outputs and local release archives
+mobile/node_modules/
+mobile/artifacts/
+mobile/dist/
+mobile/dist-visual/
+mobile/android/app/build/
+mobile/android/app/.cxx/
+mobile/android/.gradle/
+mobile/ios/build/
+mobile/ios/archive/
+mobile/ios/Pods/
+
+# Root native/generated outputs
+android/app/build/
+android/.gradle/
+ios/build/
+ios/archive/
+
+# Backend/local test/runtime files not needed for mobile cloud builds
+data/
+test-results/
+playwright-report/
+issue_screenshots/
+.tmp/
+.pycache-tmp/
+fairfares.db
+fairfares.env
+dev-pdf-extracted.txt
+report.xml
+
+*.log
+.DS_Store
