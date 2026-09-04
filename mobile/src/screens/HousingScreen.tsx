@@ -722,11 +722,24 @@ export function HousingScreen({
 
   useEffect(() => {
     if (!linkedCarpoolRide) return;
+    ridePlanSubmittingRef.current = false;
+    rideEditorRequestRef.current += 1;
+    selectedRideSuggestionRef.current = "";
+    setEditingRideId("");
+    setRidePosted(false);
+    setRideBusy(false);
+    setRidePlanBusy(false);
+    setRideEditorLoading(false);
+    setRideSuggestionsEnabled(false);
+    setRideSuggestions([]);
+    setRideSuggestionsBusy(false);
+    setRideRequestStatus("");
+    setRideOwnerOpen(false);
     setMode("ride");
     setRideRows([linkedCarpoolRide]);
-    setRideForm((current) => ({
-      ...current,
-      city: linkedCarpoolRide.city || current.city,
+    setRideForm({
+      ...initialRideForm,
+      city: linkedCarpoolRide.city || rideDefaultCity,
       origin: linkedCarpoolRide.origin,
       originLat: linkedCarpoolRide.originLat ?? null,
       originLng: linkedCarpoolRide.originLng ?? null,
@@ -734,7 +747,7 @@ export function HousingScreen({
       destinationLat: linkedCarpoolRide.destinationLat ?? null,
       destinationLng: linkedCarpoolRide.destinationLng ?? null,
       rideType: "CARPOOL_REQUEST"
-    }));
+    });
     setSelectedRideChoice(`offer:${linkedCarpoolRide.id}`);
     setRidePlannerStage("choices");
     setRidePlannerOpen(true);
@@ -1320,6 +1333,15 @@ export function HousingScreen({
 
   function openRidePlanner() {
     const initialOrigin = rideDefaultPickup;
+    ridePlanSubmittingRef.current = false;
+    rideEditorRequestRef.current += 1;
+    selectedRideSuggestionRef.current = "";
+    setEditingRideId("");
+    setRidePosted(false);
+    setRideBusy(false);
+    setRidePlanBusy(false);
+    setRideEditorLoading(false);
+    setRideSuggestionsEnabled(false);
     setMode("ride");
     setRidePlannerStage("plan");
     setRideFocusedField("destination");
@@ -1327,28 +1349,33 @@ export function HousingScreen({
     setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
-    setRideForm((current) => ({
-      ...current,
-      city: rideDefaultCity || current.city || "",
+    setRideForm({
+      ...initialRideForm,
+      city: rideDefaultCity || "",
       origin: initialOrigin,
-      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
-      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
-      destination: "",
-      destinationLat: null,
-      destinationLng: null,
+      originLat: currentRideLocation?.coords.latitude ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? null,
       rideType: "CARPOOL_REQUEST"
-    }));
+    });
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     void useCurrentRideLocationForOrigin(initialOrigin);
   }
 
   function closeRidePlanner() {
+    ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
+    selectedRideSuggestionRef.current = "";
+    setEditingRideId("");
+    setRidePosted(false);
+    setRideBusy(false);
+    setRidePlanBusy(false);
     setRideEditorLoading(false);
     setRideSuggestionsEnabled(false);
     setRideSuggestions([]);
     setRideSuggestionsBusy(false);
+    setRideRequestStatus("");
+    setSelectedRideChoice("");
     setRidePlannerOpen(false);
     onBottomTabsHiddenChange?.(false);
   }
@@ -1472,6 +1499,15 @@ export function HousingScreen({
 
   function openRideOfferPlanner(profile?: RideDriverProfile | null) {
     const offerSurface = rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
+    ridePlanSubmittingRef.current = false;
+    rideEditorRequestRef.current += 1;
+    selectedRideSuggestionRef.current = "";
+    setEditingRideId("");
+    setRidePosted(false);
+    setRideBusy(false);
+    setRidePlanBusy(false);
+    setRideEditorLoading(false);
+    setRideSuggestionsEnabled(false);
     setMode("ride");
     setRideOwnerOpen(false);
     setSelectedRideService(offerSurface.key);
@@ -1481,24 +1517,21 @@ export function HousingScreen({
     setRideSuggestionsBusy(false);
     setRideRequestStatus(profile?.readyForOffers ? "" : "You can plan the route now. Driver profile is checked when you save the listing.");
     setSelectedRideChoice("");
-    setRideForm((current) => ({
-      ...current,
-      city: rideDefaultCity || current.city || "",
+    setRideForm({
+      ...initialRideForm,
+      city: rideDefaultCity || "",
       origin: rideDefaultPickup,
-      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
-      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
-      destination: "",
-      destinationLat: null,
-      destinationLng: null,
+      originLat: currentRideLocation?.coords.latitude ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? null,
       rideType: "CARPOOL_OFFER",
-      seats: current.seats === "1" ? "4" : current.seats,
-      luggage: current.luggage || "1 small bag",
-      maxDetourMinutes: current.maxDetourMinutes || "15",
+      seats: "4",
+      luggage: "1 small bag",
+      maxDetourMinutes: "15",
       maxPickupDistanceMiles: "50",
-      contributionPerSeat: current.contributionPerSeat || "",
-      preferences: current.preferences || offerSurface.title,
-      notes: current.notes || offerSurface.note
-    }));
+      contributionPerSeat: "",
+      preferences: offerSurface.title,
+      notes: offerSurface.note
+    });
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     // Do not asynchronously force the device's current location into a route
@@ -1558,7 +1591,15 @@ export function HousingScreen({
   }
 
   function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
+    ridePlanSubmittingRef.current = false;
+    rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = place.label;
+    setEditingRideId("");
+    setRidePosted(false);
+    setRideBusy(false);
+    setRidePlanBusy(false);
+    setRideEditorLoading(false);
+    setRideSuggestionsEnabled(false);
     setMode("ride");
     setSelectedRideService("carpool");
     setRidePlannerStage("plan");
@@ -1567,17 +1608,17 @@ export function HousingScreen({
     setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
-    setRideForm((current) => ({
-      ...current,
+    setRideForm({
+      ...initialRideForm,
       city: rideDefaultCity,
       origin: rideDefaultPickup,
-      originLat: currentRideLocation?.coords.latitude ?? current.originLat ?? null,
-      originLng: currentRideLocation?.coords.longitude ?? current.originLng ?? null,
+      originLat: currentRideLocation?.coords.latitude ?? null,
+      originLng: currentRideLocation?.coords.longitude ?? null,
       destination: place.label,
       destinationLat: place.lat,
       destinationLng: place.lng,
       rideType: "CARPOOL_REQUEST"
-    }));
+    });
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     void useCurrentRideLocationForOrigin();
