@@ -3115,18 +3115,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const currentEnvelopePayload = Array.isArray(payload.envelopes)
         ? { ok: true, envelopes: payload.envelopes }
         : await getChatEncryptedEnvelopes(conversationId, identity.deviceId);
-      const identities = recoveredChatIdentities(Number(data?.user?.id || 0), identity);
-      const historicalEnvelopeResults = await Promise.allSettled(identities
-        .filter((candidate) => candidate.deviceId !== identity.deviceId)
-        .map(async (candidate) => (await getChatEncryptedEnvelopes(conversationId, candidate.deviceId)).envelopes
-          .map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }))));
-      const historicalEnvelopes = historicalEnvelopeResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const identities = [identity];
       const envelopePayload = {
         ok: true,
-        envelopes: [
-          ...currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })),
-          ...historicalEnvelopes
-        ]
+        envelopes: currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
       };
       const olderMessages = await decryptMessages(conversationId, payload.messages || [], Promise.resolve({
         identity,
@@ -3781,18 +3773,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const currentEnvelopePayload = Array.isArray(payload.envelopes)
         ? { ok: true, envelopes: payload.envelopes }
         : await getChatEncryptedEnvelopes(conversation.id, identity.deviceId);
-      const identities = recoveredChatIdentities(Number(data?.user?.id || 0), identity);
-      const historicalEnvelopeResults = await Promise.allSettled(identities
-        .filter((candidate) => candidate.deviceId !== identity.deviceId)
-        .map(async (candidate) => (await getChatEncryptedEnvelopes(conversation.id, candidate.deviceId)).envelopes
-          .map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }))));
-      const historicalEnvelopes = historicalEnvelopeResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const identities = [identity];
       const envelopePayload = {
         ok: true,
-        envelopes: [
-          ...currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })),
-          ...historicalEnvelopes
-        ]
+        envelopes: currentEnvelopePayload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
       };
       const decryptedMessages = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
         identity,
@@ -4663,9 +4647,25 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setSearch("");
       setCreatingGroup(false);
       onThreadModeChange?.(true);
-      const payload = await getChatMessages(response.conversation.id);
+      const identity = await ensureChatDeviceIdentity();
+      const payload = await getChatMessages(response.conversation.id, 0, 30, identity.deviceId);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
-      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      const keyPayloadPromise = getChatDeviceKeys(response.conversation.id).catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }));
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || [], Promise.resolve({
+        identity,
+        identities: [identity],
+        envelopePayload: {
+          ok: true,
+          envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
+        },
+        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+      }));
+      void keyPayloadPromise.then((keyPayload) => {
+        if (activeConversationIdRef.current === response.conversation.id) {
+          setEncryptionReady(Boolean(keyPayload.ready));
+          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+        }
+      });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
       setHydratedConversationId(response.conversation.id);
@@ -4692,14 +4692,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setActiveConversation(response.conversation);
       setActiveSubject(person.name);
       onThreadModeChange?.(true);
+      const identity = await ensureChatDeviceIdentity();
       const cachedMessages = await loadCachedThreadMessages(response.conversation.id);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
       const displayedCachedMessages = showCachedThreadMessages(response.conversation.id, cachedMessages);
       if (!displayedCachedMessages) replaceThreadMessages(response.conversation.id, []);
       setThreadLoading(!displayedCachedMessages);
-      const payload = await getChatMessages(response.conversation.id);
+      const payload = await getChatMessages(response.conversation.id, 0, 30, identity.deviceId);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
-      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      const keyPayloadPromise = getChatDeviceKeys(response.conversation.id).catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }));
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || [], Promise.resolve({
+        identity,
+        identities: [identity],
+        envelopePayload: {
+          ok: true,
+          envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
+        },
+        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+      }));
+      void keyPayloadPromise.then((keyPayload) => {
+        if (activeConversationIdRef.current === response.conversation.id) {
+          setEncryptionReady(Boolean(keyPayload.ready));
+          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+        }
+      });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages);
       setHydratedConversationId(response.conversation.id);
@@ -4930,9 +4946,25 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       setTab("All");
       setThreadLoading(true);
-      const payload = await getChatMessages(response.conversation.id);
+      const identity = await ensureChatDeviceIdentity();
+      const payload = await getChatMessages(response.conversation.id, 0, 30, identity.deviceId);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
-      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
+      const keyPayloadPromise = getChatDeviceKeys(response.conversation.id).catch(() => ({ ok: false, keys: [], ready: false, warning: "Encryption keys are temporarily unavailable." }));
+      const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || [], Promise.resolve({
+        identity,
+        identities: [identity],
+        envelopePayload: {
+          ok: true,
+          envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
+        },
+        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+      }));
+      void keyPayloadPromise.then((keyPayload) => {
+        if (activeConversationIdRef.current === response.conversation.id) {
+          setEncryptionReady(Boolean(keyPayload.ready));
+          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+        }
+      });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
       setHydratedConversationId(response.conversation.id);
