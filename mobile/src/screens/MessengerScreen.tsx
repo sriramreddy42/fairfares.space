@@ -6522,7 +6522,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.threadMessages}>
-          {identityRecoveryWarning || (!encryptionReady && encryptionStatusDetail) ? (
+          {identityRecoveryWarning || (!encryptionReady && encryptionStatusDetail && encryptionStatusDetail !== pendingEncryptionStatusText) ? (
             <View style={styles.encryptionRecoveryWarning}>
               <Text style={styles.encryptionRecoveryWarningText}>{identityRecoveryWarning || encryptionStatusDetail}</Text>
             </View>

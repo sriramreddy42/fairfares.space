@@ -20367,10 +20367,10 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
     keyed_users = len({int(item["userId"]) for item in keys})
     is_group = bool(int(row_value(conversation, "community_id") or 0)) or str(row_value(conversation, "conversation_type") or "").upper() == "GROUP"
     sender_has_key = any(int(item["userId"]) == user_id for item in keys)
-    can_send = bool(sender_has_key and keys)
     # A missing device key must not freeze an entire group. Messages are sealed
     # only for currently registered member devices; a member who has not opened
     # the current app cannot decrypt messages sent before their key registration.
+    can_send = bool(sender_has_key and (is_group or keyed_users == participant_count))
     if is_group and sender_has_key:
         return keys, "", can_send
     if keyed_users == participant_count:
