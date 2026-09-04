@@ -1183,6 +1183,10 @@ function FairFaresApp() {
         const opensCarpool = (host === "fairfare.space" && (parsed.pathname === "/carpool" || parsed.pathname === "/carpool/open")) || (parsed.protocol === "fairfares:" && host === "carpool");
         if (opensCarpool) {
           const rideId = parsed.searchParams.get("rideId") || parsed.searchParams.get("ride_id") || "";
+          setRideOwnerOpenTarget("workspace");
+          setRideOwnerEditId("");
+          setRideOwnerReturnTab(null);
+          setRideOwnerOpenToken(0);
           setSelectedNeed("ride_need");
           setActiveTab("housing");
           if (rideId) {
@@ -2633,6 +2637,10 @@ function FairFaresApp() {
         }}
         onOpenRides={() => {
           setRentalFocusKey(0);
+          setRideOwnerOpenTarget("workspace");
+          setRideOwnerEditId("");
+          setRideOwnerReturnTab(null);
+          setRideOwnerOpenToken(0);
           setSelectedNeed("ride_need");
           setCarpoolFocusKey((value) => value + 1);
           setActiveTab("housing");
@@ -2675,6 +2683,10 @@ function FairFaresApp() {
       <DashboardScreen
         data={data}
         onReserveRide={() => {
+          setRideOwnerOpenTarget("workspace");
+          setRideOwnerEditId("");
+          setRideOwnerReturnTab(null);
+          setRideOwnerOpenToken(0);
           setActiveTab("housing");
           setSelectedNeed("ride_need");
         }}
@@ -2763,6 +2775,10 @@ function FairFaresApp() {
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
         onOpenRide={() => {
+          setRideOwnerOpenTarget("workspace");
+          setRideOwnerEditId("");
+          setRideOwnerReturnTab(null);
+          setRideOwnerOpenToken(0);
           setSelectedNeed("ride_need");
           setActiveTab("housing");
         }}
@@ -2829,6 +2845,7 @@ function FairFaresApp() {
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
+          setRideOwnerOpenTarget("workspace");
           setRideOwnerOpenToken(0);
           setRideOwnerEditId("");
           setRideOwnerReturnTab(null);
@@ -2889,6 +2906,7 @@ function FairFaresApp() {
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
+          setRideOwnerOpenTarget("workspace");
           setRideOwnerOpenToken(0);
           setRideOwnerEditId("");
           setRideOwnerReturnTab(null);
