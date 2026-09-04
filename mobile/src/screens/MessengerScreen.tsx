@@ -3544,7 +3544,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return () => onThreadModeChange?.(false);
   }, [inThread, onThreadModeChange]);
 
-  const visiblePersonConversations = (sourceConversations: ChatConversation[]) => {
+  const visiblePersonConversations = React.useCallback((sourceConversations: ChatConversation[]) => {
     const rows: ChatConversation[] = [];
     const rowByPerson = new Map<number, ChatConversation>();
     sourceConversations.forEach((storedConversation) => {
@@ -3567,15 +3567,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       existing.unread += conversation.unread || 0;
     });
     return rows;
-  };
+  }, [communities, currentUserId]);
 
   const personConversations = useMemo(
     () => visiblePersonConversations(conversations),
-    [communities, conversations, currentUserId]
+    [conversations, visiblePersonConversations]
   );
   const searchedPersonConversations = useMemo(
     () => visiblePersonConversations(searchConversations),
-    [communities, currentUserId, searchConversations]
+    [searchConversations, visiblePersonConversations]
   );
 
   const searchingInbox = search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups");

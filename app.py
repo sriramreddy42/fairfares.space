@@ -22328,7 +22328,7 @@ def get_chat_conversations_for_user(
         for term in search_terms[:6]:
             term_clauses.append("(" + " OR ".join(f"LOWER({field}) LIKE ?" for field in searchable_fields) + ")")
             search_values.extend([f"%{term}%"] * len(searchable_fields))
-        if len(phone_digits_query) >= 3 and phone_digits_query not in search_terms:
+        if len(phone_digits_query) >= 3 and re.fullmatch(r"[\d\s()+\-.]+", search_query) and phone_digits_query not in search_terms:
             term_clauses.append(f"{normalized_phone_field} LIKE ?")
             search_values.append(f"%{phone_digits_query}%")
         search_clause = " AND " + " AND ".join(term_clauses)
