@@ -25994,7 +25994,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ]
             share_title = f"Carpool: {route} | FairFares"
             share_description = f"{' · '.join(str(item) for item in ride_facts if item)}. View this carpool listing and connect securely on FairFares."
-            share_url = f"{schema_origin()}/carpool?rideId={urllib.parse.quote(shared_ride_id)}"
+            share_url = f"{schema_origin()}/carpool/open?rideId={urllib.parse.quote(shared_ride_id)}"
         else:
             route = ""
             share_title = "FairFares Carpool | Find or Share a Ride"

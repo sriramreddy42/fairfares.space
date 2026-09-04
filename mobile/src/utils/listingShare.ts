@@ -35,10 +35,7 @@ export async function shareHousingListing(post: HousingPost | HousingActivityPos
 export async function shareCarpoolListing(ride: RidePost) {
   const params = new URLSearchParams();
   params.set("rideId", ride.id);
-  if (ride.city) params.set("city", ride.city);
-  if (ride.origin) params.set("origin", ride.origin);
-  if (ride.destination) params.set("destination", ride.destination);
-  const url = versionedShareUrl(`${PUBLIC_SITE_URL}/carpool${params.toString() ? `?${params.toString()}` : ""}`);
+  const url = versionedShareUrl(`${PUBLIC_SITE_URL}/carpool/open?${params.toString()}`);
   const route = `${compact(ride.origin, "Pickup area")} → ${compact(ride.destination, "Destination")}`;
   const timing = [ride.pickupDate, ride.pickupTime].filter(Boolean).join(" · ");
   const seats = Number(ride.seats || 1);
