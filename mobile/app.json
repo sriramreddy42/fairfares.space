@@ -16,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "42",
+      "buildNumber": "43",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -49,7 +49,7 @@
     "android": {
       "package": "com.fairfares.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 23,
+      "versionCode": 24,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
