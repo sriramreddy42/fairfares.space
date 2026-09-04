@@ -3867,7 +3867,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         envelopePayload,
         // Decryption is independent of the send-key directory. Its eventual
         // result updates encryptionReady through keyPayloadPromise above.
-        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+        keyPayload: { ok: true, keys: [], ready: false, warning: "" }
       }));
       if (messengerUserIdRef.current !== operationUserId || activeConversationIdRef.current !== conversation.id) return;
       void keyPayloadPromise;
@@ -4742,7 +4742,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ok: true,
           envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
         },
-        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+        keyPayload: { ok: true, keys: [], ready: false, warning: "" }
       }));
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
@@ -4793,7 +4793,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ok: true,
           envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
         },
-        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+        keyPayload: { ok: true, keys: [], ready: false, warning: "" }
       }));
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
@@ -5043,7 +5043,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ok: true,
           envelopes: (payload.envelopes || []).map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId }))
         },
-        keyPayload: { ok: true, keys: [], ready: true, warning: "" }
+        keyPayload: { ok: true, keys: [], ready: false, warning: "" }
       }));
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
