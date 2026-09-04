@@ -11,7 +11,7 @@ import { BlurView } from "expo-blur";
 import { sha256 } from "@noble/hashes/sha256";
 import { utf8ToBytes } from "@noble/hashes/utils";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { ActivityIndicator, Alert, Animated, AppState, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6194,6 +6194,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (inThread) closeThread();
   }, [androidBackRequestToken, inThread]);
 
+  useEffect(() => {
+    if (Platform.OS !== "android" || !inThread) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      closeThread();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id]);
+
   if (inThread) {
     return (
       <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]}>
@@ -6384,10 +6393,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // Message rows can contain authenticated media, link previews and
             // rich cards. Keep JS batches below a frame budget; the native
             // recycler fills the remaining window incrementally.
-            initialNumToRender={8}
-            maxToRenderPerBatch={4}
-            updateCellsBatchingPeriod={48}
-            windowSize={5}
+            initialNumToRender={Platform.OS === "android" ? 10 : 8}
+            maxToRenderPerBatch={Platform.OS === "android" ? 3 : 4}
+            updateCellsBatchingPeriod={Platform.OS === "android" ? 24 : 48}
+            windowSize={Platform.OS === "android" ? 7 : 5}
             // iOS inverted lists are implemented with transforms. Clipping
             // variable-height media cells there can detach/re-attach the
             // visible anchor and produce a jump. Android's recycler benefits
@@ -7231,9 +7240,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} tintColor={theme.colors.text} onRefresh={refreshMessenger} />}
         initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        updateCellsBatchingPeriod={50}
-        windowSize={7}
+        maxToRenderPerBatch={Platform.OS === "android" ? 6 : 8}
+        updateCellsBatchingPeriod={Platform.OS === "android" ? 32 : 50}
+        windowSize={Platform.OS === "android" ? 9 : 7}
         removeClippedSubviews={Platform.OS === "android"}
         onEndReachedThreshold={0.25}
         onEndReached={() => { if ((tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
