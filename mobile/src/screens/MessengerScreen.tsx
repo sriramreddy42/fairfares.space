@@ -3544,10 +3544,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return () => onThreadModeChange?.(false);
   }, [inThread, onThreadModeChange]);
 
-  const personConversations = useMemo(() => {
+  const visiblePersonConversations = (sourceConversations: ChatConversation[]) => {
     const rows: ChatConversation[] = [];
     const rowByPerson = new Map<number, ChatConversation>();
-    conversations.forEach((storedConversation) => {
+    sourceConversations.forEach((storedConversation) => {
       const conversation = hydrateLegacyGroupConversation(storedConversation, communities);
       // Opening a profile, listing, or group can provision a conversation on
       // the server. It is not an inbox item until it contains a visible message.
@@ -3567,10 +3567,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       existing.unread += conversation.unread || 0;
     });
     return rows;
-  }, [communities, conversations, currentUserId]);
+  };
+
+  const personConversations = useMemo(
+    () => visiblePersonConversations(conversations),
+    [communities, conversations, currentUserId]
+  );
+  const searchedPersonConversations = useMemo(
+    () => visiblePersonConversations(searchConversations),
+    [communities, currentUserId, searchConversations]
+  );
 
   const searchingInbox = search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups");
-  const visibleInboxConversations = searchingInbox ? searchConversations : personConversations;
+  const visibleInboxConversations = searchingInbox ? searchedPersonConversations : personConversations;
 
   useEffect(() => {
     const query = search.trim();

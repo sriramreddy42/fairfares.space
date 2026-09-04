@@ -22302,13 +22302,19 @@ def get_chat_conversations_for_user(
     offset = max(0, int(offset or 0))
     search_query = clean_text_value(search_query, 120).strip()
     search_terms = [term for term in re.split(r"\s+", search_query.casefold()) if term]
+    phone_digits_query = re.sub(r"\D+", "", search_query)
     search_clause = ""
     search_values: list[object] = []
     if search_terms:
+        normalized_phone_field = (
+            "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+            "COALESCE(other_user.phone, participant_user.phone, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', '')"
+        )
         searchable_fields = (
             "COALESCE(conversations.subject, '')",
             "COALESCE(other_user.name, participant_user.name, '')",
             "COALESCE(other_user.phone, participant_user.phone, '')",
+            normalized_phone_field,
             "COALESCE(posts.title, '')",
             "COALESCE(rides.title, '')",
             "COALESCE(rides.origin_label, '')",
@@ -22322,6 +22328,9 @@ def get_chat_conversations_for_user(
         for term in search_terms[:6]:
             term_clauses.append("(" + " OR ".join(f"LOWER({field}) LIKE ?" for field in searchable_fields) + ")")
             search_values.extend([f"%{term}%"] * len(searchable_fields))
+        if len(phone_digits_query) >= 3 and phone_digits_query not in search_terms:
+            term_clauses.append(f"{normalized_phone_field} LIKE ?")
+            search_values.append(f"%{phone_digits_query}%")
         search_clause = " AND " + " AND ".join(term_clauses)
     with db() as con:
         rows = con.execute(
