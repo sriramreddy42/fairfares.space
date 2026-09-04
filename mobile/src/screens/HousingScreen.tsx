@@ -3531,7 +3531,7 @@ export function HousingScreen({
       ]}
       stickyHeaderIndices={[1]}
       showsVerticalScrollIndicator={false}
-      scrollEventThrottle={16}
+      scrollEventThrottle={32}
       onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
     >
         <View style={[styles.brandHeader, mode !== "housing" && styles.brandHeaderHidden]}>
@@ -3886,12 +3886,13 @@ export function HousingScreen({
                 ref={detailScrollRef}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.detailContent}
-                scrollEventThrottle={48}
+                scrollEventThrottle={64}
                 onContentSizeChange={(_width, height) => setDetailCanScrollMore(height > 560)}
                 onScroll={(event) => {
                   const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
                   detailScrollOffsetRef.current = Math.max(0, contentOffset.y);
-                  setDetailCanScrollMore(contentOffset.y + layoutMeasurement.height < contentSize.height - 36);
+                  const nextCanScrollMore = contentOffset.y + layoutMeasurement.height < contentSize.height - 36;
+                  setDetailCanScrollMore((current) => current === nextCanScrollMore ? current : nextCanScrollMore);
                 }}
               >
                 <Text style={styles.detailTitle}>{detailPost.title}</Text>

@@ -1041,10 +1041,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
       keyExtractor={(item) => item.key}
       renderItem={renderFeedRow}
       ItemSeparatorComponent={() => <View style={styles.feedRowSeparator} />}
-      initialNumToRender={5}
-      maxToRenderPerBatch={5}
-      windowSize={7}
-      updateCellsBatchingPeriod={40}
+      initialNumToRender={Platform.OS === "android" ? 6 : 7}
+      maxToRenderPerBatch={Platform.OS === "android" ? 4 : 6}
+      windowSize={Platform.OS === "android" ? 9 : 8}
+      updateCellsBatchingPeriod={Platform.OS === "android" ? 28 : 32}
       removeClippedSubviews={Platform.OS === "android"}
       contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
       alwaysBounceVertical

@@ -6462,8 +6462,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // rich cards. Keep JS batches below a frame budget; the native
             // recycler fills the remaining window incrementally.
             initialNumToRender={Platform.OS === "android" ? 10 : 8}
-            maxToRenderPerBatch={Platform.OS === "android" ? 3 : 4}
-            updateCellsBatchingPeriod={Platform.OS === "android" ? 24 : 48}
+            maxToRenderPerBatch={Platform.OS === "android" ? 4 : 4}
+            updateCellsBatchingPeriod={Platform.OS === "android" ? 32 : 48}
             windowSize={Platform.OS === "android" ? 7 : 5}
             // iOS inverted lists are implemented with transforms. Clipping
             // variable-height media cells there can detach/re-attach the
