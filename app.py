@@ -6472,6 +6472,11 @@ def init_db() -> None:
                 departure_flex_minutes INTEGER NOT NULL DEFAULT 0,
                 contribution_per_seat REAL NOT NULL DEFAULT 0,
                 approval_required INTEGER NOT NULL DEFAULT 1,
+                vehicle_make_model TEXT NOT NULL DEFAULT '',
+                vehicle_year TEXT NOT NULL DEFAULT '',
+                vehicle_color TEXT NOT NULL DEFAULT '',
+                license_plate TEXT NOT NULL DEFAULT '',
+                license_state TEXT NOT NULL DEFAULT '',
                 preferences TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'ACTIVE',
@@ -7847,6 +7852,11 @@ def init_db() -> None:
         ensure_column(con, "ride_posts", "departure_flex_minutes", "departure_flex_minutes INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "ride_posts", "contribution_per_seat", "contribution_per_seat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "ride_posts", "approval_required", "approval_required INTEGER NOT NULL DEFAULT 1")
+        ensure_column(con, "ride_posts", "vehicle_make_model", "vehicle_make_model TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "vehicle_year", "vehicle_year TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "vehicle_color", "vehicle_color TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "license_plate", "license_plate TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ride_posts", "license_state", "license_state TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "preferences", "preferences TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "notes", "notes TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ride_posts", "status", "status TEXT NOT NULL DEFAULT 'ACTIVE'")
@@ -17742,6 +17752,11 @@ def mobile_ride_payload(
         "departureFlexMinutes": int(row_value(row, "departure_flex_minutes") or 0),
         "contributionPerSeat": float(row_value(row, "contribution_per_seat") or 0),
         "approvalRequired": bool(int(row_value(row, "approval_required") or 0)),
+        "vehicleMakeModel": row_value(row, "vehicle_make_model"),
+        "vehicleYear": row_value(row, "vehicle_year"),
+        "vehicleColor": row_value(row, "vehicle_color"),
+        "licensePlate": row_value(row, "license_plate"),
+        "licenseState": row_value(row, "license_state"),
         "preferences": row_value(row, "preferences"),
         "notes": row_value(row, "notes"),
         "status": status,
@@ -38596,6 +38611,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         flex_minutes = max(0, min(int(float_from_value(payload.get("departureFlexMinutes") or payload.get("departure_flex_minutes") or "0")), 240))
         contribution = max(0, min(float_from_value(payload.get("contributionPerSeat") or payload.get("contribution_per_seat") or "0"), 5000))
         approval_required = 0 if str(payload.get("approvalRequired") or payload.get("approval_required") or "").lower() in {"0", "false", "no"} else 1
+        vehicle_make_model = clean_text_value(payload.get("vehicleMakeModel") or payload.get("vehicle_make_model"), 120)
+        vehicle_year = clean_text_value(payload.get("vehicleYear") or payload.get("vehicle_year"), 12)
+        vehicle_color = clean_text_value(payload.get("vehicleColor") or payload.get("vehicle_color"), 40)
+        license_plate = clean_text_value(payload.get("licensePlate") or payload.get("license_plate"), 40)
+        license_state = clean_text_value(payload.get("licenseState") or payload.get("license_state"), 40).upper()
         preferences = clean_text_value(payload.get("preferences"), 240)
         notes = clean_multiline_text_value(payload.get("notes"), 1200)
         if not origin or not destination:
@@ -38646,6 +38666,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     400,
                 )
                 return
+            if not vehicle_make_model:
+                self.send_json({"ok": False, "error": "Vehicle make/model is required for this ride listing."}, 400)
+                return
+            if not license_plate or not license_state:
+                self.send_json({"ok": False, "error": "License plate and state are required for this ride listing."}, 400)
+                return
         origin_point = ride_point(origin, city)
         destination_point = ride_point(destination, city)
         if origin_lat and origin_lng:
@@ -38683,13 +38709,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         destination_label = ?, destination_lat = ?, destination_lng = ?, city_label = ?, pickup_date = ?, pickup_time = ?,
                         start_date = ?, end_date = ?, days_of_week = ?, seats = ?, luggage = ?, accessibility = ?, max_detour_minutes = ?,
                         max_pickup_distance_miles = ?, departure_flex_minutes = ?, contribution_per_seat = ?, approval_required = ?,
+                        vehicle_make_model = ?, vehicle_year = ?, vehicle_color = ?, license_plate = ?, license_state = ?,
                         preferences = ?, notes = ?, updated_at = ?
                     WHERE id = ? AND user_id = ?
                     """,
                     (ride_type, rider_role, title, origin_label, float(origin_point.get("lat") or 0), float(origin_point.get("lng") or 0),
                      destination_label, float(destination_point.get("lat") or 0), float(destination_point.get("lng") or 0), city,
                      pickup_date, pickup_time, start_date, end_date, days_of_week, seats, luggage, accessibility, max_detour_minutes,
-                     max_pickup_distance, flex_minutes, contribution, approval_required, preferences, notes, now,
+                     max_pickup_distance, flex_minutes, contribution, approval_required,
+                     vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state, preferences, notes, now,
                      int(row_value(existing, "id") or 0), int(row_value(user, "id") or 0)),
                 )
                 if ride_type == "SCHEDULED_REQUEST":
@@ -38723,8 +38751,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                  destination_label, destination_lat, destination_lng, city_label, pickup_date, pickup_time,
                  start_date, end_date, days_of_week, seats, luggage, accessibility, max_detour_minutes,
                  max_pickup_distance_miles, departure_flex_minutes, contribution_per_seat, approval_required,
+                 vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state,
                  preferences, notes, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
                 """,
                 (
                     public_id,
@@ -38752,6 +38781,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     flex_minutes,
                     contribution,
                     approval_required,
+                    vehicle_make_model,
+                    vehicle_year,
+                    vehicle_color,
+                    license_plate,
+                    license_state,
                     preferences,
                     notes,
                 ),

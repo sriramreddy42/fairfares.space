@@ -544,6 +544,11 @@ const initialRideForm: RideInput = {
   departureFlexMinutes: "30",
   contributionPerSeat: "",
   approvalRequired: true,
+  vehicleMakeModel: "",
+  vehicleYear: "",
+  vehicleColor: "",
+  licensePlate: "",
+  licenseState: "",
   preferences: "No smoking",
   notes: ""
 };
@@ -1175,6 +1180,11 @@ export function HousingScreen({
           departureFlexMinutes: String(ride.departureFlexMinutes || 0),
           contributionPerSeat: String(ride.contributionPerSeat || 0),
           approvalRequired: ride.approvalRequired,
+          vehicleMakeModel: ride.vehicleMakeModel || "",
+          vehicleYear: ride.vehicleYear || "",
+          vehicleColor: ride.vehicleColor || "",
+          licensePlate: ride.licensePlate || "",
+          licenseState: ride.licenseState || "",
           preferences: ride.preferences || "",
           notes: ride.notes || ""
         });
@@ -1529,6 +1539,11 @@ export function HousingScreen({
       maxDetourMinutes: "15",
       maxPickupDistanceMiles: "50",
       contributionPerSeat: "",
+      vehicleMakeModel: rideDriverProfile?.vehicleMakeModel || "",
+      vehicleYear: rideDriverProfile?.vehicleYear || "",
+      vehicleColor: rideDriverProfile?.vehicleColor || "",
+      licensePlate: rideDriverProfile?.licensePlate || "",
+      licenseState: rideDriverProfile?.licenseState || "",
       preferences: offerSurface.title,
       notes: offerSurface.note
     });
@@ -1703,6 +1718,18 @@ export function HousingScreen({
           rideForm.destinationLng !== null ||
           rideForm.destination.trim() === selectedRideSuggestionRef.current))
     );
+    if (listingRide && destinationAlreadyPicked) {
+      if (!String(rideForm.vehicleMakeModel || "").trim()) {
+        ridePlanSubmittingRef.current = false;
+        Alert.alert("Vehicle needed", "Enter the car make/model for this ride.");
+        return;
+      }
+      if (!String(rideForm.licensePlate || "").trim() || !String(rideForm.licenseState || "").trim()) {
+        ridePlanSubmittingRef.current = false;
+        Alert.alert("Plate needed", "Enter the license plate and state for this ride.");
+        return;
+      }
+    }
     setRideBusy(true);
     setRidePlanBusy(true);
     try {
@@ -3010,6 +3037,67 @@ export function HousingScreen({
                         placeholderTextColor="#8f949b"
                         value={rideForm.luggage}
                         onChangeText={(value) => updateRideForm("luggage", value)}
+                      />
+                    </View>
+                  </View>
+                  <Text style={styles.rideTripDetailsTitle}>Vehicle for this ride</Text>
+                  <Text style={styles.rideTripHint}>Confirm the car for this listing. You can change it each time you offer seats.</Text>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripFieldFull}>
+                      <Text style={styles.rideTripLabel}>Vehicle make/model</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="Toyota Camry"
+                        placeholderTextColor="#8f949b"
+                        value={rideForm.vehicleMakeModel || ""}
+                        onChangeText={(value) => updateRideForm("vehicleMakeModel", value)}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Year</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="2022"
+                        placeholderTextColor="#8f949b"
+                        keyboardType="number-pad"
+                        value={rideForm.vehicleYear || ""}
+                        onChangeText={(value) => updateRideForm("vehicleYear", value)}
+                      />
+                    </View>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Color</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="White"
+                        placeholderTextColor="#8f949b"
+                        value={rideForm.vehicleColor || ""}
+                        onChangeText={(value) => updateRideForm("vehicleColor", value)}
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.rideTripDetailsRow}>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>Plate</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="ABC123"
+                        placeholderTextColor="#8f949b"
+                        autoCapitalize="characters"
+                        value={rideForm.licensePlate || ""}
+                        onChangeText={(value) => updateRideForm("licensePlate", value)}
+                      />
+                    </View>
+                    <View style={styles.rideTripField}>
+                      <Text style={styles.rideTripLabel}>State</Text>
+                      <TextInput
+                        style={styles.rideTripInput}
+                        placeholder="CO"
+                        placeholderTextColor="#8f949b"
+                        autoCapitalize="characters"
+                        value={rideForm.licenseState || ""}
+                        onChangeText={(value) => updateRideForm("licenseState", value)}
                       />
                     </View>
                   </View>

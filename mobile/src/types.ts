@@ -335,6 +335,11 @@ export type RidePost = {
   departureFlexMinutes: number;
   contributionPerSeat: number;
   approvalRequired: boolean;
+  vehicleMakeModel?: string;
+  vehicleYear?: string;
+  vehicleColor?: string;
+  licensePlate?: string;
+  licenseState?: string;
   preferences: string;
   notes: string;
   status: string;
@@ -428,6 +433,11 @@ export type RideInput = {
   departureFlexMinutes: string;
   contributionPerSeat: string;
   approvalRequired: boolean;
+  vehicleMakeModel?: string;
+  vehicleYear?: string;
+  vehicleColor?: string;
+  licensePlate?: string;
+  licenseState?: string;
   preferences: string;
   notes: string;
 };
