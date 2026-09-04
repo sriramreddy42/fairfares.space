@@ -1433,7 +1433,7 @@ export async function relayEncryptedChatMessage(bundle: Record<string, unknown>)
 }
 
 export async function getChatDeviceKeys(conversationId: string) {
-  return request<{ ok: boolean; keys: Array<{ userId: number; deviceId: string; publicKey: string }>; ready: boolean; warning: string }>(`/api/chat/e2ee/keys?conversation_id=${encodeURIComponent(conversationId)}`);
+  return request<{ ok: boolean; keys: Array<{ userId: number; deviceId: string; publicKey: string }>; ready: boolean; canSend?: boolean; warning: string }>(`/api/chat/e2ee/keys?conversation_id=${encodeURIComponent(conversationId)}`);
 }
 
 export async function getChatEncryptedEnvelopes(conversationId: string, deviceId: string) {

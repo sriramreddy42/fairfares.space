@@ -20349,11 +20349,11 @@ def chat_link_preview(value: str) -> tuple[dict[str, str] | None, str]:
         return None, "This website preview is temporarily unavailable."
 
 
-def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str]:
+def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int) -> tuple[list[dict[str, object]] | None, str, bool]:
     with db() as con:
         conversation = get_chat_conversation_by_public_id(con, conversation_public_id, user_id)
         if not conversation:
-            return None, "Conversation not found."
+            return None, "Conversation not found.", False
         rows = con.execute(
             """SELECT keys.user_id, keys.device_id, keys.public_key
                FROM chat_device_keys keys
@@ -20363,28 +20363,21 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
             (int(conversation["id"]),),
         ).fetchall()
         participant_count = int(con.execute("SELECT COUNT(*) AS count FROM chat_participants WHERE conversation_id = ?", (int(conversation["id"]),)).fetchone()["count"])
-        participants = con.execute(
-            """SELECT participants.user_id, users.name
-               FROM chat_participants participants
-               JOIN users ON users.id = participants.user_id
-               WHERE participants.conversation_id = ?
-               ORDER BY users.name""",
-            (int(conversation["id"]),),
-        ).fetchall()
     keys = [{"userId": int(row["user_id"]), "deviceId": row_value(row, "device_id"), "publicKey": row_value(row, "public_key")} for row in rows]
     keyed_users = len({int(item["userId"]) for item in keys})
     is_group = bool(int(row_value(conversation, "community_id") or 0)) or str(row_value(conversation, "conversation_type") or "").upper() == "GROUP"
     sender_has_key = any(int(item["userId"]) == user_id for item in keys)
+    can_send = bool(sender_has_key and keys)
     # A missing device key must not freeze an entire group. Messages are sealed
     # only for currently registered member devices; a member who has not opened
     # the current app cannot decrypt messages sent before their key registration.
     if is_group and sender_has_key:
-        return keys, ""
+        return keys, "", can_send
     if keyed_users == participant_count:
-        return keys, ""
+        return keys, "", can_send
     if not sender_has_key:
-        return keys, "Securing Chitthi on this device. This usually finishes automatically."
-    return keys, "Secure chat is being prepared. You can try again shortly."
+        return keys, "Securing Chitthi on this device. This usually finishes automatically.", False
+    return keys, "Secure chat is being prepared. You can try again shortly.", can_send
 
 
 def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str, reply_to_message_id: int = 0) -> tuple[sqlite3.Row | None, str]:
@@ -27606,11 +27599,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Sign in to secure Chitthi."}, 401)
             return
         conversation_id = (urllib.parse.parse_qs(parsed.query).get("conversation_id") or [""])[0]
-        keys, warning = get_chat_conversation_device_keys(conversation_id, int(user["id"]))
+        keys, warning, can_send = get_chat_conversation_device_keys(conversation_id, int(user["id"]))
         if keys is None:
             self.send_json({"ok": False, "message": warning}, 404)
             return
-        self.send_json({"ok": True, "keys": keys, "ready": not warning, "warning": warning})
+        self.send_json({"ok": True, "keys": keys, "ready": not warning, "canSend": can_send, "warning": warning})
 
     def api_chat_link_preview(self, parsed: urllib.parse.ParseResult) -> None:
         if not self.current_user():

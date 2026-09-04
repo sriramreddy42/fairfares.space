@@ -182,6 +182,9 @@ function userSafeEncryptionStatus(value: string) {
   }
   return text;
 }
+function chatKeyPayloadCanSend(payload: { ready?: boolean; canSend?: boolean; keys?: unknown[] }) {
+  return Boolean((payload.canSend ?? payload.ready) && payload.keys?.length);
+}
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.chitthi.public-keys.${userId}.${conversationId}`;
 const legacyConversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const chatConversationCacheName = (userId: number) => `fairfares.chitthi.conversations.v2.${userId}`;
@@ -2853,7 +2856,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const userId = Number(data?.user?.id || 0);
     try {
       const payload = await getChatDeviceKeys(conversationId);
-      if (payload.ready && payload.keys.length) {
+      if (chatKeyPayloadCanSend(payload)) {
         await AsyncStorage.setItem(conversationKeyCacheName(userId, conversationId), JSON.stringify(payload));
       }
       return payload;
@@ -2911,7 +2914,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const clearText = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "";
           if (!clearText) throw new Error("This device cannot recover the queued encrypted message.");
           const keyPayload = await getChatDeviceKeys(item.conversationId);
-          if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+          if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
           await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
           const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys, encryptedOverviewPreview(clearText));
           await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
@@ -4141,8 +4144,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getChatDeviceKeys(activeConversationId);
         ensureSendContext();
-        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
-        setEncryptionReady(true);
+        if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+        setEncryptionReady(Boolean(keyPayload.ready));
         const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
         const sentMessages: ChatMessage[] = [];
         for (let index = 0; index < attachments.length; index += 1) {
@@ -4373,7 +4376,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getEncryptionKeysForSend(activeConversationId);
         ensureSendContext();
-        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+        if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
         const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
         const response = await editChatMessage(activeConversationId, editingMessageId, envelopes);
         ensureSendContext();
@@ -4420,8 +4423,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const identity = await ensureChatDeviceIdentity();
           const keyPayload = await getEncryptionKeysForSend(activeConversationId);
           ensureSendContext();
-          if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
-          setEncryptionReady(true);
+          if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+          setEncryptionReady(Boolean(keyPayload.ready));
           const envelopes = encryptForDevices(encryptedText, identity, keyPayload.keys, cleanMessage);
           pendingIdentity = identity;
           pendingEnvelopes = envelopes;
@@ -5395,8 +5398,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!activeConversationId) throw new Error("Open a conversation first.");
     const identity = await ensureChatDeviceIdentity();
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
-    if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
-    setEncryptionReady(true);
+    if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+    setEncryptionReady(Boolean(keyPayload.ready));
     const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi letter";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
@@ -6129,7 +6132,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       for (const [conversationIndex, destination] of destinationKeys.entries()) {
         const { conversationId, keyPayload } = destination;
         setForwardingStatus(`Encrypting for chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
-        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || "A selected chat is not ready for encrypted forwarding.");
+        if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || "A selected chat is not ready for encrypted forwarding.");
         for (const [messageIndex, message] of chosenMessages.entries()) {
           setForwardingStatus(`Forwarding message ${messageIndex + 1} of ${chosenMessages.length} to chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
           if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {
