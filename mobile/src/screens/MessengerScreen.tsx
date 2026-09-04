@@ -2044,7 +2044,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       if (showDateDivider) {
         rows.push({
           kind: "date",
-          key: `date-${chatDayKey(message.createdAt)}`,
+          key: `${activeConversationId || "thread"}-date-${chatDayKey(message.createdAt)}`,
           message,
           index,
           skipForMediaGroup: false,
@@ -2057,7 +2057,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
       rows.push({
         kind: "message",
-        key: `message-${message.id}`,
+        key: `${activeConversationId || "thread"}-message-${message.id}`,
         message,
         index,
         skipForMediaGroup: Boolean(mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId),
@@ -2069,7 +2069,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
     });
     return rows.reverse();
-  }, [messages, visibleMessages]);
+  }, [activeConversationId, messages, visibleMessages]);
   const activeGroup = useMemo(
     () => communities.find((item) => item.id === activeConversation?.communityId) || null,
     [communities, activeConversation?.communityId]
@@ -2283,6 +2283,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   function activateThreadConversation(conversationId: string) {
     if (activeConversationIdRef.current !== conversationId) {
       setHydratedConversationId("");
+      setReplyingTo(null);
+      setPrivateReplyContext(null);
+      setEditingMessageId(null);
+      setSelectedMessageIds([]);
       // Encryption readiness belongs to one conversation. Carrying `true`
       // from the previous thread could briefly label a not-yet-ready direct
       // chat as encrypted and suppress its readiness retry until the network
@@ -4688,6 +4692,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setActiveConversation(response.conversation);
       setActiveSubject(person.name);
       onThreadModeChange?.(true);
+      const cachedMessages = await loadCachedThreadMessages(response.conversation.id);
+      if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
+      const displayedCachedMessages = showCachedThreadMessages(response.conversation.id, cachedMessages);
+      if (!displayedCachedMessages) replaceThreadMessages(response.conversation.id, []);
+      setThreadLoading(!displayedCachedMessages);
       const payload = await getChatMessages(response.conversation.id);
       if (activeConversationIdRef.current && activeConversationIdRef.current !== response.conversation.id) return;
       const decryptedMessages = await decryptMessages(response.conversation.id, payload.messages || []);
@@ -4700,6 +4709,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setEditingMessageId(null);
         setMessageText("");
         setPrivateReplyContext(privateReply);
+      } else {
+        setPrivateReplyContext(null);
       }
       await refreshMessenger();
     } catch (error) {
@@ -6321,6 +6332,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
           ) : null}
           <FlatList
+            key={activeConversationId || "empty-thread"}
             ref={messagesScrollRef}
             style={styles.threadMessagesList}
             data={threadMessageItems}
