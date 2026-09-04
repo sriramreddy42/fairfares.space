@@ -3045,6 +3045,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
+  function hydrateUnavailableMessagesFromRecoveredIdentities(conversationId: string, pageMessages: ChatMessage[]) {
+    if (!pageMessages.some((message) => message.text === unavailableEncryptedMessageText || isEncryptedPlaceholder(message.text))) return;
+    void prepareMessageDecryption(conversationId)
+      .then((context) => decryptMessages(conversationId, pageMessages, Promise.resolve(context)))
+      .then((hydratedMessages) => {
+        if (activeConversationIdRef.current !== conversationId) return;
+        const recoveredIds = new Set(
+          hydratedMessages
+            .filter((message) => {
+              const original = pageMessages.find((candidate) => candidate.id === message.id);
+              return Boolean(original && (original.text === unavailableEncryptedMessageText || isEncryptedPlaceholder(original.text)) && message.text !== unavailableEncryptedMessageText && !isEncryptedPlaceholder(message.text));
+            })
+            .map((message) => message.id)
+        );
+        if (!recoveredIds.size) return;
+        setMessages((current) => {
+          const merged = mergeThreadHistoryMessages(current, hydratedMessages);
+          messageCache.current.set(conversationId, merged);
+          return merged;
+        });
+      })
+      .catch(() => undefined);
+  }
+
   async function decryptConversationPreviews(nextConversations: ChatConversation[]) {
     const encrypted = nextConversations.filter((conversation) => isEncryptedPlaceholder(conversation.lastMessage) && Number(conversation.lastMessageId || 0) > 0);
     if (!encrypted.length) return nextConversations;
@@ -3126,6 +3150,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         envelopePayload,
         keyPayload
       }));
+      hydrateUnavailableMessagesFromRecoveredIdentities(conversationId, olderMessages);
       if (activeConversationIdRef.current !== conversationId) return;
       prependScrollAnchorRef.current = null;
       shouldAutoScrollToEndRef.current = false;
@@ -3790,6 +3815,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void keyPayloadPromise;
       prepareThreadForLatestLayout();
       mergeThreadMessages(conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
+      hydrateUnavailableMessagesFromRecoveredIdentities(conversation.id, decryptedMessages);
       setHydratedConversationId(conversation.id);
       updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
@@ -4668,6 +4694,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
+      hydrateUnavailableMessagesFromRecoveredIdentities(response.conversation.id, decryptedMessages);
       setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       await refreshMessenger();
@@ -4718,6 +4745,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages);
+      hydrateUnavailableMessagesFromRecoveredIdentities(response.conversation.id, decryptedMessages);
       setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       if (privateReply) {
@@ -4967,6 +4995,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       prepareThreadForLatestLayout();
       mergeThreadMessages(response.conversation.id, decryptedMessages, Number(payload.conversation.historyStartMessageId || 0));
+      hydrateUnavailableMessagesFromRecoveredIdentities(response.conversation.id, decryptedMessages);
       setHydratedConversationId(response.conversation.id);
       updateMessagePagination(payload);
       const lastMessage = payload.messages[payload.messages.length - 1];
