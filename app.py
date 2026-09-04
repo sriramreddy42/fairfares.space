@@ -25555,6 +25555,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def carpool_open_landing(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         ride_id = clean_text_value((params.get("rideId", params.get("ride_id", [""]))[0] or ""), 80)
+        shared_ride = None
+        if ride_id:
+            with db() as con:
+                shared_ride = con.execute(
+                    """
+                    SELECT ride_posts.*, users.name AS owner_name
+                    FROM ride_posts
+                    LEFT JOIN users ON users.id = ride_posts.user_id
+                    WHERE ride_posts.public_id = ? AND ride_posts.status = 'ACTIVE'
+                    LIMIT 1
+                    """,
+                    (ride_id,),
+                ).fetchone()
         ios_store_url = "https://apps.apple.com/us/app/fairfares-ltd/id6797162820"
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         app_query = urllib.parse.urlencode({"rideId": ride_id}) if ride_id else ""
@@ -25566,8 +25579,37 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"intent://www.fairfare.space/carpool#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
         )
         fairfares_logo = absolute_public_url("/static/img/fairfares-glow-logo.png")
+        if shared_ride:
+            route = f"{row_value(shared_ride, 'origin_label') or 'Pickup area'} → {row_value(shared_ride, 'destination_label') or 'Destination'}"
+            seat_count = int(row_value(shared_ride, "seats") or 1)
+            ride_facts = [
+                row_value(shared_ride, "pickup_date"),
+                row_value(shared_ride, "pickup_time"),
+                f"{seat_count} seat{'s' if seat_count != 1 else ''}",
+            ]
+            share_title = f"Carpool: {route} | FairFares"
+            share_description = f"{' · '.join(str(item) for item in ride_facts if item)}. Open this carpool in FairFares and connect securely."
+            share_url = f"{schema_origin()}/carpool/open?rideId={urllib.parse.quote(ride_id)}"
+            share_image = f"{schema_origin()}/api/share-card?kind=carpool&id={urllib.parse.quote(ride_id)}"
+            share_image_alt = f"FairFares carpool route {route}"
+            share_image_type = "image/png"
+            share_image_height = "630"
+            headline = route
+            subcopy = share_description
+        else:
+            share_title = "FairFares Carpool | Find or Offer a Ride"
+            share_description = "Find people traveling your route, share seats, and coordinate privately in FairFares."
+            share_url = f"{schema_origin()}/carpool/open"
+            share_image = absolute_public_url("/static/img/notifications/carpool-state-move.jpg")
+            share_image_alt = "Find and share carpool rides on FairFares"
+            share_image_type = "image/jpeg"
+            share_image_height = "800"
+            headline = "Going the same way?"
+            subcopy = share_description
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
-        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><meta name=\"robots\" content=\"noindex,nofollow\"><title>Open FairFares Carpool</title><meta name=\"description\" content=\"Open FairFares Carpool to find or offer rides.\"></head><body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 22px\"><p style=\"color:#62d8a6;font-weight:850;letter-spacing:.1em;text-transform:uppercase\">FairFares Carpool</p><h1 style=\"font-size:34px;line-height:1.08;margin:10px 0\">Going the same way?</h1><p style=\"color:#b7c2d4;line-height:1.5\">Find people traveling your route, share seats, and coordinate privately in FairFares.</p><a id=\"continue-fairfares\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#00c997;color:#06291e;text-decoration:none;padding:15px;border-radius:999px;font-weight:900;margin-top:20px\">Open in FairFares</a><a id=\"install-fairfares\" href=\"{html.escape(ios_store_url, quote=True)}\" style=\"display:block;color:#c9d7d1;text-decoration:none;padding:14px;border-radius:999px;font-weight:800;margin-top:10px;border:1px solid #547064\">Install FairFares</a><p style=\"color:#8493aa;font-size:13px;line-height:1.4;margin:14px 0 0\">Opens the app if installed, or takes you to the correct store.</p></main><script>(function(){{var button=document.getElementById('continue-fairfares'),install=document.getElementById('install-fairfares');if(!button)return;var isAndroid=/android/i.test(navigator.userAgent),iosStore={json.dumps(ios_store_url)},androidStore={json.dumps(android_store_url)};if(install)install.href=isAndroid?androidStore:iosStore;if(isAndroid){{button.href={json.dumps(android_app_link)};return}}var appLink={json.dumps(ios_app_link)},storeLink=iosStore,timer=0;button.href=appLink;button.addEventListener('click',function(event){{event.preventDefault();var started=Date.now();window.location.href=appLink;timer=window.setTimeout(function(){{if(!document.hidden&&Date.now()-started<2600)window.location.href=storeLink}},1500)}});document.addEventListener('visibilitychange',function(){{if(document.hidden&&timer){{window.clearTimeout(timer);timer=0}}}})}})()</script></body></html>"""
+        escaped_share_url = html.escape(share_url, quote=True)
+        escaped_share_image = html.escape(share_image, quote=True)
+        body = f"""<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"apple-itunes-app\" content=\"app-id=6797162820, app-argument={safe_universal_app_link}\"><meta name=\"robots\" content=\"noindex,nofollow\"><title>{html.escape(share_title)}</title><meta name=\"description\" content=\"{html.escape(share_description, quote=True)}\"><link rel=\"canonical\" href=\"{escaped_share_url}\"><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/static/img/favicon-32.png?v={ASSET_VERSION}\"><link rel=\"icon\" type=\"image/png\" sizes=\"512x512\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><link rel=\"apple-touch-icon\" href=\"/static/img/appicon.png?v={ASSET_VERSION}\"><meta name=\"theme-color\" content=\"#00c997\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:site_name\" content=\"FairFares\"><meta property=\"og:logo\" content=\"{html.escape(fairfares_logo, quote=True)}\"><meta property=\"og:title\" content=\"{html.escape(share_title, quote=True)}\"><meta property=\"og:description\" content=\"{html.escape(share_description, quote=True)}\"><meta property=\"og:url\" content=\"{escaped_share_url}\"><meta property=\"og:image\" content=\"{escaped_share_image}\"><meta property=\"og:image:secure_url\" content=\"{escaped_share_image}\"><meta property=\"og:image:type\" content=\"{share_image_type}\"><meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"{share_image_height}\"><meta property=\"og:image:alt\" content=\"{html.escape(share_image_alt, quote=True)}\"><meta name=\"twitter:card\" content=\"summary_large_image\"><meta name=\"twitter:title\" content=\"{html.escape(share_title, quote=True)}\"><meta name=\"twitter:description\" content=\"{html.escape(share_description, quote=True)}\"><meta name=\"twitter:image\" content=\"{escaped_share_image}\"></head><body style=\"margin:0;background:#07101f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;min-height:100vh;place-items:center\"><main style=\"max-width:420px;padding:32px;text-align:center\"><img src=\"{html.escape(fairfares_logo, quote=True)}\" alt=\"FairFares\" style=\"display:block;width:210px;max-height:80px;object-fit:contain;margin:0 auto 22px\"><p style=\"color:#62d8a6;font-weight:850;letter-spacing:.1em;text-transform:uppercase\">FairFares Carpool</p><h1 style=\"font-size:34px;line-height:1.08;margin:10px 0\">{html.escape(headline)}</h1><p style=\"color:#b7c2d4;line-height:1.5\">{html.escape(subcopy)}</p><a id=\"continue-fairfares\" href=\"{safe_universal_app_link}\" style=\"display:block;background:#00c997;color:#06291e;text-decoration:none;padding:15px;border-radius:999px;font-weight:900;margin-top:20px\">Open in FairFares</a><a id=\"install-fairfares\" href=\"{html.escape(ios_store_url, quote=True)}\" style=\"display:block;color:#c9d7d1;text-decoration:none;padding:14px;border-radius:999px;font-weight:800;margin-top:10px;border:1px solid #547064\">Install FairFares</a><p style=\"color:#8493aa;font-size:13px;line-height:1.4;margin:14px 0 0\">Opens the app if installed, or takes you to the correct store.</p></main><script>(function(){{var button=document.getElementById('continue-fairfares'),install=document.getElementById('install-fairfares');if(!button)return;var isAndroid=/android/i.test(navigator.userAgent),iosStore={json.dumps(ios_store_url)},androidStore={json.dumps(android_store_url)};if(install)install.href=isAndroid?androidStore:iosStore;if(isAndroid){{button.href={json.dumps(android_app_link)};return}}var appLink={json.dumps(ios_app_link)},storeLink=iosStore,timer=0;button.href=appLink;button.addEventListener('click',function(event){{event.preventDefault();var started=Date.now();window.location.href=appLink;timer=window.setTimeout(function(){{if(!document.hidden&&Date.now()-started<2600)window.location.href=storeLink}},1500)}});document.addEventListener('visibilitychange',function(){{if(document.hidden&&timer){{window.clearTimeout(timer);timer=0}}}})}})()</script></body></html>"""
         self.send_text(body, "text/html; charset=utf-8", cache_control="private, no-store")
 
     def healthz(self) -> None:
