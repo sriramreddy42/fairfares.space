@@ -173,6 +173,15 @@ function prepareChitthiSentSound() {
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
+const pendingEncryptionStatusText = "Secure chat is being prepared. You can try again shortly.";
+function userSafeEncryptionStatus(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/needs to open the latest FairFares app|other participants need to open the latest FairFares app|before this private chat can be encrypted/i.test(text)) {
+    return pendingEncryptionStatusText;
+  }
+  return text;
+}
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.chitthi.public-keys.${userId}.${conversationId}`;
 const legacyConversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const chatConversationCacheName = (userId: number) => `fairfares.chitthi.conversations.v2.${userId}`;
@@ -2751,7 +2760,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const keyPayload = await getChatDeviceKeys(conversationId);
             if (!cancelled && activeConversationIdRef.current === conversationId) {
               setEncryptionReady(Boolean(keyPayload.ready));
-              setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+              setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
             }
           } catch (error) {
             // Registration already succeeded. Conversation status is fetched
@@ -2824,7 +2833,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const payload = await getChatDeviceKeys(activeConversationId);
         if (cancelled || activeConversationIdRef.current !== activeConversationId) return;
         setEncryptionReady(Boolean(payload.ready));
-        setEncryptionStatusDetail(payload.ready ? "" : payload.warning || "Encryption setup is still pending.");
+        setEncryptionStatusDetail(payload.ready ? "" : userSafeEncryptionStatus(payload.warning) || "Encryption setup is still pending.");
       } catch {
         // Startup registration and normal thread refresh also retry. Preserve
         // the useful status instead of replacing it with transient network text.
@@ -2902,7 +2911,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const clearText = ownEnvelope ? decryptEnvelope(ownEnvelope, identity) : "";
           if (!clearText) throw new Error("This device cannot recover the queued encrypted message.");
           const keyPayload = await getChatDeviceKeys(item.conversationId);
-          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+          if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
           await AsyncStorage.setItem(conversationKeyCacheName(userId, item.conversationId), JSON.stringify(keyPayload));
           const refreshedEnvelopes = encryptForDevices(clearText, identity, keyPayload.keys, encryptedOverviewPreview(clearText));
           await updateEncryptedOutboxItem(userId, item.clientMessageId, { envelopes: refreshedEnvelopes, attempts: item.attempts + 1, lastAttemptAt: new Date().toISOString() });
@@ -2967,7 +2976,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const { identity, identities = [identity], envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
       setEncryptionReady(Boolean(keyPayload.ready));
-      setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+      setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
       const byMessage = new Map<number, typeof envelopePayload.envelopes>();
       envelopePayload.envelopes.forEach((item) => {
         const current = byMessage.get(item.messageId) || [];
@@ -3810,7 +3819,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         .then((keyPayload) => {
           if (messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === conversation.id) {
             setEncryptionReady(Boolean(keyPayload.ready));
-            setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+            setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
           }
           return keyPayload;
         })
@@ -4132,7 +4141,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getChatDeviceKeys(activeConversationId);
         ensureSendContext();
-        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
         setEncryptionReady(true);
         const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
         const sentMessages: ChatMessage[] = [];
@@ -4364,7 +4373,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const identity = await ensureChatDeviceIdentity();
         const keyPayload = await getEncryptionKeysForSend(activeConversationId);
         ensureSendContext();
-        if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
         const envelopes = encryptForDevices(cleanMessage, identity, keyPayload.keys);
         const response = await editChatMessage(activeConversationId, editingMessageId, envelopes);
         ensureSendContext();
@@ -4411,7 +4420,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const identity = await ensureChatDeviceIdentity();
           const keyPayload = await getEncryptionKeysForSend(activeConversationId);
           ensureSendContext();
-          if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+          if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
           setEncryptionReady(true);
           const envelopes = encryptForDevices(encryptedText, identity, keyPayload.keys, cleanMessage);
           pendingIdentity = identity;
@@ -4735,7 +4744,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
           setEncryptionReady(Boolean(keyPayload.ready));
-          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+          setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
         }
       });
       prepareThreadForLatestLayout();
@@ -4786,7 +4795,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
           setEncryptionReady(Boolean(keyPayload.ready));
-          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+          setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
         }
       });
       prepareThreadForLatestLayout();
@@ -5036,7 +5045,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void keyPayloadPromise.then((keyPayload) => {
         if (activeConversationIdRef.current === response.conversation.id) {
           setEncryptionReady(Boolean(keyPayload.ready));
-          setEncryptionStatusDetail(keyPayload.ready ? "" : keyPayload.warning || "Encryption key registration is incomplete.");
+          setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
         }
       });
       prepareThreadForLatestLayout();
@@ -5386,7 +5395,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!activeConversationId) throw new Error("Open a conversation first.");
     const identity = await ensureChatDeviceIdentity();
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
-    if (!keyPayload.ready) throw new Error(keyPayload.warning || "Encryption keys are not ready.");
+    if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
     setEncryptionReady(true);
     const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi letter";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
@@ -6120,7 +6129,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       for (const [conversationIndex, destination] of destinationKeys.entries()) {
         const { conversationId, keyPayload } = destination;
         setForwardingStatus(`Encrypting for chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
-        if (!keyPayload.ready) throw new Error(keyPayload.warning || "A selected chat is not ready for encrypted forwarding.");
+        if (!keyPayload.ready) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || "A selected chat is not ready for encrypted forwarding.");
         for (const [messageIndex, message] of chosenMessages.entries()) {
           setForwardingStatus(`Forwarding message ${messageIndex + 1} of ${chosenMessages.length} to chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
           if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {

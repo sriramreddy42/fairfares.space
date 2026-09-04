@@ -20384,16 +20384,7 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
         return keys, ""
     if not sender_has_key:
         return keys, "Securing Chitthi on this device. This usually finishes automatically."
-    keyed_user_ids = {int(item["userId"]) for item in keys}
-    missing_names = [
-        str(row_value(participant, "name") or "This participant").strip()
-        for participant in participants
-        if int(row_value(participant, "user_id") or 0) not in keyed_user_ids
-        and int(row_value(participant, "user_id") or 0) != user_id
-    ]
-    if len(missing_names) == 1:
-        return keys, f"{missing_names[0]} needs to open the latest FairFares app before this private chat can be encrypted."
-    return keys, "The other participants need to open the latest FairFares app before this private chat can be encrypted."
+    return keys, "Secure chat is being prepared. You can try again shortly."
 
 
 def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str, reply_to_message_id: int = 0) -> tuple[sqlite3.Row | None, str]:
