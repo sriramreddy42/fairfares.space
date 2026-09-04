@@ -6197,11 +6197,79 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   useEffect(() => {
     if (Platform.OS !== "android" || !inThread) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (actionMessage) {
+        setActionMessage(null);
+        return true;
+      }
+      if (messageInfo) {
+        setMessageInfo(null);
+        return true;
+      }
+      if (attachmentPreview) {
+        setAttachmentPreview(null);
+        return true;
+      }
+      if (profilePhotoPreview) {
+        setProfilePhotoPreview(null);
+        return true;
+      }
+      if (pendingPhotoPreviewOpen) {
+        setPendingPhotoPreviewOpen(false);
+        return true;
+      }
+      if (attachmentPreviewGroup.length) {
+        setAttachmentPreviewGroup([]);
+        return true;
+      }
+      if (forwardPickerOpen) {
+        if (!forwardingMessages) {
+          setForwardPickerOpen(false);
+          setSelectedMessageIds([]);
+          setSelectedForwardConversationIds([]);
+        }
+        return true;
+      }
+      if (shareContactPickerOpen) {
+        setShareContactPickerOpen(false);
+        return true;
+      }
+      if (contactPickerOpen && contactPickerMode === "add") {
+        setContactPickerOpen(false);
+        return true;
+      }
+      if (richComposer) {
+        setRichComposer("");
+        return true;
+      }
+      if (emojiPickerOpen) {
+        setEmojiPickerOpen(false);
+        return true;
+      }
+      if (wallpaperPanelOpen) {
+        setWallpaperPanelOpen(false);
+        return true;
+      }
+      if (attachmentMenuOpen) {
+        setAttachmentMenuOpen(false);
+        return true;
+      }
+      if (groupMembersOpen) {
+        setGroupMembersOpen(false);
+        return true;
+      }
+      if (chatOptionsOpen) {
+        setChatOptionsOpen(false);
+        return true;
+      }
+      if (selectedMessageIds.length) {
+        setSelectedMessageIds([]);
+        return true;
+      }
       closeThread();
       return true;
     });
     return () => subscription.remove();
-  }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id]);
+  }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id, actionMessage, messageInfo, attachmentPreview, profilePhotoPreview, pendingPhotoPreviewOpen, attachmentPreviewGroup.length, forwardPickerOpen, forwardingMessages, shareContactPickerOpen, contactPickerOpen, contactPickerMode, richComposer, emojiPickerOpen, wallpaperPanelOpen, attachmentMenuOpen, groupMembersOpen, chatOptionsOpen, selectedMessageIds.length]);
 
   if (inThread) {
     return (
