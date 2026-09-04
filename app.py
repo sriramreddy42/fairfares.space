@@ -18890,12 +18890,8 @@ def mobile_sample_housing_posts(
             (SAMPLE_HOUSING_OWNER_EMAIL,),
         ).fetchone()
     sample_owner_id = int(row_value(sample_owner, "id") or 0) if sample_owner else 0
-    sample_owner_name = (
-        row_value(sample_owner, "name") or SAMPLE_HOUSING_OWNER_NAME
-        if sample_owner
-        else SAMPLE_HOUSING_OWNER_NAME
-    )
-    sample_owner_photo = avatar_delivery_path(row_value(sample_owner, "profile_photo_url"), sample_owner_id)
+    sample_owner_name = ""
+    sample_owner_photo = ""
     selected_location = " ".join((area or city or "your selected location").split())[:120]
     selected_country = accommodation_country_code(selected_location)
     currency_code, currency_symbol = accommodation_currency(selected_location)
@@ -18953,7 +18949,7 @@ def mobile_sample_housing_posts(
                 "accommodates": accommodates,
                 "roommateCount": roommate_count,
                 "amenities": [item.strip() for item in amenities.split(",")],
-                "sample": False,
+                "sample": True,
             }
         )
     return samples
