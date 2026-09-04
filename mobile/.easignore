@@ -4,6 +4,9 @@
 .env.*.local
 node_modules/
 /ios/
+/android/
+/artifacts/
+/modules/*/android/build/
 dist/
 dist-visual/
 *.log
