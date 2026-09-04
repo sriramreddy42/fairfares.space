@@ -2895,13 +2895,23 @@ function FairFaresApp() {
         }}
       />
     );
+  const screenContent = (
+    <>
+      {activeTab === "messenger" ? null : selectedScreen}
+      {(activeTab === "messenger" || messengerMediaTransferActive) ? (
+        <View key="retained-messenger" style={activeTab === "messenger" ? styles.retainedMessengerVisible : styles.retainedMessengerHidden}>
+          {messengerScreen}
+        </View>
+      ) : null}
+    </>
+  );
   const screen = (
     <React.Suspense fallback={(
       <View style={styles.lazyScreenFallback}>
         <ActivityIndicator size="large" color={theme.colors.brand} />
       </View>
     )}>
-      <React.Profiler
+      {__DEV__ ? <React.Profiler
         id={`screen-${activeTab}`}
         onRender={(id, phase, actualDuration, baseDuration) => {
           if (actualDuration >= 50) logDevelopmentPerformance("slow-react-commit", {
@@ -2912,13 +2922,8 @@ function FairFaresApp() {
           }, actualDuration >= 250);
         }}
       >
-        {activeTab === "messenger" ? null : selectedScreen}
-        {(activeTab === "messenger" || messengerMediaTransferActive) ? (
-          <View key="retained-messenger" style={activeTab === "messenger" ? styles.retainedMessengerVisible : styles.retainedMessengerHidden}>
-            {messengerScreen}
-          </View>
-        ) : null}
-      </React.Profiler>
+        {screenContent}
+      </React.Profiler> : screenContent}
     </React.Suspense>
   );
 
