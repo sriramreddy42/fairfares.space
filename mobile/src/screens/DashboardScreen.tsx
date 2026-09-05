@@ -455,7 +455,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       return;
     }
     const url = Platform.OS === "ios"
-      ? `http://maps.apple.com/?saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destination)}&dirflg=d`
+      ? `https://maps.apple.com/?saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destination)}&dirflg=d`
       : `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
     try {
       await Linking.openURL(url);
@@ -473,7 +473,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     const coordinateDestination = ride.originLat && ride.originLng ? `${ride.originLat},${ride.originLng}` : "";
     const destination = coordinateDestination || pickup;
     const url = Platform.OS === "ios"
-      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(pickup)}&dirflg=d`
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(pickup)}&dirflg=d`
       : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
     try {
       await Linking.openURL(url);
@@ -491,7 +491,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     const coordinateDestination = ride.destinationLat && ride.destinationLng ? `${ride.destinationLat},${ride.destinationLng}` : "";
     const destination = coordinateDestination || dropoff;
     const url = Platform.OS === "ios"
-      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(dropoff)}&dirflg=d`
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(dropoff)}&dirflg=d`
       : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
     try {
       await Linking.openURL(url);
@@ -521,7 +521,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       }
       const { latitude, longitude } = response.location;
       const url = Platform.OS === "ios"
-        ? `http://maps.apple.com/?ll=${latitude},${longitude}&q=${encodeURIComponent("FairFares driver")}`
+        ? `https://maps.apple.com/?ll=${latitude},${longitude}&q=${encodeURIComponent("FairFares driver")}`
         : `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
       await Linking.openURL(url);
     } catch (error) {
