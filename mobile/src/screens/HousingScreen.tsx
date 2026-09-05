@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -1899,6 +1899,15 @@ export function HousingScreen({
     };
     setRideActivityBusy(true);
     try {
+      if (action === "EN_ROUTE") {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== "granted") {
+          Alert.alert("Location permission required", "Allow location while using FairFares so the matched rider can see the driver's live location.");
+          return;
+        }
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        await updateRideDriverLocation(ride.id, position.coords.latitude, position.coords.longitude);
+      }
       const updated = await respondToRideDispatch(ride.id, action);
       await refreshRideActivity();
       if (action === "ACCEPT") {
@@ -1908,6 +1917,24 @@ export function HousingScreen({
           [
             { text: "Stay here", style: "cancel" },
             { text: "Open Chitthi", onPress: () => onRideMessage(updated) }
+          ]
+        );
+      } else if (action === "EN_ROUTE") {
+        Alert.alert(
+          "Rider notified",
+          `The rider has been notified that you are on the way.${cleanRideRoutePoint(updated.origin || ride.origin) ? `\n\nPickup: ${cleanRideRoutePoint(updated.origin || ride.origin)}` : ""}`,
+          [
+            { text: "Later", style: "cancel" },
+            { text: "Open map", onPress: () => void openRiderPickupNavigation({ ...ride, ...updated }) }
+          ]
+        );
+      } else if (action === "ARRIVED") {
+        Alert.alert(
+          "Rider notified",
+          `The rider has been notified that you have arrived.${cleanRideRoutePoint(updated.destination || ride.destination) ? `\n\nNext: ${cleanRideRoutePoint(updated.destination || ride.destination)}` : ""}`,
+          [
+            { text: "Later", style: "cancel" },
+            { text: "Open destination", onPress: () => void openRiderDestinationNavigation({ ...ride, ...updated }) }
           ]
         );
       } else {
@@ -1944,6 +1971,49 @@ export function HousingScreen({
       return;
     }
     void Linking.openURL(mapDirectionsUrl(origin, destination));
+  }
+
+  function cleanRideRoutePoint(value?: string) {
+    const raw = String(value || "").replace(/\s+/g, " ").trim();
+    if (!raw || /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(raw)) return "";
+    if (/^current location$/i.test(raw)) return "Current location";
+    return raw;
+  }
+
+  async function openRiderPickupNavigation(ride: RidePost) {
+    const pickup = cleanRideRoutePoint(ride.origin);
+    if (!pickup) {
+      Alert.alert("Pickup unavailable", "The rider pickup location is still being confirmed.");
+      return;
+    }
+    const coordinateDestination = ride.originLat && ride.originLng ? `${ride.originLat},${ride.originLng}` : "";
+    const destination = coordinateDestination || pickup;
+    const url = Platform.OS === "ios"
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(pickup)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Map unavailable", "The rider pickup route could not be opened on this device.");
+    }
+  }
+
+  async function openRiderDestinationNavigation(ride: RidePost) {
+    const dropoff = cleanRideRoutePoint(ride.destination);
+    if (!dropoff) {
+      Alert.alert("Destination unavailable", "The rider destination is still being confirmed.");
+      return;
+    }
+    const coordinateDestination = ride.destinationLat && ride.destinationLng ? `${ride.destinationLat},${ride.destinationLng}` : "";
+    const destination = coordinateDestination || dropoff;
+    const url = Platform.OS === "ios"
+      ? `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(dropoff)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Map unavailable", "The rider destination route could not be opened on this device.");
+    }
   }
 
   function renderRideOwnerTracker() {
@@ -2136,7 +2206,7 @@ export function HousingScreen({
                   const canAccept = isIncoming && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
                   const canAdvance = isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
                   const nextAction = status === "ACCEPTED" ? "EN_ROUTE" : status === "EN_ROUTE" ? "ARRIVED" : status === "ARRIVED" ? "COMPLETED" : null;
-                  const nextLabel = status === "ACCEPTED" ? "Mark en route" : status === "EN_ROUTE" ? "Mark arrived" : status === "ARRIVED" ? "Complete ride" : "";
+                  const nextLabel = status === "ACCEPTED" ? "Start trip" : status === "EN_ROUTE" ? "I've arrived" : status === "ARRIVED" ? "Complete ride" : "";
                   return (
                     <View key={ride.id} style={styles.rideOwnerRequestCard}>
                       <View style={styles.rideOwnerRequestTop}>
@@ -2181,6 +2251,16 @@ export function HousingScreen({
                         {canAdvance && nextAction ? (
                           <TouchableOpacity style={styles.rideOwnerAcceptButton} onPress={() => updateRideDispatch(ride, nextAction)} disabled={rideActivityBusy}>
                             <Text style={styles.rideOwnerActionText}>{nextLabel}</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        {isIncoming && status === "EN_ROUTE" ? (
+                          <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => void openRiderPickupNavigation(ride)}>
+                            <Text style={styles.rideOwnerChatText}>Navigate pickup</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                        {isIncoming && ["ARRIVED", "IN_PROGRESS"].includes(status) ? (
+                          <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => void openRiderDestinationNavigation(ride)}>
+                            <Text style={styles.rideOwnerChatText}>Navigate destination</Text>
                           </TouchableOpacity>
                         ) : null}
                         <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => onRideMessage(ride)}>
