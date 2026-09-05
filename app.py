@@ -18192,9 +18192,15 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                    notifications.route_deviation_miles AS dispatch_route_deviation_miles,
                    notifications.route_deviation_minutes AS dispatch_route_deviation_minutes,
                    notifications.notified_at AS dispatch_notified_at,
-                   notifications.responded_at AS dispatch_responded_at
+                   notifications.responded_at AS dispatch_responded_at,
+                   driver_posts.public_id AS matched_ride_public_id,
+                   driver_posts.title AS matched_route_title,
+                   driver_posts.origin_label AS matched_route_origin,
+                   driver_posts.destination_label AS matched_route_destination,
+                   driver_posts.contribution_per_seat AS matched_contribution_per_seat
             FROM ride_dispatch_notifications notifications
             JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+            JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
             WHERE notifications.id = ?
             LIMIT 1
             """,
@@ -18239,6 +18245,11 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
     response["dropoffDistanceMiles"] = float(row_value(updated, "dispatch_dropoff_distance_miles") or row_value(notification, "dropoff_distance_miles") or 0) if updated else float(row_value(notification, "dropoff_distance_miles") or 0)
     response["routeDeviationMiles"] = float(row_value(updated, "dispatch_route_deviation_miles") or row_value(notification, "route_deviation_miles") or 0) if updated else float(row_value(notification, "route_deviation_miles") or 0)
     response["routeDeviationMinutes"] = int(row_value(updated, "dispatch_route_deviation_minutes") or row_value(notification, "route_deviation_minutes") or 0) if updated else int(row_value(notification, "route_deviation_minutes") or 0)
+    response["matchedRideId"] = row_value(updated, "matched_ride_public_id") if updated else ""
+    response["matchedRouteTitle"] = row_value(updated, "matched_route_title") if updated else ""
+    response["matchedRouteOrigin"] = row_value(updated, "matched_route_origin") if updated else ""
+    response["matchedRouteDestination"] = row_value(updated, "matched_route_destination") if updated else ""
+    response["matchedContributionPerSeat"] = float(row_value(updated, "matched_contribution_per_seat") or 0) if updated else 0
     if next_status in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
         response["pickupPin"] = ride_pickup_pin(ride_public_id, user_id)
     return 200, {"ok": True, "ride": response}
