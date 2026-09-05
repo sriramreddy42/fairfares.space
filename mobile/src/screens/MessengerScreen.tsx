@@ -11,7 +11,7 @@ import { BlurView } from "expo-blur";
 import { sha256 } from "@noble/hashes/sha256";
 import { utf8ToBytes } from "@noble/hashes/utils";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Dimensions, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -172,6 +172,12 @@ function prepareChitthiSentSound() {
 }
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
+const CHAT_MEDIA_WIDTH = Math.max(248, Math.min(320, Math.round(Dimensions.get("window").width * 0.78)));
+const CHAT_MEDIA_MIN_HEIGHT = 160;
+const CHAT_MEDIA_MAX_HEIGHT = 430;
+const CHAT_MEDIA_FALLBACK_HEIGHT = Math.round(CHAT_MEDIA_WIDTH * 1.05);
+const CHAT_COLLAGE_GAP = 3;
+const CHAT_COLLAGE_CELL = (CHAT_MEDIA_WIDTH - CHAT_COLLAGE_GAP) / 2;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
 const pendingEncryptionStatusText = "Secure chat is being prepared. You can try again shortly.";
 function userSafeEncryptionStatus(value: string) {
@@ -1244,8 +1250,12 @@ function WebAuthenticatedChatImage({ attachmentUrl, compact = false }: { attachm
 
 function fittedChatImageSize(width: number, height: number) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-  const scale = Math.min(286 / width, 380 / height);
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+  const ratio = width / height;
+  const fittedHeight = Math.round(CHAT_MEDIA_WIDTH / ratio);
+  return {
+    width: CHAT_MEDIA_WIDTH,
+    height: Math.max(CHAT_MEDIA_MIN_HEIGHT, Math.min(CHAT_MEDIA_MAX_HEIGHT, fittedHeight)),
+  };
 }
 
 function AdaptiveChatImage({ uri, source, compact = false, onError, imageWidth = 0, imageHeight = 0 }: { uri?: string; source?: { uri: string; headers?: Record<string, string> }; compact?: boolean; onError?: () => void; imageWidth?: number; imageHeight?: number }) {
@@ -8145,7 +8155,7 @@ const styles = StyleSheet.create({
   myForwardedLabelText: { color: "rgba(216,235,226,0.72)" },
   senderName: { color: "#255744", fontSize: 12, fontWeight: "600" },
   senderTime: { color: "#786F5C", fontSize: 11, fontWeight: "700" },
-  photoSenderLine: { width: 286, minHeight: 34, backgroundColor: "#202321", borderTopLeftRadius: 19, borderTopRightRadius: 19, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 6, marginBottom: 0 },
+  photoSenderLine: { width: CHAT_MEDIA_WIDTH, minHeight: 34, backgroundColor: "#202321", borderTopLeftRadius: 19, borderTopRightRadius: 19, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 6, marginBottom: 0 },
   photoSenderName: { flex: 1, color: "#F0A98F", fontSize: 15, lineHeight: 20, fontWeight: "900" },
   messageContext: { borderLeftWidth: 4, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, minWidth: 190 },
   myMessageContext: { borderLeftColor: "#D6A95F", backgroundColor: "rgba(246,237,218,0.92)" },
@@ -8177,7 +8187,7 @@ const styles = StyleSheet.create({
   discoveredLink: { textDecorationLine: "underline", fontWeight: "600" },
   myDiscoveredLink: { color: "#DDEFE6" },
   theirDiscoveredLink: { color: "#176A55" },
-  websitePreviewCard: { width: 286, height: 276, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
+  websitePreviewCard: { width: CHAT_MEDIA_WIDTH, height: 276, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
   myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
   theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
   websitePreviewImageSlot: { width: "100%", height: 154, overflow: "hidden", backgroundColor: "#D7D8D4" },
@@ -8204,15 +8214,15 @@ const styles = StyleSheet.create({
   myWebsitePreviewDetail: { color: "#526474" },
   photoMediaWrap: { position: "relative", borderRadius: 18, overflow: "hidden" },
   photoMediaWrapWithSender: { borderTopLeftRadius: 0, borderTopRightRadius: 0 },
-  messageImage: { width: 286, height: 300, borderRadius: 0, backgroundColor: theme.colors.panel2 },
-  messageCollage: { width: 286, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 0, overflow: "hidden" },
-  collageCell: { width: 141.5, height: 141.5, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },
+  messageImage: { width: CHAT_MEDIA_WIDTH, height: CHAT_MEDIA_FALLBACK_HEIGHT, borderRadius: 0, backgroundColor: theme.colors.panel2 },
+  messageCollage: { width: CHAT_MEDIA_WIDTH, flexDirection: "row", flexWrap: "wrap", gap: CHAT_COLLAGE_GAP, borderRadius: 0, overflow: "hidden" },
+  collageCell: { width: CHAT_COLLAGE_CELL, height: CHAT_COLLAGE_CELL, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },
   collageImage: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },
   collageMore: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.58)", alignItems: "center", justifyContent: "center" },
   collageMoreText: { color: "#fff", fontSize: 24, fontWeight: "700" },
   collageTimeOverlay: { position: "absolute", right: 6, bottom: 6, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.58)", paddingHorizontal: 6, paddingVertical: 2, zIndex: 2 },
   collageTimeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  messageImageLoading: { height: 300, alignItems: "center", justifyContent: "center" },
+  messageImageLoading: { height: CHAT_MEDIA_FALLBACK_HEIGHT, alignItems: "center", justifyContent: "center" },
   messageImageLoadingText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
   photoTimeOverlay: { position: "absolute", right: 8, bottom: 7, minHeight: 23, flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.64)", paddingHorizontal: 8, paddingVertical: 3 },
   photoTimeText: { color: "#fff", fontSize: 11, fontWeight: "700", textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 2 },
@@ -8220,7 +8230,7 @@ const styles = StyleSheet.create({
   photoForwardAction: { position: "absolute", right: -47, bottom: 10, width: 39, height: 39, borderRadius: 20, backgroundColor: "rgba(37,41,40,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   photoForwardActionMine: { right: undefined, left: -47 },
   photoForwardActionText: { color: "#e7e7e7", fontSize: 23, lineHeight: 25, fontWeight: "800", marginTop: -2 },
-  videoMessageCard: { width: 286, height: 300, borderRadius: 0, backgroundColor: "#14231e", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  videoMessageCard: { width: CHAT_MEDIA_WIDTH, height: CHAT_MEDIA_FALLBACK_HEIGHT, borderRadius: 0, backgroundColor: "#14231e", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   videoMessageBackdrop: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "#18382e" },
   videoMessageThumbnail: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
