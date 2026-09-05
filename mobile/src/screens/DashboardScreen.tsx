@@ -413,7 +413,14 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       } else if (action === "DECLINE") {
         Alert.alert("Request declined", "The rider request has been declined.");
       } else if (action === "EN_ROUTE") {
-        Alert.alert("Rider notified", "The rider has been notified that you are on the way.");
+        Alert.alert(
+          "Rider notified",
+          `The rider has been notified that you are on the way.${cleanRoutePoint(updated.origin || ride.origin) ? `\n\nPickup: ${cleanRoutePoint(updated.origin || ride.origin)}` : ""}`,
+          [
+            { text: "Later", style: "cancel" },
+            { text: "Open map", onPress: () => void openRiderPickupRoute({ ...ride, ...updated }) },
+          ],
+        );
       } else if (action === "ARRIVED") {
         Alert.alert("Rider notified", "The rider has been notified that you have arrived.");
       } else {
@@ -447,6 +454,24 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       await Linking.openURL(url);
     } catch {
       Alert.alert("Map unavailable", "The route could not be opened on this device.");
+    }
+  }
+
+  async function openRiderPickupRoute(ride: RidePost) {
+    const pickup = cleanRoutePoint(ride.origin);
+    if (!pickup) {
+      Alert.alert("Pickup unavailable", "The rider pickup location is still being confirmed.");
+      return;
+    }
+    const coordinateDestination = ride.originLat && ride.originLng ? `${ride.originLat},${ride.originLng}` : "";
+    const destination = coordinateDestination || pickup;
+    const url = Platform.OS === "ios"
+      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(pickup)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Map unavailable", "The rider pickup route could not be opened on this device.");
     }
   }
 
