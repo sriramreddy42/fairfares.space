@@ -6789,7 +6789,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 style={[styles.bubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
-                {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
+                {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail, isMediaMessage && styles.photoBubbleTail]} /> : null}
                 {showGroupSender ? (
                   <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}>
                     <Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text>
@@ -8136,7 +8136,7 @@ const styles = StyleSheet.create({
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
   bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 9, paddingRight: 9, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  photoBubble: { maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
+  photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
@@ -8149,6 +8149,7 @@ const styles = StyleSheet.create({
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
   myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
   theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
+  photoBubbleTail: { backgroundColor: "#202321" },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   forwardedLabel: { alignSelf: "flex-start", paddingHorizontal: 7, paddingTop: 3, paddingBottom: 5 },
   forwardedLabelText: { color: "rgba(214,225,219,0.68)", fontSize: 12, lineHeight: 16, fontWeight: "700", fontStyle: "italic" },
