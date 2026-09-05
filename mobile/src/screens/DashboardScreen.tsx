@@ -422,7 +422,14 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
           ],
         );
       } else if (action === "ARRIVED") {
-        Alert.alert("Rider notified", "The rider has been notified that you have arrived.");
+        Alert.alert(
+          "Rider notified",
+          `The rider has been notified that you have arrived.${cleanRoutePoint(updated.destination || ride.destination) ? `\n\nNext: ${cleanRoutePoint(updated.destination || ride.destination)}` : ""}`,
+          [
+            { text: "Later", style: "cancel" },
+            { text: "Open destination", onPress: () => void openRiderDestinationRoute({ ...ride, ...updated }) },
+          ],
+        );
       } else {
         Alert.alert("Ride completed", "This carpool is now in Past activity.");
       }
@@ -472,6 +479,24 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       await Linking.openURL(url);
     } catch {
       Alert.alert("Map unavailable", "The rider pickup route could not be opened on this device.");
+    }
+  }
+
+  async function openRiderDestinationRoute(ride: RidePost) {
+    const dropoff = cleanRoutePoint(ride.destination);
+    if (!dropoff) {
+      Alert.alert("Destination unavailable", "The rider destination is still being confirmed.");
+      return;
+    }
+    const coordinateDestination = ride.destinationLat && ride.destinationLng ? `${ride.destinationLat},${ride.destinationLng}` : "";
+    const destination = coordinateDestination || dropoff;
+    const url = Platform.OS === "ios"
+      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&q=${encodeURIComponent(dropoff)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Map unavailable", "The rider destination route could not be opened on this device.");
     }
   }
 
