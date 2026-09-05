@@ -2051,9 +2051,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       mediaGroups.set(key, group.sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
     });
     const rows: ThreadMessageItem[] = [];
+    const renderedImageGroupIds = new Set<string>();
     visibleMessages.forEach((message, index) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-      const mediaGroup = mediaGroupId ? mediaGroups.get(mediaGroupId) || [] : [];
+      const mediaGroup = mediaGroupId && message.type === "IMAGE" ? mediaGroups.get(mediaGroupId) || [] : [];
+      const imageGroupKey = message.type === "IMAGE" && mediaGroup.length > 1 ? mediaGroupId : "";
+      const imageGroupAlreadyRendered = Boolean(imageGroupKey && renderedImageGroupIds.has(imageGroupKey));
+      if (imageGroupKey && !imageGroupAlreadyRendered) renderedImageGroupIds.add(imageGroupKey);
       const showDateDivider = index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt);
       if (showDateDivider) {
         rows.push({
@@ -2074,7 +2078,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         key: `${activeConversationId || "thread"}-message-${message.id}`,
         message,
         index,
-        skipForMediaGroup: Boolean(mediaGroupId && String(visibleMessages[index - 1]?.metadata?.mediaGroupId || "") === mediaGroupId),
+        skipForMediaGroup: imageGroupAlreadyRendered,
         mediaGroup,
         discoveredUrl: message.text ? firstDiscoveredUrl(message.text) : "",
         isMediaMessage: ["IMAGE", "VIDEO"].includes(message.type) && Boolean(message.attachmentUrl),
@@ -5831,7 +5835,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const operationUserId = currentUserId;
     let resolvedMessage = message;
     const diskLocalUri = await existingLocalAttachmentUri(operationUserId, message);
-    const alreadyOnDevice = Boolean(diskLocalUri || localMediaMessageIds.includes(message.id));
+    let alreadyOnDevice = Boolean(diskLocalUri || localMediaMessageIds.includes(message.id));
     if (diskLocalUri && !localMediaMessageIds.includes(message.id)) {
       setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
     }
@@ -5866,6 +5870,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           throw new Error("This photo was encrypted for an earlier Chitthi device and its key could not be recovered. Ask the sender to resend it.");
         }
         setMessages((current) => current.map((item) => item.id === message.id ? resolvedMessage : item));
+        if (!alreadyOnDevice) {
+          const recoveredDiskLocalUri = await existingLocalAttachmentUri(operationUserId, resolvedMessage);
+          alreadyOnDevice = Boolean(recoveredDiskLocalUri || localMediaMessageIds.includes(message.id));
+          if (recoveredDiskLocalUri) {
+            setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+          }
+        }
       }
       if (!alreadyOnDevice && Platform.OS !== "web") {
         downloadingMediaMessageIdsRef.current.add(message.id);
