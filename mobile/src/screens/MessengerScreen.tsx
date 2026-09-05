@@ -2521,12 +2521,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     let cancelled = false;
     const mediaMessages = recentChatMessages(messages).filter((message) => ["IMAGE", "VIDEO", "FILE"].includes(message.type));
     void Promise.all(mediaMessages.map(async (message) => {
-      let mimeType = message.metadata?.mimeType || "application/octet-stream";
-      const encryptedMetadata = message.metadata?.encryptedKeyPayload ? encryptedAttachmentMetadata(message.metadata.encryptedKeyPayload) : {};
-      if (encryptedMetadata.mimeType) mimeType = encryptedMetadata.mimeType;
-      const fileName = safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: encryptedMetadata.fileName || message.metadata?.fileName } }, mimeType);
-      const uri = encryptedAttachmentLocalUri(currentUserId, message.id, fileName, mimeType);
-      return await persistentChitthiMediaExists(uri) ? message.id : 0;
+      return await existingLocalAttachmentUri(currentUserId, message) ? message.id : 0;
     })).then((ids) => {
       if (!cancelled) setLocalMediaMessageIds(ids.filter((id) => id > 0));
     }).catch(() => {
@@ -3987,54 +3982,71 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setAttachmentSending(true);
       const mediaSendAbort = new AbortController();
       attachmentCryptoAbortRef.current = mediaSendAbort;
-      const optimisticAttachment = attachments.length === 1 ? attachments[0] : null;
-      const optimisticAttachmentId = optimisticAttachment ? nextOptimisticAttachmentIdRef.current-- : 0;
-      if (optimisticAttachmentId) activeAttachmentSendsRef.current.set(optimisticAttachmentId, { controller: mediaSendAbort, conversationId: operationConversationId });
+      const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
+      const optimisticAttachmentIds = attachments.map(() => nextOptimisticAttachmentIdRef.current--);
+      const removeOptimisticMessages = (messageIds = optimisticAttachmentIds) => {
+        messageIds.forEach((messageId) => {
+          removePendingMediaMessage(operationConversationId, messageId);
+          publishMediaProgress(messageId, null);
+          activeAttachmentSendsRef.current.delete(messageId);
+        });
+        if (activeConversationIdRef.current === operationConversationId) {
+          setMessages((current) => current.filter((message) => !messageIds.includes(message.id)));
+        }
+      };
       let optimisticThumbnailPromise: Promise<string> | null = null;
       let releaseVideoPipeline: (() => void) | null = null;
-      if (optimisticAttachment) {
-        const optimisticMessage: ChatMessage = {
+      const optimisticMessages = attachments.map((attachment, index): ChatMessage => {
+        const optimisticAttachmentId = optimisticAttachmentIds[index];
+        const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+        return {
           id: optimisticAttachmentId,
           senderId: Number(data?.user?.id || 0),
           senderName: data?.user?.name || "You",
           mine: true,
-          type: optimisticAttachment.kind,
-          text: cleanMessage,
-          attachmentUrl: optimisticAttachment.uri,
+          type: attachment.kind,
+          text: index === 0 ? cleanMessage : "",
+          attachmentUrl: attachment.uri,
           metadata: {
-            encrypted: true, uploading: true, kind: optimisticAttachment.kind,
-            fileName: optimisticAttachment.name, mimeType: optimisticAttachment.mimeType,
-            size: optimisticAttachment.size,
-            imageWidth: optimisticAttachment.imageWidth,
-            imageHeight: optimisticAttachment.imageHeight,
-            decryptedDataUrl: optimisticAttachment.kind === "IMAGE" ? optimisticAttachment.uri : undefined,
-            thumbnailDataUrl: optimisticAttachment.thumbnailBase64 ? `data:image/jpeg;base64,${optimisticAttachment.thumbnailBase64}` : undefined,
+            encrypted: true, uploading: true, kind: attachment.kind,
+            fileName: attachment.name, mimeType: attachment.mimeType,
+            size: attachment.size,
+            imageWidth: attachment.imageWidth,
+            imageHeight: attachment.imageHeight,
+            decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+            thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+            ...mediaMetadata,
           },
           createdAt: new Date().toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
           canEdit: false, status: "pending",
         };
-        upsertPendingMediaMessage(operationConversationId, optimisticMessage);
-        publishMediaProgress(optimisticAttachmentId, 0);
-        messagesConversationIdRef.current = operationConversationId;
-        setMessages((current) => [...current.filter((message) => message.id !== optimisticAttachmentId), optimisticMessage]);
-        if (optimisticAttachment.kind === "VIDEO" && !optimisticAttachment.thumbnailBase64) {
-          optimisticThumbnailPromise = optimisticAttachment.pickerAssetId
-            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(optimisticAttachment.pickerAssetId).catch(() => createLightweightVideoThumbnail(optimisticAttachment.uri))
-            : createLightweightVideoThumbnail(optimisticAttachment.uri);
+      });
+      optimisticMessages.forEach((message) => {
+        upsertPendingMediaMessage(operationConversationId, message);
+        publishMediaProgress(message.id, 0);
+        activeAttachmentSendsRef.current.set(message.id, { controller: mediaSendAbort, conversationId: operationConversationId });
+      });
+      messagesConversationIdRef.current = operationConversationId;
+      setMessages((current) => mergeChatMessages(current.filter((message) => !optimisticAttachmentIds.includes(message.id)), optimisticMessages));
+      const selectedVideoIndex = selectedVideo ? attachments.findIndex((attachment) => attachment === selectedVideo) : -1;
+      const selectedVideoOptimisticId = selectedVideoIndex >= 0 ? optimisticAttachmentIds[selectedVideoIndex] : 0;
+      if (selectedVideo && selectedVideoOptimisticId && !selectedVideo.thumbnailBase64) {
+          optimisticThumbnailPromise = selectedVideo.pickerAssetId
+            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+            : createLightweightVideoThumbnail(selectedVideo.uri);
           void optimisticThumbnailPromise.then((thumbnailBase64) => {
             if (!thumbnailBase64) return;
-            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+            updatePendingMediaMessage(operationConversationId, selectedVideoOptimisticId, (message) => ({
               ...message,
               metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` },
             }));
-            setMessages((current) => current.map((message) => message.id === optimisticAttachmentId
+            setMessages((current) => current.map((message) => message.id === selectedVideoOptimisticId
               ? { ...message, metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` } }
               : message));
           }).catch(() => undefined);
-        }
-        setMessageText("");
-        scrollThreadToLatest(false);
       }
+      setMessageText("");
+      scrollThreadToLatest(false);
       if (selectedVideo) {
         try {
           // Keep the UI fully concurrent while bounding expensive native video
@@ -4043,15 +4055,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           // different queued or active video.
           releaseVideoPipeline = await acquireVideoSendPipeline(mediaSendAbort.signal);
         } catch {
-          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
-          if (activeConversationIdRef.current === operationConversationId) {
-            setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
-          }
-          publishMediaProgress(optimisticAttachmentId, null);
+          removeOptimisticMessages();
           releasePendingAttachments(attachments);
           setAttachmentSending(false);
           if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
-          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
           activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
           finishMediaTransfer();
           return;
@@ -4067,9 +4074,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           }
           const preparationStartedAt = Date.now();
           const profile = selectedVideo.videoQuality === "data-saver" ? "data-saver" : "hd";
-          const optimized = FairFaresCrypto.videoPreparationAvailable
-            ? await FairFaresCrypto.prepareVideo(selectedVideo.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal)
-            : await FairFaresCrypto.optimizeVideo(selectedVideo.uri, optimizedUri, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal);
+            const optimized = FairFaresCrypto.videoPreparationAvailable
+            ? await FairFaresCrypto.prepareVideo(selectedVideo.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", selectedVideoOptimisticId, 0, 0.35), mediaSendAbort.signal)
+            : await FairFaresCrypto.optimizeVideo(selectedVideo.uri, optimizedUri, attachmentProgressReporter("Preparing video…", selectedVideoOptimisticId, 0, 0.35), mediaSendAbort.signal);
           ensureSendContext();
           logDevelopmentPerformance("media-prepare-complete", {
             durationMs: Date.now() - preparationStartedAt,
@@ -4096,12 +4103,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             };
             releasePendingAttachments([selectedVideo]);
             attachments = attachments.map((attachment) => attachment.uri === selectedVideo.uri ? preparedVideo : attachment);
-            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+            updatePendingMediaMessage(operationConversationId, selectedVideoOptimisticId, (message) => ({
               ...message,
               attachmentUrl: preparedVideo.uri,
               metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
             }));
-            setMessages((current) => current.map((message) => message.id === optimisticAttachmentId ? {
+            setMessages((current) => current.map((message) => message.id === selectedVideoOptimisticId ? {
               ...message,
               attachmentUrl: preparedVideo.uri,
               metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
@@ -4113,12 +4120,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           }
         } catch (error) {
           await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
-          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          removeOptimisticMessages();
           setAttachmentStatus("");
           const preparationWasCancelled = mediaSendAbort.signal.aborted || (error instanceof Error && error.name === "AbortError");
           const preparationConversationStillActive = activeConversationIdRef.current === operationConversationId;
-          if (preparationConversationStillActive) setMessages((current) => current.filter((message) => message.id !== optimisticAttachmentId));
-          publishMediaProgress(optimisticAttachmentId, null);
           if (!preparationWasCancelled && preparationConversationStillActive) {
             setPendingImages(attachments);
             setPendingAttachment(null);
@@ -4128,7 +4133,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           }
           setAttachmentSending(false);
           if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
-          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
           activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
           releaseVideoPipeline?.();
           releaseVideoPipeline = null;
@@ -4146,10 +4150,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ensureSendContext();
         if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
         setEncryptionReady(Boolean(keyPayload.ready));
-        const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
         const sentMessages: ChatMessage[] = [];
         for (let index = 0; index < attachments.length; index += 1) {
           const attachment = attachments[index];
+          const optimisticAttachmentId = optimisticAttachmentIds[index];
           const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
           // Video previews use a zero-decoding local placeholder. Native frame
           // extraction belongs in a background queue in a custom app build,
@@ -4241,6 +4245,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }
           };
           removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
           // Server acceptance is the reconciliation boundary. Do not keep the
           // optimistic row visible while a potentially 100 MB local cache copy
           // runs; realtime refresh may already have rendered the server row.
@@ -4280,9 +4285,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           setAttachmentStatus(attachments.length > 1 ? `Sending item ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "" : "Sending file…");
         }
         if (activeConversationIdRef.current === operationConversationId) {
-          setMessages((current) => mergeThreadHistoryMessages(current.filter((item) => item.id !== optimisticAttachmentId), sentMessages));
+          setMessages((current) => mergeThreadHistoryMessages(current.filter((item) => !optimisticAttachmentIds.includes(item.id)), sentMessages));
         }
-        publishMediaProgress(optimisticAttachmentId, null);
+        optimisticAttachmentIds.forEach((messageId) => publishMediaProgress(messageId, null));
         scrollThreadToLatest(false);
         const sentKind = attachments[0].kind;
         releasePendingAttachments(attachments);
@@ -4304,15 +4309,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         const sendContextStillActive = messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId;
         const completedAttachments = attachments.slice(0, completedAttachmentCount);
         const remainingAttachments = attachments.slice(completedAttachmentCount);
+        const remainingOptimisticIds = optimisticAttachmentIds.slice(completedAttachmentCount);
         releasePendingAttachments(completedAttachments);
-        removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
-        if (optimisticAttachment && sendContextStillActive) {
-          setMessages((current) => current.filter((item) => item.id !== optimisticAttachmentId));
+        removeOptimisticMessages(remainingOptimisticIds);
+        if (remainingOptimisticIds.length && sendContextStillActive) {
           if (!sendWasCancelled) {
             // Preparation may already have replaced and deleted the picker
             // source. Restore the current durable attachment, not that stale
             // original URI, so Retry can actually read the file.
-            const retryAttachment = attachments[0] || optimisticAttachment;
+            const retryAttachment = remainingAttachments[0] || attachments[attachments.length - 1];
             if (retryAttachment.kind === "IMAGE" || retryAttachment.kind === "VIDEO") {
               setPendingImages([retryAttachment]);
               setPendingAttachment(null);
@@ -4323,21 +4328,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setMessageText(cleanMessage);
           }
         }
-        publishMediaProgress(optimisticAttachmentId, null);
         if (sendWasCancelled) {
           releasePendingAttachments(remainingAttachments);
         } else if (sendContextStillActive) {
           setAttachmentStatus("");
-          if (!optimisticAttachment && remainingAttachments.length) {
-            if (remainingAttachments.length === 1 && remainingAttachments[0].kind === "FILE") {
-              setPendingAttachment(remainingAttachments[0]);
-              setPendingImages([]);
-            } else {
-              setPendingAttachment(null);
-              setPendingImages(remainingAttachments);
-            }
-            setMessageText(completedAttachmentCount ? "" : cleanMessage);
-          }
           const failedAttachment = remainingAttachments[0] || attachments[attachments.length - 1];
           Alert.alert(failedAttachment.kind === "IMAGE" ? "Image failed" : failedAttachment.kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
         } else {
@@ -4347,7 +4341,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
         if (mediaSendAbort.signal.aborted) setAttachmentStatus("");
         if (messengerUserIdRef.current === operationUserId) setAttachmentSending(false);
-        activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
+        optimisticAttachmentIds.forEach((messageId) => activeAttachmentSendsRef.current.delete(messageId));
         activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
         releaseVideoPipeline?.();
         finishMediaTransfer();
@@ -5514,6 +5508,40 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return clean || `chitthi-${message.id}${fallbackExtension}`;
   }
 
+  async function existingLocalAttachmentUri(userId: number, message: ChatMessage) {
+    if (!userId || Platform.OS === "web" || message.id <= 0) return "";
+    const keyPayload = String(message.metadata?.encryptedKeyPayload || "");
+    const encryptedMetadata = keyPayload ? encryptedAttachmentMetadata(keyPayload) : {};
+    const chunkedDescriptor = keyPayload ? parseChunkedAttachmentDescriptor(keyPayload) : null;
+    const candidates = [
+      {
+        mimeType: chunkedDescriptor?.mimeType || encryptedMetadata.mimeType || message.metadata?.mimeType || "application/octet-stream",
+        fileName: chunkedDescriptor?.fileName || encryptedMetadata.fileName || message.metadata?.fileName,
+      },
+      {
+        mimeType: encryptedMetadata.mimeType || message.metadata?.mimeType || "application/octet-stream",
+        fileName: encryptedMetadata.fileName || message.metadata?.fileName,
+      },
+      {
+        mimeType: message.metadata?.mimeType || (message.type === "VIDEO" ? "video/mp4" : message.type === "IMAGE" ? "image/jpeg" : "application/octet-stream"),
+        fileName: message.metadata?.fileName,
+      },
+    ];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const uri = encryptedAttachmentLocalUri(
+        userId,
+        message.id,
+        safeAttachmentName({ ...message, metadata: { ...message.metadata, fileName: candidate.fileName } }, candidate.mimeType),
+        candidate.mimeType
+      );
+      if (!uri || seen.has(uri)) continue;
+      seen.add(uri);
+      if (await persistentChitthiMediaExists(uri)) return uri;
+    }
+    return "";
+  }
+
   function cryptoThrottleForSize(size: number) {
     // Every 256 KB chunk already yields to the event loop. Avoid a fixed sleep
     // unless operations explicitly enable one as a safety override.
@@ -5750,7 +5778,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (downloadingMediaMessageIdsRef.current.has(message.id)) return;
     const operationUserId = currentUserId;
     let resolvedMessage = message;
-    const alreadyOnDevice = localMediaMessageIds.includes(message.id);
+    const diskLocalUri = await existingLocalAttachmentUri(operationUserId, message);
+    const alreadyOnDevice = Boolean(diskLocalUri || localMediaMessageIds.includes(message.id));
+    if (diskLocalUri && !localMediaMessageIds.includes(message.id)) {
+      setLocalMediaMessageIds((current) => current.includes(message.id) ? current : [...current, message.id]);
+    }
     try {
       // Disk-cached E2EE rows intentionally exclude the decrypted attachment
       // descriptor because it contains the media key. If an older media row is
