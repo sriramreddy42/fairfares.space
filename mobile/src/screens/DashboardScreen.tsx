@@ -645,6 +645,11 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                   <Text style={styles.secondaryPillText}>Navigate pickup</Text>
                 </TouchableOpacity>
               ) : null}
+              {isIncomingRiderRequest(ride) && ["ARRIVED", "IN_PROGRESS"].includes((ride.dispatchStatus || ride.status || "").toUpperCase()) ? (
+                <TouchableOpacity style={styles.secondaryPill} onPress={() => void openRiderDestinationRoute(ride)}>
+                  <Text style={styles.secondaryPillText}>Navigate destination</Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity style={styles.secondaryPill} onPress={() => void openDriverLocation(ride)} disabled={rideActionBusyId === ride.id}>
                 <Text style={styles.secondaryPillText}>{isIncomingRiderRequest(ride) ? "Share location" : "Driver location"}</Text>
               </TouchableOpacity>
