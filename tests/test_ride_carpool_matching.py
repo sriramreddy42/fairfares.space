@@ -751,6 +751,50 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertEqual(mock_push.call_args.args[3]["status"], expected)
             if expected == "ARRIVED":
                 self.assertIn("Vehicle: CO LOAD02.", mock_push.call_args.args[2])
+            with app.db() as con:
+                active_location_row = con.execute(
+                    """
+                    SELECT driver_lat, driver_lng, driver_location_updated_at
+                    FROM ride_dispatch_notifications notifications
+                    JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                    WHERE requests.public_id = ?
+                      AND notifications.driver_user_id = ?
+                      AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED')
+                      AND requests.user_id = ?
+                    LIMIT 1
+                    """,
+                    (request_public_id, second_driver, self.rider_id),
+                ).fetchone()
+            if expected in {"EN_ROUTE", "ARRIVED"}:
+                self.assertIsNotNone(active_location_row)
+                with app.db() as con:
+                    con.execute(
+                        """
+                        UPDATE ride_dispatch_notifications
+                        SET driver_lat = ?, driver_lng = ?, driver_location_updated_at = CURRENT_TIMESTAMP
+                        WHERE request_ride_post_id = (SELECT id FROM ride_posts WHERE public_id = ?)
+                          AND driver_user_id = ?
+                        """,
+                        (39.7001, -104.9002, request_public_id, second_driver),
+                    )
+                    rider_visible_location = con.execute(
+                        """
+                        SELECT driver_lat, driver_lng, driver_location_updated_at
+                        FROM ride_dispatch_notifications notifications
+                        JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
+                        WHERE requests.public_id = ?
+                          AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED')
+                          AND requests.user_id = ?
+                        LIMIT 1
+                        """,
+                        (request_public_id, self.rider_id),
+                    ).fetchone()
+                self.assertIsNotNone(rider_visible_location)
+                self.assertAlmostEqual(float(rider_visible_location["driver_lat"]), 39.7001, places=4)
+                self.assertAlmostEqual(float(rider_visible_location["driver_lng"]), -104.9002, places=4)
+                self.assertTrue(rider_visible_location["driver_location_updated_at"])
+            else:
+                self.assertIsNone(active_location_row)
 
         status_code, response = app.apply_ride_dispatch_action(second_driver, request_public_id, "DECLINE")
         self.assertEqual(status_code, 409)
