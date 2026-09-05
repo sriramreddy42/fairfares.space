@@ -199,6 +199,10 @@ function routeLabel(ride: RidePost) {
   return `${cleanRoutePoint(ride.origin) || "Pickup"} → ${cleanRoutePoint(ride.destination) || "Destination"}`;
 }
 
+function riderRequestRouteLabel(ride: RidePost) {
+  return isIncomingRiderRequest(ride) ? `Rider route: ${routeLabel(ride)}` : routeLabel(ride);
+}
+
 function matchedListingLabel(ride: RidePost) {
   const origin = cleanRoutePoint(ride.matchedRouteOrigin);
   const destination = cleanRoutePoint(ride.matchedRouteDestination);
@@ -543,7 +547,8 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <Text style={styles.cardMeta}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text>
             </View>
             <Text style={styles.cardTitle}>{rideActionLabel(ride)}</Text>
-            <Text style={styles.routeText} numberOfLines={2}>{routeLabel(ride)}</Text>
+            <Text style={styles.routeText} numberOfLines={2}>{riderRequestRouteLabel(ride)}</Text>
+            {isIncomingRiderRequest(ride) && matchedListingLabel(ride) ? <Text style={styles.matchedListingText} numberOfLines={2}>{matchedListingLabel(ride)}</Text> : null}
             <View style={styles.metricRow}>
               {ride.pickupPin ? <Text style={styles.metricPill}>PIN {ride.pickupPin}</Text> : null}
               <Text style={styles.metricPill}>{distanceCopy(ride)}</Text>
@@ -675,7 +680,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <View style={styles.requestCarCircle}><CarOutlineIcon /></View>
               <View style={styles.requestMain}>
                 <Text style={styles.requestBadge}>{riderRequestStatusCopy(ride)}</Text>
-                <Text style={styles.requestRouteTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
+                <Text style={styles.requestRouteTitle} numberOfLines={2}>{riderRequestRouteLabel(ride)}</Text>
                 {matchedListingLabel(ride) ? <Text style={styles.matchedListingText} numberOfLines={2}>{matchedListingLabel(ride)}</Text> : null}
                 <Text style={styles.carpoolMiniMeta}>{detourCopy(ride)} · {pickupDropCopy(ride)}</Text>
                 <View style={styles.metricRow}>
@@ -690,7 +695,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
                     <><TouchableOpacity style={styles.acceptPill} onPress={() => handleRequestDecision(ride, "ACCEPT")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>{rideActionBusyId === ride.id ? "Updating..." : "Accept"}</Text></TouchableOpacity><TouchableOpacity style={styles.declinePill} onPress={() => handleRequestDecision(ride, "DECLINE")} disabled={rideActionBusyId === ride.id}><Text style={styles.requestActionText}>Decline</Text></TouchableOpacity></>
                   ) : null}
                   <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Text style={styles.primarySmallPillText}>Message</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.detailsOutlinePill} onPress={() => Alert.alert("Request details", `${routeLabel(ride)}\n${detourCopy(ride)}\n${pickupDropCopy(ride)}\n${statusCopy(ride)}`)}><Text style={styles.secondaryPillText}>Details</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.detailsOutlinePill} onPress={() => Alert.alert("Request details", `${riderRequestRouteLabel(ride)}${matchedListingLabel(ride) ? `\n${matchedListingLabel(ride)}` : ""}\n${detourCopy(ride)}\n${pickupDropCopy(ride)}\n${statusCopy(ride)}`)}><Text style={styles.secondaryPillText}>Details</Text></TouchableOpacity>
                 </View>
               </View>
             </View>
