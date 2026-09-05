@@ -1,11 +1,22 @@
+import json
 import os
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 import app
+
+
+class QuietHandler(app.FairFaresHandler):
+    suppress_operational_alerts = True
+
+    def log_message(self, _format, *_args):
+        return
 
 
 POINTS = {
@@ -66,6 +77,23 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             (name, email, app.hash_password("Password123!")),
         )
         return int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def request_json(self, server, method, path, token="", payload=None):
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            data=data,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode("utf-8"))
 
     def test_specific_ride_label_is_not_replaced_by_country_fallback(self):
         self.assertEqual(
@@ -800,6 +828,71 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(status_code, 409)
         self.assertIn("Cannot change ride request", response["error"])
         self.assertEqual(mock_push.call_count, 5)
+
+    @patch.object(app, "send_mobile_push_for_users")
+    def test_rider_can_fetch_live_driver_location_through_mobile_api(self, _mock_push):
+        driver_token = "driver-location-token"
+        rider_token = "rider-location-token"
+        outsider_token = "outsider-location-token"
+        with app.db() as con:
+            outsider_id = self.insert_user(con, "Outsider", "outsider-location@example.com")
+            con.executemany(
+                "INSERT INTO sessions (token, user_id) VALUES (?, ?)",
+                ((driver_token, self.driver_id), (rider_token, self.rider_id), (outsider_token, outsider_id)),
+            )
+            self.insert_ride(con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
+            request = self.insert_ride(con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO")
+            with patch.object(app, "google_route_totals", return_value=None):
+                app.create_ride_dispatch_notifications(con, request, self.rider_id)
+            request_public_id = request["public_id"]
+
+        self.assertEqual(app.apply_ride_dispatch_action(self.driver_id, request_public_id, "ACCEPT")[0], 200)
+        self.assertEqual(app.apply_ride_dispatch_action(self.driver_id, request_public_id, "EN_ROUTE")[0], 200)
+
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, pending = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", rider_token)
+            self.assertEqual(status, 200)
+            self.assertFalse(pending["available"])
+            self.assertEqual(pending["status"], "EN_ROUTE")
+
+            status, updated = self.request_json(
+                server,
+                "POST",
+                "/api/mobile/rides/driver-location",
+                driver_token,
+                {"rideId": request_public_id, "latitude": 39.7001, "longitude": -104.9002},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(updated["location"]["status"], "EN_ROUTE")
+
+            status, visible = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", rider_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(visible["available"])
+            self.assertAlmostEqual(visible["location"]["latitude"], 39.7001, places=4)
+            self.assertAlmostEqual(visible["location"]["longitude"], -104.9002, places=4)
+            self.assertIn("ageSeconds", visible["location"])
+
+            status, blocked = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", outsider_token)
+            self.assertEqual(status, 404)
+            self.assertFalse(blocked["ok"])
+
+            self.assertEqual(app.apply_ride_dispatch_action(self.driver_id, request_public_id, "ARRIVED")[0], 200)
+            status, arrived_visible = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", rider_token)
+            self.assertEqual(status, 200)
+            self.assertTrue(arrived_visible["available"])
+            self.assertEqual(arrived_visible["status"], "ARRIVED")
+
+            self.assertEqual(app.apply_ride_dispatch_action(self.driver_id, request_public_id, "COMPLETED")[0], 200)
+            status, completed = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", rider_token)
+            self.assertEqual(status, 404)
+            self.assertFalse(completed["ok"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     @patch.object(app, "google_route_totals", return_value=None)
     def test_dispatch_notifies_only_drivers_travelling_on_request_date(self, _mock_routes):
