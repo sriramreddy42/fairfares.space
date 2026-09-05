@@ -16283,6 +16283,13 @@ def distance_miles_between(lat1: float, lng1: float, lat2: float, lng2: float) -
     return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def format_distance_miles_label(distance: float) -> str:
+    distance = max(0.0, float(distance or 0))
+    if distance < 0.1:
+        return "less than 0.1 mi"
+    return f"{distance:.1f} mi" if distance < 10 else f"{round(distance)} mi"
+
+
 GAS_FUEL_TYPES = {
     "regular": "REGULAR_UNLEADED",
     "midgrade": "MIDGRADE",
@@ -18191,6 +18198,8 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                    notifications.dropoff_distance_miles AS dispatch_dropoff_distance_miles,
                    notifications.route_deviation_miles AS dispatch_route_deviation_miles,
                    notifications.route_deviation_minutes AS dispatch_route_deviation_minutes,
+                   notifications.driver_lat AS dispatch_driver_lat,
+                   notifications.driver_lng AS dispatch_driver_lng,
                    notifications.notified_at AS dispatch_notified_at,
                    notifications.responded_at AS dispatch_responded_at,
                    driver_posts.public_id AS matched_ride_public_id,
@@ -18227,6 +18236,12 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                 clean_text_value(row_value(driver_profile, "license_plate"), 24) if driver_profile else "",
             ) if value
         )
+        driver_lat = float(row_value(updated, "dispatch_driver_lat") or 0) if updated else 0.0
+        driver_lng = float(row_value(updated, "dispatch_driver_lng") or 0) if updated else 0.0
+        request_origin_lat = float(row_value(request_row, "origin_lat") or 0)
+        request_origin_lng = float(row_value(request_row, "origin_lng") or 0)
+        request_destination_lat = float(row_value(request_row, "destination_lat") or 0)
+        request_destination_lng = float(row_value(request_row, "destination_lng") or 0)
     status_titles = {
         "ACCEPTED": "Carpool request accepted",
         "DECLINED": "Carpool request declined",
@@ -18234,10 +18249,21 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
         "ARRIVED": "Your carpool driver has arrived",
         "COMPLETED": "Carpool ride completed",
     }
+    push_body_parts: list[str] = []
+    if next_status == "ARRIVED" and vehicle_number:
+        push_body_parts.append(f"Vehicle: {vehicle_number}.")
+    if next_status == "EN_ROUTE" and all((driver_lat, driver_lng, request_origin_lat, request_origin_lng)):
+        distance_label = format_distance_miles_label(distance_miles_between(driver_lat, driver_lng, request_origin_lat, request_origin_lng))
+        push_body_parts.append(f"Driver is {distance_label} from pickup.")
+    elif next_status == "ARRIVED" and all((driver_lat, driver_lng, request_destination_lat, request_destination_lng)):
+        distance_label = format_distance_miles_label(distance_miles_between(driver_lat, driver_lng, request_destination_lat, request_destination_lng))
+        push_body_parts.append(f"Destination is {distance_label} away.")
+    if route_label:
+        push_body_parts.append(route_label)
     send_mobile_push_for_users(
         [requester_user_id],
         status_titles.get(next_status, "Carpool request updated"),
-        (f"Vehicle: {vehicle_number}. {route_label}" if next_status == "ARRIVED" and vehicle_number else route_label) or "Open FairFares to review your carpool activity.",
+        " ".join(push_body_parts).strip() or "Open FairFares to review your carpool activity.",
         {"type": "CARPOOL_STATUS", "rideId": ride_public_id, "status": next_status, "target": "activity"},
     )
     response = mobile_ride_payload(updated) if updated else mobile_ride_payload(request_row)

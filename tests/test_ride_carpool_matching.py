@@ -769,6 +769,17 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(statuses[second_driver], "ACCEPTED")
         self.assertEqual(request_status, "ACCEPTED")
 
+        with app.db() as con:
+            con.execute(
+                """
+                UPDATE ride_dispatch_notifications
+                SET driver_lat = ?, driver_lng = ?, driver_location_updated_at = CURRENT_TIMESTAMP
+                WHERE request_ride_post_id = (SELECT id FROM ride_posts WHERE public_id = ?)
+                  AND driver_user_id = ?
+                """,
+                (39.7001, -104.9002, request_public_id, second_driver),
+            )
+
         for action, expected in (("EN_ROUTE", "EN_ROUTE"), ("ARRIVED", "ARRIVED"), ("COMPLETED", "COMPLETED")):
             status_code, response = app.apply_ride_dispatch_action(second_driver, request_public_id, action)
             self.assertEqual(status_code, 200)
@@ -777,8 +788,13 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertEqual(response["ride"]["origin"], "Littleton, CO")
             self.assertEqual(response["ride"]["destination"], "Colorado Springs, CO")
             self.assertEqual(mock_push.call_args.args[3]["status"], expected)
+            if expected == "EN_ROUTE":
+                self.assertIn("Driver is ", mock_push.call_args.args[2])
+                self.assertIn(" from pickup.", mock_push.call_args.args[2])
             if expected == "ARRIVED":
                 self.assertIn("Vehicle: CO LOAD02.", mock_push.call_args.args[2])
+                self.assertIn("Destination is ", mock_push.call_args.args[2])
+                self.assertIn(" away.", mock_push.call_args.args[2])
             with app.db() as con:
                 active_location_row = con.execute(
                     """
