@@ -677,7 +677,20 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         with app.db() as con:
             second_driver_id = self.insert_user(con, "Driver Two", "driver-two@example.com")
             self.insert_ride(con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
-            self.insert_ride(con, second_driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
+            accepted_driver_offer = self.insert_ride(con, second_driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
+            con.execute(
+                """
+                INSERT INTO ride_driver_profiles
+                (user_id, vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state,
+                 insurance_provider, insurance_policy_last4, service_types, availability_days,
+                 availability_start_time, availability_end_time, seat_count, luggage_space,
+                 max_detour_minutes, max_pickup_distance_miles, review_status)
+                VALUES (?, 'Toyota Camry', '2024', 'Blue', 'LOAD02', 'CO',
+                        'State Farm', '4002', 'CARPOOL_OFFER', 'Mon,Tue,Wed,Thu,Fri',
+                        '7:00 AM', '7:00 PM', 4, '1 small bag', 25, 15, 'APPROVED')
+                """,
+                (second_driver_id,),
+            )
             request = self.insert_ride(con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO")
             with patch.object(app, "google_route_totals", return_value=None):
                 dispatch = app.create_ride_dispatch_notifications(con, request, self.rider_id)
@@ -703,6 +716,19 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(accepted["ride"]["dispatchStatus"], "ACCEPTED")
         self.assertRegex(accepted["ride"]["pickupPin"], r"^\d{4}$")
         self.assertGreaterEqual(accepted["ride"]["routeDeviationMinutes"], 0)
+        self.assertEqual(accepted["ride"]["origin"], "Littleton, CO")
+        self.assertEqual(accepted["ride"]["destination"], "Colorado Springs, CO")
+        self.assertAlmostEqual(accepted["ride"]["originLat"], POINTS["Littleton, CO"]["lat"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["originLng"], POINTS["Littleton, CO"]["lng"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["destinationLat"], POINTS["Colorado Springs, CO"]["lat"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["destinationLng"], POINTS["Colorado Springs, CO"]["lng"], places=4)
+        self.assertEqual(accepted["ride"]["matchedRideId"], accepted_driver_offer["public_id"])
+        self.assertEqual(accepted["ride"]["matchedRouteOrigin"], "300 East 17th Ave, Denver, CO")
+        self.assertEqual(accepted["ride"]["matchedRouteDestination"], "Colorado Springs, CO")
+        self.assertAlmostEqual(accepted["ride"]["matchedRouteOriginLat"], POINTS["300 East 17th Ave, Denver, CO"]["lat"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["matchedRouteOriginLng"], POINTS["300 East 17th Ave, Denver, CO"]["lng"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["matchedRouteDestinationLat"], POINTS["Colorado Springs, CO"]["lat"], places=4)
+        self.assertAlmostEqual(accepted["ride"]["matchedRouteDestinationLng"], POINTS["Colorado Springs, CO"]["lng"], places=4)
         self.assertEqual(mock_push.call_args.args[3]["status"], "ACCEPTED")
 
         with app.db() as con:
@@ -720,7 +746,11 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertEqual(status_code, 200)
             self.assertEqual(response["ride"]["dispatchStatus"], expected)
             self.assertRegex(response["ride"]["pickupPin"], r"^\d{4}$")
+            self.assertEqual(response["ride"]["origin"], "Littleton, CO")
+            self.assertEqual(response["ride"]["destination"], "Colorado Springs, CO")
             self.assertEqual(mock_push.call_args.args[3]["status"], expected)
+            if expected == "ARRIVED":
+                self.assertIn("Vehicle: CO LOAD02.", mock_push.call_args.args[2])
 
         status_code, response = app.apply_ride_dispatch_action(second_driver, request_public_id, "DECLINE")
         self.assertEqual(status_code, 409)
