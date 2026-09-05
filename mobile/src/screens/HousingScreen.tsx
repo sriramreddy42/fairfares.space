@@ -704,14 +704,49 @@ export function HousingScreen({
   const selectedRideSuggestionRef = useRef("");
   const lastRideOwnerOpenTokenRef = useRef(0);
   const rideEditorRequestRef = useRef(0);
+  const rideOwnerLocationSubscription = useRef<Location.LocationSubscription | null>(null);
+  const rideOwnerLocationRideId = useRef("");
   const homeStoryScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
+
+  const liveRideOwnerRequest = useMemo(
+    () => rideActivityRows.find((ride) => ride.activityRole === "DRIVER_NOTIFICATION" && ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
+    [rideActivityRows]
+  );
 
   useEffect(() => {
     if (ridePlannerOpen || rideOwnerOpen || rideListingSuccess) return;
     onBottomTabsHiddenChange?.(false);
   }, [onBottomTabsHiddenChange, rideListingSuccess, rideOwnerOpen, ridePlannerOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function maintainRideOwnerLocation() {
+      if (!liveRideOwnerRequest) {
+        rideOwnerLocationSubscription.current?.remove();
+        rideOwnerLocationSubscription.current = null;
+        rideOwnerLocationRideId.current = "";
+        return;
+      }
+      if (rideOwnerLocationRideId.current === liveRideOwnerRequest.id && rideOwnerLocationSubscription.current) return;
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (cancelled || permission.status !== "granted") return;
+      rideOwnerLocationSubscription.current?.remove();
+      rideOwnerLocationRideId.current = liveRideOwnerRequest.id;
+      rideOwnerLocationSubscription.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, timeInterval: 10000, distanceInterval: 20 },
+        (position) => void updateRideDriverLocation(liveRideOwnerRequest.id, position.coords.latitude, position.coords.longitude).catch(() => undefined)
+      );
+    }
+    void maintainRideOwnerLocation();
+    return () => { cancelled = true; };
+  }, [liveRideOwnerRequest?.id]);
+
+  useEffect(() => () => {
+    rideOwnerLocationSubscription.current?.remove();
+    rideOwnerLocationSubscription.current = null;
+  }, []);
 
   useEffect(() => {
     if (!linkedHousingPost) return;
