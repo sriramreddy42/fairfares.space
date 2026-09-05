@@ -3,12 +3,17 @@
 .env.local
 .env.*.local
 node_modules/
+.git/
 
 # Mobile generated outputs and local release archives
 mobile/node_modules/
 mobile/artifacts/
 mobile/dist/
 mobile/dist-visual/
+!mobile/android/
+!mobile/android/**
+!mobile/ios/
+!mobile/ios/**
 mobile/android/app/build/
 mobile/android/app/.cxx/
 mobile/android/.gradle/
@@ -17,18 +22,34 @@ mobile/ios/archive/
 mobile/ios/Pods/
 
 # Root native/generated outputs
+/android/
+/ios/
 android/app/build/
 android/.gradle/
 ios/build/
 ios/archive/
 
 # Backend/local test/runtime files not needed for mobile cloud builds
+ai/
+artifacts/
+docs/
+scripts/
+static/
+templates/
+tests/
 data/
 test-results/
 playwright-report/
 issue_screenshots/
 .tmp/
 .pycache-tmp/
+app.py
+requirements.txt
+render.yaml
+playwright.config.js
+package.json
+package-lock.json
+capacitor.config.json
 fairfares.db
 fairfares.env
 dev-pdf-extracted.txt
