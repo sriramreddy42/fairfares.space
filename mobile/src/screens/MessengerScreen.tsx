@@ -2043,9 +2043,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     visibleMessages.forEach((message) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
       if (!mediaGroupId || message.type !== "IMAGE") return;
-      const group = mediaGroups.get(mediaGroupId) || [];
+      const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
+      const group = mediaGroups.get(mediaGroupKey) || [];
       group.push(message);
-      mediaGroups.set(mediaGroupId, group);
+      mediaGroups.set(mediaGroupKey, group);
     });
     mediaGroups.forEach((group, key) => {
       mediaGroups.set(key, group.sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
@@ -2054,8 +2055,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const renderedImageGroupIds = new Set<string>();
     visibleMessages.forEach((message, index) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-      const mediaGroup = mediaGroupId && message.type === "IMAGE" ? mediaGroups.get(mediaGroupId) || [] : [];
-      const imageGroupKey = message.type === "IMAGE" && mediaGroup.length > 1 ? mediaGroupId : "";
+      const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
+      const mediaGroup = mediaGroupId && message.type === "IMAGE" ? mediaGroups.get(mediaGroupKey) || [] : [];
+      const imageGroupKey = message.type === "IMAGE" && mediaGroup.length > 1 ? mediaGroupKey : "";
       const imageGroupAlreadyRendered = Boolean(imageGroupKey && renderedImageGroupIds.has(imageGroupKey));
       if (imageGroupKey && !imageGroupAlreadyRendered) renderedImageGroupIds.add(imageGroupKey);
       const showDateDivider = index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt);
@@ -4002,6 +4004,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       };
       let optimisticThumbnailPromise: Promise<string> | null = null;
       let releaseVideoPipeline: (() => void) | null = null;
+      const optimisticCreatedAt = Date.now();
       const optimisticMessages = attachments.map((attachment, index): ChatMessage => {
         const optimisticAttachmentId = optimisticAttachmentIds[index];
         const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
@@ -4023,7 +4026,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
             ...mediaMetadata,
           },
-          createdAt: new Date().toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
+          createdAt: new Date(optimisticCreatedAt + index).toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
           canEdit: false, status: "pending",
         };
       });
