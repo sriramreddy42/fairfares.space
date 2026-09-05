@@ -3944,8 +3944,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         sizeMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
         quality: selectedVideo.videoQuality || "original",
       });
-      const shouldPrepareVideo = Boolean(selectedVideo && Platform.OS === "ios" && FairFaresCrypto.videoPreparationAvailable);
-      if (selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo) &&
+      const shouldPrepareVideoAttachment = (attachment: PendingChatAttachment) =>
+        attachment.kind === "VIDEO" && !attachment.ownedCacheFile && (attachment.videoQuality === "data-saver" || (Platform.OS === "ios" && FairFaresCrypto.videoPreparationAvailable));
+      const hasVideoNeedingPreparation = attachments.some(shouldPrepareVideoAttachment);
+      if (hasVideoNeedingPreparation &&
           ((!FairFaresCrypto.videoPreparationAvailable && !FairFaresCrypto.videoOptimizationAvailable) || !FileSystem.cacheDirectory)) {
         Alert.alert("Development build required", "Video preparation needs the latest FairFares iOS build. Install the newest build or choose HD in the current build.");
         return;
@@ -4064,7 +4066,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           return;
         }
       }
-      if (selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo)) {
+      if (attachments.length === 1 && selectedVideo && shouldPrepareVideoAttachment(selectedVideo)) {
         setAttachmentStatus("");
         const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
         try {
@@ -4152,9 +4154,59 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         setEncryptionReady(Boolean(keyPayload.ready));
         const sentMessages: ChatMessage[] = [];
         for (let index = 0; index < attachments.length; index += 1) {
-          const attachment = attachments[index];
+          let attachment = attachments[index];
           const optimisticAttachmentId = optimisticAttachmentIds[index];
           const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+          if (attachments.length > 1 && shouldPrepareVideoAttachment(attachment)) {
+            const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+            try {
+              const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+              if (Number.isFinite(freeBytes) && freeBytes < attachment.size + 32 * 1024 * 1024) {
+                throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
+              }
+              const profile = attachment.videoQuality === "data-saver" ? "data-saver" : "hd";
+              const optimized = FairFaresCrypto.videoPreparationAvailable
+                ? await FairFaresCrypto.prepareVideo(attachment.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal)
+                : await FairFaresCrypto.optimizeVideo(attachment.uri, optimizedUri, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal);
+              ensureSendContext();
+              if (optimized.outputSize > 0) {
+                if (optimized.outputSize > effectiveAttachmentLimitBytes) {
+                  throw new Error(`The prepared video exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
+                }
+                const preparedThumbnail = await createLightweightVideoThumbnail(optimizedUri).catch(() => "");
+                const preparedVideo: PendingChatAttachment = {
+                  ...attachment,
+                  uri: optimizedUri,
+                  name: attachment.name.replace(/\.[^.]+$/, "") + ".mp4",
+                  mimeType: optimized.mimeType || "video/mp4",
+                  size: optimized.outputSize,
+                  thumbnailBase64: preparedThumbnail || attachment.thumbnailBase64,
+                  ownedCacheFile: true,
+                  videoQuality: profile === "hd" ? "original" : "data-saver",
+                };
+                releasePendingAttachments([attachment]);
+                attachments[index] = preparedVideo;
+                attachment = preparedVideo;
+                updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+                  ...message,
+                  attachmentUrl: preparedVideo.uri,
+                  metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl },
+                }));
+                setMessages((current) => current.map((message) => message.id === optimisticAttachmentId ? {
+                  ...message,
+                  attachmentUrl: preparedVideo.uri,
+                  metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl },
+                } : message));
+              } else {
+                await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+                attachment = { ...attachment, videoQuality: "original" };
+                attachments[index] = attachment;
+              }
+            } catch (error) {
+              await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+              throw error;
+            }
+          }
           // Video previews use a zero-decoding local placeholder. Native frame
           // extraction belongs in a background queue in a custom app build,
           // never in this send-critical JavaScript path.
@@ -4175,7 +4227,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata },
                 identity,
                 keyPayload.keys,
-                attachmentProgressReporter(`Encrypting ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"}…`, optimisticAttachmentId, selectedVideo && (selectedVideo.videoQuality === "data-saver" || shouldPrepareVideo) ? 0.35 : 0, 0.62),
+                attachmentProgressReporter(`Encrypting ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"}…`, optimisticAttachmentId, attachment.kind === "VIDEO" && attachment.ownedCacheFile ? 0.35 : 0, 0.62),
                 cryptoThrottleForSize(attachment.size),
                 mediaSendAbort.signal
               );
