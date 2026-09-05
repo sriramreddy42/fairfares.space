@@ -18197,6 +18197,10 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                    driver_posts.title AS matched_route_title,
                    driver_posts.origin_label AS matched_route_origin,
                    driver_posts.destination_label AS matched_route_destination,
+                   driver_posts.origin_lat AS matched_route_origin_lat,
+                   driver_posts.origin_lng AS matched_route_origin_lng,
+                   driver_posts.destination_lat AS matched_route_destination_lat,
+                   driver_posts.destination_lng AS matched_route_destination_lng,
                    driver_posts.contribution_per_seat AS matched_contribution_per_seat
             FROM ride_dispatch_notifications notifications
             JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
@@ -18249,6 +18253,10 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
     response["matchedRouteTitle"] = row_value(updated, "matched_route_title") if updated else ""
     response["matchedRouteOrigin"] = row_value(updated, "matched_route_origin") if updated else ""
     response["matchedRouteDestination"] = row_value(updated, "matched_route_destination") if updated else ""
+    response["matchedRouteOriginLat"] = float(row_value(updated, "matched_route_origin_lat") or 0) or None if updated else None
+    response["matchedRouteOriginLng"] = float(row_value(updated, "matched_route_origin_lng") or 0) or None if updated else None
+    response["matchedRouteDestinationLat"] = float(row_value(updated, "matched_route_destination_lat") or 0) or None if updated else None
+    response["matchedRouteDestinationLng"] = float(row_value(updated, "matched_route_destination_lng") or 0) or None if updated else None
     response["matchedContributionPerSeat"] = float(row_value(updated, "matched_contribution_per_seat") or 0) if updated else 0
     if next_status in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
         response["pickupPin"] = ride_pickup_pin(ride_public_id, user_id)
@@ -37598,6 +37606,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        driver_posts.title AS matched_route_title,
                        driver_posts.origin_label AS matched_route_origin,
                        driver_posts.destination_label AS matched_route_destination,
+                       driver_posts.origin_lat AS matched_route_origin_lat,
+                       driver_posts.origin_lng AS matched_route_origin_lng,
+                       driver_posts.destination_lat AS matched_route_destination_lat,
+                       driver_posts.destination_lng AS matched_route_destination_lng,
                        driver_posts.contribution_per_seat AS matched_contribution_per_seat
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
@@ -37687,6 +37699,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["matchedRouteTitle"] = row_value(row, "matched_route_title")
                 payload["matchedRouteOrigin"] = row_value(row, "matched_route_origin")
                 payload["matchedRouteDestination"] = row_value(row, "matched_route_destination")
+                payload["matchedRouteOriginLat"] = float(row_value(row, "matched_route_origin_lat") or 0) or None
+                payload["matchedRouteOriginLng"] = float(row_value(row, "matched_route_origin_lng") or 0) or None
+                payload["matchedRouteDestinationLat"] = float(row_value(row, "matched_route_destination_lat") or 0) or None
+                payload["matchedRouteDestinationLng"] = float(row_value(row, "matched_route_destination_lng") or 0) or None
                 payload["matchedContributionPerSeat"] = float(row_value(row, "matched_contribution_per_seat") or 0)
                 if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
                     payload["pickupPin"] = ride_pickup_pin(public_id, user_id)
