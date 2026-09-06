@@ -1323,7 +1323,7 @@ function FairFaresApp() {
       await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey || "");
       const opened = await openChatForPost(post.id);
       const keys = await getChatDeviceKeys(opened.conversation.id);
-      if (!keys.ready || !keys.keys.length) throw new Error(keys.warning || "The seller's encrypted chat is not ready yet.");
+      if (!(keys.canSend ?? keys.ready) || !keys.keys.length) throw new Error(keys.warning || "The seller's encrypted chat is not ready yet.");
       const envelopes = encryptForDevices(message, identity, keys.keys);
       await sendEncryptedChatMessage(opened.conversation.id, envelopes, undefined, false, 0, post.id);
       markCardMessageSent({ postId: post.id, name: post.posterName, photoUrl: post.photoUrl, listingTitle: post.title });

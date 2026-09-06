@@ -678,15 +678,18 @@ class ChatPrivateGroupsTest(unittest.TestCase):
         with app.db() as con:
             owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
             conversation, _ = app.get_or_create_community_conversation(con, group["id"], owner)
-        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
         self.assertFalse(warning)
+        self.assertTrue(can_send)
         self.assertEqual({item["userId"] for item in keys}, {self.owner, self.member})
         self.assertFalse(app.update_chat_group_member(group["id"], self.owner, self.member, "REMOVE"))
-        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
         self.assertFalse(warning)
+        self.assertTrue(can_send)
         self.assertEqual({item["userId"] for item in keys}, {self.owner})
-        denied, error = app.get_chat_conversation_device_keys(conversation["public_id"], self.member)
+        denied, error, can_send = app.get_chat_conversation_device_keys(conversation["public_id"], self.member)
         self.assertIsNone(denied)
+        self.assertFalse(can_send)
         self.assertIn("not found", error.lower())
 
     def test_unkeyed_member_does_not_freeze_encrypted_group_messaging(self):
@@ -699,8 +702,9 @@ class ChatPrivateGroupsTest(unittest.TestCase):
             owner = con.execute("SELECT * FROM users WHERE id = ?", (self.owner,)).fetchone()
             conversation, error = app.get_or_create_community_conversation(con, group["id"], owner)
             self.assertFalse(error)
-        keys, warning = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys(conversation["public_id"], self.owner)
         self.assertFalse(warning)
+        self.assertTrue(can_send)
         self.assertEqual({item["userId"] for item in keys}, {self.owner})
         with app.db() as con:
             conversation = con.execute("SELECT * FROM chat_conversations WHERE public_id = ?", (conversation["public_id"],)).fetchone()
@@ -728,20 +732,23 @@ class ChatPrivateGroupsTest(unittest.TestCase):
                     (conversation_id, user_id),
                 )
 
-        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
         self.assertEqual(keys, [])
+        self.assertFalse(can_send)
         self.assertIn("this device", warning.lower())
 
         owner_key = base64.b64encode(b"A" * 32).decode("ascii")
         self.assertFalse(app.register_chat_device_key(self.owner, "owner-direct-device", owner_key))
-        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
         self.assertEqual({item["userId"] for item in keys}, {self.owner})
+        self.assertFalse(can_send)
         self.assertIn("Member", warning)
 
         member_key = base64.b64encode(b"B" * 32).decode("ascii")
         self.assertFalse(app.register_chat_device_key(self.member, "member-direct-device", member_key))
-        keys, warning = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
+        keys, warning, can_send = app.get_chat_conversation_device_keys("direct-key-recovery", self.owner)
         self.assertFalse(warning)
+        self.assertTrue(can_send)
         self.assertEqual({item["userId"] for item in keys}, {self.owner, self.member})
 
     def test_signed_relay_rejects_tampering_expiry_and_duplicates(self):

@@ -20433,7 +20433,7 @@ def get_chat_conversation_device_keys(conversation_public_id: str, user_id: int)
         return keys, "", can_send
     if not sender_has_key:
         return keys, "Securing Chitthi on this device. This usually finishes automatically.", False
-    return keys, "Secure chat is being prepared. You can try again shortly.", can_send
+    return keys, "Member's Chitthi is still being prepared. You can try again shortly.", can_send
 
 
 def save_encrypted_chat_message(con: sqlite3.Connection, conversation: sqlite3.Row, sender: sqlite3.Row, envelopes: list[dict[str, object]], client_message_id: str, reply_to_message_id: int = 0) -> tuple[sqlite3.Row | None, str]:

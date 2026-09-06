@@ -176,8 +176,11 @@ const CHAT_MEDIA_WIDTH = Math.max(248, Math.min(320, Math.round(Dimensions.get("
 const CHAT_MEDIA_MIN_HEIGHT = 160;
 const CHAT_MEDIA_MAX_HEIGHT = 430;
 const CHAT_MEDIA_FALLBACK_HEIGHT = Math.round(CHAT_MEDIA_WIDTH * 1.05);
+const CHAT_PREVIEW_SCREEN_WIDTH = Dimensions.get("window").width;
+const CHAT_PREVIEW_MEDIA_HEIGHT = Math.max(300, Math.min(560, Dimensions.get("window").height - (Platform.OS === "ios" ? 220 : 190)));
 const CHAT_COLLAGE_GAP = 3;
 const CHAT_COLLAGE_CELL = (CHAT_MEDIA_WIDTH - CHAT_COLLAGE_GAP) / 2;
+const CHAT_HD_VIDEO_PREPARE_MIN_BYTES = 35_000_000;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
 const pendingEncryptionStatusText = "Secure chat is being prepared. You can try again shortly.";
 function userSafeEncryptionStatus(value: string) {
@@ -1946,11 +1949,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const downloadingMediaMessageIdsRef = useRef(new Set<number>());
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
+  const [pendingPreviewIndex, setPendingPreviewIndex] = useState(0);
+  const pendingPreviewListRef = useRef<FlatList<PendingChatAttachment> | null>(null);
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+
+  function scrollPendingPreviewToIndex(index: number, animated = true) {
+    const safeIndex = Math.max(0, Math.min(index, pendingImages.length - 1));
+    if (!pendingImages.length) return;
+    try {
+      pendingPreviewListRef.current?.scrollToIndex({ index: safeIndex, animated });
+    } catch {
+      pendingPreviewListRef.current?.scrollToOffset({ offset: CHAT_PREVIEW_SCREEN_WIDTH * safeIndex, animated });
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingPhotoPreviewOpen || !pendingImages.length) return;
+    const safeIndex = Math.max(0, Math.min(pendingPreviewIndex, pendingImages.length - 1));
+    if (safeIndex !== pendingPreviewIndex) setPendingPreviewIndex(safeIndex);
+    requestAnimationFrame(() => scrollPendingPreviewToIndex(safeIndex, false));
+  }, [pendingImages.length, pendingPhotoPreviewOpen, pendingPreviewIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2866,9 +2888,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function getEncryptionKeysForSend(conversationId: string) {
     const userId = Number(data?.user?.id || 0);
     try {
-      const payload = await getChatDeviceKeys(conversationId);
+      let payload = await getChatDeviceKeys(conversationId);
+      if (!chatKeyPayloadCanSend(payload)) {
+        // First-time devices can reach the composer while the background
+        // registration/readiness poll is still catching up. Do one inline
+        // recovery pass so the user's first send continues instead of being
+        // blocked behind a vague "preparing" state.
+        const identity = await ensureChatDeviceIdentity();
+        await ensureDeviceRegistration(identity);
+        payload = await getChatDeviceKeys(conversationId);
+      }
       if (chatKeyPayloadCanSend(payload)) {
+        setEncryptionReady(Boolean(payload.ready));
+        setEncryptionStatusDetail("");
         await AsyncStorage.setItem(conversationKeyCacheName(userId, conversationId), JSON.stringify(payload));
+      } else {
+        setEncryptionReady(false);
+        setEncryptionStatusDetail(userSafeEncryptionStatus(payload.warning) || pendingEncryptionStatusText);
       }
       return payload;
     } catch (error) {
@@ -3961,7 +3997,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         quality: selectedVideo.videoQuality || "original",
       });
       const shouldPrepareVideoAttachment = (attachment: PendingChatAttachment) =>
-        attachment.kind === "VIDEO" && !attachment.ownedCacheFile && (attachment.videoQuality === "data-saver" || (Platform.OS === "ios" && FairFaresCrypto.videoPreparationAvailable));
+        attachment.kind === "VIDEO"
+        && Platform.OS === "ios"
+        && (attachment.videoQuality === "data-saver"
+          || (!attachment.ownedCacheFile && FairFaresCrypto.videoPreparationAvailable && attachment.size >= CHAT_HD_VIDEO_PREPARE_MIN_BYTES));
       const hasVideoNeedingPreparation = attachments.some(shouldPrepareVideoAttachment);
       if (hasVideoNeedingPreparation &&
           ((!FairFaresCrypto.videoPreparationAvailable && !FairFaresCrypto.videoOptimizationAvailable) || !FileSystem.cacheDirectory)) {
@@ -4165,7 +4204,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         await allowBusyUiToPaint();
         ensureSendContext();
         const identity = await ensureChatDeviceIdentity();
-        const keyPayload = await getChatDeviceKeys(activeConversationId);
+        const keyPayload = await getEncryptionKeysForSend(activeConversationId);
         ensureSendContext();
         if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
         setEncryptionReady(Boolean(keyPayload.ready));
@@ -4384,14 +4423,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         if (remainingOptimisticIds.length && sendContextStillActive) {
           if (!sendWasCancelled) {
             // Preparation may already have replaced and deleted the picker
-            // source. Restore the current durable attachment, not that stale
-            // original URI, so Retry can actually read the file.
-            const retryAttachment = remainingAttachments[0] || attachments[attachments.length - 1];
-            if (retryAttachment.kind === "IMAGE" || retryAttachment.kind === "VIDEO") {
-              setPendingImages([retryAttachment]);
+            // source. Restore the current durable remaining batch, not those
+            // stale original URIs, so Retry can actually read every file.
+            const retryAttachments = remainingAttachments.length ? remainingAttachments : attachments.slice(-1);
+            const retryMediaAttachments = retryAttachments.filter((attachment) => attachment.kind === "IMAGE" || attachment.kind === "VIDEO");
+            if (retryMediaAttachments.length === retryAttachments.length) {
+              setPendingImages(retryMediaAttachments);
               setPendingAttachment(null);
             } else {
-              setPendingAttachment(retryAttachment);
+              setPendingAttachment(retryAttachments[0] || null);
               setPendingImages([]);
             }
             setMessageText(cleanMessage);
@@ -5336,13 +5376,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
       setAttachmentStatus("");
       if (!media.length) return;
+      const canPrepareVideo = Platform.OS === "ios" && (FairFaresCrypto.videoPreparationAvailable || FairFaresCrypto.videoOptimizationAvailable);
+      const mediaWithFastDefaults = media.map((item) => item.kind === "VIDEO"
+        ? {
+            ...item,
+            videoQuality: canPrepareVideo && item.size >= CHAT_HD_VIDEO_PREPARE_MIN_BYTES ? "data-saver" as const : "original" as const
+          }
+        : item);
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
-      setPendingImages(media);
+      setPendingImages(mediaWithFastDefaults);
+      setPendingPreviewIndex(0);
       // Selected media lives in the dedicated review surface instead of a
       // large preview card above the composer. The paperclip count reopens it.
       setPendingPhotoPreviewOpen(true);
-      const selectedVideos = media.filter((item) => item.kind === "VIDEO");
+      const selectedVideos = mediaWithFastDefaults.filter((item) => item.kind === "VIDEO");
       // Keep thumbnail decoding serial as well. Several simultaneous native
       // video decoders can evict each other's image context on iOS and cause
       // the renderAsync "Image context has been lost" failure.
@@ -5379,6 +5427,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
       setPendingImages([{ ...photo, kind: "IMAGE" }]);
+      setPendingPreviewIndex(0);
       setPendingPhotoPreviewOpen(true);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Could not take this photo.";
@@ -5995,6 +6044,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setAttachmentMenuOpen(willOpen);
   }
 
+  function sendPendingPreviewAndReturn() {
+    if (attachmentSending || !pendingImages.length) {
+      setPendingPhotoPreviewOpen(false);
+      return;
+    }
+    setPendingPhotoPreviewOpen(false);
+    void sendMessage();
+  }
+
   function toggleEmojiPicker() {
     const willOpen = !emojiPickerOpen;
     Keyboard.dismiss();
@@ -6409,7 +6467,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return true;
       }
       if (pendingPhotoPreviewOpen) {
-        setPendingPhotoPreviewOpen(false);
+        sendPendingPreviewAndReturn();
         return true;
       }
       if (attachmentPreviewGroup.length) {
@@ -7037,48 +7095,67 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
 
-        <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={() => setPendingPhotoPreviewOpen(false)}>
+        <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={sendPendingPreviewAndReturn}>
           <KeyboardAvoidingView style={styles.pendingFullPreview} behavior={Platform.OS === "ios" ? "padding" : undefined}>
             <View style={styles.pendingFullPreviewHeader}>
-              <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={() => setPendingPhotoPreviewOpen(false)} accessibilityLabel="Close selected photo preview"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={sendPendingPreviewAndReturn} accessibilityLabel="Send selected media and return to chat"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
               <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} item{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
-              <TouchableOpacity style={styles.pendingFullPreviewSendTop} disabled={threadLoading || attachmentSending} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }} accessibilityLabel="Send selected media"><Text style={styles.pendingFullPreviewSendTopText}>{threadLoading || attachmentSending ? "…" : "Send"}</Text></TouchableOpacity>
+              <View style={styles.pendingFullPreviewHeaderSpacer} />
             </View>
             <FlatList
+              ref={pendingPreviewListRef}
               style={styles.pendingFullPreviewScroll}
               contentContainerStyle={styles.pendingFullPreviewContent}
               data={pendingImages}
               keyExtractor={(photo, index) => `${photo.uri}-${index}`}
+              horizontal
+              pagingEnabled
               initialNumToRender={2}
               maxToRenderPerBatch={2}
               windowSize={3}
               removeClippedSubviews={Platform.OS === "android"}
               showsVerticalScrollIndicator={false}
-              renderItem={({ item: photo, index }) => <View style={styles.pendingFullPreviewPhotoCard}>
-                {photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={styles.pendingVideoThumbnail} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
-                {pendingImages.length === 1 && photo.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.pendingFullPreviewVideoOptions}>
-                  <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality !== "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "original" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity>
-                  <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality === "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "data-saver" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity>
-                </View> : null}
-                <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}</Text></View>
-                <TouchableOpacity
-                  style={styles.pendingFullPreviewRemove}
-                  onPress={() => {
-                    if (!pendingImages.some((item, itemIndex) => itemIndex !== index && item.uri === photo.uri)) releasePendingAttachments([photo]);
-                    setPendingImages((current) => {
-                      const next = current.filter((_, itemIndex) => itemIndex !== index);
-                      if (!next.length) setPendingPhotoPreviewOpen(false);
-                      return next;
-                    });
-                  }}
-                  accessibilityLabel={`Remove item ${index + 1}`}
-                ><Text style={styles.pendingFullPreviewRemoveText}>×</Text></TouchableOpacity>
-              </View>}
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(event) => {
+                const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, CHAT_PREVIEW_SCREEN_WIDTH));
+                setPendingPreviewIndex(Math.max(0, Math.min(nextIndex, pendingImages.length - 1)));
+              }}
+              onScrollToIndexFailed={(info) => {
+                pendingPreviewListRef.current?.scrollToOffset({ offset: CHAT_PREVIEW_SCREEN_WIDTH * info.index, animated: true });
+              }}
+              getItemLayout={(_data, index) => ({ length: CHAT_PREVIEW_SCREEN_WIDTH, offset: CHAT_PREVIEW_SCREEN_WIDTH * index, index })}
+              renderItem={({ item: photo, index }) => <View style={styles.pendingFullPreviewPage}><View style={styles.pendingFullPreviewPhotoCard}>
+                  {photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={[styles.pendingVideoThumbnail, styles.pendingFullVideoThumbnail]} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
+                  {photo.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.pendingFullPreviewVideoOptions}>
+                    <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality !== "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "original" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity>
+                    <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality === "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "data-saver" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity>
+                  </View> : null}
+                  <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}/{pendingImages.length}</Text></View>
+                  <TouchableOpacity
+                    style={styles.pendingFullPreviewRemove}
+                    onPress={() => {
+                      if (!pendingImages.some((item, itemIndex) => itemIndex !== index && item.uri === photo.uri)) releasePendingAttachments([photo]);
+                      setPendingImages((current) => {
+                        const next = current.filter((_, itemIndex) => itemIndex !== index);
+                        setPendingPreviewIndex((currentIndex) => Math.max(0, Math.min(currentIndex, next.length - 1)));
+                        if (!next.length) setPendingPhotoPreviewOpen(false);
+                        return next;
+                      });
+                    }}
+                    accessibilityLabel={`Remove item ${index + 1}`}
+                  ><Text style={styles.pendingFullPreviewRemoveText}>×</Text></TouchableOpacity>
+                </View></View>}
             />
             <View style={styles.pendingFullPreviewFooter}>
-              <TextInput style={styles.pendingFullPreviewCaption} value={messageText} onChangeText={handleMessageTextChange} placeholder="Add a caption…" placeholderTextColor="rgba(255,255,255,0.45)" multiline maxLength={4000} accessibilityLabel="Media caption" />
-              <Text style={styles.pendingFullPreviewFooterText}>The caption is attached to the first item.</Text>
-              <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={threadLoading || attachmentSending || !pendingImages.length} onPress={() => { setPendingPhotoPreviewOpen(false); void sendMessage(); }}><Text style={styles.pendingFullPreviewSendText}>{threadLoading || attachmentSending ? "Sending…" : `Send ${pendingImages.length} item${pendingImages.length === 1 ? "" : "s"}`}</Text></TouchableOpacity>
+              {pendingImages.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingFullPreviewThumbs}>
+                {pendingImages.map((item, index) => <TouchableOpacity key={`${item.uri}-thumb-${index}`} style={[styles.pendingFullPreviewThumb, index === pendingPreviewIndex && styles.pendingFullPreviewThumbActive]} onPress={() => { setPendingPreviewIndex(index); scrollPendingPreviewToIndex(index); }} accessibilityRole="button" accessibilityLabel={`Preview item ${index + 1}`}>
+                  {item.kind === "VIDEO" ? <View style={styles.pendingFullPreviewThumbVideo}>{item.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${item.thumbnailBase64}` }} style={styles.pendingFullPreviewThumbImage} resizeMode="cover" /> : null}<Text style={styles.pendingFullPreviewThumbPlay}>▶</Text></View> : <PendingPhotoPreview uri={item.uri} compact />}
+                </TouchableOpacity>)}
+              </ScrollView> : null}
+              <View style={styles.pendingFullPreviewComposerRow}>
+                <TextInput style={styles.pendingFullPreviewCaption} value={messageText} onChangeText={handleMessageTextChange} placeholder="Add a caption…" placeholderTextColor="rgba(255,255,255,0.45)" multiline maxLength={4000} accessibilityLabel="Media caption" />
+                <TouchableOpacity style={styles.pendingFullPreviewSend} disabled={attachmentSending || !pendingImages.length} onPress={sendPendingPreviewAndReturn} accessibilityRole="button" accessibilityLabel={`Send ${pendingImages.length} selected item${pendingImages.length === 1 ? "" : "s"}`}><Text style={styles.pendingFullPreviewSendText}>{attachmentSending ? "…" : "➤"}</Text></TouchableOpacity>
+              </View>
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -7298,7 +7375,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }}
             multiline
           />
-          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, threadLoading && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading}>
+          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, (threadLoading && !activeConversationId) && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading && !activeConversationId}>
             {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
           </View>
@@ -8000,6 +8077,7 @@ const styles = StyleSheet.create({
   pendingAttachmentImage: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#dde3ec" },
   pendingVideoPreview: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#20252d", alignItems: "center", justifyContent: "center" },
   pendingVideoThumbnail: { ...StyleSheet.absoluteFillObject, width: 72, height: 72, borderRadius: 12 },
+  pendingFullVideoThumbnail: { width: "100%", height: "100%", borderRadius: 0 },
   pendingVideoPlayBadge: { width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(0,0,0,0.56)", alignItems: "center", justifyContent: "center" },
   pendingVideoPreviewText: { color: "#fff", fontSize: 18, marginLeft: 2 },
   pendingCollagePreview: { width: 76, height: 76, flexDirection: "row", flexWrap: "wrap", gap: 2, overflow: "hidden", borderRadius: 12, backgroundColor: "#d7dde7" },
@@ -8027,22 +8105,28 @@ const styles = StyleSheet.create({
   pendingFullPreviewTitleWrap: { flex: 1, minWidth: 0 },
   pendingFullPreviewTitle: { color: "#fff", fontSize: 17, fontWeight: "800", textAlign: "center" },
   pendingFullPreviewSubtitle: { color: "rgba(255,255,255,0.62)", fontSize: 11, fontWeight: "700", textAlign: "center", marginTop: 2 },
-  pendingFullPreviewSendTop: { minWidth: 52, minHeight: 38, borderRadius: 19, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
-  pendingFullPreviewSendTopText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+  pendingFullPreviewHeaderSpacer: { width: 42, height: 42 },
   pendingFullPreviewScroll: { flex: 1 },
-  pendingFullPreviewContent: { paddingHorizontal: 12, paddingVertical: 12, gap: 12 },
-  pendingFullPreviewPhotoCard: { width: "100%", minHeight: 480, borderRadius: 18, overflow: "hidden", position: "relative", backgroundColor: "#11151a", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
-  pendingFullPreviewImage: { width: "100%", height: 560, maxHeight: 560, borderRadius: 0, backgroundColor: "#080a0d" },
+  pendingFullPreviewContent: { alignItems: "center" },
+  pendingFullPreviewPage: { width: CHAT_PREVIEW_SCREEN_WIDTH, paddingHorizontal: 12, paddingVertical: 12, justifyContent: "center" },
+  pendingFullPreviewPhotoCard: { width: "100%", minHeight: CHAT_PREVIEW_MEDIA_HEIGHT, borderRadius: 18, overflow: "hidden", position: "relative", backgroundColor: "#11151a", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  pendingFullPreviewImage: { width: "100%", height: CHAT_PREVIEW_MEDIA_HEIGHT, maxHeight: CHAT_PREVIEW_MEDIA_HEIGHT, borderRadius: 0, backgroundColor: "#080a0d" },
   pendingFullPreviewVideoOptions: { position: "absolute", left: 14, bottom: 14, flexDirection: "row", gap: 7, padding: 5, borderRadius: 18, backgroundColor: "rgba(0,0,0,0.72)" },
   pendingFullPreviewNumber: { position: "absolute", left: 12, top: 12, minWidth: 30, height: 30, borderRadius: 15, paddingHorizontal: 8, backgroundColor: "rgba(0,0,0,0.66)", alignItems: "center", justifyContent: "center" },
   pendingFullPreviewNumberText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   pendingFullPreviewRemove: { position: "absolute", right: 12, top: 12, width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(0,0,0,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", alignItems: "center", justifyContent: "center" },
   pendingFullPreviewRemoveText: { color: "#fff", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
-  pendingFullPreviewFooter: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 28 : 14, gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(10,13,17,0.98)" },
-  pendingFullPreviewCaption: { minHeight: 46, maxHeight: 110, borderRadius: 23, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, color: "#fff", fontSize: 15, backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)" },
-  pendingFullPreviewFooterText: { color: "rgba(255,255,255,0.62)", fontSize: 11, lineHeight: 16, fontWeight: "700", textAlign: "center" },
-  pendingFullPreviewSend: { minHeight: 52, borderRadius: 26, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center" },
-  pendingFullPreviewSendText: { color: "#fff", fontSize: 16, fontWeight: "900" },
+  pendingFullPreviewFooter: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: Platform.OS === "ios" ? 24 : 12, gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(10,13,17,0.98)" },
+  pendingFullPreviewThumbs: { paddingHorizontal: 2, gap: 8, alignItems: "center" },
+  pendingFullPreviewThumb: { width: 52, height: 52, borderRadius: 10, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "#151a20" },
+  pendingFullPreviewThumbActive: { borderColor: "#28d184", borderWidth: 2 },
+  pendingFullPreviewThumbVideo: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#11151a" },
+  pendingFullPreviewThumbImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
+  pendingFullPreviewThumbPlay: { color: "#fff", fontSize: 15, textShadowColor: "rgba(0,0,0,0.85)", textShadowRadius: 4 },
+  pendingFullPreviewComposerRow: { flexDirection: "row", alignItems: "flex-end", gap: 9 },
+  pendingFullPreviewCaption: { flex: 1, minHeight: 46, maxHeight: 110, borderRadius: 23, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, color: "#fff", fontSize: 15, backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)" },
+  pendingFullPreviewSend: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#159a68", alignItems: "center", justifyContent: "center" },
+  pendingFullPreviewSendText: { color: "#fff", fontSize: 21, lineHeight: 23, fontWeight: "900", marginLeft: 2 },
   richComposerPanel: { position: "absolute", left: 10, right: 10, bottom: 62, maxHeight: "78%", backgroundColor: "#ECEDEB", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "#CBCFCA", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 14, zIndex: 21, gap: 9, overflow: "hidden" },
   richInput: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#d8d3cb", borderRadius: 12, minHeight: 44, paddingHorizontal: 12, color: "#222", fontSize: 14 },
   richMultiline: { minHeight: 82, paddingTop: 12, textAlignVertical: "top" },

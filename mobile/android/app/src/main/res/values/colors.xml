@@ -12,4 +12,5 @@
   <color name="ff_on_surface_variant">#FF65676B</color>
   <color name="ff_on_surface">#FF1C1E21</color>
   <color name="ff_status_bar">#FFF3F4F6</color>
+  <color name="navigationBarColor">#f3f4f6</color>
 </resources>
