@@ -1126,6 +1126,13 @@ function DiscoveredMessageText({ message, mine, mentionNames = [], hiddenUrl = "
   );
 }
 
+function isEmojiOnlyMessage(text: string) {
+  const compact = text.trim();
+  if (!compact) return false;
+  const emojiSyntax = /[\p{Extended_Pictographic}\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]/gu;
+  return compact.replace(emojiSyntax, "").trim().length === 0;
+}
+
 function presenceLabel(conversation: ChatConversation | null) {
   if (!conversation) return "New conversation";
   if (isGroupConversation(conversation)) return "Group chat";
@@ -6720,9 +6727,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.threadMessages}>
-          {identityRecoveryWarning || (!encryptionReady && encryptionStatusDetail && encryptionStatusDetail !== pendingEncryptionStatusText) ? (
+          {identityRecoveryWarning ? (
             <View style={styles.encryptionRecoveryWarning}>
-              <Text style={styles.encryptionRecoveryWarningText}>{identityRecoveryWarning || encryptionStatusDetail}</Text>
+              <Text style={styles.encryptionRecoveryWarningText}>{identityRecoveryWarning}</Text>
             </View>
           ) : null}
           <FlatList
@@ -6857,6 +6864,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const mediaUploadingBatch = mediaUploading && mediaUploadBatchCount > 1;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             const showGroupSender = !message.mine && isGroupConversation(activeConversation);
+            const emojiOnlyMessage = !isMediaMessage
+              && !message.contextTitle
+              && !message.replyToMessageId
+              && !message.metadata?.forwarded
+              && !message.metadata?.privateReply
+              && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type)
+              && isEmojiOnlyMessage(message.text || "");
             return (
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
@@ -6880,10 +6894,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
-                {messageRunEnds ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail, isMediaMessage && styles.photoBubbleTail]} /> : null}
+                {messageRunEnds && !emojiOnlyMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail, isMediaMessage && styles.photoBubbleTail]} /> : null}
                 {showGroupSender ? (
                   <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}>
                     <Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text>
@@ -6980,7 +6994,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </View>
                   </View>
                 ) : null}
-                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} /> : null}
+                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
+                  ? <Text style={styles.emojiOnlyText}>{message.text}</Text>
+                  : <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
+                ) : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
                     url={discoveredUrl}
@@ -8256,6 +8273,7 @@ const styles = StyleSheet.create({
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
   bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 9, paddingRight: 9, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  emojiOnlyBubble: { minWidth: 0, paddingHorizontal: 2, paddingTop: 0, paddingBottom: 0, borderWidth: 0, shadowOpacity: 0, elevation: 0 },
   photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
@@ -8266,6 +8284,8 @@ const styles = StyleSheet.create({
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   myBubble: { backgroundColor: "#176B4A", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(80,174,126,0.65)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
   theirBubble: { backgroundColor: "#F2E8D3", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(183,145,78,0.42)", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
+  myEmojiOnlyBubble: { backgroundColor: "transparent", borderColor: "transparent", alignSelf: "flex-end" },
+  theirEmojiOnlyBubble: { backgroundColor: "transparent", borderColor: "transparent", alignSelf: "flex-start" },
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
   myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
   theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
@@ -8299,6 +8319,7 @@ const styles = StyleSheet.create({
   theirQuotedReplyText: { color: "#24483C" },
   quotedReplyCopy: { flex: 1, minWidth: 0 },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
+  emojiOnlyText: { fontSize: 34, lineHeight: 42, includeFontPadding: false },
   messageMention: { fontWeight: "900", textDecorationLine: "underline" },
   myMessageMention: { color: "#FFE6A6", backgroundColor: "rgba(255,230,166,0.16)" },
   theirMessageMention: { color: "#087552", backgroundColor: "rgba(8,117,82,0.10)" },
