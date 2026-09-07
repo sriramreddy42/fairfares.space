@@ -2413,6 +2413,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       logDevelopmentPerformance("media-cancel-missing-operation", { messageId }, true);
       return;
     }
+    const pendingMessage = (pendingMediaMessagesRef.current.get(operation.conversationId) || []).find((message) => message.id === messageId);
+    const batchCount = Number(pendingMessage?.metadata?.mediaGroupCount || 0);
+    if (batchCount > 1) {
+      // A multi-file send is currently one encrypted/upload transaction under
+      // one AbortController. Treat batch bubbles as progress-only so tapping or
+      // any stale cancel route cannot accidentally abort every selected file.
+      logDevelopmentPerformance("media-cancel-ignored-for-batch", {
+        conversationId: operation.conversationId,
+        messageId,
+        batchCount,
+      });
+      return;
+    }
     // Cancellation is optimistic just like sending: acknowledge the tap
     // immediately, then let the same AbortSignal unwind preparation, crypto,
     // native URLSession tasks and the server multipart authorization.
@@ -6061,11 +6074,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function sendPendingPreviewAndReturn() {
+    void sendMessage();
+  }
+
+  function closePendingMediaPreview() {
     if (attachmentSending || !pendingImages.length) {
       setPendingPhotoPreviewOpen(false);
       return;
     }
-    void sendMessage();
+    setPendingPhotoPreviewOpen(false);
   }
 
   function toggleEmojiPicker() {
@@ -6482,7 +6499,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return true;
       }
       if (pendingPhotoPreviewOpen) {
-        sendPendingPreviewAndReturn();
+        closePendingMediaPreview();
         return true;
       }
       if (attachmentPreviewGroup.length) {
@@ -7114,10 +7131,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
 
-        <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={sendPendingPreviewAndReturn}>
+        <Modal visible={pendingPhotoPreviewOpen && pendingImages.length > 0} animationType="slide" statusBarTranslucent onRequestClose={closePendingMediaPreview}>
           <KeyboardAvoidingView style={styles.pendingFullPreview} behavior={Platform.OS === "ios" ? "padding" : undefined}>
             <View style={styles.pendingFullPreviewHeader}>
-              <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={sendPendingPreviewAndReturn} accessibilityLabel="Send selected media and return to chat"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.pendingFullPreviewClose} onPress={closePendingMediaPreview} accessibilityLabel="Back to chat without sending"><Text style={styles.pendingFullPreviewCloseText}>‹</Text></TouchableOpacity>
               <View style={styles.pendingFullPreviewTitleWrap}><Text style={styles.pendingFullPreviewTitle}>{pendingImages.length} item{pendingImages.length === 1 ? "" : "s"} selected</Text><Text style={styles.pendingFullPreviewSubtitle}>Review before sending</Text></View>
               <View style={styles.pendingFullPreviewHeaderSpacer} />
             </View>
