@@ -1618,6 +1618,22 @@ function MediaUploadCancelProgress({ messageId }: { messageId: number }) {
   );
 }
 
+function MediaUploadProgress({ messageId }: { messageId: number }) {
+  const progress = useMediaProgress(messageId);
+  const segments = 24;
+  const activeSegments = Math.round(Math.max(0, Math.min(1, progress)) * segments);
+  return (
+    <View style={styles.downloadProgressCircle}>
+      {Array.from({ length: segments }, (_, index) => (
+        <View key={index} style={[styles.downloadProgressSegment, index < activeSegments && styles.uploadProgressSegmentActive, { transform: [{ rotate: `${index * (360 / segments)}deg` }, { translateY: -25 }] }]} />
+      ))}
+      <View style={styles.videoUploadProgressCircle}>
+        <Text style={styles.videoUploadPercentText}>{Math.round(progress * 100)}%</Text>
+      </View>
+    </View>
+  );
+}
+
 function NativeKeyboardTrackingBody({ bottomSafeArea, children }: { bottomSafeArea: number; children: React.ReactNode }) {
   // Keyboard Controller publishes native keyboard frame/progress events to
   // Reanimated shared values. This keeps interactive dismissal and opening on
@@ -4030,12 +4046,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           onMediaTransferActiveChange?.(false);
         }
       };
-      // Transfer visual ownership immediately from the composer to the send
-      // operation. Keeping this card mounted throughout a long native HD
-      // preparation made the selected video appear duplicated once the
-      // optimistic bubble committed.
-      setPendingAttachment(null);
-      setPendingImages([]);
       setAttachmentSending(true);
       const mediaSendAbort = new AbortController();
       attachmentCryptoAbortRef.current = mediaSendAbort;
@@ -4086,6 +4096,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
       messagesConversationIdRef.current = operationConversationId;
       setMessages((current) => mergeChatMessages(current.filter((message) => !optimisticAttachmentIds.includes(message.id)), optimisticMessages));
+      // Transfer visual ownership only after the optimistic bubbles are queued.
+      // Closing/clearing the preview first caused a visible gap where selected
+      // media disappeared before the chat showed the outgoing bubbles.
+      setPendingAttachment(null);
+      setPendingImages([]);
+      setPendingPhotoPreviewOpen(false);
       const selectedVideoIndex = selectedVideo ? attachments.findIndex((attachment) => attachment === selectedVideo) : -1;
       const selectedVideoOptimisticId = selectedVideoIndex >= 0 ? optimisticAttachmentIds[selectedVideoIndex] : 0;
       if (selectedVideo && selectedVideoOptimisticId && !selectedVideo.thumbnailBase64) {
@@ -6049,7 +6065,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setPendingPhotoPreviewOpen(false);
       return;
     }
-    setPendingPhotoPreviewOpen(false);
     void sendMessage();
   }
 
@@ -6821,6 +6836,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>;
             }
             const mediaUploading = Boolean(message.metadata?.uploading);
+            const mediaUploadBatchCount = Number(message.metadata?.mediaGroupCount || 0);
+            const mediaUploadingBatch = mediaUploading && mediaUploadBatchCount > 1;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             const showGroupSender = !message.mine && isGroupConversation(activeConversation);
             return (
@@ -6836,7 +6853,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 delayLongPress={350}
                 onLongPress={() => handleMessageLongPress(message)}
                 onPress={() => {
-                  if (mediaUploading) {
+                  if (mediaUploadingBatch) {
+                    return;
+                  } else if (mediaUploading) {
                     cancelPendingMediaUpload(message.id);
                   } else if (selectedMessageIds.length) {
                     toggleMessageSelection(message);
@@ -6898,7 +6917,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                         <View style={styles.videoUploadCancelOverlay} pointerEvents="none">
                           {Platform.OS === "web" ? <View pointerEvents="none" style={styles.videoDownloadBlurFallback} /> : <BlurView pointerEvents="none" intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
                           <View style={styles.videoUploadCancelButton}>
-                            <MediaUploadCancelProgress messageId={message.id} />
+                            {mediaUploadingBatch ? <MediaUploadProgress messageId={message.id} /> : <MediaUploadCancelProgress messageId={message.id} />}
                           </View>
                         </View>
                       ) : null}
@@ -8323,6 +8342,7 @@ const styles = StyleSheet.create({
   videoUploadCancelOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 9, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   videoUploadCancelButton: { width: 82, height: 82, alignItems: "center", justifyContent: "center" },
   videoUploadCancelCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(4,30,20,0.96)", borderWidth: 1, borderColor: "rgba(50,215,135,0.32)", alignItems: "center", justifyContent: "center" },
+  videoUploadProgressCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(4,30,20,0.96)", borderWidth: 1, borderColor: "rgba(50,215,135,0.32)", alignItems: "center", justifyContent: "center" },
   videoUploadCancelText: { color: "#E8FFF3", fontSize: 25, lineHeight: 25, fontWeight: "500", marginTop: -2 },
   videoUploadPercentText: { color: "rgba(232,255,243,0.78)", fontSize: 8, lineHeight: 9, fontWeight: "800" },
   uploadProgressSegmentActive: { backgroundColor: "#0B6B43" },
