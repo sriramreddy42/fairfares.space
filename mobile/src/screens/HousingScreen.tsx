@@ -2123,7 +2123,7 @@ export function HousingScreen({
     const incomingRequestRows = rideActivityRows.filter((ride) => {
       if (ride.activityRole !== "DRIVER_NOTIFICATION" || ride.isExpired) return false;
       const status = String(ride.dispatchStatus || ride.status || "PENDING").toUpperCase();
-      return ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
+      return ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN", "ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
     }).slice(0, 8);
     const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER");
     const requestRows = rideOwnerOpenTarget === "listings"
