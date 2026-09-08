@@ -6,7 +6,7 @@ appId: com.fairfares.mobile
     timeout: 15000
 - tapOn: Chitthi
 - extendedWaitUntil:
-    visible: "Search people, groups, or city"
+    visible: "Search people, groups, or messages"
     timeout: 15000
 - takeScreenshot: fairfares-chitthi-light-inbox
 - tapOn:

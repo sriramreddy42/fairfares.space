@@ -206,7 +206,7 @@ function preferredImageEncoding() {
   };
 }
 
-export type PickedChatMedia = {
+type PreparedChatMedia = {
   uri: string;
   blob?: Blob;
   name: string;
@@ -218,6 +218,15 @@ export type PickedChatMedia = {
   pickerAssetId?: string;
   ownedCacheFile: boolean;
   kind: "IMAGE" | "VIDEO";
+};
+
+// The picker can return the original image immediately so the review surface
+// opens without waiting for resize/compression. `preparation` resolves to the
+// encrypted-upload-safe derivative and is intentionally omitted from the
+// final attachment descriptor.
+export type PickedChatMedia = PreparedChatMedia & {
+  preparation?: Promise<PreparedChatMedia>;
+  cancelPreparation?: () => void;
 };
 
 async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: number, prefix: string, maxWidth: number, quality: number, maxBytes = 0) {
@@ -337,7 +346,7 @@ export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62,
   ));
 }
 
-export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000, maxVideoBytes = 100_000_000) {
+export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000, maxVideoBytes = 100_000_000, deferImagePreparation = false) {
   // A batch cap protects the native picker and low-memory phones without
   // imposing the old one-video/four-item product restriction. People can send
   // another batch immediately; the composer processes this batch serially.
@@ -360,12 +369,50 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
   const videoLimit = Math.max(1_000_000, Math.min(100_000_000, maxVideoBytes));
   const prepared: PickedChatMedia[] = [];
   let firstFailure: unknown = null;
+  // Give React Native one event-loop turn to mount the review surface before
+  // the first native image manipulation begins. Without this yield, a large
+  // first photo can start resizing in the same microtask as picker return and
+  // make an otherwise immediate preview feel delayed.
+  let imagePreparationQueue: Promise<void> = new Promise((resolve) => setTimeout(resolve, 0));
   // Do not decode/compress a large batch concurrently. Sequential preparation
   // keeps memory bounded and preserves exactly the order chosen by the user.
   for (const [index, asset] of selectedAssets.entries()) {
     try {
       if (asset.type !== "video") {
-        prepared.push(await compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes));
+        if (!deferImagePreparation) {
+          prepared.push(await compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes));
+          continue;
+        }
+        const encoding = preferredImageEncoding();
+        let preparationCancelled = false;
+        const preparation = imagePreparationQueue.then(
+          () => {
+            if (preparationCancelled) throw new Error("CHITTHI_IMAGE_PREPARATION_CANCELLED");
+            return compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes);
+          },
+          () => {
+            if (preparationCancelled) throw new Error("CHITTHI_IMAGE_PREPARATION_CANCELLED");
+            return compressedUpload(asset, index, "chitthi", maxWidth, quality, maxBytes);
+          }
+        );
+        // Keep each image preparation serial to protect low-memory devices,
+        // while allowing the picker UI and preview to return immediately.
+        imagePreparationQueue = preparation.then(() => undefined, () => undefined);
+        prepared.push({
+          uri: asset.uri,
+          name: asset.fileName || `chitthi-${Date.now()}-${index + 1}.${encoding.extension}`,
+          mimeType: asset.mimeType || encoding.mimeType,
+          size: Number(asset.fileSize || 0),
+          imageWidth: Number(asset.width || 0),
+          imageHeight: Number(asset.height || 0),
+          thumbnailBase64: "",
+          // The original picker grant can disappear after a cancelled review;
+          // do not race a background compressor by deleting it ourselves.
+          ownedCacheFile: false,
+          kind: "IMAGE",
+          preparation,
+          cancelPreparation: () => { preparationCancelled = true; }
+        });
         continue;
       }
       const blob = Platform.OS === "web" ? await fetch(asset.uri).then((response) => response.blob()) : undefined;

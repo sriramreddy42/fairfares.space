@@ -262,6 +262,10 @@ function FairFaresApp() {
   const [activeTab, setActiveTab] = useState<TabKey>("community");
   const [gasPriceRefreshKey, setGasPriceRefreshKey] = useState(0);
   const [messengerBackRequestToken, setMessengerBackRequestToken] = useState(0);
+  // BackHandler callbacks can run between React renders. Keep the thread
+  // state synchronously available so Android Back never pops tab history
+  // while Chitthi is visibly open.
+  const messengerThreadActiveRef = useRef(false);
   const androidTabHistoryRef = useRef<TabKey[]>(["community"]);
   const androidBackTargetRef = useRef<TabKey | null>(null);
   const [updatePolicy, setUpdatePolicy] = useState<(AppVersionPolicy & { required: boolean }) | null>(null);
@@ -602,7 +606,7 @@ function FairFaresApp() {
         setStaffPickupOpen(false);
         return true;
       }
-      if (activeTab === "messenger" && bottomTabsHidden) {
+      if (activeTab === "messenger" && messengerThreadActiveRef.current) {
         setMessengerBackRequestToken((value) => value + 1);
         return true;
       }
@@ -843,7 +847,10 @@ function FairFaresApp() {
   }, [data?.housing, cars]);
 
   useEffect(() => {
-    if (data?.user) void enableMobileNotifications(true);
+    // Chitthi is fully usable in-app without notification permission. Check
+    // for an already-granted setting and register it quietly, but never put a
+    // system permission prompt in front of someone simply signing in.
+    if (data?.user) void enableMobileNotifications(false);
   }, [data?.user?.id]);
 
   useEffect(() => {
@@ -2571,6 +2578,7 @@ function FairFaresApp() {
         setNotificationMessageId(0);
       }}
       onThreadModeChange={(active) => {
+        messengerThreadActiveRef.current = active;
         if (activeTab === "messenger") setBottomTabsHidden(active);
       }}
       onMediaTransferActiveChange={setMessengerMediaTransferActive}

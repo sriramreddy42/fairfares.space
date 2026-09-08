@@ -707,9 +707,10 @@ export type RidePlaceSuggestion = {
   imageUrl?: string;
 };
 
-export async function getRidePlaceSuggestions(city: string, query = "", useCityBias = true, citiesOnly = false) {
+export async function getRidePlaceSuggestions(city: string, query = "", useCityBias = true, citiesOnly = false, resolveExact = false) {
   const params = new URLSearchParams({ city, q: query, limit: "12", cityBias: useCityBias ? "1" : "0" });
   if (citiesOnly) params.set("citiesOnly", "1");
+  if (resolveExact) params.set("resolve", "1");
   const payload = await request<{ ok: boolean; suggestions: RidePlaceSuggestion[] }>(`/api/mobile/ride-places?${params.toString()}`);
   return payload.suggestions || [];
 }

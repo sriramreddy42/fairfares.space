@@ -50,7 +50,6 @@ import {
   getAuthenticatedImagePreviewUri,
   joinChatCommunity,
   joinChatGroupInvite,
-  lookupAccommodationLocation,
   previewChatGroupInvite,
   leaveChatGroup,
   muteChatConversation,
@@ -87,7 +86,7 @@ import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickCh
 import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
-import { awaitChatIdentityRecovery, chatIdentityRecoveryError, recoveredChatIdentities } from "../utils/chatRecovery";
+import { awaitChatIdentityRecovery, recoveredChatIdentities } from "../utils/chatRecovery";
 import { NEARBY_RELAY_ENABLED_FOR_BUILD, useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
 import { cleanupPersistentChitthiMedia, copyPersistentChitthiMedia, persistentChitthiMediaExists, persistentChitthiMediaUri, persistentChitthiThumbnailUri, writePersistentChitthiMedia } from "../utils/chitthiMediaStorage";
@@ -117,10 +116,20 @@ type Props = {
   onOpenCommunityPost?: (postId: string) => void;
 };
 
+type MessageSearchResult = {
+  conversation: ChatConversation;
+  message: ChatMessage;
+};
+
+type MediaSearchBucket = {
+  label: string;
+  results: MessageSearchResult[];
+};
+
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
-type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; imageWidth?: number; imageHeight?: number; pickerAssetId?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver" };
+type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; imageWidth?: number; imageHeight?: number; pickerAssetId?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver"; preparation?: Promise<Omit<PendingChatAttachment, "preparation" | "cancelPreparation">>; cancelPreparation?: () => void };
 type ContactDiscoveryResult = {
   matches: Array<{ id: number; name: string; localName: string; photoUrl: string }>;
   invitations: Array<{ id: string; name: string; phone: string }>;
@@ -221,6 +230,9 @@ function enqueueEncryptedVideoMaterialization<Result>(task: () => Promise<Result
 }
 
 function releasePendingAttachments(attachments: PendingChatAttachment[]) {
+  attachments.forEach((attachment) => {
+    attachment.cancelPreparation?.();
+  });
   if (Platform.OS === "web") return;
   attachments.forEach((attachment) => {
     if (attachment.ownedCacheFile && attachment.uri.startsWith(FileSystem.cacheDirectory || "__never__")) {
@@ -744,6 +756,15 @@ function shareableMessageText(message: ChatMessage) {
   if (message.type === "EVENT") return `${prefix}Event: ${message.metadata?.title || ""} ${message.metadata?.date || ""}`.trim();
   if (message.type === "CONTACT") return `${prefix}Contact: ${message.metadata?.name || ""} ${message.metadata?.phone || message.metadata?.email || ""}`.trim();
   return `${prefix}${message.text}`.trim();
+}
+
+function messageSearchPreviewText(message: ChatMessage) {
+  if (message.text) return message.text;
+  if (message.metadata?.caption) return message.metadata.caption;
+  if (message.type === "IMAGE") return "Photo";
+  if (message.type === "VIDEO") return "Video";
+  if (message.type === "FILE") return message.metadata?.fileName || "Document";
+  return "Message";
 }
 
 function isEncryptedPlaceholder(value: string) {
@@ -1881,6 +1902,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const outboxFlushRunning = useRef(false);
   const multipartResumeStateRef = useRef({ userId: 0, running: false, lastAttemptAt: 0 });
   const attachmentCryptoAbortRef = useRef<AbortController | null>(null);
+  // Background picker work is allowed to finish, but it must never mutate a
+  // newer composer selection after the user removes or replaces the old one.
+  const pendingMediaSelectionGenerationRef = useRef(0);
   const activeAttachmentSendsRef = useRef(new Map<number, { controller: AbortController; conversationId: string }>());
   const pendingMediaMessagesRef = useRef(new Map<string, ChatMessage[]>());
   const activeMediaTransferCountRef = useRef(0);
@@ -1899,6 +1923,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const loadingMoreConversationsRequestRef = useRef(0);
   const messengerUserIdRef = useRef(currentUserId);
   const messageCache = useRef(new Map<string, ChatMessage[]>());
+  const messageSearchRequestRef = useRef(0);
+  const messageSearchTargetRef = useRef<{ conversationId: string; messageId: number } | null>(null);
   const attachmentMaterializationJobs = useRef(new Map<string, {
     promise: Promise<{ uri: string; name: string; mimeType: string }>;
     progressListeners: Set<(progress: number) => void>;
@@ -1922,8 +1948,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
   const [hasMoreConversations, setHasMoreConversations] = useState((data?.chat.conversations || []).length >= 30);
   const [conversationCursor, setConversationCursor] = useState("");
-  const [searchConversations, setSearchConversations] = useState<ChatConversation[]>([]);
-  const [searchingConversations, setSearchingConversations] = useState(false);
+  const [messageSearchResults, setMessageSearchResults] = useState<MessageSearchResult[]>([]);
+  const [searchingMessages, setSearchingMessages] = useState(false);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
@@ -1966,6 +1992,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [pollClosesInHours, setPollClosesInHours] = useState(24);
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
+  const [attachmentStatusCancelable, setAttachmentStatusCancelable] = useState(false);
   const [localMediaMessageIds, setLocalMediaMessageIds] = useState<number[]>([]);
   const [localVideoThumbnailUris, setLocalVideoThumbnailUris] = useState<Record<number, string>>({});
   const [downloadingMediaMessageIds, setDownloadingMediaMessageIds] = useState<number[]>([]);
@@ -2065,7 +2092,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [groupDetailsSaving, setGroupDetailsSaving] = useState(false);
   const [groupDetailsDraft, setGroupDetailsDraft] = useState({ name: "", description: "", area: "" });
   const [deviceIdentity, setDeviceIdentity] = useState<DeviceIdentity | null>(null);
-  const [identityRecoveryWarning, setIdentityRecoveryWarning] = useState("");
   const [encryptionReady, setEncryptionReady] = useState(false);
   const [encryptionStatusDetail, setEncryptionStatusDetail] = useState("");
   const [wallpaper, setWallpaper] = useState("midnight");
@@ -2637,6 +2663,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setLoadingMoreConversations(false);
       attachmentCryptoAbortRef.current?.abort();
       attachmentCryptoAbortRef.current = null;
+      setAttachmentStatusCancelable(false);
       activeAttachmentSendsRef.current.forEach(({ controller }) => controller.abort());
       activeAttachmentSendsRef.current.clear();
       pendingMediaMessagesRef.current.clear();
@@ -2665,6 +2692,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setThreadLoading(false);
       setLoading(false);
       setPendingAttachment(null);
+      pendingMediaSelectionGenerationRef.current += 1;
       setPendingImages([]);
       setPendingPhotoPreviewOpen(false);
       setSelectedMessageIds([]);
@@ -2676,7 +2704,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setDeviceIdentity(null);
       setEncryptionReady(false);
       setEncryptionStatusDetail("");
-      setIdentityRecoveryWarning("");
       setQuickReplyDismissedConversationIds([]);
       setConversations(bootstrapConversations);
       setConversationCursor("");
@@ -2819,7 +2846,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         await awaitChatIdentityRecovery(userId);
         const identity = await getOrCreateDeviceIdentity(userId);
         if (cancelled) return;
-        setIdentityRecoveryWarning(chatIdentityRecoveryError(userId));
         // Preserve the device key even if the network registration must retry.
         setDeviceIdentity(identity);
         await ensureDeviceRegistration(identity);
@@ -3668,57 +3694,141 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     () => visiblePersonConversations(conversations),
     [conversations, visiblePersonConversations]
   );
-  const searchedPersonConversations = useMemo(
-    () => visiblePersonConversations(searchConversations),
-    [searchConversations, visiblePersonConversations]
-  );
 
   const searchingInbox = search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups");
-  const visibleInboxConversations = searchingInbox ? searchedPersonConversations : personConversations;
+  const visibleInboxConversations = personConversations;
 
   useEffect(() => {
-    const query = search.trim();
+    const query = search.trim().toLocaleLowerCase();
+    const requestId = ++messageSearchRequestRef.current;
     if (!signedIn || query.length < 2 || !(tab === "All" || tab === "Unread" || tab === "Groups")) {
-      setSearchConversations([]);
-      setSearchingConversations(false);
+      setMessageSearchResults([]);
+      setSearchingMessages(false);
       return;
     }
+
     let cancelled = false;
     const timer = setTimeout(() => {
-      setSearchingConversations(true);
-      void getChatConversationsPage("", 0, query)
-        .then((conversationPage) => decryptConversationPreviews(conversationPage.conversations))
-        .then((decrypted) => {
-          if (cancelled) return;
-          setSearchConversations(decrypted.map((conversation) => ({
-            ...conversation,
-            lastMessage: safeConversationPreview(conversation)
-          })));
-        })
-        .catch(() => {
-          if (!cancelled) setSearchConversations([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearchingConversations(false);
-        });
-    }, 220);
+      setSearchingMessages(true);
+      void (async () => {
+        // Search happens after decrypting on this device. Do not add plaintext
+        // search text to an API request or persist it in the disk cache.
+        const candidates = recentChatConversations(visiblePersonConversations(conversations));
+        const byKey = new Map<string, MessageSearchResult>();
+        const publish = () => {
+          if (cancelled || requestId !== messageSearchRequestRef.current) return;
+          setMessageSearchResults([...byKey.values()]
+            .sort((left, right) => chatDate(right.message.createdAt).getTime() - chatDate(left.message.createdAt).getTime())
+            .slice(0, 20));
+        };
+        const collect = (conversation: ChatConversation, nextMessages: ChatMessage[]) => {
+          nextMessages.forEach((message) => {
+            const text = [
+              message.text,
+              message.metadata?.caption,
+              message.metadata?.fileName,
+              message.metadata?.mimeType,
+              message.type === "IMAGE" ? "photo image" : "",
+              message.type === "VIDEO" ? "video" : "",
+              message.type === "FILE" ? "document file" : "",
+            ].filter(Boolean).join(" ").toLocaleLowerCase();
+            if (!text.includes(query) || message.text === unavailableEncryptedMessageText || isEncryptedPlaceholder(message.text)) return;
+            byKey.set(`${conversation.id}:${message.id}`, { conversation, message });
+          });
+        };
+
+        candidates.forEach((conversation) => collect(conversation, messageCache.current.get(conversation.id) || []));
+        if (activeConversationIdRef.current) collect(
+          activeConversation || candidates.find((conversation) => conversation.id === activeConversationIdRef.current) || ({ id: activeConversationIdRef.current } as ChatConversation),
+          messages
+        );
+        publish();
+
+        try {
+          const identity = await ensureChatDeviceIdentity();
+          for (const conversation of candidates) {
+            if (cancelled || requestId !== messageSearchRequestRef.current) return;
+            const payload = await getChatMessages(conversation.id, 0, 30, identity.deviceId);
+            if (cancelled || requestId !== messageSearchRequestRef.current) return;
+            const envelopePayload = Array.isArray(payload.envelopes)
+              ? { ok: true, envelopes: payload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })) }
+              : await getChatEncryptedEnvelopes(conversation.id, identity.deviceId).then((value) => ({ ok: true, envelopes: value.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })) }));
+            const decrypted = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
+              identity,
+              identities: [identity],
+              envelopePayload,
+              keyPayload: { ok: true, keys: [], ready: false, warning: "" }
+            }));
+            if (cancelled || requestId !== messageSearchRequestRef.current) return;
+            const merged = mergeChatMessages(messageCache.current.get(conversation.id) || [], decrypted);
+            messageCache.current.set(conversation.id, merged);
+            collect(conversation, merged);
+            publish();
+          }
+        } catch {
+          // Cached, already-decrypted messages remain searchable if a network
+          // request fails. Search must never degrade the inbox itself.
+        }
+
+        if (cancelled || requestId !== messageSearchRequestRef.current) return;
+        publish();
+      })().finally(() => {
+        if (!cancelled && requestId === messageSearchRequestRef.current) setSearchingMessages(false);
+      });
+    }, 350);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [search, signedIn, tab]);
+  }, [activeConversation, conversations, messages, search, signedIn, tab, visiblePersonConversations]);
+
+  useEffect(() => {
+    const target = messageSearchTargetRef.current;
+    if (!target || activeConversationId !== target.conversationId || hydratedConversationId !== target.conversationId) return;
+    if (messages.some((message) => Number(message.id) === target.messageId)) {
+      messageSearchTargetRef.current = null;
+      requestAnimationFrame(() => jumpToRepliedMessage(target.messageId));
+    } else if (hasMoreMessages && !loadingOlderMessages) {
+      void loadOlderMessages(true);
+    } else if (!hasMoreMessages) {
+      messageSearchTargetRef.current = null;
+    }
+  }, [activeConversationId, hasMoreMessages, hydratedConversationId, loadingOlderMessages, messages]);
+
+  function openMessageSearchResult(result: MessageSearchResult) {
+    messageSearchTargetRef.current = { conversationId: result.conversation.id, messageId: result.message.id };
+    setSearch("");
+    handleOpenConversation(result.conversation);
+  }
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
     return visibleInboxConversations.filter((conversation) => {
-      const matchesSearch = searchingInbox || !query || `${conversation.subject} ${conversation.otherName} ${conversation.otherPhone} ${conversation.rideRoute} ${conversation.lastMessage}`.toLowerCase().includes(query);
+      const matchesSearch = !query || `${conversation.subject} ${conversation.otherName} ${conversation.otherPhone} ${conversation.rideRoute} ${conversation.lastMessage}`.toLowerCase().includes(query);
       const matchesTab =
         tab === "All" ||
         (tab === "Unread" && conversation.unread > 0) ||
         (tab === "Groups" && (conversation.kind === "GROUP" || Boolean(conversation.communityId)));
       return matchesSearch && matchesTab;
     });
-  }, [search, searchingInbox, tab, visibleInboxConversations]);
+  }, [search, tab, visibleInboxConversations]);
+
+  const searchedContacts = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (query.length < 2) return [];
+    return contactMatches.filter((person) => `${person.localName} ${person.name}`.toLocaleLowerCase().includes(query));
+  }, [contactMatches, search]);
+
+  const mediaSearchBuckets = useMemo<MediaSearchBucket[]>(() => {
+    const photosAndVideos = messageSearchResults.filter((result) => result.message.type === "IMAGE" || result.message.type === "VIDEO");
+    const documents = messageSearchResults.filter((result) => result.message.type === "FILE");
+    const links = messageSearchResults.filter((result) => /https?:\/\//i.test(`${result.message.text} ${result.message.metadata?.caption || ""}`));
+    return [
+      photosAndVideos.length ? { label: `Photos & videos · ${photosAndVideos.length}`, results: photosAndVideos } : null,
+      documents.length ? { label: `Documents · ${documents.length}`, results: documents } : null,
+      links.length ? { label: `Links · ${links.length}`, results: links } : null,
+    ].filter(Boolean) as MediaSearchBucket[];
+  }, [messageSearchResults]);
 
   const filteredCommunities = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -4008,7 +4118,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     };
     let attachments = pendingImages.length ? pendingImages : pendingAttachment ? [pendingAttachment] : [];
     if (attachments.length) {
-      const overRemoteLimit = attachments.find((attachment) => attachment.size > effectiveAttachmentLimitBytes);
+      // A just-selected image can still be compressing in the background. Its
+      // original size is not its upload size, so enforce the limit after the
+      // preparation promise resolves rather than rejecting a valid photo.
+      const overRemoteLimit = attachments.find((attachment) => !attachment.preparation && attachment.size > effectiveAttachmentLimitBytes);
       if (overRemoteLimit) {
         Alert.alert("Current upload limit", `${overRemoteLimit.name} exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
         return;
@@ -4067,6 +4180,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         }
       };
       setAttachmentSending(true);
+      // Image preparation is not abortable at the native manipulator layer.
+      // Do not expose a cancel action until the actual encrypted transfer has
+      // begun and its AbortController can honor it.
+      setAttachmentStatusCancelable(false);
       const mediaSendAbort = new AbortController();
       attachmentCryptoAbortRef.current = mediaSendAbort;
       const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
@@ -4141,6 +4258,72 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
       setMessageText("");
       scrollThreadToLatest(false);
+      const pendingImagePreparation = attachments.some((attachment) => attachment.kind === "IMAGE" && attachment.preparation);
+      if (pendingImagePreparation) {
+        setAttachmentStatus("Preparing selected media…");
+        try {
+          const preparedAttachments = await Promise.all(attachments.map(async (attachment) => {
+            if (!attachment.preparation) return attachment;
+            const prepared = await attachment.preparation;
+            return { ...prepared, videoQuality: attachment.videoQuality };
+          }));
+          ensureSendContext();
+          attachments = preparedAttachments;
+          attachments.forEach((attachment, index) => {
+            const optimisticAttachmentId = optimisticAttachmentIds[index];
+            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+              ...message,
+              attachmentUrl: attachment.uri,
+              metadata: {
+                ...message.metadata,
+                fileName: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                imageWidth: attachment.imageWidth,
+                imageHeight: attachment.imageHeight,
+                decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+                thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              }
+            }));
+          });
+          setMessages((current) => current.map((message) => {
+            const index = optimisticAttachmentIds.indexOf(message.id);
+            if (index < 0) return message;
+            const attachment = attachments[index];
+            return {
+              ...message,
+              attachmentUrl: attachment.uri,
+              metadata: {
+                ...message.metadata,
+                fileName: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                imageWidth: attachment.imageWidth,
+                imageHeight: attachment.imageHeight,
+                decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+                thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              }
+            };
+          }));
+          setAttachmentStatus("");
+        } catch (error) {
+          removeOptimisticMessages();
+          if (activeConversationIdRef.current === operationConversationId) {
+            setPendingImages(attachments);
+            setPendingAttachment(null);
+            setPendingPhotoPreviewOpen(true);
+            setMessageText(cleanMessage);
+            Alert.alert("Photo preparation failed", error instanceof Error ? error.message : "Could not prepare the selected photo.");
+          }
+          setAttachmentStatus("");
+          setAttachmentSending(false);
+          setAttachmentStatusCancelable(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          finishMediaTransfer();
+          return;
+        }
+      }
       if (selectedVideo) {
         try {
           // Keep the UI fully concurrent while bounding expensive native video
@@ -4234,6 +4417,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           return;
         }
       }
+      // A batch uses one encrypted upload transaction. Its individual preview
+      // cards are intentionally progress-only, so never expose a global cancel
+      // affordance that would discard every selected item.
+      setAttachmentStatusCancelable(attachments.length === 1);
       setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} items…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "" : "Sending file…");
       let completedAttachmentCount = 0;
       try {
@@ -4484,6 +4671,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         }
       } finally {
         if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+        setAttachmentStatusCancelable(false);
         if (mediaSendAbort.signal.aborted) setAttachmentStatus("");
         if (messengerUserIdRef.current === operationUserId) setAttachmentSending(false);
         optimisticAttachmentIds.forEach((messageId) => activeAttachmentSendsRef.current.delete(messageId));
@@ -5093,42 +5281,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
-  async function searchGroupsByLocation(value: string) {
-    // This explicit search takes precedence over any current-location lookup
-    // that may still be resolving in the background.
-    const requestId = suggestionRequestId.current + 1;
-    suggestionRequestId.current = requestId;
-    const isCurrentRequest = () => suggestionRequestId.current === requestId;
-    setLoading(true);
-    try {
-      const lookup = await lookupAccommodationLocation(value);
-      if (!isCurrentRequest()) return;
-      const resolvedCity = String(lookup?.selectedLocation || value).trim();
-      const nextCommunities = await getChatCommunities(resolvedCity);
-      if (!isCurrentRequest()) return;
-      const hasLocalGroups = nextCommunities.some((community) => {
-        const communityCity = String(community.suggestionCity || community.area || "").split(",", 1)[0].trim().toLowerCase();
-        return !community.joined && communityCity === resolvedCity.split(",", 1)[0].trim().toLowerCase();
-      });
-      if (!hasLocalGroups) {
-        Alert.alert("Location not found", "Choose a city or area from FairFares location search and try again.");
-        return;
-      }
-      setSuggestionCity(resolvedCity);
-      replaceCommunitiesPreservingOpenGroup(nextCommunities);
-      setGroupSuggestionsDismissed(false);
-      setTab("Groups");
-      setSearch("");
-    } catch (error) {
-      if (isCurrentRequest()) Alert.alert("Group search", error instanceof Error ? error.message : "Could not find groups near that location.");
-    } finally {
-      if (isCurrentRequest()) setLoading(false);
-    }
-  }
-
   function handleMessengerSearchSubmit() {
     const value = search.trim();
     if (!value) return;
+    Keyboard.dismiss();
     if (value.includes("group_invite=") || value.includes("community_id=")) {
       if (value.includes("community_id=")) {
         try { void confirmGroupInvitation(`community:${new URL(value).searchParams.get("community_id") || ""}`); } catch { void confirmGroupInvitation(value); }
@@ -5139,7 +5295,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       void startPhoneChat(value);
       return;
     }
-    void searchGroupsByLocation(value);
   }
 
   async function openCommunityThread(community: Community) {
@@ -5409,7 +5564,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     try {
       setAttachmentStatus("Preparing selected media…");
-      const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes);
+      const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes, true);
       setAttachmentStatus("");
       if (!media.length) return;
       const canPrepareVideo = Platform.OS === "ios" && (FairFaresCrypto.videoPreparationAvailable || FairFaresCrypto.videoOptimizationAvailable);
@@ -5419,6 +5574,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             videoQuality: canPrepareVideo && item.size >= CHAT_HD_VIDEO_PREPARE_MIN_BYTES ? "data-saver" as const : "original" as const
           }
         : item);
+      const selectionGeneration = ++pendingMediaSelectionGenerationRef.current;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
       setPendingImages(mediaWithFastDefaults);
@@ -5426,6 +5582,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Selected media lives in the dedicated review surface instead of a
       // large preview card above the composer. The paperclip count reopens it.
       setPendingPhotoPreviewOpen(true);
+      // The system picker has returned; render original selected images now.
+      // Each derivative swaps in silently when its serial background resize
+      // completes, so sending immediately still waits for the safe upload.
+      mediaWithFastDefaults.filter((item) => item.kind === "IMAGE" && item.preparation).forEach((selectedImage) => {
+        void selectedImage.preparation!.then((preparedImage) => {
+          if (pendingMediaSelectionGenerationRef.current !== selectionGeneration) return;
+          setPendingImages((current) => current.map((item) => item.uri === selectedImage.uri
+            ? { ...preparedImage, videoQuality: item.videoQuality }
+            : item));
+        }).catch(() => undefined);
+      });
       const selectedVideos = mediaWithFastDefaults.filter((item) => item.kind === "VIDEO");
       // Keep thumbnail decoding serial as well. Several simultaneous native
       // video decoders can evict each other's image context on iOS and cause
@@ -5436,6 +5603,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
             : createLightweightVideoThumbnail(selectedVideo.uri)).catch(() => "");
           if (!thumbnailBase64) continue;
+          if (pendingMediaSelectionGenerationRef.current !== selectionGeneration) return;
           setPendingImages((current) => current.map((item) => item.kind === "VIDEO" && item.uri === selectedVideo.uri
             ? { ...item, thumbnailBase64 }
             : item));
@@ -5460,6 +5628,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const photo = await takeChatPhoto();
       if (!photo) return;
+      pendingMediaSelectionGenerationRef.current += 1;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
       setPendingImages([{ ...photo, kind: "IMAGE" }]);
@@ -5524,6 +5693,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const file = await pickChatFile(effectiveAttachmentLimitBytes);
       if (!file) return;
+      pendingMediaSelectionGenerationRef.current += 1;
       releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingImages([]);
       setPendingAttachment({ kind: "FILE", ...file });
@@ -6448,6 +6618,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setGroupMembers([]);
     setGroupMemberSearch("");
     setAttachmentStatus("");
+    setAttachmentStatusCancelable(false);
+    pendingMediaSelectionGenerationRef.current += 1;
     releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
     setPendingAttachment(null);
     setPendingImages([]);
@@ -6596,7 +6768,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {(isGroupConversation(activeConversation) ? activeConversation?.subject : activeConversation?.otherName) || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : encryptionStatusDetail || "Encryption setup pending"}`}
+              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
             </Text>
           </TouchableOpacity>
           {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
@@ -6727,11 +6899,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ) : null}
 
         <View style={styles.threadMessages}>
-          {identityRecoveryWarning ? (
-            <View style={styles.encryptionRecoveryWarning}>
-              <Text style={styles.encryptionRecoveryWarningText}>{identityRecoveryWarning}</Text>
-            </View>
-          ) : null}
           <FlatList
             key={activeConversationId || "empty-thread"}
             ref={messagesScrollRef}
@@ -7347,7 +7514,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
-        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
+        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentStatusCancelable && attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
         {pendingAttachment?.kind === "FILE" ? (
           <View style={styles.pendingAttachmentCard}>
@@ -7500,7 +7667,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       <View style={styles.searchRow}>
         <TextInput
-          placeholder="Search people, groups, or city"
+          placeholder="Search people, groups, or messages"
           placeholderTextColor={theme.colors.muted}
           style={[styles.search, styles.searchInput, isLight && styles.searchLight]}
           value={search}
@@ -7524,7 +7691,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
       {/(?:group_invite|community_id)=/.test(search.trim()) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Open group invitation</Text></TouchableOpacity> : null}
       {search.replace(/\D/g, "").length >= 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Message this FairFares member</Text></TouchableOpacity> : null}
-      {search.trim().length >= 2 && search.replace(/\D/g, "").length < 10 && !/(?:group_invite|community_id)=/.test(search) ? <TouchableOpacity style={styles.searchAction} onPress={handleMessengerSearchSubmit}><Text style={styles.searchActionText}>Show groups near {search.trim()}</Text></TouchableOpacity> : null}
 
       <View style={styles.tabs}>
         {(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => (
@@ -7643,9 +7809,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         windowSize={Platform.OS === "android" ? 9 : 7}
         removeClippedSubviews={Platform.OS === "android"}
         onEndReachedThreshold={0.25}
-        onEndReached={() => { if (!searchingInbox && (tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
+        onEndReached={() => { if ((tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
         ListHeaderComponent={<>
         {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} onOpenCommunityPost={onOpenCommunityPost} /> : null}
+        {search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups") ? (
+          <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Chats</Text>
+        ) : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
@@ -7677,20 +7846,58 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </TouchableOpacity>
         ))}
 
-        {searchingConversations ? (
-          <View style={styles.letterEmptyCard}>
-            <ActivityIndicator color={theme.colors.text} />
-            <Text style={styles.letterEmptyTitle}>Searching Chitthi…</Text>
+        {search.trim().length >= 2 && searchedContacts.length ? (
+          <View style={styles.searchResultsSection}>
+            <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Contacts</Text>
+            {searchedContacts.map((person) => (
+              <TouchableOpacity key={`search-contact-${person.id}`} style={[styles.searchContactRow, isLight && styles.searchContactRowLight]} onPress={() => void openContactChat(person)} accessibilityRole="button" accessibilityLabel={`Message ${person.localName}`}>
+                <View style={styles.searchContactAvatar}><InitialsAvatar photoUrl={person.photoUrl} label={person.localName} imageStyle={styles.avatarImage} textStyle={styles.avatarText} /></View>
+                <Text style={[styles.searchContactName, isLight && styles.searchContactNameLight]} numberOfLines={1}>{person.localName}</Text>
+                <Text style={[styles.messageSearchChevron, isLight && styles.messageSearchChevronLight]}>›</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         ) : null}
 
-        {!searchingInbox && (tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
+        {search.trim().length >= 2 && mediaSearchBuckets.length ? (
+          <View style={styles.searchResultsSection}>
+            <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Media</Text>
+            {mediaSearchBuckets.map((bucket) => (
+              <TouchableOpacity key={`media-search-${bucket.label}`} style={[styles.searchContactRow, isLight && styles.searchContactRowLight]} onPress={() => openMessageSearchResult(bucket.results[0])} accessibilityRole="button" accessibilityLabel={`Open matching ${bucket.label}`}>
+                <View style={styles.searchLinkIcon}><Text style={styles.searchLinkIconText}>{bucket.label.startsWith("Links") ? "↗" : bucket.label.startsWith("Documents") ? "⌁" : "▣"}</Text></View>
+                <Text style={[styles.searchContactName, isLight && styles.searchContactNameLight]}>{bucket.label}</Text>
+                <Text style={[styles.messageSearchChevron, isLight && styles.messageSearchChevronLight]}>›</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+
+        {search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups") ? (
+          <View style={styles.searchResultsSection}>
+            <View style={styles.messageSearchHeading}>
+              <Text style={[styles.searchSectionTitle, styles.searchSectionTitleInline, isLight && styles.searchSectionTitleLight]}>Messages</Text>
+              {searchingMessages ? <ActivityIndicator size="small" color={isLight ? "#147A58" : "#D7B36D"} /> : null}
+            </View>
+            {messageSearchResults.map((result) => (
+              <TouchableOpacity key={`message-search-${result.conversation.id}-${result.message.id}`} style={[styles.messageSearchRow, isLight && styles.messageSearchRowLight]} onPress={() => openMessageSearchResult(result)} accessibilityRole="button" accessibilityLabel={`Open message in ${result.conversation.subject || result.conversation.otherName || "Chitthi"}`}>
+                <View style={styles.messageSearchCopy}>
+                  <Text style={[styles.messageSearchConversation, isLight && styles.messageSearchConversationLight]} numberOfLines={1}>{result.conversation.subject || result.conversation.otherName || "Chitthi"}{isGroupConversation(result.conversation) && result.message.senderName ? ` · ${result.message.senderName}` : ""}</Text>
+                  <Text style={[styles.messageSearchText, isLight && styles.messageSearchTextLight]} numberOfLines={2}>{messageSearchPreviewText(result.message)}</Text>
+                </View>
+                <Text style={[styles.messageSearchChevron, isLight && styles.messageSearchChevronLight]}>›</Text>
+              </TouchableOpacity>
+            ))}
+            {!searchingMessages && !messageSearchResults.length ? <Text style={[styles.messageSearchEmpty, isLight && styles.messageSearchEmptyLight]}>No matching messages on this device yet.</Text> : null}
+          </View>
+        ) : null}
+
+        {(tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
           <TouchableOpacity style={styles.loadMoreLetters} onPress={() => void loadMoreConversations()} disabled={loadingMoreConversations}>
             <Text style={styles.loadMoreLettersText}>{loadingMoreConversations ? "Opening more letters…" : "Load more letters"}</Text>
           </TouchableOpacity>
         ) : null}
 
-        {signedIn && tab !== "Contacts" && !searchingConversations && !filteredConversations.length && !filteredCommunities.length ? (
+        {signedIn && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length && !messageSearchResults.length ? (
           <View style={styles.letterEmptyCard}>
             <Text style={styles.letterEmptyIcon}>📬</Text>
             <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
@@ -7933,8 +8140,6 @@ const styles = StyleSheet.create({
   threadMessages: { flex: 1 },
   threadMessagesList: { flex: 1 },
   threadMessagesContent: { paddingTop: 10, paddingBottom: 8, paddingHorizontal: 10, gap: 2 },
-  encryptionRecoveryWarning: { marginHorizontal: 10, marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(116,77,18,0.92)", borderWidth: 1, borderColor: "rgba(214,169,95,0.55)", zIndex: 3 },
-  encryptionRecoveryWarningText: { color: "#F3E9D5", fontSize: 12, lineHeight: 17, fontWeight: "700", textAlign: "center" },
   jumpToLatestButton: { position: "absolute", right: 16, bottom: 18, width: 43, height: 43, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(7,35,29,0.94)", borderWidth: 1, borderColor: "rgba(214,169,95,0.55)", shadowColor: "#000", shadowOpacity: 0.26, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
   jumpToLatestButtonText: { color: "#F4D99E", fontSize: 30, lineHeight: 32, fontWeight: "900", marginTop: -6 },
   threadListFooter: { overflow: "visible" },
@@ -8284,8 +8489,8 @@ const styles = StyleSheet.create({
   messageSelectionCheckText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   myBubble: { backgroundColor: "#176B4A", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(80,174,126,0.65)", alignSelf: "flex-end", borderBottomRightRadius: 2 },
   theirBubble: { backgroundColor: "#F2E8D3", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(183,145,78,0.42)", alignSelf: "flex-start", borderBottomLeftRadius: 2 },
-  myEmojiOnlyBubble: { backgroundColor: "transparent", borderColor: "transparent", alignSelf: "flex-end" },
-  theirEmojiOnlyBubble: { backgroundColor: "transparent", borderColor: "transparent", alignSelf: "flex-start" },
+  myEmojiOnlyBubble: { backgroundColor: "transparent", borderWidth: 0, borderColor: "transparent", alignSelf: "flex-end" },
+  theirEmojiOnlyBubble: { backgroundColor: "transparent", borderWidth: 0, borderColor: "transparent", alignSelf: "flex-start" },
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
   myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
   theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
@@ -8463,6 +8668,29 @@ const styles = StyleSheet.create({
   loadMoreLettersText: { color: theme.colors.warning, fontWeight: "800", fontSize: 14 },
   chatRow: { minHeight: 76, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, marginBottom: 6, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.14)", borderRadius: 18, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2, overflow: "hidden" },
   chatRowLight: { minHeight: 74, marginBottom: 0, paddingHorizontal: 18, paddingVertical: 10, backgroundColor: "#ffffff", borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.09)", borderRadius: 0, shadowOpacity: 0, elevation: 0 },
+  searchResultsSection: { marginTop: 14, marginBottom: 2 },
+  searchSectionTitle: { color: "#F5F3EB", fontSize: 22, lineHeight: 28, fontWeight: "800", paddingHorizontal: 4, marginBottom: 8 },
+  searchSectionTitleInline: { marginBottom: 0, paddingHorizontal: 0 },
+  searchSectionTitleLight: { color: "#111111" },
+  messageSearchHeading: { minHeight: 39, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(219,180,107,0.16)" },
+  messageSearchRow: { minHeight: 62, paddingHorizontal: 15, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(219,180,107,0.13)" },
+  messageSearchRowLight: { borderBottomColor: "rgba(15,23,42,0.08)" },
+  messageSearchCopy: { flex: 1, minWidth: 0, gap: 3 },
+  messageSearchConversation: { color: "#F5F3EB", fontSize: 14, fontWeight: "800" },
+  messageSearchConversationLight: { color: "#111827" },
+  messageSearchText: { color: "#AEB8B1", fontSize: 13, lineHeight: 18 },
+  messageSearchTextLight: { color: "#667085" },
+  messageSearchChevron: { color: "#D7B36D", fontSize: 27, fontWeight: "300" },
+  messageSearchChevronLight: { color: "#147A58" },
+  messageSearchEmpty: { color: "#AEB8B1", fontSize: 13, paddingHorizontal: 15, paddingVertical: 14 },
+  messageSearchEmptyLight: { color: "#667085" },
+  searchContactRow: { minHeight: 62, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 15, backgroundColor: "rgba(7,24,22,0.56)" },
+  searchContactRowLight: { backgroundColor: "#ffffff" },
+  searchContactAvatar: { width: 48, height: 48, borderRadius: 24, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#173E2E" },
+  searchContactName: { flex: 1, color: "#F5F3EB", fontSize: 17, fontWeight: "600" },
+  searchContactNameLight: { color: "#151515" },
+  searchLinkIcon: { width: 42, height: 42, borderWidth: 2, borderColor: "#1FAA63", borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  searchLinkIconText: { color: "#1FAA63", fontSize: 24, fontWeight: "800", marginTop: -2 },
   chatRowUnreadLight: { backgroundColor: "#f1faf6" },
   unreadAccent: { position: "absolute", left: 0, top: 15, bottom: 15, width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, backgroundColor: "#45C56A" },
   communityRow: { backgroundColor: "rgba(8,25,24,0.82)" },
