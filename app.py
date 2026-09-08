@@ -16028,11 +16028,15 @@ def clean_google_place_prediction(description: str) -> str:
 
 
 def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[str]:
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    # Ride entry can start with a completely new route, before a city has
+    # been chosen. A Maps key that is permitted for Places must work here too;
+    # requiring a separate Places-only variable made autocomplete silently
+    # empty for otherwise configured deployments.
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     city = normalize_accommodation_place_label(city)
     area = normalize_accommodation_place_label(area)
     city_root = city.split(",", 1)[0].strip().lower()
-    if not api_key or not city or not area or area.lower() == city_root or area.lower() == city.lower():
+    if not api_key or not area or (city and (area.lower() == city_root or area.lower() == city.lower())):
         return []
     # Keep the user's place text intact. The city coordinates below are only a
     # proximity bias for neighborhood-style queries; appending the pickup city
@@ -17004,6 +17008,38 @@ def ride_role_for_type(ride_type: str) -> str:
     return "DRIVER" if ride_type == "CARPOOL_OFFER" else "RIDER"
 
 
+def valid_ride_coordinate_pair(latitude: object, longitude: object) -> bool:
+    """Accept real map coordinates while rejecting malformed values and 0,0."""
+    try:
+        lat = float(latitude)
+        lng = float(longitude)
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(lat)
+        and math.isfinite(lng)
+        and -90 <= lat <= 90
+        and -180 <= lng <= 180
+        and not (abs(lat) < 0.0001 and abs(lng) < 0.0001)
+    )
+
+
+def ride_query_should_geocode_directly(query: str, city: str = "") -> bool:
+    clean_query = normalize_accommodation_place_label(query)
+    clean_city = normalize_accommodation_place_label(city)
+    if not clean_query:
+        return False
+    if not clean_city:
+        return True
+    if "," in clean_query or re.search(r"\b[A-Z]{2}\b", clean_query) or re.search(r"\b\d{5}(?:-\d{4})?\b", clean_query):
+        return True
+    if re.search(r"\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way)\b", clean_query, flags=re.IGNORECASE):
+        return True
+    if not re.search(r"\b(university|college|airport|international|amtrak|terminal|station|mall|hotel|apartments?)\b", clean_query, flags=re.IGNORECASE):
+        return len(clean_query.split()) <= 3
+    return False
+
+
 def ride_point(query: str, city: str = "", *, allow_refresh: bool = True) -> dict[str, object]:
     clean_query = normalize_accommodation_place_label(query)
     clean_city = normalize_accommodation_place_label(city)
@@ -17309,12 +17345,40 @@ def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float =
     return cities
 
 
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False) -> list[dict[str, object]]:
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
     labels: list[tuple[str, str]] = []
     popular_points: dict[str, dict[str, object]] = {}
+
+    # Selection and final submission use this narrow path. It turns the exact
+    # text the member chose into a coordinate-bearing route point instead of
+    # trusting an autocomplete prediction (which has no geometry in the
+    # legacy Places response).
+    if resolve_exact and query:
+        point: dict[str, object] = {}
+        if ride_query_should_geocode_directly(query, city):
+            point = precise_accommodation_location_point(query)
+        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
+            point = ride_point(query, city, allow_refresh=True)
+        label = ride_display_label(query, point, city)
+        lat = float(point.get("lat") or 0)
+        lng = float(point.get("lng") or 0)
+        if label and lat and lng:
+            parts = [part.strip() for part in label.split(",") if part.strip()]
+            return [{
+                "label": label,
+                "main": parts[0] if parts else label,
+                "secondary": ", ".join(parts[1:]) if len(parts) > 1 else city,
+                "distanceMiles": None,
+                "lat": lat,
+                "lng": lng,
+                "source": "geocoded",
+                "icon": ride_place_icon_source(label),
+                "imageUrl": "",
+            }]
+        return []
 
     def add_label(label: str, source: str) -> None:
         clean = dedupe_repeated_location_label(normalize_accommodation_place_label(label))
@@ -37157,13 +37221,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             limit = 10
         use_city_bias = str(params.get("cityBias", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
         cities_only = str(params.get("citiesOnly", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
+        resolve_exact = str(params.get("resolve", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
         self.send_json(
             {
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only),
-                "placesEnabled": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
+                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact),
+                "placesEnabled": bool(
+                    os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+                    or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+                ),
             }
         )
 
@@ -38643,6 +38711,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         origin_lng = float_from_value(payload.get("originLng") or payload.get("origin_lng") or "0")
         destination_lat = float_from_value(payload.get("destinationLat") or payload.get("destination_lat") or "0")
         destination_lng = float_from_value(payload.get("destinationLng") or payload.get("destination_lng") or "0")
+        origin_coordinates_supplied = any(payload.get(key) not in {None, ""} for key in ("originLat", "origin_lat", "originLng", "origin_lng"))
+        destination_coordinates_supplied = any(payload.get(key) not in {None, ""} for key in ("destinationLat", "destination_lat", "destinationLng", "destination_lng"))
         pickup_date = clean_text_value(payload.get("pickupDate") or payload.get("pickup_date") or "", 30)
         pickup_time = clean_text_value(payload.get("pickupTime") or payload.get("pickup_time") or "", 30)
         start_date = clean_text_value(payload.get("startDate") or payload.get("start_date") or pickup_date, 30)
@@ -38669,6 +38739,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         notes = clean_multiline_text_value(payload.get("notes"), 1200)
         if not origin or not destination:
             self.send_json({"ok": False, "error": "Pickup and destination are required."}, 400)
+            return
+        if origin_coordinates_supplied and not valid_ride_coordinate_pair(origin_lat, origin_lng):
+            self.send_json({"ok": False, "error": "Pickup coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
+            return
+        if destination_coordinates_supplied and not valid_ride_coordinate_pair(destination_lat, destination_lng):
+            self.send_json({"ok": False, "error": "Destination coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
             return
         if not pickup_time:
             self.send_json({"ok": False, "error": "Pickup time is required."}, 400)
@@ -38723,9 +38799,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
         origin_point = ride_point(origin, city)
         destination_point = ride_point(destination, city)
-        if origin_lat and origin_lng:
+        if valid_ride_coordinate_pair(origin_lat, origin_lng):
             origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
-        if destination_lat and destination_lng:
+        if valid_ride_coordinate_pair(destination_lat, destination_lng):
             destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
         origin_label = ride_display_label(origin, origin_point, city)
         destination_label = ride_display_label(destination, destination_point, city)

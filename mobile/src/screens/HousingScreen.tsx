@@ -210,6 +210,32 @@ function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | 
     .filter(Boolean)
     .join(", ");
 }
+
+function hasRideCoordinates(latitude: number | null | undefined, longitude: number | null | undefined) {
+  return typeof latitude === "number"
+    && Number.isFinite(latitude)
+    && latitude >= -90
+    && latitude <= 90
+    && typeof longitude === "number"
+    && Number.isFinite(longitude)
+    && longitude >= -180
+    && longitude <= 180
+    // 0,0 is our missing-geocode sentinel. Either coordinate can otherwise
+    // legitimately be zero (for example, a route on the equator or prime
+    // meridian), so do not reject it individually.
+    && !(Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001);
+}
+
+function looksLikeBroadRideCityQuery(value: string) {
+  const text = value.trim();
+  if (text.length < 3) return false;
+  if (/[,\d]/.test(text)) return false;
+  if (/\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way|station|airport|terminal|university|college|mall|hotel|apartments?)\b/i.test(text)) {
+    return false;
+  }
+  return text.split(/\s+/).length <= 3;
+}
+
 const budgetValues = [700, 900, 1200, 1600, 2000];
 const renterAgeOptions = ["21-24", "25+"];
 const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
@@ -1255,11 +1281,17 @@ export function HousingScreen({
     }
     const timer = setTimeout(() => {
       setRideSuggestionsBusy(true);
-      getRidePlaceSuggestions(
-        rideForm.city || data?.location.city || discoveryLocation || "",
-        query,
-        rideFocusedField !== "origin"
-      )
+      void (async () => {
+        const cityBias = rideForm.city || data?.location.city || discoveryLocation || "";
+        const biasedPlaces = await getRidePlaceSuggestions(
+          cityBias,
+          query,
+          rideFocusedField !== "origin"
+        );
+        if (biasedPlaces.length || query.length < 3) return biasedPlaces;
+        const exactPlace = await getRidePlaceSuggestions("", query, false, false, true);
+        return exactPlace;
+      })()
         .then((places) => { if (!cancelled) setRideSuggestions(places); })
         .catch(() => { if (!cancelled) setRideSuggestions([]); })
         .finally(() => { if (!cancelled) setRideSuggestionsBusy(false); });
@@ -1629,9 +1661,34 @@ export function HousingScreen({
       ...current,
       [rideFocusedField]: place.label,
       ...(rideFocusedField === "origin"
-        ? { city: place.label, originLat: place.lat, originLng: place.lng }
-        : { destinationLat: place.lat, destinationLng: place.lng })
+        ? {
+            city: place.label,
+            originLat: hasRideCoordinates(place.lat, place.lng) ? place.lat : null,
+            originLng: hasRideCoordinates(place.lat, place.lng) ? place.lng : null
+          }
+        : {
+            destinationLat: hasRideCoordinates(place.lat, place.lng) ? place.lat : null,
+            destinationLng: hasRideCoordinates(place.lat, place.lng) ? place.lng : null
+          })
     }));
+    // Autocomplete predictions do not always include geometry. Resolve the
+    // selected label separately so route maps and saved offers never retain a
+    // text-only (or 0,0) endpoint.
+    if (!hasRideCoordinates(place.lat, place.lng)) {
+      const selectedLabel = place.label;
+      void getRidePlaceSuggestions("", selectedLabel, false, false, true)
+        .then(([resolved]) => {
+          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) return;
+          setRideForm((current) => {
+            if (current[selectedField] !== selectedLabel) return current;
+            return selectedField === "origin"
+              ? { ...current, origin: resolved.label, city: resolved.label, originLat: resolved.lat, originLng: resolved.lng }
+              : { ...current, destination: resolved.label, destinationLat: resolved.lat, destinationLng: resolved.lng };
+          });
+          if (selectedRideSuggestionRef.current === selectedLabel) selectedRideSuggestionRef.current = resolved.label;
+        })
+        .catch(() => undefined);
+    }
     if (selectedField === "origin") {
       setRideFocusedField("destination");
     } else if (rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId) {
@@ -1747,11 +1804,9 @@ export function HousingScreen({
     let effectiveDestination = submittedDestination;
     const listingRide = requestedRideType === "CARPOOL_OFFER";
     const destinationAlreadyPicked = Boolean(
-      selectedDestination ||
-        (rideForm.destination.trim() &&
-        (rideForm.destinationLat !== null ||
-          rideForm.destinationLng !== null ||
-          rideForm.destination.trim() === selectedRideSuggestionRef.current))
+      selectedDestination && hasRideCoordinates(selectedDestination.lat, selectedDestination.lng)
+    ) || Boolean(
+      rideForm.destination.trim() && hasRideCoordinates(rideForm.destinationLat, rideForm.destinationLng)
     );
     if (listingRide && destinationAlreadyPicked) {
       if (!String(rideForm.vehicleMakeModel || "").trim()) {
@@ -1770,22 +1825,32 @@ export function HousingScreen({
     try {
       let originPoint: RidePlaceSuggestion | undefined;
       const originAlreadyPicked = Boolean(
-        rideForm.origin.trim() &&
-          rideForm.originLat !== null &&
-          rideForm.originLng !== null
+        rideForm.origin.trim() && hasRideCoordinates(rideForm.originLat, rideForm.originLng)
       );
       if (!originAlreadyPicked) {
         // Resolve manually typed origins without the device/current-city bias.
         // Otherwise an international route such as Hyderabad -> Chennai can
         // be geocoded against a previous US discovery location.
-        const originMatches = await getRidePlaceSuggestions(rideForm.city, effectiveOrigin, false);
+        const originMatches = await getRidePlaceSuggestions(rideForm.city, effectiveOrigin, false, false, true);
         originPoint = originMatches[0];
         if (originPoint?.label) effectiveOrigin = originPoint.label;
       }
       const routeCity = effectiveOrigin;
       let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
       if (!destinationAlreadyPicked) {
-        const destinationMatches = await getRidePlaceSuggestions(routeCity, effectiveDestination, false);
+        const broadDestination = looksLikeBroadRideCityQuery(effectiveDestination);
+        let destinationMatches = await getRidePlaceSuggestions(
+          broadDestination ? "" : routeCity,
+          effectiveDestination,
+          false,
+          false,
+          true
+        );
+        if (!destinationMatches.length && broadDestination) {
+          destinationMatches = await getRidePlaceSuggestions(routeCity, effectiveDestination, false, false, true);
+        } else if (!destinationMatches.length) {
+          destinationMatches = await getRidePlaceSuggestions("", effectiveDestination, false, false, true);
+        }
         destinationPoint = destinationMatches[0];
         if (destinationPoint?.label) {
           effectiveDestination = destinationPoint.label;
@@ -1805,6 +1870,9 @@ export function HousingScreen({
         destinationLng: destinationPoint?.lng ?? rideForm.destinationLng ?? null,
         rideType: nextRideType
       };
+      if (!hasRideCoordinates(nextRideForm.originLat, nextRideForm.originLng) || !hasRideCoordinates(nextRideForm.destinationLat, nextRideForm.destinationLng)) {
+        throw new Error("We couldn't locate one of those places. Choose a suggestion or enter a fuller address.");
+      }
       setRideForm((current) => ({
         ...current,
         city: routeCity,
@@ -1837,12 +1905,12 @@ export function HousingScreen({
         return;
       }
       const searchRideType: RideType = "CARPOOL_OFFER";
-      const rides = await getRides(rideForm.city, effectiveOrigin, effectiveDestination, searchRideType, {
-        originLat: rideForm.originLat,
-        originLng: rideForm.originLng,
-        destinationLat: destinationPoint?.lat ?? rideForm.destinationLat,
-        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng,
-        pickupDate: rideForm.pickupDate
+      const rides = await getRides(nextRideForm.city, nextRideForm.origin, nextRideForm.destination, searchRideType, {
+        originLat: nextRideForm.originLat,
+        originLng: nextRideForm.originLng,
+        destinationLat: nextRideForm.destinationLat,
+        destinationLng: nextRideForm.destinationLng,
+        pickupDate: nextRideForm.pickupDate
       });
       setRideRows(rides);
       setSelectedRideChoice("");
@@ -2994,9 +3062,7 @@ export function HousingScreen({
     const listingRide = rideForm.rideType === "CARPOOL_OFFER";
     const rideDestinationPicked = Boolean(
       rideForm.destination.trim() &&
-        (rideForm.destinationLat !== null ||
-          rideForm.destinationLng !== null ||
-          rideForm.destination.trim() === selectedRideSuggestionRef.current)
+        hasRideCoordinates(rideForm.destinationLat, rideForm.destinationLng)
     );
     const plannerActionText = editingRideId ? "Save changes" : listingRide ? (rideDestinationPicked ? "List ride" : "Continue") : "Find rides";
     return (

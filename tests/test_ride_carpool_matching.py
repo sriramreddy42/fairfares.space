@@ -961,6 +961,36 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         suggestions = app.ride_place_suggestions("", "unin", limit=10)
         self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))
 
+    @patch.object(app, "google_accommodation_geocode")
+    def test_ride_exact_resolve_prefers_typed_address_over_stale_city_bias(self, mock_geocode):
+        def fake_geocode(query):
+            if "12480 Ardwick" in query:
+                return {
+                    "formatted_address": "12480 Ardwick Ln, Bridgeton, MO 63044, USA",
+                    "geometry": {"location": {"lat": 38.7479, "lng": -90.4232}},
+                    "address_components": [],
+                }
+            if "Denver" in query:
+                return {
+                    "formatted_address": "Denver, CO, USA",
+                    "geometry": {"location": {"lat": 39.7392, "lng": -104.9903}},
+                    "address_components": [],
+                }
+            return None
+
+        mock_geocode.side_effect = fake_geocode
+
+        suggestions = app.ride_place_suggestions(
+            "825 Logan St, Denver, CO 80203, USA",
+            "12480 Ardwick Ln, St. Louis, MO",
+            resolve_exact=True,
+        )
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0]["label"], "12480 Ardwick Ln, Bridgeton, MO 63044, USA")
+        self.assertAlmostEqual(suggestions[0]["lat"], 38.7479)
+        self.assertAlmostEqual(suggestions[0]["lng"], -90.4232)
+
     @patch.object(app, "send_mobile_push_for_users")
     def test_concurrent_driver_acceptance_has_exactly_one_winner(self, _mock_push):
         with app.db() as con:
