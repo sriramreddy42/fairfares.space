@@ -14,6 +14,7 @@ mobile/dist-visual/
 !mobile/android/**
 !mobile/ios/
 !mobile/ios/**
+mobile/android/local.properties
 mobile/android/app/build/
 mobile/android/app/.cxx/
 mobile/android/.gradle/

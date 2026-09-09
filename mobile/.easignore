@@ -9,6 +9,7 @@ node_modules/
 !/android/**
 !/ios/
 !/ios/**
+/android/local.properties
 /android/app/build/
 /android/app/.cxx/
 /android/.gradle/
