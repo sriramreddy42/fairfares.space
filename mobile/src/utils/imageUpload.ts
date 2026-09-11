@@ -464,5 +464,33 @@ export async function takeChatPhoto(maxWidth = 1280, quality = 0.64, maxBytes = 
   }
   if (result.canceled || !result.assets.length) return null;
   const asset = result.assets[0];
-  return compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality, maxBytes);
+  const encoding = preferredImageEncoding();
+  return {
+    uri: asset.uri,
+    name: asset.fileName || `chitthi-camera-${Date.now()}.${encoding.extension}`,
+    mimeType: asset.mimeType || encoding.mimeType,
+    size: Number(asset.fileSize || 0),
+    imageWidth: Number(asset.width || 0),
+    imageHeight: Number(asset.height || 0),
+    thumbnailBase64: "",
+    ownedCacheFile: false,
+    kind: "IMAGE" as const,
+    preparation: new Promise<PreparedChatMedia>((resolve) => {
+      setTimeout(() => {
+        void compressedUpload(asset, 0, "chitthi-camera", maxWidth, quality, maxBytes)
+          .then(resolve)
+          .catch(() => resolve({
+            uri: asset.uri,
+            name: asset.fileName || `chitthi-camera-${Date.now()}.${encoding.extension}`,
+            mimeType: asset.mimeType || encoding.mimeType,
+            size: Number(asset.fileSize || 0),
+            imageWidth: Number(asset.width || 0),
+            imageHeight: Number(asset.height || 0),
+            thumbnailBase64: "",
+            ownedCacheFile: false,
+            kind: "IMAGE" as const
+          }));
+      }, 0);
+    })
+  };
 }

@@ -175,6 +175,7 @@ export type ChatMessage = {
     expiresAt?: string;
     live?: boolean;
     stopped?: boolean;
+    locating?: boolean;
     mediaExpired?: boolean;
     expiredAt?: string;
     deletedFromStorage?: boolean;

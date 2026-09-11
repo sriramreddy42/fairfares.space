@@ -5712,17 +5712,52 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setRichComposer(type);
   }
 
-  async function sendEncryptedRichMessage(type: string, metadata: Record<string, unknown>, silent = false) {
+  async function sendEncryptedRichMessage(type: string, metadata: Record<string, unknown>, silent = false, optimistic?: { clientMessageId: string; localMessageId: number; metadata?: Record<string, unknown> }) {
     if (!activeConversationId) throw new Error("Open a conversation first.");
+    const createdAt = new Date().toISOString();
+    if (optimistic) {
+      const optimisticMessage: ChatMessage = {
+        id: optimistic.localMessageId,
+        senderId: Number(data?.user?.id || 0),
+        senderName: data?.user?.name || "You",
+        mine: true,
+        type,
+        text: "",
+        attachmentUrl: "",
+        metadata: { ...(optimistic.metadata || metadata), encrypted: true },
+        createdAt,
+        deliveredAt: "",
+        readAt: "",
+        editedAt: "",
+        deletedAt: "",
+        canEdit: false,
+        canDelete: false,
+        status: "pending",
+        localClientMessageId: optimistic.clientMessageId
+      };
+      setMessages((current) => {
+        const existing = current.some((message) => message.localClientMessageId === optimistic.clientMessageId);
+        return existing ? current : mergeThreadHistoryMessages(current, [optimisticMessage]);
+      });
+      scrollThreadToLatest(false);
+    }
     const identity = await ensureChatDeviceIdentity();
     const keyPayload = await getEncryptionKeysForSend(activeConversationId);
     if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
     setEncryptionReady(Boolean(keyPayload.ready));
     const richPreview = type === "CONTACT" ? "Shared a contact" : type === "LOCATION" ? "Shared a location" : type === "POLL" ? "Shared a poll" : type === "EVENT" ? "Shared an event" : "New Chitthi letter";
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
-    const response = await sendEncryptedChatMessage(activeConversationId, envelopes, `${Date.now()}-${Math.random().toString(36).slice(2)}`, silent);
+    const clientMessageId = optimistic?.clientMessageId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, silent);
     const message = { ...response.message, type, text: "", canEdit: false, canDelete: Boolean(response.message.canEdit), metadata: { ...metadata, encrypted: true } } as ChatMessage;
-    setMessages((current) => mergeThreadHistoryMessages(current, [message]));
+    setMessages((current) => {
+      if (!optimistic) return mergeThreadHistoryMessages(current, [message]);
+      const withoutServerDuplicate = current.filter((item) => item.id !== response.message.id || item.localClientMessageId === clientMessageId);
+      const hasOptimistic = withoutServerDuplicate.some((item) => item.localClientMessageId === clientMessageId);
+      return hasOptimistic
+        ? withoutServerDuplicate.map((item) => item.localClientMessageId === clientMessageId ? message : item)
+        : mergeThreadHistoryMessages(withoutServerDuplicate, [message]);
+    });
     return message;
   }
 
@@ -5769,6 +5804,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function startLiveLocation(minutes: number) {
     setAttachmentMenuOpen(false);
     if (!activeConversationId) return;
+    let firstClientMessageId = "";
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
@@ -5779,7 +5815,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const expiresAt = Date.now() + minutes * 60_000;
       locationExpiresAt.current = expiresAt;
       setSharingLocation(true);
-      const publish = async (position: Location.LocationObject) => {
+      firstClientMessageId = createOutboxClientMessageId("location");
+      const firstLocalMessageId = -Date.now();
+      const firstOptimisticMetadata = { live: true, locating: true, expiresAt: new Date(expiresAt).toISOString() };
+      setMessages((current) => mergeThreadHistoryMessages(current, [{
+        id: firstLocalMessageId,
+        senderId: Number(data?.user?.id || 0),
+        senderName: data?.user?.name || "You",
+        mine: true,
+        type: "LOCATION",
+        text: "",
+        attachmentUrl: "",
+        metadata: { ...firstOptimisticMetadata, encrypted: true },
+        createdAt: new Date().toISOString(),
+        deliveredAt: "",
+        readAt: "",
+        editedAt: "",
+        deletedAt: "",
+        canEdit: false,
+        canDelete: false,
+        status: "pending",
+        localClientMessageId: firstClientMessageId
+      } as ChatMessage]));
+      scrollThreadToLatest(false);
+      const publish = async (position: Location.LocationObject, first = false) => {
         if (Date.now() >= locationExpiresAt.current) {
           stopLiveLocation(true);
           return;
@@ -5793,15 +5852,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           accuracy: Math.round(position.coords.accuracy || 0),
           live: true,
           expiresAt: new Date(expiresAt).toISOString()
-        }, isUpdate);
+        }, isUpdate, first ? { clientMessageId: firstClientMessageId, localMessageId: firstLocalMessageId, metadata: firstOptimisticMetadata } : undefined);
       };
-      await publish(await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+      await publish(await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }), true);
       locationSubscription.current = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, timeInterval: 15_000, distanceInterval: 25 },
         (position) => void publish(position).catch(() => undefined)
       );
     } catch (error) {
       stopLiveLocation(false);
+      if (firstClientMessageId) {
+        setMessages((current) => current.map((message) => message.localClientMessageId === firstClientMessageId
+          ? { ...message, status: "failed", metadata: { ...message.metadata, locating: false } }
+          : message));
+      }
       Alert.alert("Live location unavailable", error instanceof Error ? error.message : "Could not start location sharing.");
     }
   }
@@ -7156,7 +7220,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     <Text style={styles.locationIcon}>⌖</Text>
                     <View style={styles.locationCopy}>
                       <Text style={styles.locationTitle}>{message.metadata?.stopped ? "Live location ended" : "Live location"}</Text>
-                      <Text style={styles.locationMeta}>{message.metadata?.stopped ? "Sharing was stopped" : message.metadata?.expiresAt ? `Shared until ${chatClock(message.metadata.expiresAt)}` : "Encrypted location"}</Text>
+                      <Text style={styles.locationMeta}>{message.metadata?.stopped ? "Sharing was stopped" : message.metadata?.locating ? "Getting your location…" : message.metadata?.expiresAt ? `Shared until ${chatClock(message.metadata.expiresAt)}` : "Encrypted location"}</Text>
                       {typeof message.metadata?.latitude === "number" && typeof message.metadata?.longitude === "number" ? <TouchableOpacity onPress={() => Linking.openURL(mapCoordinatesUrl(message.metadata!.latitude as number, message.metadata!.longitude as number))} accessibilityRole="link" accessibilityLabel={`Open shared location in ${nativeMapProviderName}`}><Text style={styles.richLink}>Open in {nativeMapProviderName}</Text></TouchableOpacity> : null}
                     </View>
                   </View>
@@ -8015,9 +8079,9 @@ const styles = StyleSheet.create({
   chatBrandWrap: { flex: 1, minWidth: 0, height: 48, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   chatBrandWrapLight: { position: "absolute", left: 68, right: 68, height: 66, alignItems: "center", justifyContent: "center" },
   chatBrand: { width: 132, height: 42 },
-  chittiHeaderMascotWrap: { width: 40, height: 44, alignItems: "center", justifyContent: "center" },
+  chittiHeaderMascotWrap: { width: 48, height: 44, alignItems: "flex-start", justifyContent: "center" },
   chittiHeaderMascot: { width: 34, height: 42 },
-  chittiHeaderBadge: { position: "absolute", top: 0, right: -2, minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, overflow: "hidden", backgroundColor: "#3cad50", color: "#fff", textAlign: "center", lineHeight: 22, fontSize: 11, fontWeight: "700" },
+  chittiHeaderBadge: { position: "absolute", top: 12, left: 25, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, overflow: "hidden", backgroundColor: "#3cad50", color: "#fff", textAlign: "center", lineHeight: 20, fontSize: 10, fontWeight: "800" },
   chittiBrandPaper: { width: 220, height: 62 },
   headerIcons: { flexDirection: "row", gap: 6, marginLeft: "auto" },
   headerIcon: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,189,104,0.65)", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(14,32,29,0.92)" },

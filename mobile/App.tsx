@@ -2098,18 +2098,6 @@ function FairFaresApp() {
     }
   }
 
-  function topAction(action: string) {
-    if (action === "Housing") {
-      setActiveTab("housing");
-      void selectNeed("");
-    } else if (action === "Ride") {
-      setActiveTab("housing");
-    } else if (action === "Explorer" || action === "Deals") {
-      setSelectedService(action === "Explorer" ? "explorer" : "deals");
-      setActiveTab("services");
-    }
-  }
-
   function renderChoiceGroup<K extends keyof MobileHousingPostInput>(
     field: K,
     options: Array<[MobileHousingPostInput[K] & string, string]>
@@ -2640,9 +2628,6 @@ function FairFaresApp() {
           setHousingWelcomeFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
-        onCreateHousingPost={(intent) => {
-          postNeed(intent);
-        }}
         onOpenRides={() => {
           setRentalFocusKey(0);
           setRideOwnerOpenTarget("workspace");
@@ -2832,7 +2817,6 @@ function FairFaresApp() {
         onBudgetSelect={selectBudget}
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
-        onTopAction={topAction}
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
@@ -2893,7 +2877,6 @@ function FairFaresApp() {
         onBudgetSelect={selectBudget}
         onSortSelect={setSelectedSort}
         onPostNeed={postNeed}
-        onTopAction={topAction}
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}

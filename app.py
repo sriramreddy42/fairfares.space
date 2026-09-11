@@ -17024,6 +17024,19 @@ def valid_ride_coordinate_pair(latitude: object, longitude: object) -> bool:
     )
 
 
+def missing_ride_coordinate_pair(latitude: object, longitude: object) -> bool:
+    """Treat empty or 0,0 client values as absent so text geocoding can run."""
+    empty_values = {None, ""}
+    if latitude in empty_values and longitude in empty_values:
+        return True
+    try:
+        lat = float(latitude or 0)
+        lng = float(longitude or 0)
+    except (TypeError, ValueError):
+        return False
+    return abs(lat) < 0.0001 and abs(lng) < 0.0001
+
+
 def ride_query_should_geocode_directly(query: str, city: str = "") -> bool:
     clean_query = normalize_accommodation_place_label(query)
     clean_city = normalize_accommodation_place_label(city)
@@ -38740,10 +38753,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not origin or not destination:
             self.send_json({"ok": False, "error": "Pickup and destination are required."}, 400)
             return
-        if origin_coordinates_supplied and not valid_ride_coordinate_pair(origin_lat, origin_lng):
+        if origin_coordinates_supplied and not missing_ride_coordinate_pair(payload.get("originLat") or payload.get("origin_lat"), payload.get("originLng") or payload.get("origin_lng")) and not valid_ride_coordinate_pair(origin_lat, origin_lng):
             self.send_json({"ok": False, "error": "Pickup coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
             return
-        if destination_coordinates_supplied and not valid_ride_coordinate_pair(destination_lat, destination_lng):
+        if destination_coordinates_supplied and not missing_ride_coordinate_pair(payload.get("destinationLat") or payload.get("destination_lat"), payload.get("destinationLng") or payload.get("destination_lng")) and not valid_ride_coordinate_pair(destination_lat, destination_lng):
             self.send_json({"ok": False, "error": "Destination coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
             return
         if not pickup_time:
@@ -38803,6 +38816,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
         if valid_ride_coordinate_pair(destination_lat, destination_lng):
             destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
+        if not valid_ride_coordinate_pair(origin_point.get("lat"), origin_point.get("lng")):
+            self.send_json({"ok": False, "error": "We couldn't locate your pickup. Choose a suggestion or enter a fuller address."}, 400)
+            return
+        if not valid_ride_coordinate_pair(destination_point.get("lat"), destination_point.get("lng")):
+            self.send_json({"ok": False, "error": "We couldn't locate your destination. Choose a suggestion or enter a fuller address."}, 400)
+            return
         origin_label = ride_display_label(origin, origin_point, city)
         destination_label = ride_display_label(destination, destination_point, city)
         public_id = ride_public_id()

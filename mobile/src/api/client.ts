@@ -758,11 +758,36 @@ export function rideMapUrl(
   return `${currentApiBase()}/api/mobile/ride-map?${params.toString()}`;
 }
 
+function validRideCoordinatePair(latitude: unknown, longitude: unknown) {
+  return typeof latitude === "number"
+    && Number.isFinite(latitude)
+    && latitude >= -90
+    && latitude <= 90
+    && typeof longitude === "number"
+    && Number.isFinite(longitude)
+    && longitude >= -180
+    && longitude <= 180
+    && !(Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001);
+}
+
+function sanitizeRideInputForSubmit(input: RideInput): RideInput {
+  const next: RideInput = { ...input };
+  if (!validRideCoordinatePair(next.originLat, next.originLng)) {
+    delete next.originLat;
+    delete next.originLng;
+  }
+  if (!validRideCoordinatePair(next.destinationLat, next.destinationLng)) {
+    delete next.destinationLat;
+    delete next.destinationLng;
+  }
+  return next;
+}
+
 export async function createMobileRide(input: RideInput) {
   const payload = await request<{ ok: boolean; ride: RidePost; dispatch?: RideDispatchSummary }>("/api/mobile/rides", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
+    body: JSON.stringify(sanitizeRideInputForSubmit(input))
   });
   return { ride: payload.ride, dispatch: payload.dispatch };
 }
@@ -771,7 +796,7 @@ export async function updateMobileRide(rideId: string, input: RideInput) {
   const payload = await request<{ ok: boolean; ride: RidePost }>("/api/mobile/rides", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...input, rideId })
+    body: JSON.stringify({ ...sanitizeRideInputForSubmit(input), rideId })
   });
   return payload.ride;
 }

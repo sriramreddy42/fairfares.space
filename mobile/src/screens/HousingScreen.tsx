@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
-import { ActivityIndicator, Alert, Image, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
@@ -15,7 +15,6 @@ import { useResponsiveLayout } from "../utils/layout";
 import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
-import { activeFestivalCampaign } from "../utils/festivals";
 import { shareCarpoolListing } from "../utils/listingShare";
 import { explicitUsState } from "../utils/locationRegion";
 
@@ -44,7 +43,6 @@ type Props = {
   onBudgetSelect: (budget: string) => void;
   onSortSelect: (sort: "distanceAsc" | "distanceDesc" | "rentAsc" | "rentDesc") => void;
   onPostNeed: (intent?: string) => void;
-  onTopAction: (action: string) => void;
   onRequireLogin?: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
@@ -94,8 +92,8 @@ const quickLinks: Array<{
   }
 ];
 
-const HOME_STORY_AUTO_SLIDE_MS = 4500;
 const SEARCH_PHRASE_AUTO_SLIDE_MS = 1800;
+const HOUSING_REVIEW_AUTO_SLIDE_MS = 4500;
 const QUICK_LINK_TYPE_MS = 85;
 const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
@@ -149,6 +147,12 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
   { label: "Single Room", category: "single_room", icon: appAssets.bed },
   { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
 ];
+const housingIntentCards = [
+  { value: "need_place", icon: "house", preview: appAssets.housingSearchPoster, title: "I need a place", subtitle: "Find rooms, apartments and housing", accent: "#ff9f1c", background: "#fff2d8" },
+  { value: "need_roommates", icon: "people", preview: appAssets.housingRentalPromo, title: "I need roommates", subtitle: "Find people to share with", accent: "#14a96b", background: "#dfffee" },
+  { value: "have_place", icon: "house", preview: appAssets.housingSearchPoster, title: "I have a place", subtitle: "List a room or property", accent: "#1488ff", background: "#dcf0ff" },
+  { value: "ride_need", icon: "car", preview: appAssets.carpoolPoster, title: "I need a ride", subtitle: "Find or offer a ride", accent: "#e53945", background: "#ffe4e6" }
+] as const;
 
 const housingSearchPhrases = ["Search housing", "City or area"];
 const rideSearchPhrases = ["Search rides", "Where are you going?"];
@@ -614,7 +618,6 @@ export function HousingScreen({
   onBudgetSelect,
   onSortSelect,
   onPostNeed,
-  onTopAction,
   onRequireLogin,
   onBookCar,
   onBottomTabsHiddenChange,
@@ -636,7 +639,6 @@ export function HousingScreen({
 }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
-  const [festivalCampaign, setFestivalCampaign] = useState(() => activeFestivalCampaign());
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
   // A listing opened from Ask must be present on the very first render. Waiting
@@ -656,8 +658,8 @@ export function HousingScreen({
   const detailScrollOffsetRef = useRef(0);
   const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
-  const [homeStoryIndex, setHomeStoryIndex] = useState(0);
-  const [homeStoryViewportWidth, setHomeStoryViewportWidth] = useState(0);
+  const [housingReviewIndex, setHousingReviewIndex] = useState(0);
+  const [housingReviewWidth, setHousingReviewWidth] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -732,7 +734,7 @@ export function HousingScreen({
   const rideEditorRequestRef = useRef(0);
   const rideOwnerLocationSubscription = useRef<Location.LocationSubscription | null>(null);
   const rideOwnerLocationRideId = useRef("");
-  const homeStoryScrollRef = useRef<ScrollView | null>(null);
+  const housingReviewScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
 
@@ -825,8 +827,6 @@ export function HousingScreen({
   const cityExperienceLocation = data?.location.city || discoveryLocation || "your current city";
   const cityExperienceInitials = avatarInitials(data?.user?.name || "FairFares member", "FF");
   const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
-  const homeStorySlideCount = 1 + homeTestimonials.length;
-  const homeStorySlideWidth = homeStoryViewportWidth || Math.max(1, viewportWidth - 28 - theme.spacing.md * 2);
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
@@ -1063,23 +1063,6 @@ export function HousingScreen({
   }
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const scheduleMidnightRefresh = () => {
-      const now = new Date();
-      const nextDay = new Date(now);
-      nextDay.setHours(24, 0, 1, 0);
-      timer = setTimeout(() => {
-        setFestivalCampaign(activeFestivalCampaign());
-        scheduleMidnightRefresh();
-      }, Math.max(1000, nextDay.getTime() - now.getTime()));
-    };
-    scheduleMidnightRefresh();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!data?.user || data.hasSubmittedHousingExperience || cityExperienceSubmitted) return;
     const timer = setTimeout(() => {
       setCityExperienceModalOpen(true);
@@ -1100,14 +1083,22 @@ export function HousingScreen({
   }, [mode]);
 
   useEffect(() => {
-    if (homeStoryIndex < homeStorySlideCount) return;
-    setHomeStoryIndex(0);
-  }, [homeStoryIndex, homeStorySlideCount]);
+    if (housingReviewIndex < homeTestimonials.length) return;
+    setHousingReviewIndex(0);
+  }, [homeTestimonials.length, housingReviewIndex]);
 
   useEffect(() => {
-    if (!homeStorySlideWidth) return;
-    homeStoryScrollRef.current?.scrollTo({ x: homeStoryIndex * homeStorySlideWidth, animated: true });
-  }, [homeStoryIndex, homeStorySlideWidth]);
+    if (!housingReviewWidth || homeTestimonials.length < 2) return;
+    housingReviewScrollRef.current?.scrollTo({ x: housingReviewIndex * housingReviewWidth, animated: true });
+  }, [homeTestimonials.length, housingReviewIndex, housingReviewWidth]);
+
+  useEffect(() => {
+    if (!housingReviewWidth || homeTestimonials.length < 2) return;
+    const timer = setInterval(() => {
+      setHousingReviewIndex((current) => (current + 1) % homeTestimonials.length);
+    }, HOUSING_REVIEW_AUTO_SLIDE_MS);
+    return () => clearInterval(timer);
+  }, [homeTestimonials.length, housingReviewWidth]);
 
   useEffect(() => {
     if (quickLinkWords.length < 2) return;
@@ -1126,14 +1117,6 @@ export function HousingScreen({
   useEffect(() => {
     setQuickLinkLetterCount(1);
   }, [quickLinkWordIndex]);
-
-  useEffect(() => {
-    if (homeStorySlideCount < 2 || !homeStorySlideWidth) return;
-    const timer = setInterval(() => {
-      setHomeStoryIndex((current) => (current + 1) % homeStorySlideCount);
-    }, HOME_STORY_AUTO_SLIDE_MS);
-    return () => clearInterval(timer);
-  }, [homeStorySlideCount, homeStorySlideWidth]);
 
   useEffect(() => {
     setRentalCars(cars);
@@ -3751,21 +3734,35 @@ export function HousingScreen({
     );
   }
 
-  function renderTopNavIcon(item: string, active: boolean) {
-    const color = active ? theme.colors.text : "rgba(255,255,255,0.8)";
-    if (item === "Home") {
-      return renderSegmentIcon("housing", active);
-    }
-    if (item === "Explorer") {
+  function renderHousingIntentIcon(type: "house" | "people" | "car", color: string) {
+    if (type === "people") {
       return (
-        <View style={[styles.topCompassIcon, { borderColor: color }]}>
-          <View style={[styles.topCompassNeedle, { borderBottomColor: color }]} />
+        <View style={styles.intentPeopleIcon}>
+          <View style={[styles.intentPersonHead, styles.intentPersonHeadLeft, { backgroundColor: color }]} />
+          <View style={[styles.intentPersonHead, styles.intentPersonHeadRight, { backgroundColor: color }]} />
+          <View style={[styles.intentPersonBody, styles.intentPersonBodyLeft, { backgroundColor: color }]} />
+          <View style={[styles.intentPersonBody, styles.intentPersonBodyRight, { backgroundColor: color }]} />
+        </View>
+      );
+    }
+    if (type === "car") {
+      return (
+        <View style={styles.intentCarSolidIcon}>
+          <View style={[styles.intentCarSolidTop, { borderBottomColor: color }]} />
+          <View style={[styles.intentCarSolidBody, { backgroundColor: color }]} />
+          <View style={[styles.intentCarSolidLight, styles.intentCarSolidLightLeft]} />
+          <View style={[styles.intentCarSolidLight, styles.intentCarSolidLightRight]} />
+          <View style={[styles.intentCarSolidWheel, styles.intentCarSolidWheelLeft]} />
+          <View style={[styles.intentCarSolidWheel, styles.intentCarSolidWheelRight]} />
         </View>
       );
     }
     return (
-      <View style={[styles.topTagIcon, { borderColor: color }]}>
-        <View style={[styles.topTagHole, { backgroundColor: color }]} />
+      <View style={styles.intentHouseIcon}>
+        <View style={[styles.intentHouseRoof, { borderBottomColor: color }]} />
+        <View style={[styles.intentHouseBody, { backgroundColor: color }]}>
+          <View style={styles.intentHouseDoor} />
+        </View>
       </View>
     );
   }
@@ -3839,65 +3836,11 @@ export function HousingScreen({
         { paddingBottom: layout.navClearance },
         layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
       ]}
-      stickyHeaderIndices={[1]}
+      stickyHeaderIndices={[0]}
       showsVerticalScrollIndicator={false}
       scrollEventThrottle={32}
       onScroll={(event) => updateScrollVisibility(event.nativeEvent.contentOffset.y)}
     >
-        <View style={[styles.brandHeader, mode !== "housing" && styles.brandHeaderHidden]}>
-          {mode === "housing" ? (
-          <>
-          <View style={[styles.freeServicesHero, festivalCampaign && styles.festivalServicesHero]}>
-            <View style={styles.freeServicesCopy}>
-              <Image source={appAssets.logo} style={styles.freeServicesLogo} resizeMode="contain" />
-              <Text style={styles.freeServicesEyebrow}>Free FairFares tools</Text>
-              <Text style={styles.freeServicesTitle}>Your Relocation Partner</Text>
-              <View style={styles.freeServicesPoweredBy}>
-                <Text style={styles.freeServicesPoweredLabel}>Powered by</Text>
-                <Image source={appAssets.chittiMascot} style={styles.freeServicesMascot} resizeMode="contain" />
-                <Image source={appAssets.chittiLettersGold} style={styles.freeServicesChitthiLogo} resizeMode="contain" />
-              </View>
-              <Text style={styles.freeServicesMeta}>Housing posts, rental searches, and ride matching across the USA.</Text>
-            </View>
-            <View style={styles.freeServicesIconRail}>
-              {["🛏️", "🔍", "🚘", "🧑‍🤝‍🧑"].map((icon, index) => (
-                <View key={`${icon}-${index}`} style={styles.freeServicesIconBubble}>
-                  <Text style={styles.freeServicesIconEmoji}>{icon}</Text>
-                </View>
-              ))}
-            </View>
-            {festivalCampaign ? (
-              <View pointerEvents="none" style={styles.festivalHeroOverlay} accessibilityLabel={`${festivalCampaign.name} FairFares poster`}>
-                <Image source={festivalCampaign.poster} style={styles.festivalPoster} resizeMode="contain" />
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.topTabs}>
-            {["Home", "Explorer", "Deals"].map((item) => {
-              const active = item === "Home";
-              return (
-                <TouchableOpacity
-                  key={item}
-                  onPress={() => {
-                    if (item === "Home") {
-                      setMode("housing");
-                      return;
-                    }
-                    onTopAction(item);
-                  }}
-                  style={[styles.topTab, active && styles.topTabActive]}
-                >
-                  {renderTopNavIcon(item, active)}
-                  <Text style={[styles.topTabText, active && styles.topTabTextActive]}>{item}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          </>
-          ) : null}
-        </View>
-
         <View style={[styles.stickySearch, isLight && styles.stickySearchLight, searchIsScrolled && styles.stickySearchRaised, isLight && searchIsScrolled && styles.stickySearchRaisedLight]}>
           {Platform.OS === "ios" ? (
             <BlurView
@@ -3928,73 +3871,115 @@ export function HousingScreen({
         <>
 
       <View
-        style={[styles.welcome, isLight && styles.welcomeLight]}
+        style={styles.housingLanding}
         onLayout={(event) => {
           setWelcomeY(event.nativeEvent.layout.y);
-          setHomeStoryViewportWidth(Math.max(1, event.nativeEvent.layout.width - theme.spacing.md * 2));
         }}
       >
-        <BlurView
-          pointerEvents="none"
-          tint={isLight ? "light" : "dark"}
-          intensity={isLight ? 8 : 42}
-          experimentalBlurMethod="dimezisBlurView"
-          style={StyleSheet.absoluteFill}
-        />
-        <View pointerEvents="none" style={styles.welcomeGlassHighlight} />
-        <ScrollView
-          ref={homeStoryScrollRef}
-          horizontal
-          pagingEnabled
-          nestedScrollEnabled
-          showsHorizontalScrollIndicator={false}
-          style={styles.homeStoryScroll}
-          decelerationRate="fast"
-          onMomentumScrollEnd={(event) => {
-            const nextIndex = Math.round(event.nativeEvent.contentOffset.x / homeStorySlideWidth);
-            setHomeStoryIndex(Math.max(0, Math.min(nextIndex, homeStorySlideCount - 1)));
-          }}
-        >
-          <View style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
-            <View style={styles.welcomeCopy}>
-              <Text style={styles.welcomeTitle}>Hi {displayName}! Welcome back.</Text>
-              <Text style={styles.welcomeMeta}>Check recent listings and explore nearby housing or carpool options.</Text>
-            </View>
-            <View style={styles.statRow}>
-              <Text style={styles.stat}>{data?.dashboard.housingPosts || 0} Housing Posts</Text>
-              <TouchableOpacity onPress={() => setMode("ride")} accessibilityRole="button" accessibilityLabel="Open carpool">
-                <Text style={[styles.stat, styles.carpoolCarouselStat]} numberOfLines={2}>List your ride &amp; earn</Text>
-              </TouchableOpacity>
-            </View>
+        <ImageBackground source={appAssets.launchCityscape} style={styles.housingHero} imageStyle={styles.housingHeroImage} resizeMode="cover">
+          <View style={styles.housingHeroOverlay} />
+          <View style={styles.housingHeroCopy}>
+            <Text style={styles.housingHeroTitle}>Hi {displayName}!{"\n"}Welcome back.</Text>
           </View>
-          {homeTestimonials.map((testimonial) => {
-            const initials = avatarInitials(testimonial.name, "FF");
-            return (
-              <View key={testimonial.id} style={[styles.homeStorySlide, { width: homeStorySlideWidth }]}>
-                <View style={styles.homeTestimonial}>
-                  <View style={styles.homeTestimonialAvatar}>
-                    {testimonial.photoUrl ? (
-                      <UserAvatar photoUrl={testimonial.photoUrl} imageStyle={styles.cityExperienceAvatarImage} fallback={testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>} />
-                    ) : testimonial.avatarEmoji ? <Text style={styles.homeTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.cityExperienceAvatarInitials}>{initials || "FF"}</Text>}
-                  </View>
-                  <View style={styles.homeTestimonialCopy}>
-                    <View style={styles.homeTestimonialTopline}>
-                      <Text style={styles.homeTestimonialName} numberOfLines={1}>{testimonial.name}</Text>
-                      <Text style={styles.homeTestimonialStars}>{"★".repeat(testimonial.rating)}</Text>
+          <View style={styles.housingHeroBadge}>
+            <Text style={styles.housingHeroBadgeText}>More Places{"\n"}More Possibilities</Text>
+            <View style={styles.housingHeroScribble} />
+          </View>
+          {homeTestimonials.length ? (
+            <View
+              style={styles.housingHeroTestimonialsViewport}
+              onLayout={(event) => setHousingReviewWidth(Math.max(1, event.nativeEvent.layout.width))}
+            >
+              <ScrollView
+                ref={housingReviewScrollRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                style={styles.housingHeroTestimonialsScroll}
+                decelerationRate="fast"
+                onMomentumScrollEnd={(event) => {
+                  if (!housingReviewWidth) return;
+                  const nextIndex = Math.round(event.nativeEvent.contentOffset.x / housingReviewWidth);
+                  setHousingReviewIndex(Math.max(0, Math.min(nextIndex, homeTestimonials.length - 1)));
+                }}
+              >
+              {homeTestimonials.map((testimonial) => {
+                const initials = avatarInitials(testimonial.name, "FF");
+                const rating = Math.max(1, Math.min(5, Math.round(testimonial.rating)));
+                return (
+                  <View key={testimonial.id} style={[styles.housingHeroTestimonialCard, { width: housingReviewWidth || 1 }]}>
+                    <View style={styles.housingHeroTestimonialAvatar}>
+                      {testimonial.photoUrl ? (
+                        <UserAvatar photoUrl={testimonial.photoUrl} imageStyle={styles.cityExperienceAvatarImage} fallback={testimonial.avatarEmoji ? <Text style={styles.housingHeroTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.housingHeroTestimonialInitials}>{initials || "FF"}</Text>} />
+                      ) : testimonial.avatarEmoji ? <Text style={styles.housingHeroTestimonialEmoji}>{testimonial.avatarEmoji}</Text> : <Text style={styles.housingHeroTestimonialInitials}>{initials || "FF"}</Text>}
                     </View>
-                    <Text style={styles.homeTestimonialCity}>📍 {testimonial.city}</Text>
-                    <Text style={styles.homeTestimonialMessage} numberOfLines={2}>“{testimonial.message}”</Text>
+                    <View style={styles.housingHeroTestimonialCopy}>
+                      <View style={styles.housingHeroTestimonialTopline}>
+                        <Text style={styles.housingHeroTestimonialName} numberOfLines={1}>{testimonial.name}</Text>
+                        <Text style={styles.housingHeroTestimonialCity} numberOfLines={1}>{testimonial.city}</Text>
+                      </View>
+                      <View style={styles.housingHeroTestimonialStars} accessibilityLabel={`${rating} out of 5 stars`}>
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Text key={star} style={[styles.housingHeroTestimonialStar, star <= rating && styles.housingHeroTestimonialStarActive]}>★</Text>
+                        ))}
+                      </View>
+                      <Text style={styles.housingHeroTestimonialText} numberOfLines={2}>“{testimonial.message}”</Text>
+                    </View>
                   </View>
+                );
+              })}
+              </ScrollView>
+              {homeTestimonials.length > 1 ? (
+                <View style={styles.housingHeroReviewDots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                  {homeTestimonials.map((testimonial, index) => (
+                    <View key={testimonial.id} style={[styles.housingHeroReviewDot, index === housingReviewIndex && styles.housingHeroReviewDotActive]} />
+                  ))}
                 </View>
-              </View>
+              ) : null}
+            </View>
+          ) : null}
+        </ImageBackground>
+        <View style={styles.housingIntentHeader}>
+          <Text style={styles.housingIntentHeading}>What would you like to do?</Text>
+          <TouchableOpacity style={styles.housingIntentViewAll} onPress={onOpenSearch} accessibilityRole="button" accessibilityLabel="View all housing listings">
+            <Text style={styles.housingIntentViewAllText}>View all</Text>
+            <Text style={styles.housingIntentViewAllArrow}>›</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.housingIntentGrid}>
+          {housingIntentCards.map((item) => {
+            const active = selectedNeed === item.value;
+            return (
+              <TouchableOpacity
+                key={item.value}
+                style={[styles.housingIntentCard, { backgroundColor: item.background }, active && styles.housingIntentCardActive, active && { borderColor: item.accent }]}
+                activeOpacity={0.82}
+                onPress={() => {
+                  if (item.value === "ride_need") {
+                    onNeedSelect("ride_need");
+                    setMode("ride");
+                    return;
+                  }
+                  onNeedSelect(item.value);
+                  onPostNeed(item.value);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={item.title}
+              >
+                <Image source={item.preview} style={styles.housingIntentPreview} resizeMode="cover" />
+                <View style={[styles.housingIntentWash, { backgroundColor: item.background }]} />
+                <View style={[styles.housingIntentIconBubble, { backgroundColor: `${item.accent}20` }]}>
+                  {renderHousingIntentIcon(item.icon, item.accent)}
+                </View>
+                <View style={styles.housingIntentCopy}>
+                  <Text style={styles.housingIntentTitle} numberOfLines={1}>{item.title}</Text>
+                  <Text style={styles.housingIntentSubtitle} numberOfLines={2}>{item.subtitle}</Text>
+                </View>
+                <View style={styles.housingIntentArrow}><Text style={styles.housingIntentArrowText}>›</Text></View>
+              </TouchableOpacity>
             );
           })}
-        </ScrollView>
-        {homeTestimonials.length > 0 ? (
-          <View style={styles.homeStoryPager} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            {Array.from({ length: homeStorySlideCount }).map((_, index) => <View key={index} style={[styles.homeStoryDot, index === homeStoryIndex && styles.homeStoryDotActive]} />)}
-          </View>
-        ) : null}
+        </View>
       </View>
 
       <Modal visible={cityExperienceModalOpen} transparent animationType="fade" onRequestClose={() => setCityExperienceModalOpen(false)}>
@@ -4406,112 +4391,6 @@ const styles = StyleSheet.create({
   rideOwnerLoadingCopy: { color: "#b6bac0", fontSize: 13, lineHeight: 18, textAlign: "center" },
   screen: { flex: 1, backgroundColor: theme.colors.bg },
   content: { padding: 14, paddingBottom: 112, gap: 20 },
-  brandHeader: {
-    width: "100%",
-    borderRadius: 26,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(46,255,188,0.24)",
-    backgroundColor: "#0aad6f"
-  },
-  brandHeaderHidden: { height: 0, borderWidth: 0, backgroundColor: "transparent" },
-  festivalHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00472d" },
-  festivalPoster: { width: "100%", height: "100%" },
-  festivalServicesHero: { minHeight: 0, aspectRatio: 1080 / 440, padding: 0 },
-  freeServicesHero: {
-    width: "100%",
-    minHeight: 142,
-    padding: 16,
-    overflow: "hidden",
-    position: "relative",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12
-  },
-  freeServicesCopy: { flex: 1, minWidth: 0 },
-  freeServicesEyebrow: {
-    alignSelf: "flex-start",
-    color: "#07351f",
-    backgroundColor: "rgba(255,255,255,0.36)",
-    borderRadius: theme.radius.pill,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    overflow: "hidden",
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: "900",
-    textTransform: "uppercase",
-    letterSpacing: 0
-  },
-  freeServicesTitle: { color: "#06130d", fontSize: 17, lineHeight: 21, fontWeight: "800", marginTop: 7, maxWidth: 210 },
-  freeServicesTitleAccent: { color: theme.colors.blue, fontWeight: "900" },
-  freeServicesMeta: { color: "rgba(6,19,13,0.72)", fontSize: 12, lineHeight: 16, fontWeight: "600", marginTop: 4 },
-  freeServicesIconRail: {
-    width: 88,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-    gap: 8
-  },
-  freeServicesPoweredBy: {
-    alignSelf: "flex-start",
-    height: 30,
-    marginTop: 6,
-    paddingLeft: 9,
-    paddingRight: 7,
-    borderRadius: 15,
-    backgroundColor: "rgba(3,49,30,0.88)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4
-  },
-  freeServicesPoweredLabel: { color: "rgba(255,255,255,0.82)", fontSize: 7.5, lineHeight: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.35 },
-  freeServicesMascot: { width: 18, height: 25 },
-  freeServicesChitthiLogo: { width: 62, height: 22, marginLeft: -13 },
-  freeServicesIconBubble: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  freeServicesIconEmoji: { fontSize: 24, lineHeight: 30, textAlign: "center" },
-  freeServicesLogo: { width: 104, height: 34, marginBottom: 4, marginLeft: -2 },
-  topTabs: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
-  topTab: { flex: 1, paddingVertical: 11, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-  topTabActive: { borderBottomWidth: 3, borderBottomColor: theme.colors.text },
-  topTabText: { color: "rgba(255,255,255,0.8)", fontSize: 14, fontWeight: "700" },
-  topTabTextActive: { color: theme.colors.text, fontWeight: "800" },
-  topCompassIcon: {
-    width: 17,
-    height: 17,
-    borderRadius: 9,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
-    transform: [{ rotate: "45deg" }]
-  },
-  topCompassNeedle: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 4,
-    borderRightWidth: 4,
-    borderBottomWidth: 8,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent"
-  },
-  topTagIcon: {
-    width: 16,
-    height: 16,
-    borderWidth: 2,
-    borderRadius: 3,
-    transform: [{ rotate: "45deg" }],
-    justifyContent: "flex-start",
-    alignItems: "flex-start",
-    padding: 2
-  },
-  topTagHole: { width: 4, height: 4, borderRadius: 2 },
   stickySearch: { backgroundColor: "rgba(10,10,12,0.68)", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, overflow: "visible", zIndex: 20 },
   stickySearchLight: { backgroundColor: "#f3f4f6", borderBottomColor: "transparent" },
   stickySearchRaised: { borderBottomColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 9 },
@@ -4699,29 +4578,68 @@ const styles = StyleSheet.create({
   cityExperienceModalTitle: { color: "#10231c", fontSize: 22, lineHeight: 27, fontWeight: "800", marginTop: 2 },
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
-  welcome: { minHeight: 132, borderWidth: 1, borderColor: "rgba(55,213,154,0.84)", borderRadius: theme.radius.md, padding: theme.spacing.md, paddingBottom: 22, backgroundColor: "rgba(12,42,32,0.76)", gap: 12, flexDirection: "row", alignItems: "center", overflow: "hidden", shadowColor: "#37d59a", shadowOpacity: Platform.OS === "android" ? 0 : 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 6 },
-  welcomeLight: { backgroundColor: "rgba(255,255,255,0.90)", borderColor: "rgba(215,220,225,0.92)", borderRadius: 20, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.13, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 5 },
-  welcomeGlassHighlight: { position: "absolute", top: 1, left: 18, right: 18, height: 1, backgroundColor: "rgba(255,255,255,0.34)", borderRadius: 1 },
-  welcomeCopy: { flex: 1, minWidth: 0, gap: 7 },
-  welcomeTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 21, fontWeight: "700" },
-  welcomeMeta: { color: theme.colors.soft, fontSize: 13, lineHeight: 18 },
-  statRow: { width: 142, gap: 7 },
-  stat: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.brand, borderRadius: theme.radius.pill, paddingHorizontal: 7, paddingVertical: 8, overflow: "hidden", fontWeight: "700", fontSize: 10.5, lineHeight: 14, textAlign: "center" },
-  carpoolCarouselStat: { color: "#8ff0c2", minHeight: 38, textAlignVertical: "center" },
-  homeStoryScroll: { flex: 1, alignSelf: "stretch" },
-  homeStorySlide: { minHeight: 92, flexDirection: "row", alignItems: "center", paddingRight: 1 },
-  homeTestimonial: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 },
-  homeTestimonialAvatar: { width: 54, height: 54, borderRadius: 27, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#16885b", borderWidth: 2, borderColor: "rgba(108,235,181,0.62)" },
-  homeTestimonialEmoji: { fontSize: 27, lineHeight: 32 },
-  homeTestimonialCopy: { flex: 1, minWidth: 0, gap: 3 },
-  homeTestimonialTopline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  homeTestimonialName: { flex: 1, minWidth: 0, color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "800" },
-  homeTestimonialStars: { color: "#f4b51e", fontSize: 12, lineHeight: 16, letterSpacing: 0.5 },
-  homeTestimonialCity: { color: "#75d9ad", fontSize: 10, lineHeight: 14, fontWeight: "700" },
-  homeTestimonialMessage: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "600" },
-  homeStoryPager: { position: "absolute", left: 0, right: 0, bottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
-  homeStoryDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.24)" },
-  homeStoryDotActive: { width: 18, backgroundColor: "#37d59a" },
+  housingLanding: { gap: 16 },
+  housingHero: { minHeight: 238, borderRadius: 22, overflow: "hidden", padding: 20, paddingBottom: 82, justifyContent: "flex-start", backgroundColor: "#eaf3ff" },
+  housingHeroImage: { borderRadius: 22, opacity: 0.78 },
+  housingHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.72)" },
+  housingHeroCopy: { maxWidth: "65%", zIndex: 1 },
+  housingHeroTitle: { color: "#07153f", fontSize: 34, lineHeight: 37, fontWeight: "900", letterSpacing: -1.1 },
+  housingHeroBadge: { position: "absolute", top: 18, right: 18, zIndex: 1, transform: [{ rotate: "-6deg" }], alignItems: "flex-end" },
+  housingHeroBadgeText: { color: "#07153f", fontSize: 18, lineHeight: 21, fontWeight: "900", fontFamily: Platform.select({ ios: "Marker Felt", android: "sans-serif-condensed", default: undefined }) },
+  housingHeroScribble: { width: 86, height: 5, borderRadius: 999, backgroundColor: "#14c9c8", marginTop: 5, transform: [{ rotate: "-3deg" }] },
+  housingHeroTestimonialsViewport: { position: "absolute", left: 18, right: 18, bottom: 18, height: 74, zIndex: 2, overflow: "hidden" },
+  housingHeroTestimonialsScroll: { flex: 1 },
+  housingHeroTestimonialCard: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 6 },
+  housingHeroTestimonialAvatar: { width: 42, height: 42, borderRadius: 21, overflow: "hidden", backgroundColor: "#12355b", alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.78)" },
+  housingHeroTestimonialInitials: { color: "#fff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+  housingHeroTestimonialEmoji: { fontSize: 18, lineHeight: 22 },
+  housingHeroTestimonialCopy: { flex: 1, minWidth: 0, gap: 1 },
+  housingHeroTestimonialTopline: { flexDirection: "row", alignItems: "center", gap: 6 },
+  housingHeroTestimonialName: { flex: 1, minWidth: 0, color: "#07153f", fontSize: 12, lineHeight: 15, fontWeight: "900" },
+  housingHeroTestimonialCity: { maxWidth: 105, color: "#4f5f77", fontSize: 10, lineHeight: 13, fontWeight: "800" },
+  housingHeroTestimonialStars: { flexDirection: "row", alignItems: "center", gap: 1, marginTop: 1 },
+  housingHeroTestimonialStar: { color: "rgba(79,95,119,0.26)", fontSize: 11, lineHeight: 13, fontWeight: "900" },
+  housingHeroTestimonialStarActive: { color: "#f59e0b" },
+  housingHeroTestimonialText: { color: "#3e4a63", fontSize: 11, lineHeight: 14, fontWeight: "800" },
+  housingHeroReviewDots: { position: "absolute", left: 52, bottom: 0, flexDirection: "row", alignItems: "center", gap: 4 },
+  housingHeroReviewDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: "rgba(7,21,63,0.20)" },
+  housingHeroReviewDotActive: { width: 13, backgroundColor: "#14c9c8" },
+  housingIntentHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  housingIntentHeading: { flex: 1, color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "900", letterSpacing: -0.35 },
+  housingIntentViewAll: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: "rgba(7,21,63,0.14)", backgroundColor: "rgba(255,255,255,0.86)" },
+  housingIntentViewAllText: { color: "#07153f", fontSize: 13, fontWeight: "800" },
+  housingIntentViewAllArrow: { color: "#07153f", fontSize: 24, lineHeight: 25, fontWeight: "600", marginTop: -2 },
+  housingIntentGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 12 },
+  housingIntentCard: { width: "48.3%", minHeight: 128, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 12, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
+  housingIntentCardActive: { transform: [{ scale: 0.985 }] },
+  housingIntentPreview: { position: "absolute", right: -18, top: 0, bottom: 0, width: "62%", opacity: 0.42 },
+  housingIntentWash: { ...StyleSheet.absoluteFillObject, opacity: 0.86 },
+  housingIntentIconBubble: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 14, zIndex: 1 },
+  intentHouseIcon: { width: 30, height: 29, alignItems: "center", justifyContent: "flex-end" },
+  intentHouseRoof: { position: "absolute", top: 1, width: 0, height: 0, borderLeftWidth: 15, borderRightWidth: 15, borderBottomWidth: 14, borderLeftColor: "transparent", borderRightColor: "transparent" },
+  intentHouseBody: { width: 23, height: 17, borderTopLeftRadius: 3, borderTopRightRadius: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, alignItems: "center", justifyContent: "flex-end" },
+  intentHouseDoor: { width: 7, height: 10, borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: "rgba(255,255,255,0.75)" },
+  intentPeopleIcon: { width: 32, height: 28 },
+  intentPersonHead: { position: "absolute", top: 1, width: 12, height: 12, borderRadius: 6 },
+  intentPersonHeadLeft: { left: 4 },
+  intentPersonHeadRight: { right: 4 },
+  intentPersonBody: { position: "absolute", bottom: 1, width: 17, height: 15, borderTopLeftRadius: 9, borderTopRightRadius: 9, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
+  intentPersonBodyLeft: { left: 1 },
+  intentPersonBodyRight: { right: 1 },
+  intentCarSolidIcon: { width: 34, height: 25 },
+  intentCarSolidTop: { position: "absolute", left: 8, top: 1, width: 18, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 9, borderLeftColor: "transparent", borderRightColor: "transparent" },
+  intentCarSolidBody: { position: "absolute", left: 2, right: 2, top: 9, height: 12, borderRadius: 4 },
+  intentCarSolidLight: { position: "absolute", top: 13, width: 4, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.82)" },
+  intentCarSolidLightLeft: { left: 6 },
+  intentCarSolidLightRight: { right: 6 },
+  intentCarSolidWheel: { position: "absolute", bottom: 0, width: 6, height: 6, borderRadius: 3, backgroundColor: "#07153f" },
+  intentCarSolidWheelLeft: { left: 7 },
+  intentCarSolidWheelRight: { right: 7 },
+  housingIntentCopy: { flex: 1, minWidth: 0, paddingRight: 28, zIndex: 1 },
+  housingIntentTitle: { color: "#07153f", fontSize: 18, lineHeight: 21, fontWeight: "900", letterSpacing: -0.3 },
+  housingIntentSubtitle: { color: "#4c5871", fontSize: 13, lineHeight: 16, marginTop: 3, fontWeight: "700" },
+  housingIntentArrow: { position: "absolute", right: 12, bottom: 13, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
+  housingIntentArrowText: { color: "#07153f", fontSize: 30, lineHeight: 31, fontWeight: "700", marginTop: -3 },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
   housingCardRow: { gap: 12, paddingLeft: 10, paddingRight: 20, paddingTop: 4, paddingBottom: 22, alignItems: "flex-start" },
@@ -5663,8 +5581,8 @@ const styles = StyleSheet.create({
   rideRouteDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#f7f7f8" },
   rideRouteRailLine: { width: 3, height: 42, backgroundColor: "#8d9299" },
   rideRouteSquare: { width: 12, height: 12, backgroundColor: "#f7f7f8" },
-  rideRouteInputs: { flex: 1, gap: 2 },
-  rideRouteInput: { minHeight: 44, color: "#f7f7f8", fontSize: 18, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.14)", paddingHorizontal: 0 },
+  rideRouteInputs: { flex: 1, minWidth: 0, gap: 2 },
+  rideRouteInput: { minHeight: 44, color: "#f7f7f8", fontSize: 17, lineHeight: 22, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.14)", paddingHorizontal: 0, paddingRight: 6 },
   rideRouteInputActive: { borderBottomColor: theme.colors.blue },
   rideRoutePlus: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
   rideRoutePlusText: { color: "#202124", fontSize: 28, lineHeight: 30 },
