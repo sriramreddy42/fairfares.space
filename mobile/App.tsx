@@ -409,6 +409,7 @@ function FairFaresApp() {
   const [rentalEditBookingId, setRentalEditBookingId] = useState("");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
   const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
+  appReadyForContentLinksRef.current = !loading && Boolean(data);
 
   useEffect(() => {
     if (Platform.OS !== "android" || IS_EXPO_GO || !GOOGLE_AUTH_CONFIGURED) return;
@@ -1270,13 +1271,13 @@ function FairFaresApp() {
   }
 
   useEffect(() => {
-    appReadyForContentLinksRef.current = !loading;
-    if (!loading && pendingContentLinkRef.current) {
+    appReadyForContentLinksRef.current = !loading && Boolean(data);
+    if (!loading && data && pendingContentLinkRef.current) {
       const pendingUrl = pendingContentLinkRef.current;
       pendingContentLinkRef.current = null;
       handleAppUrl(pendingUrl, true);
     }
-  }, [loading]);
+  }, [data, loading]);
 
   useEffect(() => {
     function handleIncomingUrl(url: string | null) {
