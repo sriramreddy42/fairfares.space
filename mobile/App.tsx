@@ -399,6 +399,7 @@ function FairFaresApp() {
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const appReadyForContentLinksRef = useRef(false);
   const pendingContentLinkRef = useRef<string | null>(null);
+  const [contentLinkOpening, setContentLinkOpening] = useState(false);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [notificationMessageId, setNotificationMessageId] = useState(0);
   const handledNotificationResponseRef = useRef("");
@@ -1196,6 +1197,7 @@ function FairFaresApp() {
         const communityPostId = parsed.pathname === "/community/open"
           ? parsed.searchParams.get("postId") || ""
           : communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "";
+        if (communityPostId) setContentLinkOpening(true);
         setLinkedCommunityPostId(communityPostId);
         setActiveTab("community");
         return;
@@ -1205,6 +1207,7 @@ function FairFaresApp() {
         setSelectedNeed("need_place");
         setActiveTab("housing");
         if (postId) {
+          setContentLinkOpening(true);
           void getHousingListing(postId).then((post) => {
             if (!post) {
               Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
@@ -1212,7 +1215,8 @@ function FairFaresApp() {
             }
             setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
             setLinkedHousingPost(post);
-          }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+          }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."))
+            .finally(() => setContentLinkOpening(false));
         }
         return;
       }
@@ -1225,13 +1229,15 @@ function FairFaresApp() {
         setSelectedNeed("ride_need");
         setActiveTab("housing");
         if (rideId) {
+          setContentLinkOpening(true);
           void getRideListing(rideId).then((ride) => {
             if (!ride) {
               Alert.alert("Ride unavailable", "This carpool listing has expired or is no longer available.");
               return;
             }
             setLinkedCarpoolRide(ride);
-          }).catch(() => Alert.alert("Ride unavailable", "This carpool listing is no longer available."));
+          }).catch(() => Alert.alert("Ride unavailable", "This carpool listing is no longer available."))
+            .finally(() => setContentLinkOpening(false));
         }
         return;
       }
@@ -1240,6 +1246,7 @@ function FairFaresApp() {
         setPendingRide(null);
         setPendingGroupInvite(groupInvite);
         setActiveTab("messenger");
+        setContentLinkOpening(false);
         return;
       }
     } catch {
@@ -2709,7 +2716,7 @@ function FairFaresApp() {
         }}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         initialPostId={linkedCommunityPostId}
-        onInitialPostOpened={() => setLinkedCommunityPostId("")}
+        onInitialPostOpened={() => { setLinkedCommunityPostId(""); setContentLinkOpening(false); }}
       />
     ) : activeTab === "activity" ? (
       <DashboardScreen
@@ -2994,6 +3001,14 @@ function FairFaresApp() {
             <Text style={styles.loaderText}>Loading FairFares</Text>
           </View>
         ) : screen}
+        {contentLinkOpening && !loading ? (
+          <View style={styles.contentLinkOpeningOverlay} pointerEvents="auto">
+            <View style={styles.contentLinkOpeningCard}>
+              <ActivityIndicator color={theme.colors.brand} />
+              <Text style={styles.contentLinkOpeningText}>Opening shared link…</Text>
+            </View>
+          </View>
+        ) : null}
         <BottomTabs
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}
@@ -3985,6 +4000,9 @@ const styles = StyleSheet.create({
   chittiSafeLight: { backgroundColor: "#f3f4f6" },
   chittiThreadSafe: { backgroundColor: "#C4D9CE" },
   appContent: { flex: 1 },
+  contentLinkOpeningOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 900, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, backgroundColor: "rgba(2,8,23,0.28)" },
+  contentLinkOpeningCard: { minWidth: 210, minHeight: 104, borderRadius: 24, alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 22, backgroundColor: "rgba(15,23,42,0.94)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  contentLinkOpeningText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   criticalAssetPreloader: { position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", left: -10, top: -10 },
   criticalAssetImage: { width: 1, height: 1 },
   founderNoteBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 20, backgroundColor: "rgba(3,12,9,0.38)" },
