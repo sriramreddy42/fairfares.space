@@ -641,6 +641,22 @@ function FairFaresApp() {
   const listingRoommateHasPlace = listingIsRoommateSearch && roommatePlaceChoice === true;
   const listingHasPropertyDetails = listingIsHavePlace || listingRoommateHasPlace;
   const listingLocationInput = listingHasPropertyDetails ? listingForm.streetAddress : listingForm.area;
+  const housingSuccessSearchNeed: ListingIntent = housingListingSuccess?.roommateIntent
+    ? "need_roommates"
+    : housingListingSuccess?.mode === "HAVE_PLACE"
+      ? "need_place"
+      : "have_place";
+  const housingSuccessSearchLabel = housingListingSuccess?.roommateIntent
+    ? "Search matching roommates"
+    : housingListingSuccess?.mode === "HAVE_PLACE"
+      ? "Search matching renters"
+      : "Search matching places";
+  const housingSuccessShareLabel = housingListingSuccess?.mode === "HAVE_PLACE" ? "↗ Share listing" : "↗ Share request";
+  const housingSuccessCopy = housingListingSuccess?.roommateIntent
+    ? "Your request is live. Search matching roommates nearby, and replies will arrive in Chitthi."
+    : housingListingSuccess?.mode === "HAVE_PLACE"
+      ? "Your listing is live. Search matching renters nearby, and replies will arrive in Chitthi."
+      : "Your request is live. Search matching rooms and places nearby, and replies will arrive in Chitthi.";
   async function enableMobileNotifications(requestPermission = true) {
     if (Platform.OS === "web") {
       return false;
@@ -3536,27 +3552,39 @@ function FairFaresApp() {
               <Text style={styles.listingSuccessFact}>{housingListingSuccess?.expiryLabel || "30 days live"}</Text>
             </View>
             <Text style={styles.listingSuccessCopy}>
-              Your post is visible to matching FairFares members. Replies will arrive in Chitthi, and you can edit the current post from Activity.
+              {housingSuccessCopy}
             </Text>
+            <TouchableOpacity
+              style={styles.listingSuccessPrimary}
+              onPress={() => {
+                const successPost = housingListingSuccess;
+                setHousingListingSuccess(null);
+                setActiveTab("housing");
+                setSearchCity(successPost?.city || city);
+                setSearchArea(successPost?.area || area);
+                setSearchRadius(searchRadius);
+                setSearchNeed(housingSuccessSearchNeed);
+                setSearchOpen(true);
+              }}
+            >
+              <Text style={styles.listingSuccessPrimaryText}>{housingSuccessSearchLabel}</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.listingSuccessShare}
               onPress={() => housingListingSuccess && void shareHousingListing(housingListingSuccess)}
               accessibilityRole="button"
-              accessibilityLabel="Share housing listing"
+              accessibilityLabel={housingListingSuccess?.mode === "HAVE_PLACE" ? "Share housing listing" : "Share housing request"}
             >
-              <Text style={styles.listingSuccessShareText}>↗ Share listing</Text>
+              <Text style={styles.listingSuccessShareText}>{housingSuccessShareLabel}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.listingSuccessPrimary}
+              style={styles.listingSuccessSecondary}
               onPress={() => {
                 setHousingListingSuccess(null);
                 setActiveTab("activity");
               }}
             >
-              <Text style={styles.listingSuccessPrimaryText}>View my listing</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.listingSuccessSecondary} onPress={() => setHousingListingSuccess(null)}>
-              <Text style={styles.listingSuccessSecondaryText}>Done</Text>
+              <Text style={styles.listingSuccessSecondaryText}>Edit in Activity</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -3967,12 +3995,12 @@ const styles = StyleSheet.create({
   listingSuccessFacts: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7 },
   listingSuccessFact: { color: theme.colors.text, fontSize: 12, fontWeight: "900", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(255,255,255,0.14)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 10, paddingVertical: 6 },
   listingSuccessCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", marginVertical: 2 },
-  listingSuccessShare: { width: "100%", minHeight: 50, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.blue, alignItems: "center", justifyContent: "center" },
-  listingSuccessShareText: { color: theme.colors.text, fontSize: 15, fontWeight: "900" },
-  listingSuccessPrimary: { width: "100%", minHeight: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
-  listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  listingSuccessSecondary: { minHeight: 44, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
-  listingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 15, fontWeight: "900" },
+  listingSuccessShare: { width: "100%", minHeight: 48, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(65,141,255,0.72)", alignItems: "center", justifyContent: "center", opacity: 0.9 },
+  listingSuccessShareText: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  listingSuccessPrimary: { width: "100%", minHeight: 64, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 6, shadowColor: theme.colors.green, shadowOpacity: 0.28, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
+  listingSuccessPrimaryText: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  listingSuccessSecondary: { minHeight: 42, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
+  listingSuccessSecondaryText: { color: theme.colors.soft, fontSize: 14, fontWeight: "900" },
   profileCompletionBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.82)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
   profileCompletionCard: { width: "100%", maxWidth: 410, borderRadius: 28, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: theme.colors.panel, paddingHorizontal: 22, paddingVertical: 24, alignItems: "center", gap: 11 },
   profileCompletionAvatar: { width: 72, height: 72, borderRadius: 36, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123c27", borderWidth: 2, borderColor: theme.colors.green },

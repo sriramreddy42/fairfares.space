@@ -190,6 +190,8 @@ const CHAT_PREVIEW_MEDIA_HEIGHT = Math.max(300, Math.min(560, Dimensions.get("wi
 const CHAT_COLLAGE_GAP = 3;
 const CHAT_COLLAGE_CELL = (CHAT_MEDIA_WIDTH - CHAT_COLLAGE_GAP) / 2;
 const CHAT_HD_VIDEO_PREPARE_MIN_BYTES = 35_000_000;
+const CHITTHI_MESSAGE_SEARCH_DEBOUNCE_MS = 140;
+const CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE = 4;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
 const pendingEncryptionStatusText = "Secure chat is being prepared. You can try again shortly.";
 function userSafeEncryptionStatus(value: string) {
@@ -748,18 +750,19 @@ function messageCanDelete(message: ChatMessage) {
 }
 
 function shareableMessageText(message: ChatMessage) {
+  const visibleText = safeVisibleMessageText(message.text || "");
   const prefix = message.senderName ? `${message.senderName}: ` : "";
-  if (message.type === "IMAGE") return `${prefix}📷 ${message.text || "Photo"}`;
-  if (message.type === "VIDEO") return `${prefix}🎥 ${message.text || "Video"}`;
-  if (message.type === "FILE") return `${prefix}📎 ${message.metadata?.fileName || "File"}${message.text ? ` — ${message.text}` : ""}`;
-  if (message.type === "POLL") return `${prefix}Poll: ${message.metadata?.question || message.text}`;
+  if (message.type === "IMAGE") return `${prefix}📷 ${visibleText || "Photo"}`;
+  if (message.type === "VIDEO") return `${prefix}🎥 ${visibleText || "Video"}`;
+  if (message.type === "FILE") return `${prefix}📎 ${message.metadata?.fileName || "File"}${visibleText ? ` — ${visibleText}` : ""}`;
+  if (message.type === "POLL") return `${prefix}Poll: ${message.metadata?.question || visibleText}`;
   if (message.type === "EVENT") return `${prefix}Event: ${message.metadata?.title || ""} ${message.metadata?.date || ""}`.trim();
   if (message.type === "CONTACT") return `${prefix}Contact: ${message.metadata?.name || ""} ${message.metadata?.phone || message.metadata?.email || ""}`.trim();
-  return `${prefix}${message.text}`.trim();
+  return `${prefix}${visibleText}`.trim();
 }
 
 function messageSearchPreviewText(message: ChatMessage) {
-  if (message.text) return message.text;
+  if (message.text) return safeVisibleMessageText(message.text);
   if (message.metadata?.caption) return message.metadata.caption;
   if (message.type === "IMAGE") return "Photo";
   if (message.type === "VIDEO") return "Video";
@@ -769,6 +772,25 @@ function messageSearchPreviewText(message: ChatMessage) {
 
 function isEncryptedPlaceholder(value: string) {
   return /end-to-end encrypted message|sent you a secure message|new (?:chitthi|fchat) message/i.test(value || "");
+}
+
+function looksLikeEncryptedTransportText(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (isEncryptedPlaceholder(text) || /^FF(?:RICH|FORWARD|PRIVATE|LOCATION|POLL|EVENT|CONTACT):/i.test(text)) return true;
+  if (/"(?:ciphertext|nonce|senderPublicKey|previewCiphertext)"\s*:/i.test(text)) return true;
+  if (/^(?:ciphertext|nonce|senderPublicKey|previewCiphertext)\s*[:=]/i.test(text)) return true;
+  // NaCl ciphertext/nonce values are base64. Avoid hiding ordinary text by
+  // requiring a long, unbroken encoded-looking value.
+  return text.length >= 96 && /^[A-Za-z0-9+/=_-]+$/.test(text) && !/\s/.test(text);
+}
+
+function safeVisibleMessageText(value: string) {
+  return looksLikeEncryptedTransportText(value) ? unavailableEncryptedMessageText : value;
+}
+
+function hideUndecryptableEncryptedMessages(messages: ChatMessage[]) {
+  return messages.filter((message) => message.text !== unavailableEncryptedMessageText);
 }
 
 function encryptedOverviewPreview(clearText: string) {
@@ -923,6 +945,7 @@ function highlightedMessageParts(value: string, mentionNames: string[]) {
 }
 
 function firstDiscoveredUrl(value: string) {
+  if (looksLikeEncryptedTransportText(value)) return "";
   return discoveredMessageParts(value).find((part) => part.url)?.url || "";
 }
 
@@ -2374,7 +2397,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     // replaces them. Keep the neutral loading shell visible until the initial
     // decrypt pass completes. In-memory caches still contain plaintext and can
     // be shown immediately on a warm reopen.
-    if (cachedMessages.some((message) => isEncryptedPlaceholder(message.text))) return false;
+    if (cachedMessages.some((message) => looksLikeEncryptedTransportText(message.text))) return false;
     prepareThreadForLatestLayout();
     replaceThreadMessages(conversationId, cachedMessages);
     setThreadLoading(false);
@@ -3083,12 +3106,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   async function decryptMessages(
     conversationId: string,
     nextMessages: ChatMessage[],
-    preparedContext?: ReturnType<typeof prepareMessageDecryption>
+    preparedContext?: ReturnType<typeof prepareMessageDecryption>,
+    options: { updateEncryptionStatus?: boolean } = {}
   ) {
     try {
       const { identity, identities = [identity], envelopePayload, keyPayload } = await (preparedContext || prepareMessageDecryption(conversationId));
-      setEncryptionReady(Boolean(keyPayload.ready));
-      setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
+      if (options.updateEncryptionStatus !== false) {
+        setEncryptionReady(Boolean(keyPayload.ready));
+        setEncryptionStatusDetail(keyPayload.ready ? "" : userSafeEncryptionStatus(keyPayload.warning) || "Encryption key registration is incomplete.");
+      }
       const byMessage = new Map<number, typeof envelopePayload.envelopes>();
       envelopePayload.envelopes.forEach((item) => {
         const current = byMessage.get(item.messageId) || [];
@@ -3098,9 +3124,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const decryptedMessages = nextMessages.map((message) => {
         const envelopes = byMessage.get(message.id) || [];
         if (!envelopes.length) {
-          if (isEncryptedPlaceholder(message.text)) {
-          }
-          return isEncryptedPlaceholder(message.text) ? { ...message, text: unavailableEncryptedMessageText, canEdit: false } : message;
+          return looksLikeEncryptedTransportText(message.text)
+            ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
+            : { ...message, text: safeVisibleMessageText(message.text) };
         }
         try {
           let clearText = "";
@@ -3156,15 +3182,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           return { ...message, text: unavailableEncryptedMessageText, canEdit: false };
         }
       });
-      return decryptedMessages;
+      return hideUndecryptableEncryptedMessages(decryptedMessages);
     } catch (error) {
-      setEncryptionReady(false);
-      setEncryptionStatusDetail(error instanceof Error ? error.message : "Encrypted message envelopes could not be retrieved.");
+      if (options.updateEncryptionStatus !== false) {
+        setEncryptionReady(false);
+        setEncryptionStatusDetail(error instanceof Error ? error.message : "Encrypted message envelopes could not be retrieved.");
+      }
       // Never render the backend's encrypted storage placeholder as if it were
       // message content when envelope retrieval is temporarily unavailable.
-      return nextMessages.map((message) => isEncryptedPlaceholder(message.text)
+      return hideUndecryptableEncryptedMessages(nextMessages.map((message) => looksLikeEncryptedTransportText(message.text)
         ? { ...message, text: unavailableEncryptedMessageText, canEdit: false }
-        : message);
+        : { ...message, text: safeVisibleMessageText(message.text) }));
     }
   }
 
@@ -3723,6 +3751,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         };
         const collect = (conversation: ChatConversation, nextMessages: ChatMessage[]) => {
           nextMessages.forEach((message) => {
+            if (message.text === unavailableEncryptedMessageText || looksLikeEncryptedTransportText(message.text)) return;
             const text = [
               message.text,
               message.metadata?.caption,
@@ -3732,7 +3761,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               message.type === "VIDEO" ? "video" : "",
               message.type === "FILE" ? "document file" : "",
             ].filter(Boolean).join(" ").toLocaleLowerCase();
-            if (!text.includes(query) || message.text === unavailableEncryptedMessageText || isEncryptedPlaceholder(message.text)) return;
+            if (!text.includes(query)) return;
             byKey.set(`${conversation.id}:${message.id}`, { conversation, message });
           });
         };
@@ -3746,23 +3775,39 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
         try {
           const identity = await ensureChatDeviceIdentity();
-          for (const conversation of candidates) {
+          const identities = recoveredChatIdentities(currentUserId, identity);
+          for (let index = 0; index < candidates.length; index += CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE) {
             if (cancelled || requestId !== messageSearchRequestRef.current) return;
-            const payload = await getChatMessages(conversation.id, 0, 30, identity.deviceId);
-            if (cancelled || requestId !== messageSearchRequestRef.current) return;
-            const envelopePayload = Array.isArray(payload.envelopes)
-              ? { ok: true, envelopes: payload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })) }
-              : await getChatEncryptedEnvelopes(conversation.id, identity.deviceId).then((value) => ({ ok: true, envelopes: value.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: identity.deviceId })) }));
-            const decrypted = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
-              identity,
-              identities: [identity],
-              envelopePayload,
-              keyPayload: { ok: true, keys: [], ready: false, warning: "" }
+            const batch = candidates.slice(index, index + CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE);
+            const results = await Promise.allSettled(batch.map(async (conversation) => {
+              const payload = await getChatMessages(conversation.id, 0, 30, identity.deviceId);
+              const envelopeResults = await Promise.allSettled(identities.map(async (candidate) => {
+                if (candidate.deviceId === identity.deviceId && Array.isArray(payload.envelopes)) {
+                  return payload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }));
+                }
+                const value = await getChatEncryptedEnvelopes(conversation.id, candidate.deviceId);
+                return value.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: candidate.deviceId }));
+              }));
+              const envelopePayload = {
+                ok: true,
+                envelopes: envelopeResults.flatMap((result) => result.status === "fulfilled" ? result.value : [])
+              };
+              const decrypted = await decryptMessages(conversation.id, payload.messages || [], Promise.resolve({
+                identity,
+                identities,
+                envelopePayload,
+                keyPayload: { ok: true, keys: [], ready: false, warning: "" }
+              }), { updateEncryptionStatus: false });
+              return { conversation, decrypted };
             }));
             if (cancelled || requestId !== messageSearchRequestRef.current) return;
-            const merged = mergeChatMessages(messageCache.current.get(conversation.id) || [], decrypted);
-            messageCache.current.set(conversation.id, merged);
-            collect(conversation, merged);
+            results.forEach((result) => {
+              if (result.status !== "fulfilled") return;
+              const { conversation, decrypted } = result.value;
+              const merged = mergeChatMessages(messageCache.current.get(conversation.id) || [], decrypted);
+              messageCache.current.set(conversation.id, merged);
+              collect(conversation, merged);
+            });
             publish();
           }
         } catch {
@@ -3775,12 +3820,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       })().finally(() => {
         if (!cancelled && requestId === messageSearchRequestRef.current) setSearchingMessages(false);
       });
-    }, 350);
+    }, CHITTHI_MESSAGE_SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [activeConversation, conversations, messages, search, signedIn, tab, visiblePersonConversations]);
+  }, [activeConversation, conversations, currentUserId, messages, search, signedIn, tab, visiblePersonConversations]);
 
   useEffect(() => {
     const target = messageSearchTargetRef.current;
@@ -7095,13 +7140,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const mediaUploadingBatch = mediaUploading && mediaUploadBatchCount > 1;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             const showGroupSender = !message.mine && isGroupConversation(activeConversation);
+            const visibleMessageText = safeVisibleMessageText(message.text || "");
             const emojiOnlyMessage = !isMediaMessage
               && !message.contextTitle
               && !message.replyToMessageId
               && !message.metadata?.forwarded
               && !message.metadata?.privateReply
               && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type)
-              && isEmojiOnlyMessage(message.text || "");
+              && isEmojiOnlyMessage(visibleMessageText);
             return (
             <View key={message.id} style={styles.threadMessageCell}>
             <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
@@ -7202,7 +7248,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 ) : null}
                 {message.type === "POLL" ? (
                   <View style={styles.richCard}>
-                    <Text style={styles.richEyebrow}>CHITTHI POLL</Text><Text style={styles.richTitle}>{message.metadata?.question || message.text}</Text>
+                    <Text style={styles.richEyebrow}>CHITTHI POLL</Text><Text style={styles.richTitle}>{message.metadata?.question || visibleMessageText}</Text>
                     <Text style={styles.pollMeta}>{message.metadata?.allowMultiple ? "Select one or more" : "Select one"} · {message.metadata?.anonymous !== false ? "Names hidden" : "Names visible"}{message.metadata?.closed ? " · Poll ended" : message.metadata?.expiresAt ? ` · Ends ${new Date(message.metadata.expiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</Text>
                     {(message.metadata?.options || []).map((option, index) => {
                       const count = message.metadata?.voteCounts?.[index] || 0;
@@ -7225,9 +7271,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </View>
                   </View>
                 ) : null}
-                {message.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
-                  ? <Text style={styles.emojiOnlyText}>{message.text}</Text>
-                  : <DiscoveredMessageText message={message.text} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
+                {visibleMessageText && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
+                  ? <Text style={styles.emojiOnlyText}>{visibleMessageText}</Text>
+                  : <DiscoveredMessageText message={visibleMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
                 ) : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
@@ -7292,7 +7338,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <Pressable onPress={() => setActionMessage(null)} style={[styles.messageActionPreviewRow, actionMessage.mine && styles.messageActionPreviewRowMine]} accessibilityRole="button" accessibilityLabel="Close message actions">
                   <View pointerEvents="box-none" style={[styles.bubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && styles.photoBubble, actionMessage.mine ? styles.myBubble : styles.theirBubble, actionMessage.type === "IMAGE" && actionMessage.attachmentUrl && (actionMessage.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), styles.messageActionPreviewBubble]}>
                     {actionMessage.attachmentUrl && actionMessage.type === "IMAGE" ? <ChatMessagePhoto message={actionMessage} resolvePreview={resolveEncryptedPhotoPreview} /> : null}
-                    {actionMessage.text && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={actionMessage.text} mine={actionMessage.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={firstDiscoveredUrl(actionMessage.text) && linkPreviewFaviconState[firstDiscoveredUrl(actionMessage.text)] === "favicon" ? firstDiscoveredUrl(actionMessage.text) : ""} /> : null}
+                    {safeVisibleMessageText(actionMessage.text || "") && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(actionMessage.type) ? <DiscoveredMessageText message={safeVisibleMessageText(actionMessage.text || "")} mine={actionMessage.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={firstDiscoveredUrl(actionMessage.text) && linkPreviewFaviconState[firstDiscoveredUrl(actionMessage.text)] === "favicon" ? firstDiscoveredUrl(actionMessage.text) : ""} /> : null}
                     {!actionMessage.text && actionMessage.type !== "IMAGE" ? <Text style={[styles.bubbleText, actionMessage.mine ? styles.myBubbleText : styles.theirBubbleText]}>{shareableMessageText(actionMessage) || "Message"}</Text> : null}
                     <View style={styles.bubbleMetaRow}><Text style={[styles.bubbleMeta, actionMessage.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(actionMessage.createdAt)}</Text>{actionMessage.mine && messageReceipt(actionMessage.status) ? <Text style={[styles.receiptMark, actionMessage.status === "seen" && styles.receiptSeen, actionMessage.status === "failed" && styles.receiptFailed]}>{messageReceipt(actionMessage.status)}</Text> : null}</View>
                     {(actionMessage.reactions || []).length ? <View style={styles.messagePreviewReactions}>{actionMessage.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(actionMessage, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
@@ -8281,14 +8327,14 @@ const styles = StyleSheet.create({
   plusIcon: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   plusHorizontal: { position: "absolute", width: 24, height: 5, borderRadius: 3, backgroundColor: theme.colors.blue },
   plusVertical: { position: "absolute", width: 5, height: 24, borderRadius: 3, backgroundColor: theme.colors.blue },
-  attachmentPanel: { position: "absolute", left: 10, right: 10, bottom: 58, backgroundColor: "#111615", borderRadius: 28, paddingHorizontal: 14, paddingTop: 9, paddingBottom: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.12)", shadowColor: "#000", shadowOpacity: 0.34, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 18, zIndex: 20 },
+  attachmentPanel: { position: "absolute", left: 10, right: 10, bottom: 74, backgroundColor: "#18211F", borderRadius: 28, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 30, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.16)", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 18, zIndex: 20 },
   attachmentGrabber: { width: 42, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.24)", alignSelf: "center", marginBottom: 9 },
   attachmentPanelHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingHorizontal: 2 },
   attachmentPanelTitle: { color: "rgba(255,255,255,0.92)", fontSize: 15, fontWeight: "800" },
   attachmentClose: { width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" },
   attachmentCloseText: { color: "rgba(255,255,255,0.88)", fontSize: 22, lineHeight: 24, marginTop: -2 },
-  attachmentGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 18, justifyContent: "space-between" },
-  attachmentTile: { width: "25%", minHeight: 92, alignItems: "center", justifyContent: "flex-start", paddingHorizontal: 3 },
+  attachmentGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 22, justifyContent: "space-between" },
+  attachmentTile: { width: "25%", minHeight: 96, alignItems: "center", justifyContent: "flex-start", paddingHorizontal: 3 },
   attachmentIcon: { width: 58, height: 58, borderRadius: 22, alignItems: "center", justifyContent: "center", marginBottom: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)" },
   attachmentIconText: { color: "#fff", fontSize: 24, fontWeight: "900" },
   fileIcon: { backgroundColor: "#178fce" },

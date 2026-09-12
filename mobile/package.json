@@ -25,6 +25,7 @@
     "web": "expo start --web",
     "web:clear": "expo start --web --clear",
     "typecheck": "tsc --noEmit",
+    "test:chitthi-encryption": "node scripts/check-chitthi-encryption-regression.cjs",
     "postinstall": "patch-package"
   },
   "dependencies": {
