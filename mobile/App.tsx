@@ -1182,7 +1182,10 @@ function FairFaresApp() {
         const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
         const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
         if (opensCommunity) {
-          setLinkedCommunityPostId(communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "");
+          const communityPostId = parsed.pathname === "/community/open"
+            ? parsed.searchParams.get("postId") || ""
+            : communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "";
+          setLinkedCommunityPostId(communityPostId);
           setActiveTab("community");
           return;
         }
