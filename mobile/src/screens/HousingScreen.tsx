@@ -3502,7 +3502,7 @@ export function HousingScreen({
   function viewSuccessfulRideListing() {
     setRideListingSuccess(null);
     setRideOwnerOpen(true);
-    setRideOwnerPrompt("Your ride is live. Matching rider requests will appear below.");
+    setRideOwnerPrompt("Your ride is live. Matching rider requests appear here with route details, pickup status, and Chitthi.");
     onBottomTabsHiddenChange?.(true);
     void refreshRideActivity();
   }
@@ -3524,14 +3524,14 @@ export function HousingScreen({
               <Text style={styles.rideListingSuccessFact}>{ride?.pickupTime || "Time open"}</Text>
               <Text style={styles.rideListingSuccessFact}>{ride?.seats || 1} seat{Number(ride?.seats || 1) === 1 ? "" : "s"}</Text>
             </View>
-            <Text style={styles.rideListingSuccessCopy}>Matching rider requests will appear in your driver workspace. You can coordinate with accepted riders in Chitthi.</Text>
+            <Text style={styles.rideListingSuccessCopy}>Your route is ready. Check matching rider requests, share the listing, or coordinate accepted riders in Chitthi.</Text>
             {ride ? (
               <TouchableOpacity style={styles.rideListingSuccessShare} onPress={() => void shareCarpoolListing(ride)} accessibilityRole="button" accessibilityLabel="Share carpool listing">
                 <Text style={styles.rideListingSuccessShareText}>↗ Share listing</Text>
               </TouchableOpacity>
             ) : null}
             <TouchableOpacity style={styles.rideListingSuccessPrimary} onPress={viewSuccessfulRideListing}>
-              <Text style={styles.rideListingSuccessPrimaryText}>View my listing</Text>
+              <Text style={styles.rideListingSuccessPrimaryText}>Search matching riders</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.rideListingSuccessSecondary} onPress={closeRideListingSuccess}>
               <Text style={styles.rideListingSuccessSecondaryText}>Done</Text>
