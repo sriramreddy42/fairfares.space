@@ -399,6 +399,7 @@ function FairFaresApp() {
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
   const appReadyForContentLinksRef = useRef(false);
   const pendingContentLinkRef = useRef<string | null>(null);
+  const pendingNotificationResponseRef = useRef<Notifications.NotificationResponse | null>(null);
   const [contentLinkOpening, setContentLinkOpening] = useState(false);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [notificationMessageId, setNotificationMessageId] = useState(0);
@@ -1039,52 +1040,57 @@ function FairFaresApp() {
     };
   }, [data?.user?.id]);
 
-  useEffect(() => {
-    const navigateFromNotification = (response: Notifications.NotificationResponse | null) => {
-      if (!response) return;
-      const responseKey = `${response.notification.request.identifier}:${response.actionIdentifier}`;
-      if (handledNotificationResponseRef.current === responseKey) return;
-      handledNotificationResponseRef.current = responseKey;
-      const type = String(response?.notification.request.content.data?.type || "");
-      if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
-        setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
-        setNotificationMessageId(Number(response?.notification.request.content.data?.messageId || 0));
-        setPendingPost(null);
-        setPendingRide(null);
-        setActiveTab("messenger");
-      } else if (type === "COMMUNITY_ANSWER" || type === "COMMUNITY_ACCEPTED") {
-        setPendingPost(null);
-        setPendingRide(null);
-        setLinkedCommunityPostId(String(response?.notification.request.content.data?.postId || ""));
-        setActiveTab("community");
-      } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
-        setPendingPost(null);
-        setPendingRide(null);
-        setRideOwnerOpenTarget(type === "CARPOOL_REQUEST" ? "requests" : "workspace");
-        setRideOwnerReturnTab("activity");
-        setSelectedNeed("ride_offer");
-        setActiveTab("housing");
-        setRideOwnerOpenToken((value) => value + 1);
-      } else if (type === "RENTAL_BOOKING") {
-        setPendingPost(null);
-        setPendingRide(null);
+  function navigateFromNotification(response: Notifications.NotificationResponse | null, force = false) {
+    if (!response) return;
+    const responseKey = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+    if (!force && !appReadyForContentLinksRef.current) {
+      pendingNotificationResponseRef.current = response;
+      return;
+    }
+    if (handledNotificationResponseRef.current === responseKey) return;
+    handledNotificationResponseRef.current = responseKey;
+    const type = String(response?.notification.request.content.data?.type || "");
+    if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
+      setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
+      setNotificationMessageId(Number(response?.notification.request.content.data?.messageId || 0));
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("messenger");
+    } else if (type === "COMMUNITY_ANSWER" || type === "COMMUNITY_ACCEPTED") {
+      setPendingPost(null);
+      setPendingRide(null);
+      setLinkedCommunityPostId(String(response?.notification.request.content.data?.postId || ""));
+      setActiveTab("community");
+    } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
+      setPendingPost(null);
+      setPendingRide(null);
+      setRideOwnerOpenTarget(type === "CARPOOL_REQUEST" ? "requests" : "workspace");
+      setRideOwnerReturnTab("activity");
+      setSelectedNeed("ride_offer");
+      setActiveTab("housing");
+      setRideOwnerOpenToken((value) => value + 1);
+    } else if (type === "RENTAL_BOOKING") {
+      setPendingPost(null);
+      setPendingRide(null);
+      setSelectedService("cars");
+      setActiveTab("services");
+    } else if (type === "FAIRFARES_PROMO") {
+      const target = String(response?.notification.request.content.data?.target || "");
+      setPendingPost(null);
+      setPendingRide(null);
+      if (target === "rentals") {
         setSelectedService("cars");
         setActiveTab("services");
-      } else if (type === "FAIRFARES_PROMO") {
-        const target = String(response?.notification.request.content.data?.target || "");
-        setPendingPost(null);
-        setPendingRide(null);
-        if (target === "rentals") {
-          setSelectedService("cars");
-          setActiveTab("services");
-        } else if (target === "carpool") {
-          setActiveTab("activity");
-        } else {
-          setActiveTab("home");
-          setHousingWelcomeFocusKey((current) => current + 1);
-        }
+      } else if (target === "carpool") {
+        setActiveTab("activity");
+      } else {
+        setActiveTab("home");
+        setHousingWelcomeFocusKey((current) => current + 1);
       }
-    };
+    }
+  }
+
+  useEffect(() => {
     const responseSubscription = Notifications.addNotificationResponseReceivedListener(navigateFromNotification);
     void Notifications.getLastNotificationResponseAsync()
       .then(async (response) => {
@@ -1272,6 +1278,11 @@ function FairFaresApp() {
 
   useEffect(() => {
     appReadyForContentLinksRef.current = !loading && Boolean(data);
+    if (!loading && data && pendingNotificationResponseRef.current) {
+      const pendingResponse = pendingNotificationResponseRef.current;
+      pendingNotificationResponseRef.current = null;
+      navigateFromNotification(pendingResponse, true);
+    }
     if (!loading && data && pendingContentLinkRef.current) {
       const pendingUrl = pendingContentLinkRef.current;
       pendingContentLinkRef.current = null;
