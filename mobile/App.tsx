@@ -397,6 +397,8 @@ function FairFaresApp() {
   const [housingDetailReturnTab, setHousingDetailReturnTab] = useState<TabKey | null>(null);
   const [linkedCommunityPostId, setLinkedCommunityPostId] = useState("");
   const [linkedCarpoolRide, setLinkedCarpoolRide] = useState<RidePost | null>(null);
+  const appReadyForContentLinksRef = useRef(false);
+  const pendingContentLinkRef = useRef<string | null>(null);
   const [notificationConversationId, setNotificationConversationId] = useState("");
   const [notificationMessageId, setNotificationMessageId] = useState(0);
   const handledNotificationResponseRef = useRef("");
@@ -1173,90 +1175,108 @@ function FairFaresApp() {
     if (activeTab !== "messenger" && bottomTabsHidden) setBottomTabsHidden(false);
   }, [activeTab, bottomTabsHidden]);
 
-  useEffect(() => {
-    function handleAppUrl(url: string | null) {
-      if (!url) return;
-      try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.replace(/^www\./i, "");
-        const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
-        const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
-        if (opensCommunity) {
-          const communityPostId = parsed.pathname === "/community/open"
-            ? parsed.searchParams.get("postId") || ""
-            : communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "";
-          setLinkedCommunityPostId(communityPostId);
-          setActiveTab("community");
-          return;
-        }
-        const opensHousing = (host === "fairfare.space" && (parsed.pathname === "/accommodations" || parsed.pathname === "/accommodations/open")) || (parsed.protocol === "fairfares:" && host === "housing");
-        if (opensHousing) {
-          const postId = parsed.searchParams.get("ad_id") || parsed.searchParams.get("postId") || "";
-          setSelectedNeed("need_place");
-          setActiveTab("housing");
-          if (postId) {
-            void getHousingListing(postId).then((post) => {
-              if (!post) {
-                Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
-                return;
-              }
-              setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
-              setLinkedHousingPost(post);
-            }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
-          }
-          return;
-        }
-        const opensCarpool = (host === "fairfare.space" && (parsed.pathname === "/carpool" || parsed.pathname === "/carpool/open")) || (parsed.protocol === "fairfares:" && host === "carpool");
-        if (opensCarpool) {
-          const rideId = parsed.searchParams.get("rideId") || parsed.searchParams.get("ride_id") || "";
-          setRideOwnerOpenTarget("workspace");
-          setRideOwnerEditId("");
-          setRideOwnerReturnTab(null);
-          setRideOwnerOpenToken(0);
-          setSelectedNeed("ride_need");
-          setActiveTab("housing");
-          if (rideId) {
-            void getRideListing(rideId).then((ride) => {
-              if (!ride) {
-                Alert.alert("Ride unavailable", "This carpool listing has expired or is no longer available.");
-                return;
-              }
-              setLinkedCarpoolRide(ride);
-            }).catch(() => Alert.alert("Ride unavailable", "This carpool listing is no longer available."));
-          }
-          return;
-        }
-        const invitePathMatch = parsed.pathname.match(/\/(?:chitthi|fchat)\/invite\/([^/]+)/i);
-        const groupCommunity = parsed.searchParams.get("community_id") || "";
-        const groupInvite = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token") || (invitePathMatch?.[1] ? decodeURIComponent(invitePathMatch[1]) : "") || (groupCommunity ? `community:${groupCommunity}` : "");
-        if (groupInvite) {
-          setPendingPost(null);
-          setPendingRide(null);
-          setPendingGroupInvite(groupInvite);
-          setActiveTab("messenger");
-          return;
-        }
-      } catch {
-        // Ignore malformed external URLs.
+  function handleAppUrl(url: string | null, force = false) {
+    if (!url) return;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.replace(/^www\./i, "");
+      const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
+      const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
+      const opensHousing = (host === "fairfare.space" && (parsed.pathname === "/accommodations" || parsed.pathname === "/accommodations/open")) || (parsed.protocol === "fairfares:" && host === "housing");
+      const opensCarpool = (host === "fairfare.space" && (parsed.pathname === "/carpool" || parsed.pathname === "/carpool/open")) || (parsed.protocol === "fairfares:" && host === "carpool");
+      const invitePathMatch = parsed.pathname.match(/\/(?:chitthi|fchat)\/invite\/([^/]+)/i);
+      const groupCommunity = parsed.searchParams.get("community_id") || "";
+      const groupInvite = parsed.searchParams.get("group_invite") || parsed.searchParams.get("token") || (invitePathMatch?.[1] ? decodeURIComponent(invitePathMatch[1]) : "") || (groupCommunity ? `community:${groupCommunity}` : "");
+      const opensContentLink = opensCommunity || opensHousing || opensCarpool || Boolean(groupInvite);
+      if (opensContentLink && !force && !appReadyForContentLinksRef.current) {
+        pendingContentLinkRef.current = url;
+        return;
       }
-      if (url.includes("payment/success")) {
-        void trackProductEvent("rental_booking_completed", { source: "stripe_deep_link" });
-        setPaymentUrl("");
-        setPaymentMessage("");
-        void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
-        setPaymentStatus({
-          title: "Payment completed",
-          body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
-          action: "View booking"
-        });
-        void load();
+      if (opensCommunity) {
+        const communityPostId = parsed.pathname === "/community/open"
+          ? parsed.searchParams.get("postId") || ""
+          : communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "";
+        setLinkedCommunityPostId(communityPostId);
+        setActiveTab("community");
+        return;
       }
-      if (url.includes("payment/cancel")) {
-        void returnToRentalCars();
+      if (opensHousing) {
+        const postId = parsed.searchParams.get("ad_id") || parsed.searchParams.get("postId") || "";
+        setSelectedNeed("need_place");
+        setActiveTab("housing");
+        if (postId) {
+          void getHousingListing(postId).then((post) => {
+            if (!post) {
+              Alert.alert("Listing unavailable", "This housing listing has expired or is no longer available.");
+              return;
+            }
+            setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+            setLinkedHousingPost(post);
+          }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+        }
+        return;
       }
+      if (opensCarpool) {
+        const rideId = parsed.searchParams.get("rideId") || parsed.searchParams.get("ride_id") || "";
+        setRideOwnerOpenTarget("workspace");
+        setRideOwnerEditId("");
+        setRideOwnerReturnTab(null);
+        setRideOwnerOpenToken(0);
+        setSelectedNeed("ride_need");
+        setActiveTab("housing");
+        if (rideId) {
+          void getRideListing(rideId).then((ride) => {
+            if (!ride) {
+              Alert.alert("Ride unavailable", "This carpool listing has expired or is no longer available.");
+              return;
+            }
+            setLinkedCarpoolRide(ride);
+          }).catch(() => Alert.alert("Ride unavailable", "This carpool listing is no longer available."));
+        }
+        return;
+      }
+      if (groupInvite) {
+        setPendingPost(null);
+        setPendingRide(null);
+        setPendingGroupInvite(groupInvite);
+        setActiveTab("messenger");
+        return;
+      }
+    } catch {
+      // Ignore malformed external URLs.
     }
-    Linking.getInitialURL().then(handleAppUrl).catch(() => undefined);
-    const subscription = Linking.addEventListener("url", (event) => handleAppUrl(event.url));
+    if (url.includes("payment/success")) {
+      void trackProductEvent("rental_booking_completed", { source: "stripe_deep_link" });
+      setPaymentUrl("");
+      setPaymentMessage("");
+      void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
+      setPaymentStatus({
+        title: "Payment completed",
+        body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
+        action: "View booking"
+      });
+      void load();
+    }
+    if (url.includes("payment/cancel")) {
+      void returnToRentalCars();
+    }
+  }
+
+  useEffect(() => {
+    appReadyForContentLinksRef.current = !loading;
+    if (!loading && pendingContentLinkRef.current) {
+      const pendingUrl = pendingContentLinkRef.current;
+      pendingContentLinkRef.current = null;
+      handleAppUrl(pendingUrl, true);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    function handleIncomingUrl(url: string | null) {
+      handleAppUrl(url);
+    }
+    Linking.getInitialURL().then(handleIncomingUrl).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", (event) => handleIncomingUrl(event.url));
     return () => subscription.remove();
   }, []);
 
