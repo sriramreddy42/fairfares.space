@@ -22665,7 +22665,7 @@ def render_member_workspace_feed(
                   <h3>{escape(row_value(post, "title") or option_label(ACCOMMODATION_CATEGORIES, row_value(post, "category"), "Housing"))}</h3>
                   <p>{escape((row_value(post, "city_area_zip") or row_value(post, "area_or_apartment") or "Location open"))} · {escape(format_accommodation_rent(post))}</p>
                   <div class="member-feed-actions">
-                    <a href="/accommodations?ad_id={escape(row_value(post, 'public_id'))}">View post</a>
+                    <a href="/accommodations/open?postId={escape(row_value(post, 'public_id'))}">View post</a>
                     <a href="/dashboard?tab=housing#housing">Dashboard</a>
                   </div>
                 </article>
