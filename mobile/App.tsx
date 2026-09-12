@@ -1180,7 +1180,7 @@ function FairFaresApp() {
         const parsed = new URL(url);
         const host = parsed.hostname.replace(/^www\./i, "");
         const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
-        const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
+        const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
         if (opensCommunity) {
           setLinkedCommunityPostId(communityPath?.[1] ? decodeURIComponent(communityPath[1]) : parsed.searchParams.get("postId") || "");
           setActiveTab("community");
