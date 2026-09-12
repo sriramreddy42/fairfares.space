@@ -1186,7 +1186,7 @@ function FairFaresApp() {
           setActiveTab("community");
           return;
         }
-        const opensHousing = (host === "fairfare.space" && parsed.pathname === "/accommodations") || (parsed.protocol === "fairfares:" && host === "housing");
+        const opensHousing = (host === "fairfare.space" && (parsed.pathname === "/accommodations" || parsed.pathname === "/accommodations/open")) || (parsed.protocol === "fairfares:" && host === "housing");
         if (opensHousing) {
           const postId = parsed.searchParams.get("ad_id") || parsed.searchParams.get("postId") || "";
           setSelectedNeed("need_place");

@@ -24,7 +24,7 @@ function versionedShareUrl(url: string) {
 }
 
 export async function shareHousingListing(post: HousingPost | HousingActivityPost) {
-  const url = versionedShareUrl(`${PUBLIC_SITE_URL}/accommodations?ad_id=${encodeURIComponent(post.id)}`);
+  const url = versionedShareUrl(`${PUBLIC_SITE_URL}/accommodations/open?postId=${encodeURIComponent(post.id)}`);
   const place = compact("area" in post ? post.area || post.location : post.location, "FairFares");
   const title = compact(post.title, "FairFares housing listing");
   const moveIn = "moveIn" in post ? post.moveIn : "";
