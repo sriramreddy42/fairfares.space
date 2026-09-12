@@ -113,7 +113,24 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             "Chennai, Tamil Nadu, India",
         )
 
-    def insert_ride(self, con, user_id, ride_type, origin, destination, *, max_detour=35, pickup_distance=20, seats=3, pickup_date="2099-08-02"):
+    def insert_ride(
+        self,
+        con,
+        user_id,
+        ride_type,
+        origin,
+        destination,
+        *,
+        max_detour=35,
+        pickup_distance=20,
+        seats=3,
+        pickup_date="2099-08-02",
+        vehicle_make_model="",
+        vehicle_year="",
+        vehicle_color="",
+        license_plate="",
+        license_state="",
+    ):
         public_id = app.ride_public_id()
         origin_point = POINTS[origin]
         destination_point = POINTS[destination]
@@ -124,9 +141,10 @@ class RideCarpoolMatchingTest(unittest.TestCase):
              destination_label, destination_lat, destination_lng, city_label, pickup_date, pickup_time,
              start_date, end_date, days_of_week, seats, luggage, accessibility, max_detour_minutes,
              max_pickup_distance_miles, departure_flex_minutes, contribution_per_seat, approval_required,
+             vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state,
              preferences, notes, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Denver, CO', ?, '8:00 AM',
-                    '', '', '', ?, '1 small bag', '', ?, ?, 30, 25, 1, '', '', 'ACTIVE')
+                    '', '', '', ?, '1 small bag', '', ?, ?, 30, 25, 1, ?, ?, ?, ?, ?, '', '', 'ACTIVE')
             """,
             (
                 public_id,
@@ -144,6 +162,11 @@ class RideCarpoolMatchingTest(unittest.TestCase):
                 seats,
                 max_detour,
                 pickup_distance,
+                vehicle_make_model,
+                vehicle_year,
+                vehicle_color,
+                license_plate,
+                license_state,
             ),
         )
         return con.execute("SELECT * FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone()
@@ -294,6 +317,69 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertGreater(notification["distance_miles"], 0)
         self.assertGreaterEqual(notification["route_deviation_miles"], 0)
         self.assertGreaterEqual(notification["route_deviation_minutes"], 0)
+
+    @patch.object(app, "ride_point", side_effect=fake_ride_point)
+    def test_ten_dummy_carpool_listings_match_visible_routes_without_private_vehicle_leaks(self, _mock_point):
+        with app.db() as con:
+            driver_ids = [
+                self.insert_user(con, f"Dummy Driver {index}", f"dummy-driver-{index}@example.com")
+                for index in range(10)
+            ]
+            route_pairs = [
+                ("300 East 17th Ave, Denver, CO", "Colorado Springs, CO"),
+                ("Denver, CO", "Colorado Springs, CO"),
+                ("Littleton, CO", "Colorado Springs, CO"),
+                ("Englewood, CO", "Colorado Springs, CO"),
+                ("Aurora, CO", "Colorado Springs, CO"),
+                ("Denver, CO", "Boulder, CO"),
+                ("Denver, CO", "Fort Collins, CO"),
+                ("Boulder, CO", "Fort Collins, CO"),
+                ("Colorado Springs, CO", "Denver, CO"),
+                ("Denver, CO", "Miamisburg, OH"),
+            ]
+            for index, (origin, destination) in enumerate(route_pairs):
+                self.insert_ride(
+                    con,
+                    driver_ids[index],
+                    "CARPOOL_OFFER",
+                    origin,
+                    destination,
+                    max_detour=45,
+                    pickup_distance=35,
+                    vehicle_make_model=f"Test Vehicle {index}",
+                    vehicle_year="2024",
+                    vehicle_color="Blue",
+                    license_plate=f"LEAK{index:02d}",
+                    license_state="CO",
+                )
+
+        with patch.object(app, "google_route_totals", return_value=None):
+            results = app.mobile_ride_posts(
+                city="Denver, CO",
+                ride_type="CARPOOL_OFFER",
+                origin="Littleton, CO",
+                destination="Colorado Springs, CO",
+                limit=20,
+                origin_lat=POINTS["Littleton, CO"]["lat"],
+                origin_lng=POINTS["Littleton, CO"]["lng"],
+                destination_lat=POINTS["Colorado Springs, CO"]["lat"],
+                destination_lng=POINTS["Colorado Springs, CO"]["lng"],
+            )
+
+        visible_routes = {(item["origin"], item["destination"]) for item in results}
+        self.assertGreaterEqual(len(results), 4)
+        self.assertIn(("300 East 17th Ave, Denver, CO", "Colorado Springs, CO"), visible_routes)
+        self.assertIn(("Denver, CO", "Colorado Springs, CO"), visible_routes)
+        self.assertIn(("Littleton, CO", "Colorado Springs, CO"), visible_routes)
+        self.assertIn(("Englewood, CO", "Colorado Springs, CO"), visible_routes)
+        self.assertNotIn(("Denver, CO", "Boulder, CO"), visible_routes)
+        self.assertNotIn(("Denver, CO", "Fort Collins, CO"), visible_routes)
+        self.assertTrue(all(item["id"] for item in results))
+        self.assertTrue(all(item["ownerName"] for item in results))
+        self.assertTrue(all("licensePlate" not in item for item in results))
+        self.assertTrue(all("licenseState" not in item for item in results))
+        self.assertTrue(all(str(item).find("LEAK") == -1 for item in results))
+        self.assertTrue(all(float(item["pickupDistanceMiles"]) >= 0 for item in results))
 
     @patch.object(app, "google_route_totals")
     def test_route_metrics_use_google_driving_detour_when_available(self, mock_route):

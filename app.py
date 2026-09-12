@@ -17784,6 +17784,7 @@ def mobile_ride_payload(
     origin_point: dict[str, object] | None = None,
     destination_point: dict[str, object] | None = None,
     allow_google_routes: bool = True,
+    include_private_vehicle: bool = False,
 ) -> dict[str, object]:
     origin_point = origin_point or {}
     destination_point = destination_point or {}
@@ -17805,7 +17806,7 @@ def mobile_ride_payload(
     ride_currency_code, ride_currency_symbol = accommodation_currency(
         row_value(row, "city_label") or row_value(row, "origin_label")
     )
-    return {
+    payload = {
         "id": row_value(row, "public_id"),
         "type": row_value(row, "ride_type"),
         "typeLabel": RIDE_TYPE_LABELS.get(row_value(row, "ride_type"), "Ride"),
@@ -17839,8 +17840,6 @@ def mobile_ride_payload(
         "vehicleMakeModel": row_value(row, "vehicle_make_model"),
         "vehicleYear": row_value(row, "vehicle_year"),
         "vehicleColor": row_value(row, "vehicle_color"),
-        "licensePlate": row_value(row, "license_plate"),
-        "licenseState": row_value(row, "license_state"),
         "preferences": row_value(row, "preferences"),
         "notes": row_value(row, "notes"),
         "status": status,
@@ -17856,6 +17855,10 @@ def mobile_ride_payload(
         "matchScore": ride_score(row, origin_point, destination_point, allow_google=allow_google_routes),
         "createdAt": row_value(row, "created_at"),
     }
+    if include_private_vehicle:
+        payload["licensePlate"] = row_value(row, "license_plate")
+        payload["licenseState"] = row_value(row, "license_state")
+    return payload
 
 
 def ride_pickup_pin(request_public_id: str, driver_user_id: int) -> str:
@@ -37803,7 +37806,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             rides: list[dict[str, object]] = []
             seen: set[str] = set()
             for row in own_rows:
-                payload = mobile_ride_payload(row)
+                payload = mobile_ride_payload(row, include_private_vehicle=True)
                 payload["activityRole"] = "MINE"
                 payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
                 payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
@@ -38953,7 +38956,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             invalidate_mobile_search_cache("rides")
             self.send_json({
                 "ok": True,
-                "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None,
+                "ride": mobile_ride_payload(row, origin_point, destination_point, include_private_vehicle=True) if row else None,
                 "matchedRequestCount": matched_request_count,
             })
             return
@@ -39035,7 +39038,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json(
             {
                 "ok": True,
-                "ride": mobile_ride_payload(row, origin_point, destination_point) if row else None,
+                "ride": mobile_ride_payload(row, origin_point, destination_point, include_private_vehicle=True) if row else None,
                 "dispatch": dispatch,
             },
             201,
