@@ -1359,6 +1359,16 @@ export function HousingScreen({
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== Location.PermissionStatus.GRANTED) {
         setCurrentRideLocationError("Location permission is off. Type a pickup address or enable location access.");
+        if (!permission.canAskAgain) {
+          Alert.alert(
+            "Location permission is off",
+            "Enable location for FairFares in Settings, or type your pickup address manually.",
+            [
+              { text: "Not now", style: "cancel" },
+              { text: "Open Settings", onPress: () => void Linking.openSettings() }
+            ]
+          );
+        }
         return null;
       }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -2010,7 +2020,16 @@ export function HousingScreen({
       if (action === "EN_ROUTE") {
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status !== "granted") {
-          Alert.alert("Location permission required", "Allow location while using FairFares so the matched rider can see the driver's live location.");
+          Alert.alert(
+            "Location permission required",
+            permission.canAskAgain
+              ? "Allow location while using FairFares so the matched rider can see the driver's live location."
+              : "Enable location for FairFares in Settings so the matched rider can see the driver's live location.",
+            permission.canAskAgain ? undefined : [
+              { text: "Not now", style: "cancel" },
+              { text: "Open Settings", onPress: () => void Linking.openSettings() }
+            ]
+          );
           return;
         }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });

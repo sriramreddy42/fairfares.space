@@ -400,7 +400,16 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       if (action === "EN_ROUTE") {
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status !== "granted") {
-          Alert.alert("Location permission required", "Allow location while using FairFares so the matched rider can see the driver's live location.");
+          Alert.alert(
+            "Location permission required",
+            permission.canAskAgain
+              ? "Allow location while using FairFares so the matched rider can see the driver's live location."
+              : "Enable location for FairFares in Settings so the matched rider can see the driver's live location.",
+            permission.canAskAgain ? undefined : [
+              { text: "Not now", style: "cancel" },
+              { text: "Open Settings", onPress: () => void Linking.openSettings() }
+            ]
+          );
           return;
         }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -505,7 +514,20 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     try {
       if (isIncomingRiderRequest(ride)) {
         const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== "granted") throw new Error("Allow location while using FairFares to share your position with the matched rider.");
+        if (permission.status !== "granted") {
+          if (!permission.canAskAgain) {
+            Alert.alert(
+              "Location permission required",
+              "Enable location for FairFares in Settings to share your position with the matched rider.",
+              [
+                { text: "Not now", style: "cancel" },
+                { text: "Open Settings", onPress: () => void Linking.openSettings() }
+              ]
+            );
+            return;
+          }
+          throw new Error("Allow location while using FairFares to share your position with the matched rider.");
+        }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         await updateRideDriverLocation(ride.id, position.coords.latitude, position.coords.longitude);
         Alert.alert("Driver location shared", "Your matched rider can now open your latest live location. Sharing continues while the trip is active and FairFares is open.");

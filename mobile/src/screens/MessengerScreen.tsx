@@ -5852,7 +5852,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
-        Alert.alert("Location permission needed", "Enable location access to share your live position in Chitthi.");
+        Alert.alert(
+          "Location permission needed",
+          permission.canAskAgain
+            ? "Enable location access to share your live position in Chitthi."
+            : "Enable location for FairFares in Settings to share your live position in Chitthi.",
+          permission.canAskAgain ? undefined : [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() }
+          ]
+        );
         return;
       }
       stopLiveLocation(false);
