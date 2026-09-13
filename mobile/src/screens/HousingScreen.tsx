@@ -1190,10 +1190,19 @@ export function HousingScreen({
     if (!focusListingResultsKey) return;
     if (selectedNeed === "rental_cars" || selectedNeed === "ride_need" || selectedNeed === "ride_offer") return;
     setMode("housing");
-    const timer = setTimeout(() => {
+    const scrollToListingResults = () => {
       scrollRef.current?.scrollTo({ y: Math.max(listingResultsY - 18, 0), animated: true });
+    };
+    const timer = setTimeout(() => {
+      scrollToListingResults();
     }, 160);
-    return () => clearTimeout(timer);
+    const settleTimer = setTimeout(() => {
+      scrollToListingResults();
+    }, 520);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(settleTimer);
+    };
   }, [focusListingResultsKey, listingResultsY, selectedNeed]);
 
   useEffect(() => {
@@ -4038,7 +4047,10 @@ export function HousingScreen({
         </KeyboardAvoidingView>
       </Modal>
 
-      <View style={styles.listingSectionHeader} onLayout={(event) => setListingResultsY(event.nativeEvent.layout.y)}>
+      <View style={styles.listingSectionHeader} onLayout={(event) => {
+        const nextY = event.nativeEvent.layout.y;
+        setListingResultsY((current) => Math.abs(current - nextY) > 1 ? nextY : current);
+      }}>
         <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || discoveryLocation || "your current city"}</Text>
         <TouchableOpacity style={styles.filterHeader} onPress={() => setFiltersOpen((value) => !value)}>
           <Text style={styles.filterGlyph}>☷</Text>
