@@ -450,8 +450,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     if (Platform.OS === "web") return () => { cancelled = true; };
     void (async () => {
       try {
-        let permission = await Location.getForegroundPermissionsAsync();
-        if (permission.canAskAgain && !permission.granted) permission = await Location.requestForegroundPermissionsAsync();
+        const permission = await Location.getForegroundPermissionsAsync();
         if (!permission.granted || cancelled) return;
         // A live fix is authoritative for city selection. Last-known location is
         // only a short-lived fallback; preferring it previously allowed a stale

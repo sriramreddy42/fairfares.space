@@ -348,7 +348,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
         return;
       }
       if (sharingDriverRideId.current === liveDriverRide.id && driverLocationSubscription.current) return;
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const permission = await Location.getForegroundPermissionsAsync();
       if (cancelled || permission.status !== "granted") return;
       driverLocationSubscription.current?.remove();
       sharingDriverRideId.current = liveDriverRide.id;

@@ -761,7 +761,7 @@ export function HousingScreen({
         return;
       }
       if (rideOwnerLocationRideId.current === liveRideOwnerRequest.id && rideOwnerLocationSubscription.current) return;
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const permission = await Location.getForegroundPermissionsAsync();
       if (cancelled || permission.status !== "granted") return;
       rideOwnerLocationSubscription.current?.remove();
       rideOwnerLocationRideId.current = liveRideOwnerRequest.id;

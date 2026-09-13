@@ -2793,8 +2793,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (Platform.OS === "web") return () => { cancelled = true; };
     void (async () => {
       try {
-        let permission = await Location.getForegroundPermissionsAsync();
-        if (permission.canAskAgain && !permission.granted) permission = await Location.requestForegroundPermissionsAsync();
+        const permission = await Location.getForegroundPermissionsAsync();
         if (!permission.granted || !isCurrentRequest()) return;
         const position = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60 * 1000, requiredAccuracy: 5000 })
           || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });

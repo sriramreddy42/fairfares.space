@@ -771,10 +771,7 @@ function FairFaresApp() {
   async function resolveInitialDeviceCity() {
     if (Platform.OS === "web") return "";
     try {
-      let permission = await Location.getForegroundPermissionsAsync();
-      if (!permission.granted && permission.canAskAgain) {
-        permission = await Location.requestForegroundPermissionsAsync();
-      }
+      const permission = await Location.getForegroundPermissionsAsync();
       if (!permission.granted) return "";
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const livePosition = await Promise.race([
