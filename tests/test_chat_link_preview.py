@@ -45,6 +45,9 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 self.assertIn("<main", body)
                 self.assertIn("Open in FairFares", body)
                 self.assertIn("Install FairFares", body)
+                self.assertNotIn("button.href=fairfares://", body)
+                self.assertNotIn("window.location.href=fairfares://", body)
+                self.assertIn("intent://www.fairfare.space", body)
 
     def test_open_landing_pages_fallback_to_visible_shell_when_lookup_fails(self):
         failing_db = sqlite3.OperationalError("database is locked")
@@ -69,7 +72,15 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 self.assertIn("background:#07101f!important", sent["body"])
 
     def test_open_landing_pages_handle_head_without_404_or_gateway_failure(self):
-        for path in ("/accommodations/open", "/carpool/open", "/community/open"):
+        for path in (
+            "/accommodations/open",
+            "/carpool/open",
+            "/community/open",
+            "/chitthi/invite",
+            "/chitthi/group",
+            "/fchat/invite",
+            "/fchat/group",
+        ):
             with self.subTest(path=path):
                 handler = object.__new__(app.FairFaresHandler)
                 handler.path = f"{path}?share=3"
