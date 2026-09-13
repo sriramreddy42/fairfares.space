@@ -249,6 +249,16 @@ const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "CARPOOL_REQUEST", title: "Find carpool", copy: "Match with drivers going your direction." },
   { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List route, seats, luggage, and contribution." }
 ];
+const indiaRidePopularCities: RidePlaceSuggestion[] = [
+  { label: "Bengaluru, Karnataka, India", main: "Bengaluru", secondary: "Karnataka, India", distanceMiles: null, lat: 12.9716, lng: 77.5946, source: "country-fallback" },
+  { label: "Chennai, Tamil Nadu, India", main: "Chennai", secondary: "Tamil Nadu, India", distanceMiles: null, lat: 13.0827, lng: 80.2707, source: "country-fallback" },
+  { label: "Mumbai, Maharashtra, India", main: "Mumbai", secondary: "Maharashtra, India", distanceMiles: null, lat: 19.0760, lng: 72.8777, source: "country-fallback" },
+  { label: "Pune, Maharashtra, India", main: "Pune", secondary: "Maharashtra, India", distanceMiles: null, lat: 18.5204, lng: 73.8567, source: "country-fallback" },
+  { label: "Delhi, India", main: "Delhi", secondary: "India", distanceMiles: null, lat: 28.6139, lng: 77.2090, source: "country-fallback" },
+  { label: "Vijayawada, Andhra Pradesh, India", main: "Vijayawada", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 16.5062, lng: 80.6480, source: "country-fallback" },
+  { label: "Visakhapatnam, Andhra Pradesh, India", main: "Visakhapatnam", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 17.6868, lng: 83.2185, source: "country-fallback" },
+  { label: "Warangal, Telangana, India", main: "Warangal", secondary: "Telangana, India", distanceMiles: null, lat: 17.9689, lng: 79.5941, source: "country-fallback" },
+];
 const rideServicePosters: Array<{
   key: "scheduled" | "general" | "carpool";
   type: RideType;
@@ -3594,6 +3604,9 @@ export function HousingScreen({
           return !placeCountry || placeCountry === rideActiveCountry;
         })
       : ridePopularPlaces;
+    const visibleRideHomeCities = rideHomeCities.length || rideActiveCountry !== "IN"
+      ? rideHomeCities
+      : indiaRidePopularCities;
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (
@@ -3652,7 +3665,7 @@ export function HousingScreen({
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.ridePopularList}>
-            {rideHomeCities.map((place, index) => (
+            {visibleRideHomeCities.map((place, index) => (
               <TouchableOpacity key={place.label} style={[styles.ridePopularCard, isLight && styles.ridePopularCardLight, styles.ridePopularCityTile, { backgroundColor: ["#123c31", "#1d3048", "#3b2f22", "#2d2945"][index % 4] }]} activeOpacity={0.84} onPress={() => openRidePlannerWithSuggestion(place)}>
                 {place.imageUrl ? (
                   <Image source={{ uri: absoluteAssetUrl(place.imageUrl) }} style={styles.ridePopularImage} resizeMode="cover" />
