@@ -3669,6 +3669,8 @@ export function HousingScreen({
               <TouchableOpacity key={place.label} style={[styles.ridePopularCard, isLight && styles.ridePopularCardLight, styles.ridePopularCityTile, { backgroundColor: ["#123c31", "#1d3048", "#3b2f22", "#2d2945"][index % 4] }]} activeOpacity={0.84} onPress={() => openRidePlannerWithSuggestion(place)}>
                 {place.imageUrl ? (
                   <Image source={{ uri: absoluteAssetUrl(place.imageUrl) }} style={styles.ridePopularImage} resizeMode="cover" />
+                ) : place.source === "country-fallback" ? (
+                  <Image source={appAssets.launchCityscape} style={styles.ridePopularImage} resizeMode="cover" />
                 ) : (
                   <Text style={styles.ridePopularCityIcon}>🏙️</Text>
                 )}
