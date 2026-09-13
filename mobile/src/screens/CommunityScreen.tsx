@@ -18,6 +18,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
+import { requestUserLocationPermission } from "../utils/locationPermission";
 import { deviceAddressCityLabel } from "../utils/locationRegion";
 import { avatarInitials } from "../utils/text";
 import { readGasCache } from "../utils/gasPriceCache";
@@ -534,6 +535,38 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     setGroupSuggestionCity(nextCity);
     setCityPickerOpen(false);
     void AsyncStorage.setItem(feedCityStorageKey, nextCity);
+  };
+
+  const useCurrentFeedLocation = async () => {
+    if (Platform.OS === "web") return;
+    const granted = await requestUserLocationPermission({
+      title: "Location needed",
+      requestMessage: "Allow location to show posts and groups near your current city.",
+      settingsMessage: "Enable location for FairFares in Settings to show posts and groups near your current city.",
+    });
+    if (!granted) return;
+    try {
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+        .catch(() => Location.getLastKnownPositionAsync({ maxAge: 60 * 1000, requiredAccuracy: 1000 }));
+      if (!position) {
+        Alert.alert("Location unavailable", "We couldn't detect your current location. Try again or enter your city manually.");
+        return;
+      }
+      const [address] = await Location.reverseGeocodeAsync(position.coords);
+      const currentCity = normalizedLocationLabel(deviceAddressCityLabel(address));
+      if (!currentCity) {
+        Alert.alert("Location unavailable", "We couldn't detect your city. Try again or enter your city manually.");
+        return;
+      }
+      manualFeedCity.current = false;
+      setSelectedGroup("");
+      setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+      setGroupSuggestionCity(currentCity);
+      setCityPickerOpen(false);
+      void AsyncStorage.removeItem(feedCityStorageKey);
+    } catch {
+      Alert.alert("Location unavailable", "We couldn't detect your current location. Try again or enter your city manually.");
+    }
   };
   useEffect(() => {
     if (!initialPostId) return;
@@ -1086,7 +1119,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         {cityOptionsLoading ? <ActivityIndicator color={theme.colors.brand} style={styles.cityPickerLoader} /> : null}
         <ScrollView keyboardShouldPersistTaps="handled" style={styles.cityPickerResults}>{cityOptions.map((option) => <TouchableOpacity key={option} style={styles.cityPickerOption} onPress={() => chooseFeedCity(option)}><Text style={styles.cityPickerOptionText}>{option}</Text><Text style={styles.cityPickerOptionArrow}>›</Text></TouchableOpacity>)}</ScrollView>
         {cityDraft.trim().length >= 2 ? <TouchableOpacity style={styles.cityPickerUseTyped} onPress={() => chooseFeedCity(cityDraft)}><Text style={styles.cityPickerUseTypedText}>Use “{cityDraft.trim()}”</Text></TouchableOpacity> : null}
-        <TouchableOpacity style={styles.currentLocationButton} accessibilityRole="button" accessibilityLabel="Use my current location" onPress={() => { manualFeedCity.current = false; setCityPickerOpen(false); void AsyncStorage.removeItem(feedCityStorageKey); setLocationRefreshKey((value) => value + 1); }}><Text style={styles.currentLocationText}>⌖ Use my current location</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.currentLocationButton} accessibilityRole="button" accessibilityLabel="Use my current location" onPress={() => { void useCurrentFeedLocation(); }}><Text style={styles.currentLocationText}>⌖ Use my current location</Text></TouchableOpacity>
       </View></View>
     </Modal>
 
