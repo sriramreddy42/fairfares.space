@@ -26272,7 +26272,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             route = ""
             share_title = "FairFares Carpool | Find or Share a Ride"
             share_description = "Find nearby riders, request a ride, or share open seats with the FairFares community."
-            share_url = f"{schema_origin()}/carpool"
+            share_url = f"{schema_origin()}/carpool/open"
         self.send_html(
             render_template(
                 "carpool.html",
@@ -26436,7 +26436,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         else:
             share_title = "FairFares Housing | Rooms, Shared Rent, and Short Stays"
             share_description = "Post or find rooms, shared rent, short stays, apartments, and roommate leads near you."
-            share_url = f"{schema_origin()}/accommodations"
+            share_url = f"{schema_origin()}/accommodations/open"
             share_image = absolute_public_url("/static/img/notifications/housing-share-rent.jpg")
             share_image_alt = "Find rooms and shared housing on FairFares"
         chat_unread_count = 0
