@@ -1,13 +1,73 @@
 import base64
 import io
 import socket
+import sqlite3
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 import app
 
 
 class ChatLinkPreviewTest(unittest.TestCase):
+    def _capture_open_landing(self, method_name, path):
+        handler = object.__new__(app.FairFaresHandler)
+        sent = {}
+
+        def send_text(body, content_type="text/plain; charset=utf-8", status=200, head_only=False, cache_control=""):
+            sent.update(
+                {
+                    "body": body,
+                    "content_type": content_type,
+                    "status": status,
+                    "head_only": head_only,
+                    "cache_control": cache_control,
+                }
+            )
+
+        handler.send_text = send_text
+        getattr(handler, method_name)(urllib.parse.urlparse(path))
+        return sent
+
+    def test_open_landing_pages_have_visible_first_paint_shell(self):
+        cases = [
+            ("accommodations_open_landing", "/accommodations/open"),
+            ("carpool_open_landing", "/carpool/open"),
+            ("community_open_landing", "/community/open"),
+        ]
+        for method_name, path in cases:
+            with self.subTest(path=path):
+                sent = self._capture_open_landing(method_name, path)
+                body = sent["body"]
+                self.assertEqual(sent["status"], 200)
+                self.assertIn("text/html", sent["content_type"])
+                self.assertIn("<style>html,body{margin:0;background:#07101f!important", body)
+                self.assertIn("<main", body)
+                self.assertIn("Open in FairFares", body)
+                self.assertIn("Install FairFares", body)
+
+    def test_open_landing_pages_fallback_to_visible_shell_when_lookup_fails(self):
+        failing_db = sqlite3.OperationalError("database is locked")
+        with patch.object(app, "db", side_effect=failing_db):
+            accommodations = self._capture_open_landing(
+                "accommodations_open_landing",
+                "/accommodations/open?postId=FFH-LOCKED",
+            )
+            carpool = self._capture_open_landing(
+                "carpool_open_landing",
+                "/carpool/open?rideId=FRD-LOCKED",
+            )
+        with patch.object(app, "community_post_rows", side_effect=failing_db):
+            community = self._capture_open_landing(
+                "community_open_landing",
+                "/community/open?postId=ASK-LOCKED",
+            )
+        for sent in (accommodations, carpool, community):
+            with self.subTest(body=sent["body"][:80]):
+                self.assertEqual(sent["status"], 200)
+                self.assertIn("Open in FairFares", sent["body"])
+                self.assertIn("background:#07101f!important", sent["body"])
+
     def test_public_share_pages_never_auto_open_an_app_only_scheme(self):
         script = app.app_only_open_script("fairfares://housing?postId=FFH-TEST")
         self.assertNotIn("location.replace", script)
