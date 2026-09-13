@@ -18,6 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { UserAvatar } from "../components/UserAvatar";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
+import { requestUserLocationPermission } from "../utils/locationPermission";
 import { avatarInitials } from "../utils/text";
 import {
   absoluteAssetUrl,
@@ -5850,18 +5851,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (!activeConversationId) return;
     let firstClientMessageId = "";
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== "granted") {
-        Alert.alert(
-          "Location permission needed",
-          permission.canAskAgain
-            ? "Enable location access to share your live position in Chitthi."
-            : "Enable location for FairFares in Settings to share your live position in Chitthi.",
-          permission.canAskAgain ? undefined : [
-            { text: "Not now", style: "cancel" },
-            { text: "Open Settings", onPress: () => void Linking.openSettings() }
-          ]
-        );
+      const hasLocationPermission = await requestUserLocationPermission({
+        title: "Location permission needed",
+        requestMessage: "Enable location access to share your live position in Chitthi.",
+        settingsMessage: "Enable location for FairFares in Settings to share your live position in Chitthi."
+      });
+      if (!hasLocationPermission) {
         return;
       }
       stopLiveLocation(false);

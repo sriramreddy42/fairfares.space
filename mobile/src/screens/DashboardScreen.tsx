@@ -6,6 +6,7 @@ import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { shareHousingListing } from "../utils/listingShare";
+import { requestUserLocationPermission } from "../utils/locationPermission";
 import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 
@@ -398,18 +399,12 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     setRideActionBusyId(ride.id);
     try {
       if (action === "EN_ROUTE") {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== "granted") {
-          Alert.alert(
-            "Location permission required",
-            permission.canAskAgain
-              ? "Allow location while using FairFares so the matched rider can see the driver's live location."
-              : "Enable location for FairFares in Settings so the matched rider can see the driver's live location.",
-            permission.canAskAgain ? undefined : [
-              { text: "Not now", style: "cancel" },
-              { text: "Open Settings", onPress: () => void Linking.openSettings() }
-            ]
-          );
+        const hasLocationPermission = await requestUserLocationPermission({
+          title: "Location permission required",
+          requestMessage: "Allow location while using FairFares so the matched rider can see the driver's live location.",
+          settingsMessage: "Enable location for FairFares in Settings so the matched rider can see the driver's live location."
+        });
+        if (!hasLocationPermission) {
           return;
         }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
@@ -513,20 +508,13 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
     setRideActionBusyId(ride.id);
     try {
       if (isIncomingRiderRequest(ride)) {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== "granted") {
-          if (!permission.canAskAgain) {
-            Alert.alert(
-              "Location permission required",
-              "Enable location for FairFares in Settings to share your position with the matched rider.",
-              [
-                { text: "Not now", style: "cancel" },
-                { text: "Open Settings", onPress: () => void Linking.openSettings() }
-              ]
-            );
-            return;
-          }
-          throw new Error("Allow location while using FairFares to share your position with the matched rider.");
+        const hasLocationPermission = await requestUserLocationPermission({
+          title: "Location permission required",
+          requestMessage: "Allow location while using FairFares to share your position with the matched rider.",
+          settingsMessage: "Enable location for FairFares in Settings to share your position with the matched rider."
+        });
+        if (!hasLocationPermission) {
+          return;
         }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         await updateRideDriverLocation(ride.id, position.coords.latitude, position.coords.longitude);

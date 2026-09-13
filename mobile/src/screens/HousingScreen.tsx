@@ -17,6 +17,7 @@ import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote,
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { shareCarpoolListing } from "../utils/listingShare";
 import { explicitUsState } from "../utils/locationRegion";
+import { requestUserLocationPermission } from "../utils/locationPermission";
 
 type Props = {
   data: BootstrapPayload | null;
@@ -1356,19 +1357,13 @@ export function HousingScreen({
     setCurrentRideLocationBusy(true);
     setCurrentRideLocationError("");
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== Location.PermissionStatus.GRANTED) {
+      const hasLocationPermission = await requestUserLocationPermission({
+        title: "Location permission is off",
+        requestMessage: "Allow location access, or type your pickup address manually.",
+        settingsMessage: "Enable location for FairFares in Settings, or type your pickup address manually."
+      });
+      if (!hasLocationPermission) {
         setCurrentRideLocationError("Location permission is off. Type a pickup address or enable location access.");
-        if (!permission.canAskAgain) {
-          Alert.alert(
-            "Location permission is off",
-            "Enable location for FairFares in Settings, or type your pickup address manually.",
-            [
-              { text: "Not now", style: "cancel" },
-              { text: "Open Settings", onPress: () => void Linking.openSettings() }
-            ]
-          );
-        }
         return null;
       }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -2018,18 +2013,12 @@ export function HousingScreen({
     setRideActivityBusy(true);
     try {
       if (action === "EN_ROUTE") {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== "granted") {
-          Alert.alert(
-            "Location permission required",
-            permission.canAskAgain
-              ? "Allow location while using FairFares so the matched rider can see the driver's live location."
-              : "Enable location for FairFares in Settings so the matched rider can see the driver's live location.",
-            permission.canAskAgain ? undefined : [
-              { text: "Not now", style: "cancel" },
-              { text: "Open Settings", onPress: () => void Linking.openSettings() }
-            ]
-          );
+        const hasLocationPermission = await requestUserLocationPermission({
+          title: "Location permission required",
+          requestMessage: "Allow location while using FairFares so the matched rider can see the driver's live location.",
+          settingsMessage: "Enable location for FairFares in Settings so the matched rider can see the driver's live location."
+        });
+        if (!hasLocationPermission) {
           return;
         }
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });

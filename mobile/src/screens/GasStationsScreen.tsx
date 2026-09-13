@@ -4,6 +4,7 @@ import { ActivityIndicator, Image, Linking, Platform, RefreshControl, ScrollView
 import { getNearbyGasPrices, nearbyGasMapUrl } from "../api/client";
 import { GasFuelType, GasStation } from "../types";
 import { readGasCache, writeGasCache } from "../utils/gasPriceCache";
+import { requestUserLocationPermission } from "../utils/locationPermission";
 
 type Props = { onBack: () => void };
 type Coordinates = { latitude: number; longitude: number };
@@ -24,7 +25,14 @@ async function currentLocationWithTimeout(timeoutMs = 15_000) {
 
 async function resolveDeviceCoordinates(): Promise<Coordinates> {
   let permission = await Location.getForegroundPermissionsAsync();
-  if (!permission.granted && permission.canAskAgain) permission = await Location.requestForegroundPermissionsAsync();
+  if (!permission.granted) {
+    const granted = await requestUserLocationPermission({
+      title: "Location permission needed",
+      requestMessage: "Allow location access to compare fuel prices near you.",
+      settingsMessage: "Enable location for FairFares in Settings to compare fuel prices near you."
+    });
+    if (granted) permission = await Location.getForegroundPermissionsAsync();
+  }
   if (!permission.granted) throw new Error("Allow location access in Settings to compare fuel prices near you.");
 
   const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
