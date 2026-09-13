@@ -18,6 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { UserAvatar } from "../components/UserAvatar";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
+import { deviceAddressCityLabel } from "../utils/locationRegion";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 import { avatarInitials } from "../utils/text";
 import {
@@ -2800,9 +2801,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (!position || !isCurrentRequest()) return;
         const [address] = await Location.reverseGeocodeAsync(position.coords);
-        const locality = String(address?.city || address?.district || address?.subregion || "").trim();
-        const region = String(address?.region || address?.isoCountryCode || address?.country || "").trim();
-        const localCity = [locality, region].filter(Boolean).join(", ");
+        const localCity = deviceAddressCityLabel(address);
         if (!localCity || !isCurrentRequest()) return;
         const nextCommunities = await getChatCommunities(localCity);
         if (!isCurrentRequest()) return;

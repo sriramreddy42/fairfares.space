@@ -15919,6 +15919,20 @@ def resolve_accommodation_country(place: str, *, allow_refresh: bool = True) -> 
     return ""
 
 
+def inferred_location_country(place: str) -> str:
+    clean_place = clean_text_value(place, 160)
+    if not clean_place:
+        return ""
+    if re.search(r",\s*(?:IN|India)\s*$", clean_place, re.IGNORECASE):
+        return "IN"
+    if re.search(r",\s*(?:US|USA|United States)\s*$", clean_place, re.IGNORECASE):
+        return "US"
+    _city, explicit_region = split_city_state(clean_place)
+    if explicit_region.upper() in COMMUNITY_US_STATE_CODES:
+        return "US"
+    return resolve_accommodation_country(clean_place, allow_refresh=False)
+
+
 def google_accommodation_geocode(query: str) -> dict[str, object] | None:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     query = (query or "").strip()
@@ -39167,6 +39181,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if layered and city and not post_public_id and not group_id and not saved_only:
             section_limit = max(1, min(limit, 30))
+            selected_country = inferred_location_country(city)
             local_rows = community_post_rows(
                 viewer_id,
                 city=city,
@@ -39178,27 +39193,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             local_posts = [community_post_payload(row, viewer_id) for row in local_rows]
             local_ids = tuple(str(post.get("id") or "") for post in local_posts)
-            national_rows = community_post_rows(
-                viewer_id,
-                category=category,
-                query=query,
-                active_only=True,
-                us_only=True,
-                public_only=True,
-                exclude_reported=True,
-                exclude_city=city,
-                exclude_public_ids=local_ids,
-                limit=section_limit,
-                offset=national_offset,
-            )
-            national_posts = [community_post_payload(row, viewer_id) for row in national_rows]
+            national_posts: list[dict[str, object]] = []
+            if selected_country == "US":
+                national_rows = community_post_rows(
+                    viewer_id,
+                    category=category,
+                    query=query,
+                    active_only=True,
+                    us_only=True,
+                    public_only=True,
+                    exclude_reported=True,
+                    exclude_city=city,
+                    exclude_public_ids=local_ids,
+                    limit=section_limit,
+                    offset=national_offset,
+                )
+                national_posts = [community_post_payload(row, viewer_id) for row in national_rows]
             combined_posts = local_posts + national_posts
             self.send_json({
                 "ok": True,
                 "posts": combined_posts,
                 "sections": {
                     "local": {"city": city, "posts": local_posts, "hasMore": len(local_posts) >= section_limit},
-                    "national": {"label": "Across the USA", "posts": national_posts, "hasMore": len(national_posts) >= section_limit},
+                    "national": {"label": "Across the USA" if selected_country == "US" else "", "posts": national_posts, "hasMore": selected_country == "US" and len(national_posts) >= section_limit},
                 },
                 "pagination": {"limit": section_limit, "offset": max(0, offset), "returned": len(combined_posts), "hasMore": len(local_posts) >= section_limit or len(national_posts) >= section_limit},
             })

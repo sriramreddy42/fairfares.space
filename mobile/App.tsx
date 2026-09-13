@@ -30,6 +30,7 @@ import { UserAvatar } from "./src/components/UserAvatar";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
 import { avatarInitials } from "./src/utils/text";
 import { shareHousingListing } from "./src/utils/listingShare";
+import { deviceAddressCityLabel } from "./src/utils/locationRegion";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -781,9 +782,7 @@ function FairFaresApp() {
       const position = livePosition || await Location.getLastKnownPositionAsync({ maxAge: 2 * 60_000, requiredAccuracy: 1000 });
       if (!position) return "";
       const [address] = await Location.reverseGeocodeAsync(position.coords);
-      const locality = String(address?.city || address?.district || address?.subregion || "").trim();
-      const region = String(address?.region || "").trim();
-      return [locality, region].filter(Boolean).join(", ");
+      return deviceAddressCityLabel(address);
     } catch {
       return "";
     }

@@ -18,6 +18,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
+import { deviceAddressCityLabel } from "../utils/locationRegion";
 import { avatarInitials } from "../utils/text";
 import { readGasCache } from "../utils/gasPriceCache";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -460,9 +461,7 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
         if (!position || cancelled) return;
         setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
         const [address] = await Location.reverseGeocodeAsync(position.coords);
-        const locality = String(address?.city || address?.district || address?.subregion || "").trim();
-        const region = String(address?.region || "").trim();
-        const currentCity = normalizedLocationLabel([locality, region].filter(Boolean).join(", "));
+        const currentCity = normalizedLocationLabel(deviceAddressCityLabel(address));
         if (currentCity && !cancelled && !manualFeedCity.current) setGroupSuggestionCity(currentCity);
       } catch {
         // The selected feed city remains the fallback when device location is unavailable.

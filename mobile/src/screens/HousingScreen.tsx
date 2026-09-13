@@ -16,7 +16,7 @@ import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { shareCarpoolListing } from "../utils/listingShare";
-import { explicitUsState } from "../utils/locationRegion";
+import { deviceAddressCityLabel, explicitUsState } from "../utils/locationRegion";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 
 type Props = {
@@ -208,10 +208,9 @@ function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | 
   const street = streetParts.length
     ? Array.from(new Set(streetParts.map((part) => String(part).trim()).filter(Boolean))).join(" ")
     : "";
-  const city = address.city || address.subregion || "";
-  const region = address.region || "";
+  const cityLabel = deviceAddressCityLabel(address);
   const postal = address.postalCode || "";
-  return [street, city, region, postal]
+  return [street, cityLabel, postal]
     .map((part) => String(part || "").trim())
     .filter(Boolean)
     .join(", ");
