@@ -68,6 +68,21 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 self.assertIn("Open in FairFares", sent["body"])
                 self.assertIn("background:#07101f!important", sent["body"])
 
+    def test_open_landing_pages_handle_head_without_404_or_gateway_failure(self):
+        for path in ("/accommodations/open", "/carpool/open", "/community/open"):
+            with self.subTest(path=path):
+                handler = object.__new__(app.FairFaresHandler)
+                handler.path = f"{path}?share=3"
+                handler.headers = {}
+                calls = []
+                handler.send_response = lambda status: calls.append(("status", status))
+                handler.send_header = lambda key, value: calls.append(("header", key, value))
+                handler.end_headers = lambda: calls.append(("end",))
+                handler.do_HEAD()
+                self.assertIn(("status", 200), calls)
+                self.assertIn(("header", "Content-Type", "text/html; charset=utf-8"), calls)
+                self.assertIn(("end",), calls)
+
     def test_public_share_pages_never_auto_open_an_app_only_scheme(self):
         script = app.app_only_open_script("fairfares://housing?postId=FFH-TEST")
         self.assertNotIn("location.replace", script)

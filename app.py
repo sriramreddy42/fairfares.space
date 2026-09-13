@@ -24655,6 +24655,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path in {
             "/",
             "/accommodations",
+            "/accommodations/open",
             "/car-rentals",
             "/about",
             "/contact",
@@ -24664,6 +24665,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/account-deletion",
             "/deals",
             "/explorer",
+            "/carpool/open",
+            "/community/open",
             "/healthz",
         }:
             content_type = "text/plain; charset=utf-8" if parsed.path == "/healthz" else "text/html; charset=utf-8"
