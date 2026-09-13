@@ -16,7 +16,7 @@ import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideDriverProfile, RideInput, RidePost, RideType } from "../types";
 import { mapDirectionsUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { shareCarpoolListing } from "../utils/listingShare";
-import { deviceAddressCityLabel, explicitUsState } from "../utils/locationRegion";
+import { deviceAddressCityLabel, explicitUsState, locationCountryCodeFromLabel } from "../utils/locationRegion";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 
 type Props = {
@@ -1330,10 +1330,23 @@ export function HousingScreen({
     async function hydratePermittedCurrentLocation() {
       const permission = await Location.getForegroundPermissionsAsync();
       if (permission.status !== Location.PermissionStatus.GRANTED || cancelled) return;
-      const position = await Location.getLastKnownPositionAsync()
-        || await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      // Prefer a live fix for country-scoped rails. Last-known can be a stale
+      // simulator/device coordinate (for example San Francisco after moving
+      // the simulator to Hyderabad), which makes the ride screen show U.S.
+      // destination names for an India user.
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        .catch(() => Location.getLastKnownPositionAsync({ maxAge: 60 * 1000, requiredAccuracy: 1000 }));
       if (cancelled || !position) return;
-      const label = await reverseGeocodeRideLocation(position.coords.latitude, position.coords.longitude);
+      let label = "";
+      try {
+        label = await reverseGeocodeRideLocation(position.coords.latitude, position.coords.longitude);
+      } catch {
+        label = "";
+      }
+      if (!label) {
+        const [address] = await Location.reverseGeocodeAsync(position.coords).catch(() => []);
+        label = formatDeviceAddress(address);
+      }
       if (!cancelled && label) {
         setCurrentRideLocation({
           label,
@@ -3573,7 +3586,14 @@ export function HousingScreen({
 
   function renderRideOnly() {
     const activeService = rideServicePosters.find((item) => item.key === selectedRideService && item.available) || rideServicePosters.find((item) => item.key === "carpool") || rideServicePosters[0];
-    const rideHomeCities = ridePopularPlaces;
+    const rideActiveLocation = currentRideLocation?.label || discoveryLocation || data?.location.city || "";
+    const rideActiveCountry = locationCountryCodeFromLabel(rideActiveLocation);
+    const rideHomeCities = rideActiveCountry
+      ? ridePopularPlaces.filter((place) => {
+          const placeCountry = locationCountryCodeFromLabel(`${place.label} ${place.main || ""} ${place.secondary || ""}`);
+          return !placeCountry || placeCountry === rideActiveCountry;
+        })
+      : ridePopularPlaces;
     const renderRideGlyph = (glyph: (typeof rideServicePosters)[number]["glyph"], small = false) => (
       <View style={[styles.rideGlyphWrap, small && styles.rideGlyphWrapSmall]}>
         {glyph === "scheduled" ? (

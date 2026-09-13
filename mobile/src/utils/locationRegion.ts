@@ -30,6 +30,12 @@ const COUNTRY_NAMES: Record<string, string> = {
   CA: "Canada",
 };
 
+const LOCATION_COUNTRY_HINTS: Record<string, string[]> = {
+  IN: ["india", "hyderabad", "telangana", "mumbai", "delhi", "bengaluru", "bangalore", "chennai", "kolkata", "pune", "ahmedabad", "jaipur", "gurugram", "gurgaon", "noida"],
+  US: ["usa", "united states", "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", "georgia", "illinois", "new jersey", "new york", "texas", "washington", "denver", "san francisco", "san diego", "san antonio", "chicago", "dallas", "seattle", "miami"],
+  CA: ["canada", "toronto", "vancouver", "montreal", "calgary", "ottawa", "edmonton"],
+};
+
 function cleanLocationPart(value?: string | null) {
   return String(value || "").trim();
 }
@@ -52,4 +58,21 @@ export function deviceAddressCityLabel(address: DeviceAddress | null | undefined
   pushUnique(parts, region);
   if (countryCode && countryCode !== "US") pushUnique(parts, country);
   return parts.join(", ");
+}
+
+export function locationCountryCodeFromLabel(value: string | null | undefined) {
+  const normalized = cleanLocationPart(value).toLocaleLowerCase();
+  if (!normalized) return "";
+  const explicitCountry = normalized.match(/(?:^|,\s*)(india|in|usa|us|united states|united states of america|canada|ca)\s*$/i)?.[1]?.toLocaleLowerCase();
+  if (explicitCountry) {
+    if ((explicitCountry === "in" || explicitCountry === "ca") && explicitUsState(value || "")) return "US";
+    if (explicitCountry === "india" || explicitCountry === "in") return "IN";
+    if (explicitCountry === "usa" || explicitCountry === "us" || explicitCountry.startsWith("united states")) return "US";
+    if (explicitCountry === "canada" || explicitCountry === "ca") return "CA";
+  }
+  const tokenized = ` ${normalized.replace(/[^a-z0-9]+/g, " ")} `;
+  for (const [countryCode, hints] of Object.entries(LOCATION_COUNTRY_HINTS)) {
+    if (hints.some((hint) => tokenized.includes(` ${hint} `))) return countryCode;
+  }
+  return "";
 }
