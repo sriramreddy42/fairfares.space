@@ -47,6 +47,7 @@ type Props = {
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   focusWelcomeKey?: number;
+  focusListingResultsKey?: number;
   carpoolFocusKey?: number;
   rentalFocusKey?: number;
   rideOwnerOpenToken?: number;
@@ -622,6 +623,7 @@ export function HousingScreen({
   onBookCar,
   onBottomTabsHiddenChange,
   focusWelcomeKey = 0,
+  focusListingResultsKey = 0,
   carpoolFocusKey = 0,
   rentalFocusKey = 0,
   rideOwnerOpenToken = 0,
@@ -737,6 +739,7 @@ export function HousingScreen({
   const housingReviewScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
+  const [listingResultsY, setListingResultsY] = useState(0);
 
   const liveRideOwnerRequest = useMemo(
     () => rideActivityRows.find((ride) => ride.activityRole === "DRIVER_NOTIFICATION" && ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
@@ -1182,6 +1185,16 @@ export function HousingScreen({
     }, 120);
     return () => clearTimeout(timer);
   }, [focusWelcomeKey, selectedNeed, welcomeY]);
+
+  useEffect(() => {
+    if (!focusListingResultsKey) return;
+    if (selectedNeed === "rental_cars" || selectedNeed === "ride_need" || selectedNeed === "ride_offer") return;
+    setMode("housing");
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(listingResultsY - 18, 0), animated: true });
+    }, 160);
+    return () => clearTimeout(timer);
+  }, [focusListingResultsKey, listingResultsY, selectedNeed]);
 
   useEffect(() => {
     if (!rideOwnerOpenToken || rideOwnerOpenToken === lastRideOwnerOpenTokenRef.current) return;
@@ -4025,7 +4038,7 @@ export function HousingScreen({
         </KeyboardAvoidingView>
       </Modal>
 
-      <View style={styles.listingSectionHeader}>
+      <View style={styles.listingSectionHeader} onLayout={(event) => setListingResultsY(event.nativeEvent.layout.y)}>
         <Text numberOfLines={2} style={styles.listingSectionTitle}>Rooms for rent in {data?.location.city || discoveryLocation || "your current city"}</Text>
         <TouchableOpacity style={styles.filterHeader} onPress={() => setFiltersOpen((value) => !value)}>
           <Text style={styles.filterGlyph}>☷</Text>

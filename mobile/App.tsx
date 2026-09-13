@@ -442,6 +442,7 @@ function FairFaresApp() {
   const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [searchSuggestionMetro, setSearchSuggestionMetro] = useState("");
   const [chitthiSuggestionCity, setChitthiSuggestionCity] = useState("");
+  const [housingResultsFocusKey, setHousingResultsFocusKey] = useState(0);
 
   // This is intentionally session-only. A fresh app process always starts
   // with the short discovery carousel and its fourth-card search prompt.
@@ -1661,6 +1662,7 @@ function FairFaresApp() {
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
+      setHousingResultsFocusKey((value) => value + 1);
       setData((current) =>
         current
           ? {
@@ -1723,7 +1725,7 @@ function FairFaresApp() {
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
       setActiveTab("housing");
-      setHousingWelcomeFocusKey((value) => value + 1);
+      setHousingResultsFocusKey((value) => value + 1);
       setData((current) =>
         current
           ? {
@@ -2879,6 +2881,7 @@ function FairFaresApp() {
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        focusListingResultsKey={housingResultsFocusKey}
         carpoolFocusKey={carpoolFocusKey}
         rentalFocusKey={rentalFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
@@ -2939,6 +2942,7 @@ function FairFaresApp() {
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
         focusWelcomeKey={housingWelcomeFocusKey}
+        focusListingResultsKey={housingResultsFocusKey}
         carpoolFocusKey={carpoolFocusKey}
         rentalFocusKey={rentalFocusKey}
         rideOwnerOpenToken={rideOwnerOpenToken}
