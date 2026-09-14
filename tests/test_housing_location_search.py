@@ -1090,6 +1090,37 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(results, cached_results)
         self.assertEqual(google_call.call_count, first_call_count)
 
+    def test_ride_place_suggestions_use_india_city_fallback_with_photos(self):
+        origin = {
+            "address_components": [
+                {"long_name": "India", "short_name": "IN", "types": ["country"]}
+            ]
+        }
+        bengaluru = {
+            "status": "OK",
+            "results": [{
+                "name": "Bengaluru", "formatted_address": "Bengaluru, Karnataka, India", "types": ["locality"],
+                "geometry": {"location": {"lat": 12.9716, "lng": 77.5946}},
+                "photos": [{"photo_reference": "bengaluru-photo"}],
+            }],
+        }
+
+        def google_response(url, *args, **kwargs):
+            if "countriesnow.space" in url:
+                return {"error": True, "data": []}
+            if "Bengaluru+city" in url:
+                return bengaluru
+            return {"status": "ZERO_RESULTS", "results": []}
+
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
+            app, "google_accommodation_geocode", return_value=origin
+        ), patch.object(app, "google_api_get", side_effect=google_response):
+            results = app.ride_place_suggestions("Hyderabad, Telangana, India", "", cities_only=True)
+        self.assertGreaterEqual(len(results), 2)
+        self.assertEqual(results[0]["label"], "Bengaluru, Karnataka, India")
+        self.assertEqual(results[0]["source"], "country-fallback")
+        self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=bengaluru-photo")
+
     def test_popular_ride_cities_prefer_population_ranked_dynamic_source(self):
         origin = {
             "address_components": [

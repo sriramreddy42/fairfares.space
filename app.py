@@ -17232,6 +17232,72 @@ def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit:
         return fresh[:result_limit]
 
 
+INDIA_RIDE_POPULAR_CITY_FALLBACKS = (
+    ("Bengaluru", "Karnataka, India", 12.9716, 77.5946),
+    ("Chennai", "Tamil Nadu, India", 13.0827, 80.2707),
+    ("Mumbai", "Maharashtra, India", 19.0760, 72.8777),
+    ("Pune", "Maharashtra, India", 18.5204, 73.8567),
+    ("Delhi", "India", 28.6139, 77.2090),
+    ("Vijayawada", "Andhra Pradesh, India", 16.5062, 80.6480),
+    ("Visakhapatnam", "Andhra Pradesh, India", 17.6868, 83.2185),
+    ("Warangal", "Telangana, India", 17.9689, 79.5941),
+)
+
+
+def google_city_photo_url(city_name: str, country_scope: str) -> str:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    city_name = normalize_accommodation_place_label(city_name)
+    country_scope = normalize_accommodation_place_label(country_scope)
+    if not api_key or not city_name:
+        return ""
+    params = {"query": f"{city_name} city, {country_scope or 'India'}", "key": api_key}
+    try:
+        payload = google_api_get(
+            f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}",
+            timeout=3,
+        )
+    except Exception:
+        return ""
+    places = payload.get("results") if payload.get("status") == "OK" else []
+    city_types = {"locality", "postal_town"}
+    place = next(
+        (
+            item for item in (places or [])
+            if isinstance(item, dict)
+            and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
+            and normalize_accommodation_place_label(str(item.get("name") or "")).lower() == city_name.lower()
+        ),
+        None,
+    ) or next(
+        (
+            item for item in (places or [])
+            if isinstance(item, dict)
+            and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
+        ),
+        None,
+    )
+    if not isinstance(place, dict):
+        return ""
+    photos = place.get("photos") if isinstance(place.get("photos"), list) else []
+    first_photo = photos[0] if photos and isinstance(photos[0], dict) else {}
+    return explorer_photo_url(str(first_photo.get("photo_reference") or "").strip())
+
+
+def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]:
+    places: list[dict[str, object]] = []
+    for name, secondary, lat, lng in INDIA_RIDE_POPULAR_CITY_FALLBACKS[:max(1, min(int(limit or 8), 8))]:
+        label = f"{name}, {secondary}"
+        places.append(
+            {
+                "label": label,
+                "lat": lat,
+                "lng": lng,
+                "imageUrl": google_city_photo_url(name, "India"),
+            }
+        )
+    return places
+
+
 def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
     """Return country-scoped cities with city photos—never attractions or neighborhoods."""
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
@@ -17436,6 +17502,12 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             add_label(label, "google-popular")
             if label:
                 popular_points[label.lower()] = place
+        if cities_only and not labels and inferred_location_country(city) == "IN":
+            for place in india_ride_popular_city_fallbacks(limit):
+                label = str(place.get("label") or "")
+                add_label(label, "country-fallback")
+                if label:
+                    popular_points[label.lower()] = place
 
     fallback_places = [
         "Denver International Airport (DEN), 8500 Pena Blvd, Denver, CO",
