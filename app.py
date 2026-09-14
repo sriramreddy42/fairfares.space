@@ -10538,6 +10538,17 @@ def explorer_photo_url(photo_reference: str) -> str:
     return f"/api/explorer/place-photo?ref={urllib.parse.quote(photo_reference)}"
 
 
+def explorer_city_photo_url(city_name: str, country_scope: str) -> str:
+    city_name = normalize_accommodation_place_label(city_name)
+    country_scope = normalize_accommodation_place_label(country_scope)
+    if not city_name:
+        return ""
+    params = {"city": city_name}
+    if country_scope:
+        params["country"] = country_scope
+    return f"/api/explorer/city-photo?{urllib.parse.urlencode(params)}"
+
+
 def normalize_google_review(review: dict[str, object]) -> dict[str, str | int]:
     text = str(review.get("text") or "").strip()
     if len(text) > 220:
@@ -17244,7 +17255,7 @@ INDIA_RIDE_POPULAR_CITY_FALLBACKS = (
 )
 
 
-def google_city_photo_url(city_name: str, country_scope: str) -> str:
+def google_city_photo_reference(city_name: str, country_scope: str) -> str:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     city_name = normalize_accommodation_place_label(city_name)
     country_scope = normalize_accommodation_place_label(country_scope)
@@ -17280,7 +17291,11 @@ def google_city_photo_url(city_name: str, country_scope: str) -> str:
         return ""
     photos = place.get("photos") if isinstance(place.get("photos"), list) else []
     first_photo = photos[0] if photos and isinstance(photos[0], dict) else {}
-    return explorer_photo_url(str(first_photo.get("photo_reference") or "").strip())
+    return str(first_photo.get("photo_reference") or "").strip()
+
+
+def google_city_photo_url(city_name: str, country_scope: str) -> str:
+    return explorer_photo_url(google_city_photo_reference(city_name, country_scope))
 
 
 def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]:
@@ -17292,7 +17307,7 @@ def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]
                 "label": label,
                 "lat": lat,
                 "lng": lng,
-                "imageUrl": google_city_photo_url(name, "India"),
+                "imageUrl": google_city_photo_url(name, "India") or explorer_city_photo_url(name, "India"),
             }
         )
     return places
@@ -24790,6 +24805,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/explorer/place-photo":
             self.api_explorer_place_photo(parsed, head_only=True)
             return
+        if parsed.path == "/api/explorer/city-photo":
+            self.api_explorer_city_photo(parsed, head_only=True)
+            return
         if parsed.path == "/admin/email-automation/run" and not (
             os.environ.get("EMAIL_AUTOMATION_TOKEN", "").strip()
             or os.environ.get("FAIRFARES_CRON_TOKEN", "").strip()
@@ -24829,6 +24847,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/explorer/place-photo":
             self.api_explorer_place_photo(parsed)
+            return
+        if parsed.path == "/api/explorer/city-photo":
+            self.api_explorer_city_photo(parsed)
             return
         if parsed.path == "/api/explorer/config-status":
             self.api_explorer_config_status()
@@ -29320,6 +29341,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             return
+
+    def api_explorer_city_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = normalize_accommodation_place_label((params.get("city") or [""])[0])
+        country = normalize_accommodation_place_label((params.get("country") or [""])[0])
+        if not city or len(city) > 120 or len(country) > 80:
+            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
+            return
+        if not re.fullmatch(r"[\w\s.,'&()-]+", city, flags=re.UNICODE) or (
+            country and not re.fullmatch(r"[\w\s.,'&()-]+", country, flags=re.UNICODE)
+        ):
+            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
+            return
+        photo_reference = google_city_photo_reference(city, country or city)
+        if not photo_reference:
+            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
+            return
+        photo_query = urllib.parse.urlencode({"ref": photo_reference})
+        self.api_explorer_place_photo(
+            urllib.parse.ParseResult(parsed.scheme, parsed.netloc, "/api/explorer/place-photo", "", photo_query, ""),
+            head_only=head_only,
+        )
 
     def api_explorer_config_status(self) -> None:
         self.send_json({"ok": True, "explorer": explorer_config_status()})

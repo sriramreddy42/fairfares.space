@@ -1242,7 +1242,10 @@ class HousingLocationSearchTest(unittest.TestCase):
             app, "ride_point", return_value={"label": "Mumbai, India", "lat": 19.076, "lng": 72.8777}
         ):
             results = app.ride_place_suggestions("Mumbai, India", "", cities_only=True)
-        self.assertEqual(results, [])
+        self.assertTrue(results)
+        self.assertNotIn("Denver", " ".join(str(item.get("label") or "") for item in results))
+        self.assertTrue(all(str(item.get("secondary") or "").endswith("India") for item in results))
+        self.assertTrue(all(str(item.get("imageUrl") or "").startswith("/api/explorer/") for item in results))
 
 
 if __name__ == "__main__":

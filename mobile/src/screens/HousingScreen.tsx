@@ -250,14 +250,14 @@ const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
   { type: "CARPOOL_OFFER", title: "Offer a ride", copy: "List route, seats, luggage, and contribution." }
 ];
 const indiaRidePopularCities: RidePlaceSuggestion[] = [
-  { label: "Bengaluru, Karnataka, India", main: "Bengaluru", secondary: "Karnataka, India", distanceMiles: null, lat: 12.9716, lng: 77.5946, source: "country-fallback" },
-  { label: "Chennai, Tamil Nadu, India", main: "Chennai", secondary: "Tamil Nadu, India", distanceMiles: null, lat: 13.0827, lng: 80.2707, source: "country-fallback" },
-  { label: "Mumbai, Maharashtra, India", main: "Mumbai", secondary: "Maharashtra, India", distanceMiles: null, lat: 19.0760, lng: 72.8777, source: "country-fallback" },
-  { label: "Pune, Maharashtra, India", main: "Pune", secondary: "Maharashtra, India", distanceMiles: null, lat: 18.5204, lng: 73.8567, source: "country-fallback" },
-  { label: "Delhi, India", main: "Delhi", secondary: "India", distanceMiles: null, lat: 28.6139, lng: 77.2090, source: "country-fallback" },
-  { label: "Vijayawada, Andhra Pradesh, India", main: "Vijayawada", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 16.5062, lng: 80.6480, source: "country-fallback" },
-  { label: "Visakhapatnam, Andhra Pradesh, India", main: "Visakhapatnam", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 17.6868, lng: 83.2185, source: "country-fallback" },
-  { label: "Warangal, Telangana, India", main: "Warangal", secondary: "Telangana, India", distanceMiles: null, lat: 17.9689, lng: 79.5941, source: "country-fallback" },
+  { label: "Bengaluru, Karnataka, India", main: "Bengaluru", secondary: "Karnataka, India", distanceMiles: null, lat: 12.9716, lng: 77.5946, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Bengaluru&country=India" },
+  { label: "Chennai, Tamil Nadu, India", main: "Chennai", secondary: "Tamil Nadu, India", distanceMiles: null, lat: 13.0827, lng: 80.2707, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Chennai&country=India" },
+  { label: "Mumbai, Maharashtra, India", main: "Mumbai", secondary: "Maharashtra, India", distanceMiles: null, lat: 19.0760, lng: 72.8777, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Mumbai&country=India" },
+  { label: "Pune, Maharashtra, India", main: "Pune", secondary: "Maharashtra, India", distanceMiles: null, lat: 18.5204, lng: 73.8567, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Pune&country=India" },
+  { label: "Delhi, India", main: "Delhi", secondary: "India", distanceMiles: null, lat: 28.6139, lng: 77.2090, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Delhi&country=India" },
+  { label: "Vijayawada, Andhra Pradesh, India", main: "Vijayawada", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 16.5062, lng: 80.6480, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Vijayawada&country=India" },
+  { label: "Visakhapatnam, Andhra Pradesh, India", main: "Visakhapatnam", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 17.6868, lng: 83.2185, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Visakhapatnam&country=India" },
+  { label: "Warangal, Telangana, India", main: "Warangal", secondary: "Telangana, India", distanceMiles: null, lat: 17.9689, lng: 79.5941, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Warangal&country=India" },
 ];
 const rideServicePosters: Array<{
   key: "scheduled" | "general" | "carpool";
