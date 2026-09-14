@@ -1104,10 +1104,20 @@ class HousingLocationSearchTest(unittest.TestCase):
                 "photos": [{"photo_reference": "bengaluru-photo"}],
             }],
         }
+        new_york = {
+            "status": "OK",
+            "results": [{
+                "name": "New York", "formatted_address": "New York, NY, USA", "types": ["locality"],
+                "geometry": {"location": {"lat": 40.7128, "lng": -74.0060}},
+                "photos": [{"photo_reference": "new-york-photo"}],
+            }],
+        }
 
         def google_response(url, *args, **kwargs):
             if "countriesnow.space" in url:
-                return {"error": True, "data": []}
+                return {"error": False, "data": [{"city": "New York"}]}
+            if "New+York+city" in url:
+                return new_york
             if "Bengaluru+city" in url:
                 return bengaluru
             return {"status": "ZERO_RESULTS", "results": []}
@@ -1117,6 +1127,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         ), patch.object(app, "google_api_get", side_effect=google_response):
             results = app.ride_place_suggestions("Hyderabad, Telangana, India", "", cities_only=True)
         self.assertGreaterEqual(len(results), 2)
+        self.assertNotIn("New York, NY, USA", [item["label"] for item in results])
         self.assertEqual(results[0]["label"], "Bengaluru, Karnataka, India")
         self.assertEqual(results[0]["source"], "country-fallback")
         self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=bengaluru-photo")

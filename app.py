@@ -17442,6 +17442,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
+    selected_country = inferred_location_country(city) if cities_only and city else ""
     labels: list[tuple[str, str]] = []
     popular_points: dict[str, dict[str, object]] = {}
 
@@ -17477,6 +17478,10 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         clean = dedupe_repeated_location_label(normalize_accommodation_place_label(label))
         if not clean:
             return
+        if cities_only and selected_country:
+            label_country = inferred_location_country(clean)
+            if label_country and label_country != selected_country:
+                return
         if any(existing.lower() == clean.lower() for existing, _ in labels):
             return
         labels.append((clean, source))
@@ -17502,7 +17507,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             add_label(label, "google-popular")
             if label:
                 popular_points[label.lower()] = place
-        if cities_only and not labels and inferred_location_country(city) == "IN":
+        if cities_only and not labels and selected_country == "IN":
             for place in india_ride_popular_city_fallbacks(limit):
                 label = str(place.get("label") or "")
                 add_label(label, "country-fallback")
