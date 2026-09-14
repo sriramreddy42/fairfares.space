@@ -24787,6 +24787,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/uploads/"):
             self.serve_upload(parsed.path)
             return
+        if parsed.path == "/api/explorer/place-photo":
+            self.api_explorer_place_photo(parsed, head_only=True)
+            return
         if parsed.path == "/admin/email-automation/run" and not (
             os.environ.get("EMAIL_AUTOMATION_TOKEN", "").strip()
             or os.environ.get("FAIRFARES_CRON_TOKEN", "").strip()
@@ -29288,7 +29291,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
-    def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult) -> None:
+    def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
         api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         ref = (urllib.parse.parse_qs(parsed.query).get("ref") or [""])[0].strip()
         if not api_key or not ref or len(ref) > 2048 or not re.fullmatch(r"[A-Za-z0-9._~-]+", ref):
@@ -29311,6 +29314,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "public, max-age=86400")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        if head_only:
+            return
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
