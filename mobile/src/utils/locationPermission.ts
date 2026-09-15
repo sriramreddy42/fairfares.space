@@ -8,11 +8,13 @@ type LocationPermissionCopy = {
 };
 
 export async function requestUserLocationPermission(copy: LocationPermissionCopy): Promise<boolean> {
-  const permission = await Location.requestForegroundPermissionsAsync();
+  const title = copy.title || "Location permission needed";
+  let permission = await Location.getForegroundPermissionsAsync();
   if (permission.status === Location.PermissionStatus.GRANTED || permission.granted) return true;
 
-  const title = copy.title || "Location permission needed";
   if (permission.canAskAgain) {
+    permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status === Location.PermissionStatus.GRANTED || permission.granted) return true;
     Alert.alert(title, copy.requestMessage);
     return false;
   }

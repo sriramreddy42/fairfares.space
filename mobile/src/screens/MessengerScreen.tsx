@@ -6846,9 +6846,102 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     return () => subscription.remove();
   }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id, actionMessage, messageInfo, attachmentPreview, profilePhotoPreview, pendingPhotoPreviewOpen, attachmentPreviewGroup.length, forwardPickerOpen, forwardingMessages, shareContactPickerOpen, contactPickerOpen, contactPickerMode, richComposer, emojiPickerOpen, wallpaperPanelOpen, attachmentMenuOpen, groupMembersOpen, chatOptionsOpen, selectedMessageIds.length]);
 
+  const threadRightEdgeBackResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const screenWidth = Dimensions.get("window").width;
+      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
+      return gesture.x0 >= screenWidth - 34 && horizontalSwipe;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      if (!horizontalSwipe) return;
+      if (actionMessage) {
+        setActionMessage(null);
+        return;
+      }
+      if (attachmentPreview) {
+        setAttachmentPreview(null);
+        return;
+      }
+      if (profilePhotoPreview) {
+        setProfilePhotoPreview(null);
+        return;
+      }
+      if (pendingPhotoPreviewOpen) {
+        closePendingMediaPreview();
+        return;
+      }
+      if (attachmentPreviewGroup.length) {
+        setAttachmentPreviewGroup([]);
+        return;
+      }
+      if (forwardPickerOpen) {
+        if (!forwardingMessages) {
+          setForwardPickerOpen(false);
+          setSelectedMessageIds([]);
+          setSelectedForwardConversationIds([]);
+        }
+        return;
+      }
+      if (shareContactPickerOpen) {
+        setShareContactPickerOpen(false);
+        return;
+      }
+      if (contactPickerOpen && contactPickerMode === "add") {
+        setContactPickerOpen(false);
+        return;
+      }
+      if (richComposer) {
+        setRichComposer("");
+        return;
+      }
+      if (emojiPickerOpen) {
+        setEmojiPickerOpen(false);
+        return;
+      }
+      if (wallpaperPanelOpen) {
+        setWallpaperPanelOpen(false);
+        return;
+      }
+      if (attachmentMenuOpen) {
+        setAttachmentMenuOpen(false);
+        return;
+      }
+      if (groupMembersOpen) {
+        setGroupMembersOpen(false);
+        return;
+      }
+      if (chatOptionsOpen) {
+        setChatOptionsOpen(false);
+        return;
+      }
+      if (selectedMessageIds.length) {
+        setSelectedMessageIds([]);
+        return;
+      }
+      closeThread();
+    },
+    onPanResponderTerminationRequest: () => true
+  }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, wallpaperPanelOpen]);
+
+  const messageInfoRightEdgeBackResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
+      return gesture.x0 >= Dimensions.get("window").width - 34 && horizontalSwipe;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      if (horizontalSwipe) setMessageInfo(null);
+    },
+    onPanResponderTerminationRequest: () => true
+  }), []);
+
   if (inThread) {
     return (
       <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]}>
+        <View style={styles.rightEdgeBackGestureZone} {...threadRightEdgeBackResponder.panHandlers} />
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
@@ -7363,7 +7456,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </Modal>
 
         <Modal visible={Boolean(messageInfo)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setMessageInfo(null)}>
-          <SafeAreaView style={styles.messageInfoScreen} edges={["top", "bottom", "left", "right"]}>
+          <SafeAreaView style={[styles.messageInfoScreen, { paddingTop: safeAreaInsets.top }]} edges={["bottom", "left", "right"]}>
+            <View style={styles.rightEdgeBackGestureZone} {...messageInfoRightEdgeBackResponder.panHandlers} />
             <View style={styles.messageInfoHeader}>
               <TouchableOpacity style={styles.messageInfoBack} onPress={() => setMessageInfo(null)} accessibilityLabel="Close message info"><Text style={styles.messageInfoBackText}>‹</Text></TouchableOpacity>
               <Text style={styles.messageInfoTitle}>Message info</Text>
@@ -8109,6 +8203,7 @@ const styles = StyleSheet.create({
   chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
   threadScreen: { flex: 1, backgroundColor: "#D9E5DD", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
+  rightEdgeBackGestureZone: { position: "absolute", top: 0, right: 0, bottom: 0, width: 28, zIndex: 80 },
   threadScreenAndroid: { paddingBottom: 0 },
   threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
   threadKeyboardBody: { flex: 1, position: "relative", overflow: "visible" },

@@ -6230,6 +6230,9 @@ def init_db() -> None:
                 terms_version TEXT,
                 privacy_version TEXT,
                 community_guidelines_version TEXT,
+                suspended_at TEXT,
+                suspended_reason TEXT NOT NULL DEFAULT '',
+                suspended_by INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -7563,6 +7566,19 @@ def init_db() -> None:
                 FOREIGN KEY(reporter_id) REFERENCES users(id),
                 FOREIGN KEY(reviewed_by) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS user_moderation_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_user_id INTEGER,
+                target_email TEXT NOT NULL DEFAULT '',
+                admin_user_id INTEGER,
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(target_user_id) REFERENCES users(id),
+                FOREIGN KEY(admin_user_id) REFERENCES users(id)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -7590,6 +7606,10 @@ def init_db() -> None:
         ensure_column(con, "users", "terms_version", "terms_version TEXT")
         ensure_column(con, "users", "privacy_version", "privacy_version TEXT")
         ensure_column(con, "users", "community_guidelines_version", "community_guidelines_version TEXT")
+        ensure_column(con, "users", "suspended_at", "suspended_at TEXT")
+        ensure_column(con, "users", "suspended_reason", "suspended_reason TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "suspended_by", "suspended_by INTEGER")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_user_moderation_actions_target ON user_moderation_actions(target_user_id, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_account_deletion_user_status ON account_deletion_requests(user_id, status, requested_at DESC)")
         ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
@@ -15560,6 +15580,35 @@ def clean_multiline_text_value(value: object, max_length: int) -> str:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", str(value or ""))
     text = re.sub(r"[ \t\r\f\v]+", " ", text).strip()
     return text[:max_length]
+
+
+ABUSIVE_PUBLIC_CONTENT_PATTERNS = (
+    r"\bnee\s+jaathini\s+denga+\b",
+    r"\bjaathini\s+denga+\b",
+    r"\bdenga+\b",
+    r"\bdengaa+\b",
+    r"\bmadarchod\b",
+    r"\bbhenchod\b",
+    r"\bchodu\b",
+    r"\bfuck\s+(?:you|off)\b",
+    r"\byou\s+gay\b",
+)
+
+
+def public_content_moderation_error(*values: object) -> str:
+    """Return an error string when public marketplace/community text is abusive."""
+    combined = clean_multiline_text_value(" ".join(str(value or "") for value in values), 5000).lower()
+    if not combined:
+        return ""
+    compact = re.sub(r"[^a-z0-9]+", " ", combined)
+    for pattern in ABUSIVE_PUBLIC_CONTENT_PATTERNS:
+        if re.search(pattern, compact, re.IGNORECASE):
+            return "This content cannot be published. Keep listings respectful and useful."
+    return ""
+
+
+def mobile_user_is_verified(user: sqlite3.Row | dict[str, object] | None) -> bool:
+    return bool(int(row_value(user, "is_verified") or 0))
 
 
 def clean_account_name(value: object) -> str:
@@ -25347,6 +25396,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/post/comment": self.comment_workspace_post,
             "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
             "/admin/community/moderate": self.moderate_community_content,
+            "/admin/users/moderate": self.moderate_user_account,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/bookings/refund": self.refund_admin_booking_payment,
             "/admin/oncall/assign": self.assign_oncall_shift,
@@ -25531,6 +25581,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 SELECT users.*, sessions.token AS authenticated_session_token FROM users
                 JOIN sessions ON sessions.user_id = users.id
                 WHERE sessions.token IN ({placeholders})
+                  AND (users.suspended_at IS NULL OR users.suspended_at = '')
                   AND datetime(sessions.created_at) >= datetime('now', ?)
                   AND datetime(COALESCE(NULLIF(sessions.last_seen_at, ''), sessions.created_at)) >= datetime('now', ?)
                 ORDER BY sessions.created_at DESC
@@ -32443,11 +32494,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        moderation_key = query.get("moderation", [""])[0]
+        moderation_messages = {
+            "suspend_hide": "User suspended, sessions revoked, and public content removed.",
+            "delete_content": "User public content removed and sessions revoked.",
+            "delete_account": "User account/profile and dependent records deleted.",
+            "restore": "User suspension removed.",
+            "confirm": "Type DELETE to permanently delete an account.",
+            "invalid": "Choose a valid user moderation action.",
+            "missing": "User not found or cannot be moderated.",
+            "self": "Admins cannot moderate their own account.",
+        }
+        moderation_notice = (
+            f'<p class="admin-status-notice">{escape(moderation_messages[moderation_key])}</p>'
+            if moderation_key in moderation_messages
+            else ""
+        )
         users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
         body = render_template(
             "admin_users.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "users"),
+            moderation_notice=moderation_notice,
             users=users or '<p class="admin-empty">No users yet.</p>',
         )
         self.send_html(body)
@@ -32508,6 +32577,108 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE ask_community_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, int(post["id"])))
                 con.execute("UPDATE ask_community_reports SET status = 'RESOLVED', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE post_id = ? AND status = 'OPEN'", (int(user["id"]), int(post["id"])))
         self.redirect("/admin/community")
+
+    def moderate_user_account(self) -> None:
+        user = self.require_owner_admin("/admin/users")
+        if not user:
+            return
+        form = self.read_form()
+        target_user_id = int(float_from_value(form.get("user_id") or "0"))
+        action = clean_text_value(form.get("action"), 30).upper()
+        reason = clean_multiline_text_value(form.get("reason"), 500) or "Admin moderation action"
+        confirmation = clean_text_value(form.get("confirmation"), 30).upper()
+        if action not in {"SUSPEND_HIDE", "DELETE_CONTENT", "DELETE_ACCOUNT", "RESTORE"} or target_user_id <= 0:
+            self.redirect("/admin/users?moderation=invalid")
+            return
+        if target_user_id == int(row_value(user, "id") or 0):
+            self.redirect("/admin/users?moderation=self")
+            return
+        with db() as con:
+            target = con.execute("SELECT * FROM users WHERE id = ? AND is_admin = 0 LIMIT 1", (target_user_id,)).fetchone()
+            if not target:
+                self.redirect("/admin/users?moderation=missing")
+                return
+            target_email = row_value(target, "email")
+            details: dict[str, int | str] = {}
+            if action in {"SUSPEND_HIDE", "DELETE_CONTENT"}:
+                if action == "SUSPEND_HIDE":
+                    con.execute(
+                        """
+                        UPDATE users
+                        SET suspended_at = COALESCE(NULLIF(suspended_at, ''), CURRENT_TIMESTAMP),
+                            suspended_reason = ?,
+                            suspended_by = ?
+                        WHERE id = ?
+                        """,
+                        (reason, int(user["id"]), target_user_id),
+                    )
+                details["sessions"] = max(0, int(con.execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,)).rowcount or 0))
+                details["housing"] = max(0, int(con.execute(
+                    "UPDATE accommodation_posts SET visibility_status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND visibility_status != 'DELETED'",
+                    (target_user_id,),
+                ).rowcount or 0))
+                details["rides"] = max(0, int(con.execute(
+                    "UPDATE ride_posts SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status != 'DELETED'",
+                    (target_user_id,),
+                ).rowcount or 0))
+                details["community_posts"] = max(0, int(con.execute(
+                    "UPDATE ask_community_posts SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE author_id = ? AND status != 'DELETED'",
+                    (target_user_id,),
+                ).rowcount or 0))
+                details["community_answers"] = max(0, int(con.execute(
+                    "UPDATE ask_community_answers SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE author_id = ? AND status != 'DELETED'",
+                    (target_user_id,),
+                ).rowcount or 0))
+                con.execute(
+                    """
+                    INSERT INTO user_moderation_actions
+                    (target_user_id, target_email, admin_user_id, action, reason, details_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (target_user_id, target_email, int(user["id"]), action, reason, json.dumps(details, separators=(",", ":"))),
+                )
+                invalidate_mobile_search_cache("housing")
+                invalidate_mobile_search_cache("rides")
+                self.redirect(f"/admin/users?moderation={action.lower()}")
+                return
+            if action == "RESTORE":
+                con.execute(
+                    "UPDATE users SET suspended_at = NULL, suspended_reason = '', suspended_by = NULL WHERE id = ?",
+                    (target_user_id,),
+                )
+                con.execute(
+                    """
+                    INSERT INTO user_moderation_actions
+                    (target_user_id, target_email, admin_user_id, action, reason, details_json)
+                    VALUES (?, ?, ?, 'RESTORE', ?, '{}')
+                    """,
+                    (target_user_id, target_email, int(user["id"]), reason),
+                )
+                self.redirect("/admin/users?moderation=restore")
+                return
+            if confirmation != "DELETE":
+                self.redirect("/admin/users?moderation=confirm")
+                return
+            con.execute(
+                """
+                INSERT INTO user_moderation_actions
+                (target_user_id, target_email, admin_user_id, action, reason, details_json)
+                VALUES (NULL, ?, ?, 'DELETE_ACCOUNT', ?, '{}')
+                """,
+                (target_email, int(user["id"]), reason),
+            )
+            result = purge_user_accounts(con, {target_email})
+            con.execute(
+                """
+                INSERT INTO user_moderation_actions
+                (target_user_id, target_email, admin_user_id, action, reason, details_json)
+                VALUES (NULL, ?, ?, 'DELETE_ACCOUNT_RESULT', ?, ?)
+                """,
+                (target_email, int(user["id"]), reason, json.dumps(result, default=str, separators=(",", ":"))),
+            )
+        invalidate_mobile_search_cache("housing")
+        invalidate_mobile_search_cache("rides")
+        self.redirect("/admin/users?moderation=delete_account")
 
     def admin_requests_page(self) -> None:
         user = self.require_owner_admin()
@@ -33251,10 +33422,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
             for listing in housing_listings
         ) or '<tr><td colspan="9">No housing listings.</td></tr>'
+        suspended = bool(row_value(row, "suspended_at"))
+        suspended_badge = (
+            f'<span class="admin-community-status status-hidden">Suspended</span><small>{escape(row_value(row, "suspended_at"))}</small>'
+            if suspended
+            else '<span class="admin-community-status status-published">Active</span>'
+        )
+        moderation_actions = f"""
+        <section class="admin-user-moderation">
+          <h3>Moderation</h3>
+          <p class="admin-muted">Use Suspend + delete public content for attackers. Hard-delete account/profile only after confirming the evidence is captured.</p>
+          <form method="post" action="/admin/users/moderate" class="admin-user-moderation-form">
+            <input type="hidden" name="user_id" value="{escape(row_value(row, "id"))}">
+            <label><span>Reason</span><input name="reason" maxlength="500" placeholder="Spam, harassment, abusive listings" required></label>
+            <div class="admin-community-actions">
+              <button name="action" value="SUSPEND_HIDE" type="submit">Suspend + delete public content</button>
+              <button name="action" value="DELETE_CONTENT" type="submit">Delete public content only</button>
+              <button name="action" value="RESTORE" type="submit">Restore login</button>
+            </div>
+            <label><span>Hard delete account/profile</span><input name="confirmation" placeholder="Type DELETE"></label>
+            <button class="danger-button" name="action" value="DELETE_ACCOUNT" type="submit">Delete account/profile</button>
+          </form>
+        </section>
+        """
         return f"""
         <details class="admin-user-card" data-admin-user-card data-search="{escape(search_text)}">
             <summary>
-                <span><b>{escape(row["name"])}</b><small>#{row["id"]} · {escape(row["email"])}</small></span>
+                <span><b>{escape(row["name"])}</b><small>#{row["id"]} · {escape(row["email"])}</small>{suspended_badge}</span>
                 <span>{escape(row["phone"] or "No phone")}</span>
                 <span>{row["booking_count"]} bookings<small>{row["housing_listing_count"] or 0} listings</small></span>
                 <span>{row["cancelled_count"] or 0} cancelled</span>
@@ -33275,6 +33469,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <tbody>{housing_listing_rows}</tbody>
                     </table>
                 </div>
+                {moderation_actions}
                 <h3>Bookings</h3>
                 <table class="admin-mini-table"><tbody>{booking_rows}</tbody></table>
                 <h3>Driver License</h3>
@@ -36545,6 +36740,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "UPDATE auth_identities SET provider_email = ?, updated_at = CURRENT_TIMESTAMP WHERE provider = ? AND provider_subject = ?",
                         (email, provider, subject),
                     )
+                if row_value(user, "suspended_at"):
+                    con.execute("DELETE FROM sessions WHERE user_id = ?", (int(user["id"]),))
+                    self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
+                    return
                 has_current_consent = bool(
                     row_value(user, "consented_at")
                     and row_value(user, "terms_version") == TERMS_VERSION
@@ -36621,6 +36820,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "This sign-in expired. Start social sign-in again."}, 401)
                 return
             user_id = int(row["user_id"])
+            continuation_user = con.execute("SELECT suspended_at FROM users WHERE id = ?", (user_id,)).fetchone()
+            if continuation_user and row_value(continuation_user, "suspended_at"):
+                con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+                self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
+                return
             owner = find_other_user_by_phone(con, phone, user_id)
             if owner:
                 owner_user = con.execute("SELECT email FROM users WHERE id = ?", (int(owner["id"]),)).fetchone()
@@ -36732,6 +36936,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             con.execute("UPDATE auth_phone_continuations SET verify_attempts = verify_attempts + 1 WHERE token_hash = ?", (token_hash,))
             phone = str(row["phone"])
             user_id = int(row["user_id"])
+            continuation_user = con.execute("SELECT suspended_at FROM users WHERE id = ?", (user_id,)).fetchone()
+            if continuation_user and row_value(continuation_user, "suspended_at"):
+                con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+                self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
+                return
         try:
             result = twilio_verify_request("VerificationCheck", {"To": phone, "Code": code})
         except RuntimeError as exc:
@@ -36782,6 +36991,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 record_login_failure(account_rate_key)
                 log_login_failure(identifier, "mobile_password_mismatch")
                 self.send_json({"ok": False, "error": "That email/phone and password did not match."}, 401)
+                return
+            if row_value(user, "suspended_at"):
+                self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
                 return
             if not int(row_value(user, "is_verified") or 0):
                 token = create_verification(int(row_value(user, "id") or 0), row_value(user, "email"))
@@ -38940,6 +39152,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required before posting a ride."}, 401)
             return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before publishing a ride."}, 403)
+            return
         payload = self.read_json_body()
         ride_type = normalize_ride_type(payload.get("rideType") or payload.get("type"))
         rider_role = ride_role_for_type(ride_type)
@@ -38978,6 +39193,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         notes = clean_multiline_text_value(payload.get("notes"), 1200)
         if not origin or not destination:
             self.send_json({"ok": False, "error": "Pickup and destination are required."}, 400)
+            return
+        moderation_error = public_content_moderation_error(origin, destination, city, luggage, accessibility, preferences, notes)
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
             return
         if origin_coordinates_supplied and not missing_ride_coordinate_pair(payload.get("originLat") or payload.get("origin_lat"), payload.get("originLng") or payload.get("origin_lng")) and not valid_ride_coordinate_pair(origin_lat, origin_lng):
             self.send_json({"ok": False, "error": "Pickup coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
@@ -39112,6 +39331,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             })
             return
         with db() as con:
+            recent_rides = int(con.execute(
+                "SELECT COUNT(*) AS count FROM ride_posts WHERE user_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')",
+                (int(row_value(user, "id") or 0),),
+            ).fetchone()["count"] or 0)
+            if recent_rides >= 8:
+                self.send_json({"ok": False, "error": "You have reached the hourly ride posting limit. Please try again later."}, 429)
+                return
+            duplicate_ride = con.execute(
+                """
+                SELECT public_id FROM ride_posts
+                WHERE user_id = ? AND status = 'ACTIVE'
+                  AND LOWER(TRIM(origin_label)) = LOWER(TRIM(?))
+                  AND LOWER(TRIM(destination_label)) = LOWER(TRIM(?))
+                  AND COALESCE(pickup_date, '') = ?
+                  AND COALESCE(pickup_time, '') = ?
+                  AND datetime(created_at) >= datetime('now', '-15 minutes')
+                LIMIT 1
+                """,
+                (int(row_value(user, "id") or 0), origin_label, destination_label, pickup_date, pickup_time),
+            ).fetchone()
+            if duplicate_ride:
+                self.send_json({"ok": False, "error": "This ride was already posted recently."}, 409)
+                return
             while con.execute("SELECT 1 FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone():
                 public_id = ride_public_id()
             cursor = con.execute(
@@ -39368,6 +39610,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required to ask the community."}, 401)
             return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before publishing to Ask Community."}, 403)
+            return
         payload = self.read_json_body()
         post_type = clean_text_value(payload.get("type"), 30).upper() or "QUESTION"
         category = clean_text_value(payload.get("category"), 30).upper() or "GENERAL"
@@ -39388,6 +39633,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if len(title) < 6 or len(body) < 12:
             self.send_json({"ok": False, "error": "Add a clear title and at least 12 characters of detail."}, 400)
             return
+        moderation_error = public_content_moderation_error(title, body, city, area, *details.values())
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
+            return
         images_supplied = isinstance(payload.get("images"), list)
         raw_images = payload.get("images") if images_supplied else []
         valid_images = [
@@ -39400,6 +39649,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             recent_posts = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_posts WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (int(user["id"]),)).fetchone()["count"])
             if recent_posts >= 6:
                 self.send_json({"ok": False, "error": "You have reached the hourly community post limit. Please try again later."}, 429)
+                return
+            duplicate_post = con.execute(
+                """
+                SELECT public_id FROM ask_community_posts
+                WHERE author_id = ? AND status IN ('PUBLISHED','LOCKED')
+                  AND LOWER(TRIM(title)) = LOWER(TRIM(?))
+                  AND LOWER(TRIM(body)) = LOWER(TRIM(?))
+                  AND datetime(created_at) >= datetime('now', '-15 minutes')
+                LIMIT 1
+                """,
+                (int(user["id"]), title, body),
+            ).fetchone()
+            if duplicate_post:
+                self.send_json({"ok": False, "error": "This post was already published recently."}, 409)
                 return
             community_id = None
             if group_public_id:
@@ -39990,6 +40253,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required before posting a housing lead."}, 401)
             return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before publishing a housing listing."}, 403)
+            return
         payload = self.read_json_body()
         editing_public_id = clean_text_value(payload.get("listingId") or payload.get("listing_id"), 80)
         existing_listing = None
@@ -40073,6 +40339,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
                 400,
             )
+            return
+        moderation_error = public_content_moderation_error(
+            title, description, city, street_address, area, primary_neighborhood, apartment_name,
+            work_school_location, contact_name, about_you, commute_preference, amenities,
+        )
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
             return
         if not valid_contact_email(contact_email) or not valid_contact_phone(contact_phone):
             self.send_json({"ok": False, "error": "Use a valid contact email and phone number."}, 400)
@@ -40221,6 +40494,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else:
                     con.execute("DELETE FROM accommodation_post_images WHERE post_id = ?", (post_id,))
             else:
+                recent_posts = int(con.execute(
+                    "SELECT COUNT(*) AS count FROM accommodation_posts WHERE user_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')",
+                    (int(row_value(user, "id") or 0),),
+                ).fetchone()["count"] or 0)
+                if recent_posts >= 5:
+                    self.send_json({"ok": False, "error": "You have reached the hourly housing posting limit. Please try again later."}, 429)
+                    return
+                duplicate_listing = con.execute(
+                    """
+                    SELECT public_id FROM accommodation_posts
+                    WHERE user_id = ? AND visibility_status != 'DELETED'
+                      AND post_mode = ?
+                      AND LOWER(TRIM(title)) = LOWER(TRIM(?))
+                      AND LOWER(TRIM(description)) = LOWER(TRIM(?))
+                      AND LOWER(TRIM(city)) = LOWER(TRIM(?))
+                      AND datetime(created_at) >= datetime('now', '-15 minutes')
+                    LIMIT 1
+                    """,
+                    (int(row_value(user, "id") or 0), mode, title, description, city),
+                ).fetchone()
+                if duplicate_listing:
+                    self.send_json({"ok": False, "error": "This listing was already published recently."}, 409)
+                    return
                 cursor = con.execute(
                 """
                 INSERT INTO accommodation_posts

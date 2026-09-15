@@ -2900,6 +2900,30 @@
 .inline-form .danger-button {
   background: var(--red);
 }
+.admin-user-moderation {
+  background: #fff7f7;
+  border: 1px solid #f0c6c6;
+  border-radius: 18px;
+  margin: 18px 0;
+  padding: 16px;
+}
+.admin-user-moderation .admin-muted {
+  color: #7f1d1d;
+  margin: 4px 0 14px;
+}
+.admin-user-moderation-form {
+  display: grid;
+  gap: 12px;
+}
+.admin-user-moderation-form label {
+  display: grid;
+  gap: 6px;
+}
+.admin-user-moderation-form input {
+  border: 1px solid #e0d8d2;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
 .admin-stack-form {
   display: grid;
   gap: 7px;

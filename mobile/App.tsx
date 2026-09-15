@@ -10,8 +10,8 @@ import * as WebBrowser from "expo-web-browser";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
-import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
@@ -865,11 +865,18 @@ function FairFaresApp() {
   }, [data?.housing, cars]);
 
   useEffect(() => {
-    // Chitthi is fully usable in-app without notification permission. Check
-    // for an already-granted setting and register it quietly, but never put a
-    // system permission prompt in front of someone simply signing in.
+    // Chitthi is usable in-app without notification permission. First, quietly
+    // register devices where notification permission was already granted.
     if (data?.user) void enableMobileNotifications(false);
   }, [data?.user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !data?.user || loading || launchVisible || loginOpen || signupCountryOpen || profileCompletionOpen || listingOpen || searchOpen || staffPickupOpen || paymentUrl || paymentStatus || bottomTabsHidden) return;
+    const timer = setTimeout(() => {
+      void enableMobileNotifications(true);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [bottomTabsHidden, data?.user?.id, launchVisible, listingOpen, loading, loginOpen, paymentStatus, paymentUrl, profileCompletionOpen, searchOpen, signupCountryOpen, staffPickupOpen]);
 
   useEffect(() => {
     if (!data?.user) {
@@ -2994,15 +3001,54 @@ function FairFaresApp() {
     </React.Suspense>
   );
 
+  const marketplaceFullBleedTop = (activeTab === "housing" || activeTab === "home")
+    && selectedNeed !== "rental_cars"
+    && !bottomTabsHidden
+    && !pendingPost
+    && !pendingRide
+    && !loginOpen
+    && !signupCountryOpen
+    && !listingOpen
+    && !searchOpen
+    && !staffPickupOpen
+    && !paymentUrl
+    && !paymentStatus;
+
+  const listingRightEdgeBackResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
+      return gesture.x0 >= viewportWidth - 34 && horizontalSwipe;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      if (horizontalSwipe) setListingOpen(false);
+    },
+    onPanResponderTerminationRequest: () => true
+  }), [viewportWidth]);
+
+  const searchRightEdgeBackResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
+      return gesture.x0 >= viewportWidth - 34 && horizontalSwipe;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      if (horizontalSwipe) setSearchOpen(false);
+    },
+    onPanResponderTerminationRequest: () => true
+  }), [viewportWidth]);
+
   return (
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView
       style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
-      edges={["top", "right", "left"]}
+      edges={marketplaceFullBleedTop ? ["right", "left"] : ["top", "right", "left"]}
     >
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
-        backgroundColor={launchVisible ? "#020817" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10"}
+        backgroundColor={launchVisible ? "#020817" : marketplaceFullBleedTop ? "#dff3ff" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10"}
         translucent
       />
       <CriticalBrandAssetPreloader />
@@ -3641,6 +3687,7 @@ function FairFaresApp() {
       </Modal>
       <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.rightEdgeBackGestureZone} {...listingRightEdgeBackResponder.panHandlers} />
           <ScrollView style={[styles.modalCard, styles.listingModalCard]} contentContainerStyle={styles.listingForm} keyboardShouldPersistTaps="handled">
             <View style={styles.modalHeaderRow}>
               <TouchableOpacity style={styles.modalBackButton} onPress={() => setListingOpen(false)} accessibilityRole="button" accessibilityLabel="Back">
@@ -3861,6 +3908,7 @@ function FairFaresApp() {
       </Modal>
       <Modal visible={searchOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setSearchOpen(false)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.rightEdgeBackGestureZone} {...searchRightEdgeBackResponder.panHandlers} />
           <View style={[styles.modalCard, styles.searchModalCard]}>
             <ScrollView style={styles.searchModalScroll} contentContainerStyle={styles.searchModalContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <View style={styles.modalHeaderRow}>
@@ -4108,6 +4156,7 @@ const styles = StyleSheet.create({
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing.md },
   loaderText: { color: theme.colors.text, fontWeight: "900" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(4,9,12,0.68)", justifyContent: "center", paddingVertical: Platform.OS === "ios" ? 38 : 22, paddingHorizontal: 16 },
+  rightEdgeBackGestureZone: { position: "absolute", top: 0, right: 0, bottom: 0, width: 28, zIndex: 40 },
   authModalScroll: { width: "100%", maxWidth: 440, maxHeight: "92%", alignSelf: "center", borderRadius: 28 },
   authModalCard: { backgroundColor: theme.colors.panel, borderRadius: 28, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 20, gap: 11, borderWidth: 1, borderColor: "rgba(145,145,150,.25)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 28, shadowOffset: { width: 0, height: 14 }, elevation: 16 },
   authHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 10 },

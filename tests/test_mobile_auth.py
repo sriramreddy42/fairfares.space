@@ -22,6 +22,11 @@ class QuietHandler(app.FairFaresHandler):
         return
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class MobileAuthTest(unittest.TestCase):
     def test_country_code_and_national_number_are_canonicalized_to_e164(self):
         self.assertEqual(app.canonical_e164_phone("937-555-0199", "+1"), "+19375550199")
@@ -1191,6 +1196,157 @@ class MobileAuthTest(unittest.TestCase):
             self.assertIn("another FairFares account", payload["error"])
             self.assertTrue(payload["emailRecoveryAvailable"])
             self.assertEqual(payload["recoveryEmailHint"], "ph***er@example.com")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_public_listing_creation_requires_verified_user(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 0)",
+                ("Unverified Poster", "unverified-poster@example.com", "+13035550200", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('unverified-poster-token', ?)", (user_id,))
+        server, thread = self.start_server()
+        try:
+            payload = {
+                "postMode": "NEED_PLACE", "category": "single_room", "title": "Need a clean room",
+                "description": "Looking near campus with flexible move-in.", "city": "Denver, CO", "zipCode": "80203",
+                "area": "Capitol Hill", "moveInDate": "2099-09-15", "rentMin": "700",
+                "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Unverified Poster",
+                "contactEmail": "unverified-poster@example.com", "contactPhone": "+13035550200",
+            }
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                data=json.dumps(payload).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer unverified-poster-token"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as blocked:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(blocked.exception.code, 403)
+            body = json.loads(blocked.exception.read().decode("utf-8"))
+            self.assertIn("Verify", body["error"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_housing_spam_burst_and_abusive_text_are_blocked(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Verified Poster", "verified-poster@example.com", "+13035550201", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('verified-poster-token', ?)", (user_id,))
+        server, thread = self.start_server()
+        try:
+            def save(payload):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                    data=json.dumps(payload).encode("utf-8"), method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": "Bearer verified-poster-token"},
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.loads(response.read().decode("utf-8"))
+                except urllib.error.HTTPError as error:
+                    return error.code, json.loads(error.read().decode("utf-8"))
+
+            base = {
+                "postMode": "NEED_PLACE", "category": "single_room",
+                "description": "Looking near campus with flexible move-in.",
+                "city": "Denver, CO", "zipCode": "80203", "area": "Capitol Hill",
+                "moveInDate": "2099-09-15", "rentMin": "700",
+                "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Verified Poster",
+                "contactEmail": "verified-poster@example.com", "contactPhone": "+13035550201",
+            }
+            with mock.patch.object(app, "refresh_accommodation_location_cache"), mock.patch.object(
+                app, "accommodation_location_point", return_value={"lat": 39.7392, "lng": -104.9903, "label": "Denver, CO 80203, USA"}
+            ):
+                abusive_status, abusive = save({**base, "title": "Nee jaathini dengaa", "description": "You gay"})
+                self.assertEqual(abusive_status, 400)
+                self.assertIn("respectful", abusive["error"])
+
+                statuses = []
+                for index in range(6):
+                    status, _payload = save({**base, "title": f"Need a clean room {index}", "description": f"Looking near campus with flexible move-in number {index}."})
+                    statuses.append(status)
+
+            self.assertEqual(statuses[:5], [201, 201, 201, 201, 201])
+            self.assertEqual(statuses[5], 429)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_admin_can_suspend_user_and_delete_public_content(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_admin, role, is_verified) VALUES (?, ?, ?, 1, 'ADMIN', 1)",
+                ("Owner Admin", "owner-admin@example.com", app.hash_password("Password123!")),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('owner-admin-token', ?)", (admin_id,))
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Attack User", "attack-user@example.com", "+13035550202", app.hash_password("Password123!")),
+            )
+            target_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('attack-token', ?)", (target_id,))
+            con.execute(
+                """INSERT INTO accommodation_posts
+                   (public_id, user_id, post_mode, category, title, description, city, zip_code, move_in_date,
+                    rent_min, contact_name, contact_phone, contact_email, visibility_status)
+                   VALUES ('FFH-ATTACK-1', ?, 'NEED_PLACE', 'single_room', 'Bad housing', 'Bad content', 'Boulder, CO', '80301', '2099-09-15',
+                           700, 'Attack User', '+13035550202', 'attack-user@example.com', 'ACTIVE')""",
+                (target_id,),
+            )
+            con.execute(
+                """INSERT INTO ride_posts
+                   (public_id, user_id, title, origin_label, origin_lat, origin_lng, destination_label, destination_lat, destination_lng,
+                    city_label, pickup_date, pickup_time, status)
+                   VALUES ('FFR-ATTACK-1', ?, 'Bad ride', 'Boulder, CO', 40.015, -105.2705, 'Denver, CO', 39.7392, -104.9903,
+                           'Boulder, CO', '2099-09-15', '09:00 AM', 'ACTIVE')""",
+                (target_id,),
+            )
+            con.execute(
+                """INSERT INTO ask_community_posts
+                   (public_id, author_id, post_type, title, body, category, city, status)
+                   VALUES ('FFC-ATTACK-1', ?, 'REQUEST', 'Bad community', 'Bad content body', 'GENERAL', 'Boulder, CO', 'PUBLISHED')""",
+                (target_id,),
+            )
+        server, thread = self.start_server()
+        try:
+            data = urllib.parse.urlencode({
+                "user_id": str(target_id),
+                "action": "SUSPEND_HIDE",
+                "reason": "Spam and harassment",
+            }).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/admin/users/moderate",
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "fairfares_session=owner-admin-token"},
+            )
+            opener = urllib.request.build_opener(NoRedirect)
+            try:
+                opener.open(request, timeout=5)
+            except urllib.error.HTTPError as redirect:
+                self.assertEqual(redirect.code, 303)
+            with app.db() as con:
+                target = con.execute("SELECT suspended_at, suspended_reason FROM users WHERE id = ?", (target_id,)).fetchone()
+                self.assertTrue(target["suspended_at"])
+                self.assertEqual(target["suspended_reason"], "Spam and harassment")
+                self.assertFalse(con.execute("SELECT 1 FROM sessions WHERE user_id = ?", (target_id,)).fetchone())
+                self.assertEqual(con.execute("SELECT visibility_status FROM accommodation_posts WHERE user_id = ?", (target_id,)).fetchone()["visibility_status"], "DELETED")
+                self.assertEqual(con.execute("SELECT status FROM ride_posts WHERE user_id = ?", (target_id,)).fetchone()["status"], "DELETED")
+                self.assertEqual(con.execute("SELECT status FROM ask_community_posts WHERE author_id = ?", (target_id,)).fetchone()["status"], "DELETED")
+                audit = con.execute("SELECT action, reason FROM user_moderation_actions WHERE target_user_id = ?", (target_id,)).fetchone()
+                self.assertEqual(audit["action"], "SUSPEND_HIDE")
+                self.assertEqual(audit["reason"], "Spam and harassment")
         finally:
             server.shutdown()
             server.server_close()
