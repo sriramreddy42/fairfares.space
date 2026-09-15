@@ -22,10 +22,14 @@
     </section>
     <section class="admin-card">
       $moderation_notice
-      <label class="admin-search">
-        <span>Search users</span>
-        <input id="adminUserSearch" placeholder="First name, last name, phone number, email, booking ID, or user ID">
-      </label>
+      <form class="admin-search" method="get" action="/admin/users">
+        <label>
+          <span>Search users</span>
+          <input id="adminUserSearch" name="q" value="$user_search_value" placeholder="Email, name, phone, user ID, post ID, ride, city, or content">
+        </label>
+        <button type="submit">Search</button>
+      </form>
+      $user_result_note
     </section>
     <section class="admin-users-list">$users</section>
   </main>

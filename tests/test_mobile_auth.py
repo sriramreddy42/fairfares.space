@@ -1352,6 +1352,37 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_admin_user_search_finds_users_beyond_default_page(self):
+        with app.db() as con:
+            for index in range(130):
+                con.execute(
+                    "INSERT INTO users (name, email, password_hash, is_verified, created_at) VALUES (?, ?, 'x', 1, datetime('now', ?))",
+                    (f"Regular User {index:03d}", f"regular-{index:03d}@example.com", f"-{index + 2} minutes"),
+                )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, created_at) VALUES (?, ?, 'x', 1, datetime('now', '-300 minutes'))",
+                ("Attack User", "wawoxef642@meonvr.com",),
+            )
+            target_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                """INSERT INTO accommodation_posts
+                   (public_id, user_id, post_mode, category, title, description, city, zip_code, move_in_date,
+                    rent_min, contact_name, contact_phone, contact_email, visibility_status)
+                   VALUES ('FFH-HIDDEN-ATTACK', ?, 'NEED_PLACE', 'single_room', 'Nee jaathini dengaa', 'You gay', 'Boulder, CO', '80301', '2099-09-15',
+                           700, 'Attack User', '+13035550203', 'wawoxef642@meonvr.com', 'ACTIVE')""",
+                (target_id,),
+            )
+
+        default_users = app.get_admin_users()
+        self.assertLessEqual(len(default_users), 500)
+        self.assertFalse(any(row["email"] == "wawoxef642@meonvr.com" for row in default_users[:100]))
+
+        email_matches = app.get_admin_users("wawoxef642@meonvr.com")
+        self.assertEqual([row["email"] for row in email_matches], ["wawoxef642@meonvr.com"])
+
+        content_matches = app.get_admin_users("FFH-HIDDEN-ATTACK")
+        self.assertEqual([row["email"] for row in content_matches], ["wawoxef642@meonvr.com"])
+
 
 if __name__ == "__main__":
     unittest.main()

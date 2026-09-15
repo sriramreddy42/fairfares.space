@@ -11302,10 +11302,59 @@ def employee_operations_metrics() -> dict[str, object]:
     }
 
 
-def get_admin_users() -> list[sqlite3.Row]:
+def get_admin_users(search: str = "", limit: int = 500) -> list[sqlite3.Row]:
+    search_value = clean_text_value(search, 160)
+    search_like = f"%{search_value.lower()}%" if search_value else ""
+    safe_limit = max(50, min(int(limit or 500), 1000))
+    filters = ["users.role = 'CUSTOMER'", "users.is_admin = 0"]
+    parameters: list[object] = []
+    if search_like:
+        filters.append(
+            """(
+                LOWER(users.name) LIKE ?
+                OR LOWER(users.email) LIKE ?
+                OR LOWER(COALESCE(users.phone, '')) LIKE ?
+                OR CAST(users.id AS TEXT) = ?
+                OR EXISTS (
+                    SELECT 1 FROM accommodation_posts
+                    WHERE accommodation_posts.user_id = users.id
+                      AND (
+                        LOWER(accommodation_posts.public_id) LIKE ?
+                        OR LOWER(accommodation_posts.title) LIKE ?
+                        OR LOWER(accommodation_posts.city) LIKE ?
+                        OR LOWER(accommodation_posts.contact_email) LIKE ?
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1 FROM ride_posts
+                    WHERE ride_posts.user_id = users.id
+                      AND (
+                        LOWER(ride_posts.public_id) LIKE ?
+                        OR LOWER(ride_posts.title) LIKE ?
+                        OR LOWER(ride_posts.origin_label) LIKE ?
+                        OR LOWER(ride_posts.destination_label) LIKE ?
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1 FROM ask_community_posts
+                    WHERE ask_community_posts.author_id = users.id
+                      AND (
+                        LOWER(ask_community_posts.public_id) LIKE ?
+                        OR LOWER(ask_community_posts.title) LIKE ?
+                        OR LOWER(ask_community_posts.body) LIKE ?
+                      )
+                )
+            )"""
+        )
+        parameters.extend([
+            search_like, search_like, search_like, search_value,
+            search_like, search_like, search_like, search_like,
+            search_like, search_like, search_like, search_like,
+            search_like, search_like, search_like,
+        ])
     with db() as con:
         return con.execute(
-            """
+            f"""
             SELECT users.*,
                    COUNT(DISTINCT bookings.id) AS booking_count,
                    COUNT(DISTINCT CASE WHEN bookings.booking_status = 'CANCELLED' THEN bookings.id END) AS cancelled_count,
@@ -11317,12 +11366,14 @@ def get_admin_users() -> list[sqlite3.Row]:
             FROM users
             LEFT JOIN bookings ON bookings.user_id = users.id
             LEFT JOIN transactions ON transactions.booking_id = bookings.id
-            WHERE users.role = 'CUSTOMER'
-              AND users.is_admin = 0
+            WHERE {' AND '.join(filters)}
             GROUP BY users.id
-            ORDER BY users.name COLLATE NOCASE
-            LIMIT 100
-            """
+            ORDER BY CASE WHEN users.suspended_at IS NOT NULL AND users.suspended_at != '' THEN 0 ELSE 1 END,
+                     users.created_at DESC,
+                     users.name COLLATE NOCASE
+            LIMIT ?
+            """,
+            (*parameters, safe_limit),
         ).fetchall()
 
 
@@ -32495,6 +32546,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             return
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        search_query = clean_text_value(query.get("q", [""])[0], 160)
         moderation_key = query.get("moderation", [""])[0]
         moderation_messages = {
             "suspend_hide": "User suspended, sessions revoked, and public content removed.",
@@ -32511,12 +32563,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if moderation_key in moderation_messages
             else ""
         )
-        users = "\n".join(self.render_admin_user_card(row) for row in get_admin_users())
+        user_rows = get_admin_users(search_query)
+        users = "\n".join(self.render_admin_user_card(row) for row in user_rows)
+        result_note = (
+            f'<p class="admin-muted">{len(user_rows)} users shown for “{escape(search_query)}”.</p>'
+            if search_query
+            else f'<p class="admin-muted">Showing latest {len(user_rows)} customer users. Use search for older users, email, post IDs, rides, or content.</p>'
+        )
         body = render_template(
             "admin_users.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "users"),
             moderation_notice=moderation_notice,
+            user_search_value=escape(search_query),
+            user_result_note=result_note,
             users=users or '<p class="admin-empty">No users yet.</p>',
         )
         self.send_html(body)
