@@ -1233,6 +1233,29 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_abusive_account_identity_is_blocked_at_signup(self):
+        server, thread = self.start_server()
+        try:
+            for name, email in (
+                ("Abusive Email", "Gayyyyy0123456789denge@fuckyou.com"),
+                ("Sriram Reddy Gay0123456789bhaagbdsk", "clean-user@example.com"),
+            ):
+                with self.assertRaises(urllib.error.HTTPError) as blocked:
+                    self.post_json(server, "/api/mobile/signup", {
+                        "name": name,
+                        "email": email,
+                        "phone": "+13035550204",
+                        "password": "Password123!",
+                        "consentAccepted": True,
+                    })
+                self.assertEqual(blocked.exception.code, 400)
+                payload = json.loads(blocked.exception.read().decode("utf-8"))
+                self.assertIn("respectful", payload["error"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_housing_spam_burst_and_abusive_text_are_blocked(self):
         with app.db() as con:
             con.execute(
@@ -1277,6 +1300,38 @@ class MobileAuthTest(unittest.TestCase):
 
             self.assertEqual(statuses[:5], [201, 201, 201, 201, 201])
             self.assertEqual(statuses[5], 429)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_verified_abusive_identity_cannot_publish_listing(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Sriram Reddy Gay0123456789bhaagbdsk", "identity-spam@example.com", "+13035550205", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('identity-spam-token', ?)", (user_id,))
+        server, thread = self.start_server()
+        try:
+            payload = {
+                "postMode": "NEED_PLACE", "category": "single_room", "title": "Need a clean room",
+                "description": "Looking near campus with flexible move-in.", "city": "Denver, CO", "zipCode": "80203",
+                "area": "Capitol Hill", "moveInDate": "2099-09-15", "rentMin": "700",
+                "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Clean Contact",
+                "contactEmail": "clean-contact@example.com", "contactPhone": "+13035550205",
+            }
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                data=json.dumps(payload).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer identity-spam-token"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as blocked:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(blocked.exception.code, 400)
+            body = json.loads(blocked.exception.read().decode("utf-8"))
+            self.assertIn("respectful", body["error"])
         finally:
             server.shutdown()
             server.server_close()

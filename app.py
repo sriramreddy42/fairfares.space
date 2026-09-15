@@ -15645,6 +15645,14 @@ ABUSIVE_PUBLIC_CONTENT_PATTERNS = (
     r"\byou\s+gay\b",
 )
 
+ABUSIVE_ACCOUNT_IDENTITY_PATTERNS = (
+    *ABUSIVE_PUBLIC_CONTENT_PATTERNS,
+    r"\bbdsk\b",
+    r"\bbhosdike\b",
+    r"\bbhaag\s*bdsk\b",
+    r"\bgay[a-z0-9]{4,}\b",
+)
+
 
 def public_content_moderation_error(*values: object) -> str:
     """Return an error string when public marketplace/community text is abusive."""
@@ -15655,6 +15663,16 @@ def public_content_moderation_error(*values: object) -> str:
     for pattern in ABUSIVE_PUBLIC_CONTENT_PATTERNS:
         if re.search(pattern, compact, re.IGNORECASE):
             return "This content cannot be published. Keep listings respectful and useful."
+    return ""
+
+
+def abusive_account_identity_error(name: object, email: object) -> str:
+    combined = clean_multiline_text_value(f"{name or ''} {normalize_email(email).split('@', 1)[0]}", 1200).lower()
+    compact = re.sub(r"[^a-z0-9]+", " ", combined)
+    joined = compact.replace(" ", "")
+    for pattern in ABUSIVE_ACCOUNT_IDENTITY_PATTERNS:
+        if re.search(pattern, compact, re.IGNORECASE) or re.search(pattern, joined, re.IGNORECASE):
+            return "Use a respectful name and email to create a FairFares account."
     return ""
 
 
@@ -15679,6 +15697,9 @@ def validate_account_fields(name: object, email: object, phone: object, password
         return clean_name, clean_email, clean_phone, "Enter a name with at least 2 characters."
     if not valid_contact_email(clean_email):
         return clean_name, clean_email, clean_phone, "Enter a valid email address."
+    identity_error = abusive_account_identity_error(clean_name, clean_email)
+    if identity_error:
+        return clean_name, clean_email, clean_phone, identity_error
     if not valid_contact_phone(clean_phone):
         return clean_name, clean_email, clean_phone, "Enter a valid phone number."
     if not valid_account_password(password):
@@ -36746,6 +36767,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not subject:
             self.send_json({"ok": False, "error": "The identity provider did not return an account identifier."}, 401)
             return
+        identity_error = abusive_account_identity_error(display_name, email)
+        if identity_error:
+            self.send_json({"ok": False, "error": identity_error}, 400)
+            return
         account_created = False
         try:
             with db() as con:
@@ -39258,6 +39283,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if moderation_error:
             self.send_json({"ok": False, "error": moderation_error}, 400)
             return
+        identity_error = abusive_account_identity_error(row_value(user, "name"), row_value(user, "email"))
+        if identity_error:
+            self.send_json({"ok": False, "error": identity_error}, 400)
+            return
         if origin_coordinates_supplied and not missing_ride_coordinate_pair(payload.get("originLat") or payload.get("origin_lat"), payload.get("originLng") or payload.get("origin_lng")) and not valid_ride_coordinate_pair(origin_lat, origin_lng):
             self.send_json({"ok": False, "error": "Pickup coordinates are invalid. Choose the place again or enter a fuller address."}, 400)
             return
@@ -39696,6 +39725,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         moderation_error = public_content_moderation_error(title, body, city, area, *details.values())
         if moderation_error:
             self.send_json({"ok": False, "error": moderation_error}, 400)
+            return
+        identity_error = abusive_account_identity_error(row_value(user, "name"), row_value(user, "email"))
+        if identity_error:
+            self.send_json({"ok": False, "error": identity_error}, 400)
             return
         images_supplied = isinstance(payload.get("images"), list)
         raw_images = payload.get("images") if images_supplied else []
@@ -40409,6 +40442,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if not valid_contact_email(contact_email) or not valid_contact_phone(contact_phone):
             self.send_json({"ok": False, "error": "Use a valid contact email and phone number."}, 400)
+            return
+        identity_error = abusive_account_identity_error(contact_name, contact_email) or abusive_account_identity_error(row_value(user, "name"), row_value(user, "email"))
+        if identity_error:
+            self.send_json({"ok": False, "error": identity_error}, 400)
             return
         try:
             parsed_move_in_date = datetime.strptime(move_in_date, "%Y-%m-%d").date()
