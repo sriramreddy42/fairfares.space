@@ -7579,6 +7579,20 @@ def init_db() -> None:
                 FOREIGN KEY(target_user_id) REFERENCES users(id),
                 FOREIGN KEY(admin_user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS abuse_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fingerprint_type TEXT NOT NULL,
+                fingerprint_hash TEXT NOT NULL,
+                source_user_id INTEGER,
+                source_email TEXT NOT NULL DEFAULT '',
+                admin_user_id INTEGER,
+                reason TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT,
+                UNIQUE(fingerprint_type, fingerprint_hash)
+            );
             """
         )
         ensure_column(con, "users", "role", "role TEXT NOT NULL DEFAULT 'CUSTOMER'")
@@ -7610,6 +7624,8 @@ def init_db() -> None:
         ensure_column(con, "users", "suspended_reason", "suspended_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "suspended_by", "suspended_by INTEGER")
         con.execute("CREATE INDEX IF NOT EXISTS idx_user_moderation_actions_target ON user_moderation_actions(target_user_id, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_abuse_fingerprints_lookup ON abuse_fingerprints(active, fingerprint_type, fingerprint_hash)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_abuse_fingerprints_source ON abuse_fingerprints(source_user_id, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_account_deletion_user_status ON account_deletion_requests(user_id, status, requested_at DESC)")
         ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
@@ -15674,6 +15690,144 @@ def abusive_account_identity_error(name: object, email: object) -> str:
         if re.search(pattern, compact, re.IGNORECASE) or re.search(pattern, joined, re.IGNORECASE):
             return "Use a respectful name and email to create a FairFares account."
     return ""
+
+
+ABUSE_FINGERPRINT_TYPES = {"EMAIL", "PHONE", "OAUTH", "INSTALLATION", "PUSH_DEVICE"}
+ABUSE_BLOCKED_ERROR = "This account or device cannot use FairFares. Contact FairFares support if you believe this is a mistake."
+
+
+def clean_abuse_identifier(value: object, max_length: int = 255) -> str:
+    return re.sub(r"[^A-Za-z0-9._:@+|-]", "", clean_text_value(value, max_length))
+
+
+def abuse_fingerprint_hash(fingerprint_type: str, value: object) -> str:
+    clean_type = clean_text_value(fingerprint_type, 40).upper()
+    clean_value = str(value or "").strip().lower()
+    if not clean_type or not clean_value:
+        return ""
+    return hmac.new(
+        application_secret().encode("utf-8"),
+        f"abuse-fingerprint:v1:{clean_type}:{clean_value}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def abuse_fingerprint_candidates(
+    *,
+    email: object = "",
+    phone: object = "",
+    provider: object = "",
+    provider_subject: object = "",
+    installation_id: object = "",
+    push_device_id: object = "",
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    clean_email = normalize_email(email)
+    if clean_email:
+        candidates.append(("EMAIL", clean_email))
+    clean_phone = canonical_e164_phone(phone) or clean_text_value(phone, 40)
+    if clean_phone:
+        candidates.append(("PHONE", clean_phone))
+    clean_provider = clean_text_value(provider, 30).lower()
+    clean_subject = clean_text_value(provider_subject, 255)
+    if clean_provider and clean_subject:
+        candidates.append(("OAUTH", f"{clean_provider}|{clean_subject}"))
+    clean_installation = clean_abuse_identifier(installation_id, 120)
+    if clean_installation:
+        candidates.append(("INSTALLATION", clean_installation))
+    clean_push_device = clean_abuse_identifier(push_device_id, 120)
+    if clean_push_device:
+        candidates.append(("PUSH_DEVICE", clean_push_device))
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str]] = []
+    for item in candidates:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
+def abuse_blocklist_match(con: sqlite3.Connection, **kwargs: object) -> sqlite3.Row | None:
+    for fingerprint_type, value in abuse_fingerprint_candidates(**kwargs):
+        fingerprint_hash = abuse_fingerprint_hash(fingerprint_type, value)
+        if not fingerprint_hash:
+            continue
+        row = con.execute(
+            """
+            SELECT * FROM abuse_fingerprints
+            WHERE active = 1
+              AND fingerprint_type = ?
+              AND fingerprint_hash = ?
+              AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (fingerprint_type, fingerprint_hash),
+        ).fetchone()
+        if row:
+            return row
+    return None
+
+
+def add_abuse_fingerprint(
+    con: sqlite3.Connection,
+    fingerprint_type: str,
+    value: object,
+    *,
+    source_user_id: int = 0,
+    source_email: object = "",
+    admin_user_id: int = 0,
+    reason: object = "",
+) -> bool:
+    clean_type = clean_text_value(fingerprint_type, 40).upper()
+    if clean_type not in ABUSE_FINGERPRINT_TYPES:
+        return False
+    fingerprint_hash = abuse_fingerprint_hash(clean_type, value)
+    if not fingerprint_hash:
+        return False
+    con.execute(
+        """
+        INSERT INTO abuse_fingerprints
+        (fingerprint_type, fingerprint_hash, source_user_id, source_email, admin_user_id, reason, active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(fingerprint_type, fingerprint_hash) DO UPDATE SET
+            active = 1,
+            source_user_id = COALESCE(NULLIF(excluded.source_user_id, 0), abuse_fingerprints.source_user_id),
+            source_email = COALESCE(NULLIF(excluded.source_email, ''), abuse_fingerprints.source_email),
+            admin_user_id = COALESCE(NULLIF(excluded.admin_user_id, 0), abuse_fingerprints.admin_user_id),
+            reason = COALESCE(NULLIF(excluded.reason, ''), abuse_fingerprints.reason),
+            expires_at = NULL
+        """,
+        (
+            clean_type,
+            fingerprint_hash,
+            source_user_id or None,
+            normalize_email(source_email),
+            admin_user_id or None,
+            clean_multiline_text_value(reason, 500),
+        ),
+    )
+    return True
+
+
+def capture_user_abuse_fingerprints(con: sqlite3.Connection, target_user_id: int, admin_user_id: int, reason: object = "") -> int:
+    user = con.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    if not user:
+        return 0
+    source_email = row_value(user, "email")
+    added = 0
+    for fingerprint_type, value in abuse_fingerprint_candidates(email=source_email, phone=row_value(user, "phone")):
+        added += 1 if add_abuse_fingerprint(con, fingerprint_type, value, source_user_id=target_user_id, source_email=source_email, admin_user_id=admin_user_id, reason=reason) else 0
+    for identity in con.execute("SELECT provider, provider_subject FROM auth_identities WHERE user_id = ?", (target_user_id,)).fetchall():
+        for fingerprint_type, value in abuse_fingerprint_candidates(provider=row_value(identity, "provider"), provider_subject=row_value(identity, "provider_subject")):
+            added += 1 if add_abuse_fingerprint(con, fingerprint_type, value, source_user_id=target_user_id, source_email=source_email, admin_user_id=admin_user_id, reason=reason) else 0
+    for token in con.execute("SELECT DISTINCT device_id FROM mobile_push_tokens WHERE user_id = ? AND COALESCE(device_id, '') != ''", (target_user_id,)).fetchall():
+        for fingerprint_type, value in abuse_fingerprint_candidates(push_device_id=row_value(token, "device_id")):
+            added += 1 if add_abuse_fingerprint(con, fingerprint_type, value, source_user_id=target_user_id, source_email=source_email, admin_user_id=admin_user_id, reason=reason) else 0
+    for event in con.execute("SELECT DISTINCT anonymous_id FROM product_analytics_events WHERE user_id = ? AND COALESCE(anonymous_id, '') != ''", (target_user_id,)).fetchall():
+        for fingerprint_type, value in abuse_fingerprint_candidates(installation_id=row_value(event, "anonymous_id")):
+            added += 1 if add_abuse_fingerprint(con, fingerprint_type, value, source_user_id=target_user_id, source_email=source_email, admin_user_id=admin_user_id, reason=reason) else 0
+    return added
 
 
 def mobile_user_is_verified(user: sqlite3.Row | dict[str, object] | None) -> bool:
@@ -24832,6 +24986,58 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return forwarded[:64]
         return str(self.client_address[0] if self.client_address else "unknown")[:64]
 
+    def request_installation_id(self) -> str:
+        return clean_abuse_identifier(
+            self.headers.get("X-FairFares-Install-ID")
+            or self.headers.get("X-FairFares-Installation-ID")
+            or self.headers.get("X-FairFares-Anonymous-ID")
+            or "",
+            120,
+        )
+
+    def blocked_by_abuse_fingerprint(
+        self,
+        con: sqlite3.Connection,
+        *,
+        user: sqlite3.Row | None = None,
+        email: object = "",
+        phone: object = "",
+        provider: object = "",
+        provider_subject: object = "",
+        installation_id: object = "",
+    ) -> sqlite3.Row | None:
+        user_id = int(row_value(user, "id") or 0) if user else 0
+        check_email = email or row_value(user, "email")
+        check_phone = phone or row_value(user, "phone")
+        check_installation_id = installation_id or self.request_installation_id()
+        match = abuse_blocklist_match(
+            con,
+            email=check_email,
+            phone=check_phone,
+            provider=provider,
+            provider_subject=provider_subject,
+            installation_id=check_installation_id,
+        )
+        if match:
+            if user_id:
+                con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            return match
+        if user_id:
+            for token in con.execute("SELECT DISTINCT device_id FROM mobile_push_tokens WHERE user_id = ? AND COALESCE(device_id, '') != ''", (user_id,)).fetchall():
+                match = abuse_blocklist_match(con, push_device_id=row_value(token, "device_id"))
+                if match:
+                    con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+                    return match
+            for identity in con.execute("SELECT provider, provider_subject FROM auth_identities WHERE user_id = ?", (user_id,)).fetchall():
+                match = abuse_blocklist_match(con, provider=row_value(identity, "provider"), provider_subject=row_value(identity, "provider_subject"))
+                if match:
+                    con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+                    return match
+        return None
+
+    def send_abuse_blocked(self) -> None:
+        self.send_json({"ok": False, "error": ABUSE_BLOCKED_ERROR}, 403)
+
     def is_cors_path(self, path: str) -> bool:
         return path.startswith("/api/") or path in {
             "/feedback",
@@ -25662,19 +25868,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (*tokens, absolute_cutoff, idle_cutoff),
             ).fetchone()
             if user:
-                session_token = str(user["authenticated_session_token"])
-                authenticated_session_token = session_token
-                now = time.monotonic()
-                with _SESSION_TOUCHES_LOCK:
-                    last_touch = _SESSION_TOUCHES.get(session_token, 0.0)
-                    should_touch = now - last_touch >= SESSION_TOUCH_INTERVAL_SECONDS
-                    if should_touch:
-                        _SESSION_TOUCHES[session_token] = now
-                    if len(_SESSION_TOUCHES) > 10_000:
-                        stale_before = now - max(SESSION_TOUCH_INTERVAL_SECONDS * 2, 3_600)
-                        for token, touched_at in list(_SESSION_TOUCHES.items()):
-                            if touched_at < stale_before:
-                                _SESSION_TOUCHES.pop(token, None)
+                if self.blocked_by_abuse_fingerprint(con, user=user):
+                    user = None
+                else:
+                    session_token = str(user["authenticated_session_token"])
+                    authenticated_session_token = session_token
+                    now = time.monotonic()
+                    with _SESSION_TOUCHES_LOCK:
+                        last_touch = _SESSION_TOUCHES.get(session_token, 0.0)
+                        should_touch = now - last_touch >= SESSION_TOUCH_INTERVAL_SECONDS
+                        if should_touch:
+                            _SESSION_TOUCHES[session_token] = now
+                        if len(_SESSION_TOUCHES) > 10_000:
+                            stale_before = now - max(SESSION_TOUCH_INTERVAL_SECONDS * 2, 3_600)
+                            for token, touched_at in list(_SESSION_TOUCHES.items()):
+                                if touched_at < stale_before:
+                                    _SESSION_TOUCHES.pop(token, None)
         # Authentication itself remains read-only. A contended activity refresh
         # must never delay login checks, conversation lists, or message sends.
         if user and should_touch:
@@ -26755,6 +26964,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.redirect("/accommodations?error=login_required#post")
             return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.redirect("/accommodations?error=moderation#post")
+                return
         form, files = self.read_form_with_files()
         for field, max_length in {
             "title": 140,
@@ -30081,6 +30294,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             log_login_failure(identifier, "password_mismatch")
             self.login_page("That email and password did not match.", next_path)
             return
+        if row_value(user, "suspended_at"):
+            self.login_page("This account has been suspended. Contact FairFares support if you believe this is a mistake.", next_path)
+            return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.login_page(ABUSE_BLOCKED_ERROR, next_path)
+                return
         if not user["is_verified"]:
             token = create_verification(user["id"], user["email"])
             link = self.activation_url(token)
@@ -30121,6 +30341,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             with db() as con:
+                if self.blocked_by_abuse_fingerprint(con, email=email, phone=phone):
+                    self.signup_page(ABUSE_BLOCKED_ERROR)
+                    return
                 existing_email_user = find_user_by_email(con, email)
                 if existing_email_user and not int(existing_email_user["guest_account"] or 0):
                     raise sqlite3.IntegrityError
@@ -32693,6 +32916,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """,
                         (reason, int(user["id"]), target_user_id),
                     )
+                    details["abuse_fingerprints"] = capture_user_abuse_fingerprints(con, target_user_id, int(user["id"]), reason)
                 details["sessions"] = max(0, int(con.execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,)).rowcount or 0))
                 details["housing"] = max(0, int(con.execute(
                     "UPDATE accommodation_posts SET visibility_status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND visibility_status != 'DELETED'",
@@ -32727,6 +32951,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "UPDATE users SET suspended_at = NULL, suspended_reason = '', suspended_by = NULL WHERE id = ?",
                     (target_user_id,),
                 )
+                con.execute("UPDATE abuse_fingerprints SET active = 0 WHERE source_user_id = ?", (target_user_id,))
                 con.execute(
                     """
                     INSERT INTO user_moderation_actions
@@ -32740,6 +32965,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if confirmation != "DELETE":
                 self.redirect("/admin/users?moderation=confirm")
                 return
+            captured = capture_user_abuse_fingerprints(con, target_user_id, int(user["id"]), reason)
             con.execute(
                 """
                 INSERT INTO user_moderation_actions
@@ -32749,6 +32975,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (target_email, int(user["id"]), reason),
             )
             result = purge_user_accounts(con, {target_email})
+            if isinstance(result, dict):
+                result["abuse_fingerprints"] = captured
             con.execute(
                 """
                 INSERT INTO user_moderation_actions
@@ -36774,6 +37002,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         account_created = False
         try:
             with db() as con:
+                if self.blocked_by_abuse_fingerprint(con, email=email, provider=provider, provider_subject=subject):
+                    self.send_abuse_blocked()
+                    return
                 con.execute("DELETE FROM auth_phone_continuations WHERE used_at IS NOT NULL OR datetime(expires_at) <= datetime('now')")
                 identity = con.execute(
                     "SELECT user_id FROM auth_identities WHERE provider = ? AND provider_subject = ?",
@@ -36828,6 +37059,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if row_value(user, "suspended_at"):
                     con.execute("DELETE FROM sessions WHERE user_id = ?", (int(user["id"]),))
                     self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
+                    return
+                if self.blocked_by_abuse_fingerprint(con, user=user, provider=provider, provider_subject=subject):
+                    self.send_abuse_blocked()
                     return
                 has_current_consent = bool(
                     row_value(user, "consented_at")
@@ -36909,6 +37143,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if continuation_user and row_value(continuation_user, "suspended_at"):
                 con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
                 self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
+                return
+            if self.blocked_by_abuse_fingerprint(con, user=con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone(), phone=phone):
+                self.send_abuse_blocked()
                 return
             owner = find_other_user_by_phone(con, phone, user_id)
             if owner:
@@ -37080,6 +37317,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if row_value(user, "suspended_at"):
                 self.send_json({"ok": False, "error": "This account has been suspended. Contact FairFares support if you believe this is a mistake."}, 403)
                 return
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.send_abuse_blocked()
+                return
             if not int(row_value(user, "is_verified") or 0):
                 token = create_verification(int(row_value(user, "id") or 0), row_value(user, "email"))
                 link = self.activation_url(token)
@@ -37144,6 +37384,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         try:
             with db() as con:
+                if self.blocked_by_abuse_fingerprint(con, email=email, phone=phone or submitted_phone):
+                    self.send_abuse_blocked()
+                    return
                 existing_email_user = find_user_by_email(con, email)
                 if existing_email_user and not int(row_value(existing_email_user, "guest_account") or 0):
                     self.send_json({"ok": False, "error": "An account with that email already exists."}, 409)
@@ -39240,6 +39483,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not mobile_user_is_verified(user):
             self.send_json({"ok": False, "error": "Verify your email or phone before publishing a ride."}, 403)
             return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.send_abuse_blocked()
+                return
         payload = self.read_json_body()
         ride_type = normalize_ride_type(payload.get("rideType") or payload.get("type"))
         rider_role = ride_role_for_type(ride_type)
@@ -39702,6 +39949,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not mobile_user_is_verified(user):
             self.send_json({"ok": False, "error": "Verify your email or phone before publishing to Ask Community."}, 403)
             return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.send_abuse_blocked()
+                return
         payload = self.read_json_body()
         post_type = clean_text_value(payload.get("type"), 30).upper() or "QUESTION"
         category = clean_text_value(payload.get("category"), 30).upper() or "GENERAL"
@@ -40349,6 +40600,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not mobile_user_is_verified(user):
             self.send_json({"ok": False, "error": "Verify your email or phone before publishing a housing listing."}, 403)
             return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.send_abuse_blocked()
+                return
         payload = self.read_json_body()
         editing_public_id = clean_text_value(payload.get("listingId") or payload.get("listing_id"), 80)
         existing_listing = None

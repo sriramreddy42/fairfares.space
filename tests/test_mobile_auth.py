@@ -1352,6 +1352,18 @@ class MobileAuthTest(unittest.TestCase):
             target_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
             con.execute("INSERT INTO sessions (token, user_id) VALUES ('attack-token', ?)", (target_id,))
             con.execute(
+                """INSERT INTO product_analytics_events
+                   (event_name, anonymous_id, user_id, platform, dedupe_key)
+                   VALUES ('app_open', 'ff-repeat-install-1', ?, 'ios', 'attack-install-event')""",
+                (target_id,),
+            )
+            con.execute(
+                """INSERT INTO mobile_push_tokens
+                   (user_id, token, platform, device_id)
+                   VALUES (?, 'ExponentPushToken[attack-token]', 'ios', 'device-repeat-1')""",
+                (target_id,),
+            )
+            con.execute(
                 """INSERT INTO accommodation_posts
                    (public_id, user_id, post_mode, category, title, description, city, zip_code, move_in_date,
                     rent_min, contact_name, contact_phone, contact_email, visibility_status)
@@ -1402,6 +1414,71 @@ class MobileAuthTest(unittest.TestCase):
                 audit = con.execute("SELECT action, reason FROM user_moderation_actions WHERE target_user_id = ?", (target_id,)).fetchone()
                 self.assertEqual(audit["action"], "SUSPEND_HIDE")
                 self.assertEqual(audit["reason"], "Spam and harassment")
+                self.assertGreaterEqual(
+                    con.execute("SELECT COUNT(*) AS count FROM abuse_fingerprints WHERE source_user_id = ? AND active = 1", (target_id,)).fetchone()["count"],
+                    4,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_admin_blocked_installation_cannot_create_new_account(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_admin, role, is_verified) VALUES (?, ?, ?, 1, 'ADMIN', 1)",
+                ("Owner Admin", "owner-block@example.com", app.hash_password("Password123!")),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('owner-block-token', ?)", (admin_id,))
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Repeat Attacker", "repeat-attacker@example.com", "+13035550777", app.hash_password("Password123!")),
+            )
+            target_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                """INSERT INTO product_analytics_events
+                   (event_name, anonymous_id, user_id, platform, dedupe_key)
+                   VALUES ('app_open', 'ff-blocked-install-2', ?, 'ios', 'blocked-install-event')""",
+                (target_id,),
+            )
+        server, thread = self.start_server()
+        try:
+            data = urllib.parse.urlencode({
+                "user_id": str(target_id),
+                "action": "SUSPEND_HIDE",
+                "reason": "Repeat abusive signups",
+            }).encode("utf-8")
+            moderate_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/admin/users/moderate",
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Cookie": "fairfares_session=owner-block-token"},
+            )
+            opener = urllib.request.build_opener(NoRedirect)
+            try:
+                opener.open(moderate_request, timeout=5)
+            except urllib.error.HTTPError as redirect:
+                self.assertEqual(redirect.code, 303)
+
+            signup_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/signup",
+                data=json.dumps({
+                    "name": "Clean New User",
+                    "email": "clean-new-user@example.com",
+                    "phone": "3035550888",
+                    "countryCode": "+1",
+                    "password": "Password123!",
+                    "consentAccepted": True,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "X-FairFares-Install-ID": "ff-blocked-install-2"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as blocked:
+                urllib.request.urlopen(signup_request, timeout=5)
+            self.assertEqual(blocked.exception.code, 403)
+            body = json.loads(blocked.exception.read().decode("utf-8"))
+            self.assertIn("cannot use FairFares", body["error"])
         finally:
             server.shutdown()
             server.server_close()

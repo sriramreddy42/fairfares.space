@@ -309,6 +309,13 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     Accept: "application/json",
     ...(init.headers as Record<string, string> | undefined)
   };
+  if ((Platform.OS === "ios" || Platform.OS === "android") && !headers["X-FairFares-Install-ID"]) {
+    const installationId = await productAnalyticsInstallationId().catch(() => "");
+    if (installationId) headers["X-FairFares-Install-ID"] = installationId;
+  }
+  if (!headers["X-FairFares-Client-Platform"]) {
+    headers["X-FairFares-Client-Platform"] = Platform.OS;
+  }
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`;
   }
