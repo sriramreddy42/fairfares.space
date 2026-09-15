@@ -477,6 +477,37 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual([message["body"] for message in guest_messages], ["Is this still available?", "I can move in next week.", "Replying privately to my last message.", "Yes, it is available."])
         self.assertEqual(guest_messages[2]["replyToMessageId"], private_reply["messageId"])
 
+    def test_abusive_community_answer_and_guest_message_are_rejected(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+
+        status, answer = self.request(
+            "POST",
+            "/api/mobile/community/answer",
+            "member-token",
+            {"postId": post_id, "body": "Nee jaathini dengaa"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("cannot be published", answer["error"])
+
+        _, session = self.request("POST", "/api/mobile/community/guest-session", payload={"installationId": "test-abusive-guest-message-0001"})
+        status, first_comment = self.guest_request(
+            "POST",
+            "/api/mobile/community/answer",
+            session["token"],
+            {"postId": post_id, "body": "Is this still available?"},
+        )
+        self.assertEqual(status, 201)
+
+        status, guest_message = self.guest_request(
+            "POST",
+            "/api/mobile/community/guest-message",
+            session["token"],
+            {"conversationId": first_comment["conversationId"], "body": "bhaag bdsk"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("cannot be published", guest_message["error"])
+
     def test_layered_feed_returns_local_first_and_active_public_usa_fallback(self):
         _, local = self.create_post(title="Dayton neighborhood advice", city="Dayton, OH")
         _, local_full_state = self.create_post(token="member-token", title="Dayton events this weekend", city="Dayton, Ohio")

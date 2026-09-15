@@ -1515,6 +1515,67 @@ class MobileAuthTest(unittest.TestCase):
         content_matches = app.get_admin_users("FFH-HIDDEN-ATTACK")
         self.assertEqual([row["email"] for row in content_matches], ["wawoxef642@meonvr.com"])
 
+    def test_rental_listing_requires_verified_clean_user(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 0)",
+                ("Unverified Owner", "unverified-owner@example.com", app.hash_password("Password123!")),
+            )
+            unverified_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('unverified-rental-token', ?)", (unverified_id,))
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Clean Owner", "clean-owner@example.com", app.hash_password("Password123!")),
+            )
+            clean_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('clean-rental-token', ?)", (clean_id,))
+            app.add_abuse_fingerprint(con, "EMAIL", "blocked-owner@example.com", reason="abuse regression")
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Blocked Owner", "blocked-owner@example.com", app.hash_password("Password123!")),
+            )
+            blocked_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('blocked-rental-token', ?)", (blocked_id,))
+
+        server, thread = self.start_server()
+        listing_payload = {
+            "name": "Honda Civic",
+            "location": "Denver, CO",
+            "dailyPrice": 45,
+            "licensePlate": "ABC1234",
+        }
+        try:
+            def request_listing(token, payload):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/rentals/listing",
+                    data=json.dumps(payload).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+
+            with self.assertRaises(urllib.error.HTTPError) as unverified_error:
+                request_listing("unverified-rental-token", listing_payload)
+            self.assertEqual(unverified_error.exception.code, 403)
+            self.assertIn("Verify", json.loads(unverified_error.exception.read().decode("utf-8"))["error"])
+
+            with self.assertRaises(urllib.error.HTTPError) as blocked_error:
+                request_listing("blocked-rental-token", listing_payload)
+            self.assertIn(blocked_error.exception.code, {401, 403})
+            blocked_body = json.loads(blocked_error.exception.read().decode("utf-8"))
+            self.assertTrue("Login" in blocked_body["error"] or "cannot use FairFares" in blocked_body["error"])
+
+            abusive_payload = dict(listing_payload, notes="Nee jaathini dengaa")
+            with self.assertRaises(urllib.error.HTTPError) as moderation_error:
+                request_listing("clean-rental-token", abusive_payload)
+            self.assertEqual(moderation_error.exception.code, 400)
+            self.assertIn("cannot be published", json.loads(moderation_error.exception.read().decode("utf-8"))["error"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()

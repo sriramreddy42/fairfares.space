@@ -15657,6 +15657,9 @@ ABUSIVE_PUBLIC_CONTENT_PATTERNS = (
     r"\bmadarchod\b",
     r"\bbhenchod\b",
     r"\bchodu\b",
+    r"\bbdsk\b",
+    r"\bbhosdike\b",
+    r"\bbhaag\s*bdsk\b",
     r"\bfuck\s+(?:you|off)\b",
     r"\byou\s+gay\b",
 )
@@ -38906,7 +38909,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required before listing your car."}, 401)
             return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before listing your car."}, 403)
+            return
+        with db() as con:
+            if self.blocked_by_abuse_fingerprint(con, user=user):
+                self.send_abuse_blocked()
+                return
         payload = self.read_json_body()
+        moderation_error = public_content_moderation_error(
+            payload.get("brand"),
+            payload.get("model"),
+            payload.get("name"),
+            payload.get("category"),
+            payload.get("type"),
+            payload.get("vehicleType"),
+            payload.get("location"),
+            payload.get("pickupLocation"),
+            payload.get("pickup_location"),
+            payload.get("features"),
+            payload.get("notes"),
+            payload.get("ownerNotes"),
+            payload.get("owner_notes"),
+        )
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
+            return
+        identity_error = abusive_account_identity_error(row_value(user, "name"), row_value(user, "email"))
+        if identity_error:
+            self.send_json({"ok": False, "error": identity_error}, 400)
+            return
         try:
             car = create_owner_car_listing(int(row_value(user, "id") or 0), payload)
         except ValueError as exc:
@@ -40045,6 +40077,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if len(body) < 2:
             self.send_json({"ok": False, "error": "Write an answer before posting."}, 400)
             return
+        moderation_error = public_content_moderation_error(body)
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
+            return
+        if user:
+            identity_error = abusive_account_identity_error(row_value(user, "name"), row_value(user, "email"))
+            if identity_error:
+                self.send_json({"ok": False, "error": identity_error}, 400)
+                return
         now = datetime.utcnow().isoformat(timespec="seconds")
         notify_user_id = 0
         notify_title = ""
@@ -40133,6 +40174,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         body = clean_multiline_text_value(payload.get("body"), 1800)
         if len(body) < 2:
             self.send_json({"ok": False, "error": "A comment must contain at least two characters."}, 400)
+            return
+        moderation_error = public_content_moderation_error(body)
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
             return
         with db() as con:
             answer = con.execute(
@@ -40300,6 +40345,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         reply_to_message_id = int(float_from_value(payload.get("replyToMessageId")) or 0)
         if len(body) < 1:
             self.send_json({"ok": False, "error": "Write a message before sending."}, 400)
+            return
+        moderation_error = public_content_moderation_error(body)
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
             return
         guest_user_id = int(row_value(guest, "user_id") or 0)
         now = datetime.utcnow().isoformat(timespec="seconds")
