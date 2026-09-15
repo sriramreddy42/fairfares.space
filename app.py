@@ -32944,6 +32944,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
                 invalidate_mobile_search_cache("housing")
                 invalidate_mobile_search_cache("rides")
+                con.commit()
                 self.redirect(f"/admin/users?moderation={action.lower()}")
                 return
             if action == "RESTORE":
@@ -32960,6 +32961,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (target_user_id, target_email, int(user["id"]), reason),
                 )
+                con.commit()
                 self.redirect("/admin/users?moderation=restore")
                 return
             if confirmation != "DELETE":
