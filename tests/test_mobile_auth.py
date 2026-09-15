@@ -1576,6 +1576,50 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_mobile_push_token_registration_enables_delivery_preferences(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Push Owner", "push-owner@example.com", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('push-owner-token', ?)", (user_id,))
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/push-token",
+                data=json.dumps({
+                    "token": "ExpoPushToken[registration-device]",
+                    "platform": "ios",
+                    "deviceLabel": "iPhone test",
+                    "deviceId": "device-notification-1",
+                    "notificationSchema": 3,
+                    "enabled": True,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer push-owner-token"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["enabled"])
+            with app.db() as con:
+                token = con.execute("SELECT * FROM mobile_push_tokens WHERE user_id = ?", (user_id,)).fetchone()
+                preferences = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()
+            self.assertEqual(token["token"], "ExpoPushToken[registration-device]")
+            self.assertEqual(token["platform"], "ios")
+            self.assertEqual(token["device_id"], "device-notification-1")
+            self.assertEqual(int(token["notification_schema"]), 3)
+            self.assertEqual(int(token["enabled"]), 1)
+            self.assertEqual(int(preferences["chitthi_enabled"]), 1)
+            self.assertEqual(int(preferences["carpool_enabled"]), 1)
+            self.assertEqual(int(preferences["rentals_enabled"]), 1)
+            self.assertEqual(int(preferences["housing_enabled"]), 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()

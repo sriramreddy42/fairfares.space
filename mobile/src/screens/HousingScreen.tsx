@@ -95,7 +95,6 @@ const quickLinks: Array<{
 ];
 
 const SEARCH_PHRASE_AUTO_SLIDE_MS = 1800;
-const HOUSING_REVIEW_AUTO_SLIDE_MS = 4500;
 const QUICK_LINK_TYPE_MS = 85;
 const QUICK_LINK_WORD_PAUSE_MS = 1200;
 const quickLinkWords = ["RIDES", "RENTALS", "ROOMMATES", "CARPOOL"];
@@ -172,36 +171,6 @@ const sortOptions: Array<{ label: string; value: Props["selectedSort"] }> = [
   { label: "Rent ↓", value: "rentDesc" }
 ];
 const genderOptions = ["Any", "Female", "Male", "Couple", "Family"];
-const demoHousingTestimonials: BootstrapPayload["testimonials"] = [
-  {
-    id: -1,
-    name: "Maya P. · Demo",
-    city: "Denver, CO",
-    avatarEmoji: "🏡",
-    demo: true,
-    rating: 5,
-    message: "The city search made it easy to compare nearby rooms without losing track of my budget."
-  },
-  {
-    id: -2,
-    name: "Jordan K. · Demo",
-    city: "Aurora, CO",
-    avatarEmoji: "🚗",
-    demo: true,
-    rating: 4,
-    message: "I liked having housing, carpools, and rental options together while planning my move."
-  },
-  {
-    id: -3,
-    name: "Sam R. · Demo",
-    city: "Dayton, OH",
-    avatarEmoji: "🎓",
-    demo: true,
-    rating: 5,
-    message: "The filters helped me narrow the search quickly and understand what was available nearby."
-  }
-];
-
 function formatDeviceAddress(address: Location.LocationGeocodedAddress | null | undefined) {
   if (!address) return "";
   const streetParts = [address.name, address.street].filter(Boolean);
@@ -670,8 +639,6 @@ export function HousingScreen({
   const detailScrollOffsetRef = useRef(0);
   const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
-  const [housingReviewIndex, setHousingReviewIndex] = useState(0);
-  const [housingReviewWidth, setHousingReviewWidth] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
   const [quickLinkLetterCount, setQuickLinkLetterCount] = useState(1);
   const [exportsInterestBusy, setExportsInterestBusy] = useState(false);
@@ -747,7 +714,6 @@ export function HousingScreen({
   const rideEditorRequestRef = useRef(0);
   const rideOwnerLocationSubscription = useRef<Location.LocationSubscription | null>(null);
   const rideOwnerLocationRideId = useRef("");
-  const housingReviewScrollRef = useRef<ScrollView | null>(null);
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
   const [listingResultsY, setListingResultsY] = useState(0);
@@ -840,7 +806,6 @@ export function HousingScreen({
   const displayName = data?.user?.name?.split(" ")[0] || "there";
   const cityExperienceLocation = data?.location.city || discoveryLocation || "your current city";
   const cityExperienceInitials = avatarInitials(data?.user?.name || "FairFares member", "FF");
-  const homeTestimonials = data?.testimonials?.length ? data.testimonials : demoHousingTestimonials;
   const selectedLocationText = (data?.location.selected || data?.location.city || "").trim();
   const distanceReference = selectedLocationText.includes("·")
     ? selectedLocationText.split("·").pop()?.trim()
@@ -1095,24 +1060,6 @@ export function HousingScreen({
   useEffect(() => {
     setSearchPhraseIndex(0);
   }, [mode]);
-
-  useEffect(() => {
-    if (housingReviewIndex < homeTestimonials.length) return;
-    setHousingReviewIndex(0);
-  }, [homeTestimonials.length, housingReviewIndex]);
-
-  useEffect(() => {
-    if (!housingReviewWidth || homeTestimonials.length < 2) return;
-    housingReviewScrollRef.current?.scrollTo({ x: housingReviewIndex * housingReviewWidth, animated: true });
-  }, [homeTestimonials.length, housingReviewIndex, housingReviewWidth]);
-
-  useEffect(() => {
-    if (!housingReviewWidth || homeTestimonials.length < 2) return;
-    const timer = setInterval(() => {
-      setHousingReviewIndex((current) => (current + 1) % homeTestimonials.length);
-    }, HOUSING_REVIEW_AUTO_SLIDE_MS);
-    return () => clearInterval(timer);
-  }, [homeTestimonials.length, housingReviewWidth]);
 
   useEffect(() => {
     if (quickLinkWords.length < 2) return;

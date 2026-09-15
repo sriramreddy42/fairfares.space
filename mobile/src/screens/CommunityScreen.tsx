@@ -13,7 +13,7 @@ import {
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser } from "../types";
+import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -28,6 +28,7 @@ type Props = {
   user: FairFaresUser | null;
   city: string;
   cars: Car[];
+  testimonials?: BootstrapPayload["testimonials"];
   onRequireLogin: () => void;
   onRequireSignup: () => void;
   onOpenHousing: (postId?: string) => void;
@@ -83,11 +84,21 @@ type CommunityFeedRow =
   | { key: string; kind: "communities" }
   | { key: string; kind: "local-empty" }
   | { key: string; kind: "national-heading" }
+  | { key: string; kind: "testimonial" }
   | { key: string; kind: "rental" }
   | { key: string; kind: "empty" };
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
 const communityGroupSnapshots = new Map<string, Community[]>();
+const communityReviewFallback: BootstrapPayload["testimonials"][number] = {
+  id: -10,
+  name: "Sriram Reddy Bandari",
+  city: "Denver, CO",
+  avatarEmoji: "🎓",
+  demo: true,
+  rating: 5,
+  message: "I like it very nice app helpful in relocating"
+};
 
 function communityFeedSnapshotKey(userId: number, city: string, category: string, query: string, groupId: string) {
   return [userId || "guest", normalizedLocationLabel(city).toLocaleLowerCase(), category, query.trim().toLocaleLowerCase(), groupId].join("|");
@@ -231,7 +242,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSignup, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const safeAreaInsets = useSafeAreaInsets();
   // React Native's Android page-sheet Modal can report a zero top inset even
@@ -296,6 +307,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     if (!Number.isFinite(price) || price <= 0 || !car.image_url) return lowest;
     return !lowest || price < Number(lowest.daily_price) ? car : lowest;
   }, null), [cars]);
+  const featuredReview = testimonials.find((item) => Number(item.rating || 0) >= 4 && String(item.message || "").trim().length > 0) || communityReviewFallback;
+  const acrossCountryName = /,\s*india\b|\bindia\b/i.test(city) ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
 
   async function openMemberProfile(author: CommunityPost["author"]) {
@@ -988,6 +1001,32 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     </TouchableOpacity>
   ) : null;
 
+  const renderCommunityReview = () => {
+    const rating = Math.max(1, Math.min(5, Math.round(Number(featuredReview.rating || 5))));
+    const photoUrl = featuredReview.photoUrl ? absoluteAssetUrl(featuredReview.photoUrl) : "";
+    return (
+      <View style={[styles.communityReviewCard, isLight && styles.communityReviewCardLight]}>
+        <View style={styles.communityReviewAvatarWrap}>
+          <UserAvatar
+            photoUrl={photoUrl}
+            style={styles.communityReviewAvatar}
+            imageStyle={styles.communityReviewAvatarImage}
+            fallback={<Text style={styles.communityReviewAvatarFallback}>{featuredReview.avatarEmoji || avatarInitials(featuredReview.name || "FairFares", "FF")}</Text>}
+          />
+        </View>
+        <View style={styles.communityReviewCopy}>
+          <View style={styles.communityReviewTop}>
+            <Text style={[styles.communityReviewName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{featuredReview.name || "FairFares member"}</Text>
+            <Text style={styles.communityReviewStars}>{Array.from({ length: rating }).map(() => "★").join("")}</Text>
+          </View>
+          <Text style={styles.communityReviewLocation} numberOfLines={1}>📍 {featuredReview.city || city || "FairFares community"}</Text>
+          <Text style={[styles.communityReviewQuote, isLight && styles.textPrimaryLight]} numberOfLines={2}>“{String(featuredReview.message || communityReviewFallback.message).replace(/^“|”$/g, "")}”</Text>
+        </View>
+        <View style={styles.communityReviewPill} />
+      </View>
+    );
+  };
+
   const feedRows = useMemo<CommunityFeedRow[]>(() => {
     const rows: CommunityFeedRow[] = [];
     posts.forEach((post, index) => {
@@ -996,7 +1035,10 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     });
     if (category === "ALL" && posts.length === 0) rows.push({ key: "community-suggestions", kind: "communities" });
     if (!posts.length) rows.push({ key: "local-empty", kind: "local-empty" });
-    if (!selectedGroup && nationalPosts.length) rows.push({ key: "national-heading", kind: "national-heading" });
+    if (!selectedGroup && nationalPosts.length) {
+      rows.push({ key: "national-heading", kind: "national-heading" });
+      rows.push({ key: "community-testimonial", kind: "testimonial" });
+    }
     if (!selectedGroup) {
       nationalPosts.forEach((post, index) => {
         rows.push({ key: `national-${post.id}`, kind: "post", post });
@@ -1012,7 +1054,8 @@ export function CommunityScreen({ user, city, cars, onRequireLogin, onRequireSig
     if (item.kind === "post") return renderPost(item.post);
     if (item.kind === "communities") return renderCommunitySuggestions();
     if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
-    if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across the USA</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>🇺🇸</Text></View>;
+    if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across {acrossCountryName === "India" ? "India" : "the USA"}</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>{acrossCountryName === "India" ? "🇮🇳" : "🇺🇸"}</Text></View>;
+    if (item.kind === "testimonial") return renderCommunityReview();
     if (item.kind === "rental") return renderLowestRental();
     return <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text>;
   };
@@ -1190,7 +1233,7 @@ const styles = StyleSheet.create({
   resolvedBadge: { alignSelf: "flex-start", borderRadius: 999, backgroundColor: "#173b2d", paddingHorizontal: 11, paddingVertical: 6 }, resolvedText: { color: "#8ce6bf", fontWeight: "800", fontSize: 12 }, detailFacts: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, fact: { minWidth: "30%", flexGrow: 1, borderRadius: 12, backgroundColor: theme.colors.panel2, padding: 10 }, factLabel: { color: theme.colors.muted, fontSize: 9, textTransform: "uppercase" }, factValue: { color: theme.colors.text, fontWeight: "800", fontSize: 12, marginTop: 3 }, inlineFields: { flexDirection: "row", gap: 8 }, inlineInput: { flex: 1 },
   postAuthorSoft: { fontWeight: "700" }, postTitleSoft: { fontWeight: "700" }, postBadgeSoft: { fontWeight: "600" },
   screen: { flex: 1, backgroundColor: theme.colors.bg }, content: { width: "100%", alignSelf: "center", padding: 12, gap: 12 },
-  quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "800", letterSpacing: .8 }, nationalTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800", marginTop: 2 }, nationalBody: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, nationalIcon: { fontSize: 22 }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
+  quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 12, paddingHorizontal: 4, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "800", letterSpacing: .8 }, nationalTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800", marginTop: 2 }, nationalBody: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, nationalIcon: { fontSize: 22 }, communityReviewCard: { minHeight: 132, marginTop: 9, marginBottom: 8, marginHorizontal: 1, paddingHorizontal: 18, paddingVertical: 18, borderRadius: 24, borderWidth: 1, borderColor: "rgba(183,205,214,0.48)", backgroundColor: "#ffffff", flexDirection: "row", alignItems: "center", gap: 13, shadowColor: "#12382d", shadowOpacity: 0.13, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4 }, communityReviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(120,151,163,0.34)" }, communityReviewAvatarWrap: { width: 68, height: 68, borderRadius: 34, padding: 3, backgroundColor: "#12c989", shadowColor: "#0aa66d", shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 5 }, communityReviewAvatar: { width: 62, height: 62, borderRadius: 31, backgroundColor: "#ecfdf5" }, communityReviewAvatarImage: { borderRadius: 31 }, communityReviewAvatarFallback: { color: "#065f46", fontSize: 24, fontWeight: "900" }, communityReviewCopy: { flex: 1, minWidth: 0 }, communityReviewTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, communityReviewName: { flex: 1, minWidth: 0, color: "#101820", fontSize: 15, lineHeight: 19, fontWeight: "900" }, communityReviewStars: { color: "#ffae00", fontSize: 14, letterSpacing: 0.6, fontWeight: "900" }, communityReviewLocation: { color: "#1ee69b", fontSize: 12, lineHeight: 17, fontWeight: "900", marginTop: 3 }, communityReviewQuote: { color: "#1a1d22", fontSize: 14, lineHeight: 19, fontWeight: "800", marginTop: 6 }, communityReviewPill: { position: "absolute", alignSelf: "center", bottom: 8, width: 28, height: 8, borderRadius: 999, backgroundColor: "#12d69a", left: "50%", marginLeft: -14 }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
   gasPreviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.06)", shadowColor: "#14251f", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
   gasPreviewIcon: { width: 42, height: 42, position: "relative", alignItems: "center", justifyContent: "center", overflow: "visible" }, gasPreviewGlyphLayer: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, gasPreviewGlyph: { fontSize: 26 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewPriceBlock: { alignItems: "flex-end", marginLeft: 6 }, gasPreviewPrice: { color: "#16b981", fontSize: 17, fontWeight: "900", letterSpacing: -0.3 }, gasPreviewPriceLabel: { color: theme.colors.muted, fontSize: 8, fontWeight: "600", marginTop: 1 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },

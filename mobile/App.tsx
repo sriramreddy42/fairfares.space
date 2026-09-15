@@ -748,7 +748,8 @@ function FairFaresApp() {
       await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true, deviceId);
       pushTokenRef.current = token.data;
       return true;
-    } catch {
+    } catch (error) {
+      console.warn("[FairFares notifications] Push registration failed", error);
       return false;
     } finally {
       pushRegistrationRunningRef.current = false;
@@ -2663,6 +2664,7 @@ function FairFaresApp() {
         user={data?.user || null}
         city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
         cars={cars}
+        testimonials={data?.testimonials || []}
         onRequireLogin={() => setLoginOpen(true)}
         onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
         onOpenHousing={(postId = "") => {
