@@ -34,6 +34,7 @@ export const appAssets = {
   housingRentalPromo: require("../assets/housing-rental-promo-mobile.jpg") as ImageSourcePropType,
   housingSearchPoster: require("../assets/housing-search-by-location.png") as ImageSourcePropType,
   housingWideHero: require("../assets/housing-reference/housing-wide-hero-notch.png") as ImageSourcePropType,
+  housingNeighborhoodCity: require("../assets/cities/denver.jpg") as ImageSourcePropType,
   carpoolPoster: require("../assets/carpool-share-cost.jpg") as ImageSourcePropType,
   rideShareStrip: require("../assets/ride-share-strip-mobile.png") as ImageSourcePropType,
   carpoolDestinationPin: require("../assets/carpool-reference/destination-pin-icon.png") as ImageSourcePropType,

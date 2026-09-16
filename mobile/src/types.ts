@@ -26,6 +26,7 @@ export type HousingPost = {
   images: string[];
   posterName?: string;
   posterUserId?: number;
+  ratingSummary?: UserRatingSummary;
   daysLeft: number;
   expiryLabel: string;
   roommateIntent: boolean;
@@ -115,6 +116,8 @@ export type ChatConversation = {
   otherUserId?: number;
   otherPhone?: string;
   otherPhotoUrl?: string;
+  otherRatingSummary?: UserRatingSummary;
+  canRateOtherUser?: boolean;
   otherOnline?: boolean;
   otherLastSeenAt?: string;
   lastMessageId?: number;
@@ -124,6 +127,12 @@ export type ChatConversation = {
   mutedAt?: string;
   blockedAt?: string;
   unread: number;
+};
+
+export type UserRatingSummary = {
+  average: number;
+  count: number;
+  label: string;
 };
 
 export type ChatMessage = {
@@ -228,6 +237,7 @@ export type CommunityAuthor = {
   id: number;
   name: string;
   photoUrl: string;
+  ratingSummary?: UserRatingSummary;
 };
 
 export type CommunityUserProfile = {
@@ -313,6 +323,7 @@ export type RidePost = {
   ownerUserId?: number;
   ownerName?: string;
   ownerPhotoUrl?: string;
+  ownerRatingSummary?: UserRatingSummary;
   title: string;
   origin: string;
   originLat?: number | null;

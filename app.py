@@ -6560,6 +6560,22 @@ def init_db() -> None:
                 FOREIGN KEY(rated_user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reviewer_user_id INTEGER NOT NULL,
+                reviewed_user_id INTEGER NOT NULL,
+                context_type TEXT NOT NULL DEFAULT 'CHAT',
+                context_public_id TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL,
+                comment TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'PUBLISHED',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(reviewer_user_id, reviewed_user_id, context_type, context_public_id),
+                FOREIGN KEY(reviewer_user_id) REFERENCES users(id),
+                FOREIGN KEY(reviewed_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -12804,6 +12820,91 @@ def community_post_rows(
         ).fetchall()
 
 
+def user_rating_summary(user_id: int) -> dict[str, object]:
+    user_id = int(user_id or 0)
+    if user_id <= 0:
+        return {"average": 0, "count": 0, "label": "New member"}
+    try:
+        with db() as con:
+            user_rating = con.execute(
+                """
+                SELECT AVG(score) AS average_score, COUNT(*) AS rating_count
+                FROM user_ratings
+                WHERE reviewed_user_id = ? AND status = 'PUBLISHED'
+                """,
+                (user_id,),
+            ).fetchone()
+            ride_rating = con.execute(
+                """
+                SELECT AVG(score) AS average_score, COUNT(*) AS rating_count
+                FROM ride_ratings
+                WHERE rated_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        return {"average": 0, "count": 0, "label": "New member"}
+    user_count = int(row_value(user_rating, "rating_count") or 0)
+    ride_count = int(row_value(ride_rating, "rating_count") or 0)
+    total_count = user_count + ride_count
+    if total_count <= 0:
+        return {"average": 0, "count": 0, "label": "New member"}
+    total_score = float(row_value(user_rating, "average_score") or 0) * user_count
+    total_score += float(row_value(ride_rating, "average_score") or 0) * ride_count
+    average = round(total_score / total_count, 1)
+    return {
+        "average": average,
+        "count": total_count,
+        "label": f"{average:.1f} ({total_count})",
+    }
+
+
+def can_rate_chat_member(conversation_public_id: str, reviewer_user_id: int, reviewed_user_id: int) -> bool:
+    conversation_public_id = clean_text_value(conversation_public_id, 80)
+    reviewer_user_id = int(reviewer_user_id or 0)
+    reviewed_user_id = int(reviewed_user_id or 0)
+    if not conversation_public_id or reviewer_user_id <= 0 or reviewed_user_id <= 0 or reviewer_user_id == reviewed_user_id:
+        return False
+    try:
+        with db() as con:
+            row = con.execute(
+                """
+                SELECT conversations.id
+                FROM chat_conversations conversations
+                JOIN chat_participants me ON me.conversation_id = conversations.id AND me.user_id = ?
+                JOIN chat_participants other ON other.conversation_id = conversations.id AND other.user_id = ?
+                WHERE conversations.public_id = ?
+                  AND conversations.status = 'ACTIVE'
+                  AND conversations.community_id IS NULL
+                  AND conversations.conversation_type IN ('DIRECT', 'HOST_GUEST', 'RIDE')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM user_ratings existing
+                      WHERE existing.reviewer_user_id = ?
+                        AND existing.reviewed_user_id = ?
+                        AND existing.context_type = 'CHAT'
+                        AND existing.context_public_id = conversations.public_id
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM chat_messages mine
+                      WHERE mine.conversation_id = conversations.id
+                        AND mine.sender_id = ?
+                        AND mine.deleted_at IS NULL
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM chat_messages theirs
+                      WHERE theirs.conversation_id = conversations.id
+                        AND theirs.sender_id = ?
+                        AND theirs.deleted_at IS NULL
+                  )
+                LIMIT 1
+                """,
+                (reviewer_user_id, reviewed_user_id, conversation_public_id, reviewer_user_id, reviewed_user_id, reviewer_user_id, reviewed_user_id),
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    return bool(row)
+
+
 def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, object]:
     author_id = int(row_value(row, "author_id") or 0)
     images = [item for item in str(row_value(row, "image_urls") or "").split(chr(31)) if item]
@@ -12813,6 +12914,7 @@ def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, ob
         details = {}
     if not isinstance(details, dict):
         details = {}
+    author_rating = user_rating_summary(author_id)
     return {
         "id": str(row_value(row, "public_id") or ""),
         "type": str(row_value(row, "post_type") or "QUESTION"),
@@ -12831,6 +12933,7 @@ def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, ob
             "id": author_id,
             "name": str(row_value(row, "author_name") or "FairFares member"),
             "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id),
+            "ratingSummary": author_rating,
         },
         "community": {
             "id": str(row_value(row, "community_public_id") or ""),
@@ -17224,6 +17327,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
         "posterUserId": owner_user_id,
         "photoUrl": avatar_delivery_path(owner_photo, owner_user_id),
+        "ratingSummary": user_rating_summary(owner_user_id),
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -18198,6 +18302,7 @@ def mobile_ride_payload(
         "ownerUserId": owner_user_id,
         "ownerName": owner_name,
         "ownerPhotoUrl": avatar_delivery_path(owner_photo, owner_user_id),
+        "ownerRatingSummary": user_rating_summary(owner_user_id),
         "title": row_value(row, "title"),
         "origin": row_value(row, "origin_label"),
         "originLat": float(row_value(row, "origin_lat") or 0) or None,
@@ -21160,6 +21265,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         or ("GROUP" if community_public_id else "RIDE" if ride_public_id else "DIRECT")
     ).upper()
     is_group = bool(community_public_id) or conversation_kind in {"GROUP", "COMMUNITY"}
+    other_user_id = 0 if is_group else int(row_value(row, "other_user_id") or 0)
+    can_rate_other_user = can_rate_chat_member(str(row_value(row, "public_id") or ""), current_user_id, other_user_id)
     group_name = community_name or (row_value(row, "subject") if is_group else "") or "FairFares group"
     calculated_unread = max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0
     unread = int(row_value(row, "unread_count", str(calculated_unread)) or 0)
@@ -21184,7 +21291,9 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         # serialize an arbitrary joined participant as the apparent direct-chat
         # peer merely because that relationship is absent.
         "otherName": group_name if is_group else row_value(row, "other_name") or "FairFares member",
-        "otherUserId": 0 if is_group else int(row_value(row, "other_user_id") or 0),
+        "otherUserId": other_user_id,
+        "otherRatingSummary": user_rating_summary(other_user_id),
+        "canRateOtherUser": can_rate_other_user,
         "otherPhone": canonical_e164_phone(row_value(row, "other_phone"))
         if not is_group and int(row_value(row, "other_user_id") or 0) not in {0, current_user_id}
         else "",
@@ -25638,6 +25747,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rides/dispatch": self.api_mobile_ride_dispatch_action,
             "/api/mobile/rides/driver-location": self.api_mobile_update_ride_driver_location,
             "/api/mobile/rides/rating": self.api_mobile_ride_rating,
+            "/api/mobile/user-rating": self.api_mobile_user_rating,
             "/api/mobile/rides/driver-profile": self.api_mobile_save_ride_driver_profile,
             "/api/mobile/rentals/quote": self.api_mobile_rental_quote,
             "/api/mobile/rentals/book": self.api_mobile_book_rental,
@@ -38658,6 +38768,149 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_json({"ok": True, "score": score})
 
+    def api_mobile_user_rating(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Login is required to rate a member."}, 401)
+            return
+        payload = self.read_json_body()
+        context_type = clean_text_value(payload.get("contextType") or payload.get("context_type") or "CHAT", 30).upper()
+        context_public_id = clean_text_value(payload.get("contextId") or payload.get("context_id"), 80)
+        comment = clean_text_value(payload.get("comment"), 500)
+        try:
+            reviewed_user_id = int(payload.get("reviewedUserId") or payload.get("reviewed_user_id") or 0)
+            score = int(payload.get("score"))
+        except (TypeError, ValueError):
+            reviewed_user_id = 0
+            score = 0
+        if score < 1 or score > 5:
+            self.send_json({"ok": False, "error": "Choose a rating from 1 to 5 stars."}, 400)
+            return
+        reviewer_user_id = int(row_value(user, "id") or 0)
+        if reviewed_user_id <= 0 or reviewed_user_id == reviewer_user_id:
+            self.send_json({"ok": False, "error": "Choose another FairFares member to rate."}, 400)
+            return
+        if context_type not in {"CHAT", "HOUSING", "COMMUNITY"}:
+            self.send_json({"ok": False, "error": "This rating context is not supported."}, 400)
+            return
+        moderation_error = public_content_moderation_error(comment)
+        if moderation_error:
+            self.send_json({"ok": False, "error": moderation_error}, 400)
+            return
+        with db() as con:
+            eligible = False
+            if context_type == "CHAT" and context_public_id:
+                row = con.execute(
+                    """
+                    SELECT conversations.id
+                    FROM chat_conversations conversations
+                    JOIN chat_participants me ON me.conversation_id = conversations.id AND me.user_id = ?
+                    JOIN chat_participants other ON other.conversation_id = conversations.id AND other.user_id = ?
+                    WHERE conversations.public_id = ?
+                      AND conversations.status = 'ACTIVE'
+                      AND conversations.community_id IS NULL
+                      AND conversations.conversation_type IN ('DIRECT', 'HOST_GUEST', 'RIDE')
+                      AND EXISTS (
+                          SELECT 1 FROM chat_messages mine
+                          WHERE mine.conversation_id = conversations.id
+                            AND mine.sender_id = ?
+                            AND mine.deleted_at IS NULL
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM chat_messages theirs
+                          WHERE theirs.conversation_id = conversations.id
+                            AND theirs.sender_id = ?
+                            AND theirs.deleted_at IS NULL
+                      )
+                    LIMIT 1
+                    """,
+                    (reviewer_user_id, reviewed_user_id, context_public_id, reviewer_user_id, reviewed_user_id),
+                ).fetchone()
+                eligible = bool(row)
+            elif context_type == "HOUSING" and context_public_id:
+                row = con.execute(
+                    """
+                    SELECT conversations.id
+                    FROM accommodation_posts posts
+                    JOIN chat_conversations conversations ON conversations.accommodation_post_id = posts.id
+                    JOIN chat_participants me ON me.conversation_id = conversations.id AND me.user_id = ?
+                    JOIN chat_participants other ON other.conversation_id = conversations.id AND other.user_id = ?
+                    WHERE posts.public_id = ?
+                      AND posts.user_id IN (?, ?)
+                      AND EXISTS (
+                          SELECT 1 FROM chat_messages mine
+                          WHERE mine.conversation_id = conversations.id
+                            AND mine.sender_id = ?
+                            AND mine.deleted_at IS NULL
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM chat_messages theirs
+                          WHERE theirs.conversation_id = conversations.id
+                            AND theirs.sender_id = ?
+                            AND theirs.deleted_at IS NULL
+                      )
+                    LIMIT 1
+                    """,
+                    (reviewer_user_id, reviewed_user_id, context_public_id, reviewer_user_id, reviewed_user_id, reviewer_user_id, reviewed_user_id),
+                ).fetchone()
+                eligible = bool(row)
+            elif context_type == "COMMUNITY" and context_public_id:
+                row = con.execute(
+                    """
+                    SELECT posts.id
+                    FROM ask_community_posts posts
+                    WHERE posts.public_id = ?
+                      AND posts.status = 'PUBLISHED'
+                      AND (
+                          posts.author_id IN (?, ?)
+                          OR EXISTS (
+                              SELECT 1 FROM ask_community_answers answers
+                              WHERE answers.post_id = posts.id
+                                AND answers.status = 'PUBLISHED'
+                                AND answers.author_id IN (?, ?)
+                          )
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM ask_community_answers mine
+                          WHERE mine.post_id = posts.id
+                            AND mine.status = 'PUBLISHED'
+                            AND mine.author_id = ?
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM ask_community_answers theirs
+                          WHERE theirs.post_id = posts.id
+                            AND theirs.status = 'PUBLISHED'
+                            AND theirs.author_id = ?
+                      )
+                    LIMIT 1
+                    """,
+                    (context_public_id, reviewer_user_id, reviewed_user_id, reviewer_user_id, reviewed_user_id, reviewer_user_id, reviewed_user_id),
+                ).fetchone()
+                eligible = bool(row)
+            if not eligible:
+                self.send_json({"ok": False, "error": "Ratings unlock after both members have genuinely interacted."}, 403)
+                return
+            try:
+                con.execute(
+                    """
+                    INSERT INTO user_ratings
+                    (reviewer_user_id, reviewed_user_id, context_type, context_public_id, score, comment)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (reviewer_user_id, reviewed_user_id, context_type, context_public_id, score, comment),
+                )
+            except sqlite3.IntegrityError:
+                self.send_json({"ok": False, "error": "You already rated this member for this interaction."}, 409)
+                return
+        summary = user_rating_summary(reviewed_user_id)
+        send_mobile_push_for_users(
+            [reviewed_user_id],
+            "New FairFares rating",
+            f"You received a {score}-star rating from a FairFares member.",
+            {"type": "USER_RATING", "target": "chitthi"},
+        )
+        self.send_json({"ok": True, "score": score, "summary": summary})
+
     def api_mobile_update_ride_driver_location(self) -> None:
         user = self.current_user()
         if not user:
@@ -40753,8 +41006,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError:
             self.send_json({"ok": False, "error": "Choose a valid move-in date."}, 400)
             return
-        if parsed_move_in_date < datetime.now(FAIRFARES_TZ).date():
-            self.send_json({"ok": False, "error": "Move-in date cannot be in the past."}, 400)
+        # Housing availability/request dates can naturally be "already
+        # available" when a user posts a room that opened this week or asks for
+        # an immediate move. Rejecting yesterday's date also made otherwise
+        # valid listings fail at midnight. Keep the guard against stale/spammy
+        # backdated posts, but allow a short grace window for immediate housing.
+        oldest_allowed_move_in_date = datetime.now(FAIRFARES_TZ).date() - timedelta(days=14)
+        if parsed_move_in_date < oldest_allowed_move_in_date:
+            self.send_json({"ok": False, "error": "Move-in date is too far in the past."}, 400)
             return
         if rent_max and rent_max < rent_min:
             self.send_json({"ok": False, "error": "Maximum rent cannot be lower than minimum rent."}, 400)

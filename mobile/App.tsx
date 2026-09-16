@@ -2632,7 +2632,6 @@ function FairFaresApp() {
       setRideOwnerOpenToken(0);
       setRideOwnerReturnTab(null);
       setSelectedNeed("need_place");
-      setHousingWelcomeFocusKey((value) => value + 1);
     }
     setActiveTab(tab);
   }

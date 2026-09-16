@@ -64,7 +64,12 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
         </View>
         <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.bathroomType || "Bath open"} · {post.leaseTerm || "Flexible"}</Text>
         <Text numberOfLines={1} style={[styles.meta, compact && styles.metaCompact]}>{post.moveIn || "Date open"}</Text>
-        {post.posterName ? <Text style={styles.poster} numberOfLines={1}>Posted by {post.posterName}</Text> : null}
+        {post.posterName ? (
+          <View style={styles.posterRow}>
+            <Text style={styles.poster} numberOfLines={1}>Posted by {post.posterName}</Text>
+            {post.ratingSummary?.count ? <Text style={styles.ratingBadge}>⭐ {post.ratingSummary.label}</Text> : null}
+          </View>
+        ) : null}
         <View style={styles.pillRow}>
           {post.distanceMiles !== null ? (
             <Text numberOfLines={1} style={[styles.distance, isLight && styles.distanceLight, compact && styles.distanceCompact]}>
@@ -190,7 +195,9 @@ const styles = StyleSheet.create({
   fallbackTitleCompact: { fontSize: 14, lineHeight: 18 },
   fallbackCopy: { color: theme.colors.muted, fontSize: 12, fontWeight: "800", textAlign: "center" },
   fallbackCopyCompact: { fontSize: 10, lineHeight: 13 },
-  poster: { color: theme.colors.soft, fontSize: 11, fontWeight: "500", marginTop: 2 },
+  posterRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  poster: { flex: 1, color: theme.colors.soft, fontSize: 11, fontWeight: "500" },
+  ratingBadge: { color: "#8b5a00", backgroundColor: "rgba(255,191,0,0.18)", borderRadius: 999, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 3, fontSize: 10, lineHeight: 12, fontWeight: "900" },
   badge: {
     position: "absolute",
     top: 12,

@@ -837,6 +837,13 @@ export async function rateCompletedRide(rideId: string, score: number, comment =
   });
 }
 
+export async function submitUserRating(input: { reviewedUserId: number; contextType: "CHAT" | "HOUSING" | "COMMUNITY"; contextId: string; score: number; comment?: string }) {
+  return request<{ ok: boolean; score: number; summary?: { average: number; count: number; label: string } }>("/api/mobile/user-rating", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getRideDriverProfile() {
   const payload = await request<{ ok: boolean; profile: RideDriverProfile }>("/api/mobile/rides/driver-profile");
   return payload.profile;

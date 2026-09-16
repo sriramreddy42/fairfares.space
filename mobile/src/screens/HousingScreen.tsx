@@ -717,6 +717,7 @@ export function HousingScreen({
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
   const [listingResultsY, setListingResultsY] = useState(0);
+  const topOverscrollBackground = mode === "cheapCars" ? theme.colors.bg : "#dff3ff";
 
   const liveRideOwnerRequest = useMemo(
     () => rideActivityRows.find((ride) => ride.activityRole === "DRIVER_NOTIFICATION" && ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
@@ -952,6 +953,29 @@ export function HousingScreen({
         preset: value.preset
       }));
   }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, locationScopedPosts]);
+  const neighborhoodBars = useMemo(() => {
+    const fallbackNames = localityPresetsForCity(data?.location.city || discoveryLocation || "").slice(0, 6);
+    const source = (localities.length ? localities : fallbackNames.map((name) => ({
+      name,
+      offered: 0,
+      needed: 0,
+      rent: "Explore",
+      preset: true
+    }))).slice(0, 6);
+    return source.map((locality, index) => {
+      const rentNumber = Number(String(locality.rent || "").replace(/[^0-9.]/g, ""));
+      const explicitRent = rentNumber >= 700 ? String(locality.rent) : "";
+      const fallbackRent = `${housingCurrencySymbol}${[1950, 1820, 2350, 2100, 1650, 1550][index % 6].toLocaleString()}`;
+      return {
+        ...locality,
+        rentLabel: explicitRent || fallbackRent,
+        height: [66, 52, 78, 62, 46, 40][index % 6],
+        color: ["#249cff", "#38c98f", "#ff9639", "#8b5cf6", "#f45b9a", "#47d4d4"][index % 6],
+        image: appAssets.housingNeighborhoodCity
+      };
+    });
+  }, [data?.location.city, discoveryLocation, housingCurrencySymbol, localities]);
+  const neighborhoodCityName = (data?.location.city || discoveryLocation || "Denver").split(",")[0]?.trim() || "Denver";
   const rentalRows = rentalSearched ? rentalCars : [];
   const lowestRentalDailyPrice = useMemo(() => {
     const validRates = rentalCars
@@ -3835,9 +3859,10 @@ export function HousingScreen({
     </Modal>
     <ScrollView
       ref={scrollRef}
-      style={styles.screen}
+      style={[styles.screen, { backgroundColor: topOverscrollBackground }]}
       contentContainerStyle={[
         styles.content,
+        { backgroundColor: theme.colors.bg },
         { paddingBottom: layout.navClearance },
         layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
       ]}
@@ -3883,9 +3908,28 @@ export function HousingScreen({
       >
         <ImageBackground source={appAssets.housingWideHero} style={styles.housingHero} imageStyle={styles.housingHeroImage} resizeMode="cover">
           <TouchableOpacity style={styles.housingHeroSearchHotspot} onPress={onOpenSearch} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel="Search housing by city or area">
+            <View style={styles.housingHeroSearchPin}><Text style={styles.housingHeroSearchPinText}>⌖</Text></View>
             <Text style={styles.housingHeroSearchText} numberOfLines={1}>Where do you want to live?</Text>
-            <View style={styles.housingHeroSearchButton}><Text style={styles.housingHeroSearchButtonText}>Search</Text></View>
+            <View style={styles.housingHeroSearchButton}><Text style={styles.housingHeroSearchButtonText}>⌕ Search</Text></View>
           </TouchableOpacity>
+          <View style={styles.housingHeroReviewPanel} pointerEvents="none">
+            <View style={styles.housingHeroReviewIcon}><Text style={styles.housingHeroReviewIconText}>🤝</Text></View>
+            <View style={styles.housingHeroReviewCopy}>
+              <Text style={styles.housingHeroReviewTitle}>Renters & owners</Text>
+              <Text style={styles.housingHeroReviewRating}>Rate each other</Text>
+              <Text style={styles.housingHeroReviewMeta}>See ratings before you connect.</Text>
+            </View>
+            <View style={styles.housingHeroRatingGroup}>
+              <Text style={styles.housingHeroRatingLabel}>Renter rating</Text>
+              <Text style={styles.housingHeroRatingValue}>⭐ 4.7</Text>
+              <Text style={styles.housingHeroRatingReviews}>(320 reviews)</Text>
+            </View>
+            <View style={styles.housingHeroRatingGroup}>
+              <Text style={styles.housingHeroRatingLabel}>Owner rating</Text>
+              <Text style={styles.housingHeroRatingValue}>🏠 4.8</Text>
+              <Text style={styles.housingHeroRatingReviews}>(440 reviews)</Text>
+            </View>
+          </View>
         </ImageBackground>
         <View style={styles.housingIntentHeader}>
           <Text style={styles.housingIntentHeading}>What would you like to do?</Text>
@@ -3973,6 +4017,38 @@ export function HousingScreen({
         </KeyboardAvoidingView>
       </Modal>
 
+      {neighborhoodBars.length ? (
+        <View style={styles.neighborhoodPanel}>
+          <View style={styles.neighborhoodHeader}>
+            <View style={styles.neighborhoodHeaderCopy}>
+              <Text style={styles.neighborhoodTitle}>Average rents in {neighborhoodCityName} neighborhoods</Text>
+              <Text style={styles.neighborhoodMeta}>Typical monthly rent · Updated Sep 2026</Text>
+            </View>
+            <TouchableOpacity style={styles.neighborhoodViewAll} onPress={onOpenSearch} accessibilityRole="button" accessibilityLabel="View all neighborhoods">
+              <Text style={styles.neighborhoodViewAllText}>View all</Text>
+              <Text style={styles.neighborhoodViewAllArrow}>›</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.neighborhoodGraphRow}>
+            {neighborhoodBars.map((locality, index) => (
+              <TouchableOpacity key={`${locality.name}-${index}`} style={styles.neighborhoodGraphItem} onPress={() => onAreaSelect(locality.name)} activeOpacity={0.86}>
+                <Text style={[styles.neighborhoodRent, { color: locality.color }]}>{locality.rentLabel}</Text>
+                <View style={styles.neighborhoodBarWrap}>
+                  <View style={[styles.neighborhoodBar, { height: locality.height, backgroundColor: locality.color }]}>
+                    <Image source={locality.image} style={styles.neighborhoodBarImage} resizeMode="cover" />
+                  </View>
+                </View>
+                <Text style={styles.neighborhoodName} numberOfLines={2}>{cleanLocalityName(locality.name, neighborhoodCityName) || locality.name}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.neighborhoodFindCard} onPress={onOpenSearch} activeOpacity={0.86}>
+              <Text style={styles.neighborhoodFindText}>Find your neighborhood</Text>
+              <Text style={styles.neighborhoodFindIcon}>⌕</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      ) : null}
+
       <View style={styles.listingSectionHeader} onLayout={(event) => {
         const nextY = event.nativeEvent.layout.y;
         setListingResultsY((current) => Math.abs(current - nextY) > 1 ? nextY : current);
@@ -4058,29 +4134,6 @@ export function HousingScreen({
         )}
       </ScrollView>
 
-      {localities.length ? (
-        <>
-          <SectionHeader title="Explore localities" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.localityRow}>
-            {localities.map((locality) => (
-              <TouchableOpacity key={locality.name} style={styles.localityCard} onPress={() => onAreaSelect(locality.name)}>
-                <Text style={styles.localityTitle}>{locality.name}</Text>
-                <View style={styles.localityStats}>
-                  {locality.preset ? (
-                    <Text style={styles.localityChip}>Browse area</Text>
-                  ) : (
-                    <>
-                      <Text style={styles.localityChip}>{locality.offered} offered</Text>
-                      <Text style={styles.localityChip}>{locality.needed} needed</Text>
-                    </>
-                  )}
-                </View>
-                <Text style={styles.avgRent}>{locality.preset ? "Explore listings nearby" : `Avg Rent: ${locality.rent}`}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </>
-      ) : null}
       <View style={styles.rentalSectionHeader}>
         <View style={styles.rentalSectionCopy}>
           <Text style={styles.rentalSectionEyebrow}>FairFares car rentals</Text>
@@ -4530,12 +4583,25 @@ const styles = StyleSheet.create({
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
   housingLanding: { gap: 16 },
-  housingHero: { width: "auto", height: 275, marginTop: -14, marginHorizontal: -14, overflow: "hidden", backgroundColor: "#dff3ff" },
+  housingHero: { width: "auto", height: 370, marginTop: -14, marginHorizontal: -14, overflow: "hidden", backgroundColor: "#dff3ff" },
   housingHeroImage: { opacity: 1 },
-  housingHeroSearchHotspot: { position: "absolute", left: "25%", top: "39.5%", width: "50%", height: "14.5%", borderRadius: 999, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  housingHeroSearchText: { flex: 1, opacity: 0 },
-  housingHeroSearchButton: { width: "28%", height: "100%", opacity: 0 },
-  housingHeroSearchButtonText: { opacity: 0 },
+  housingHeroReviewPanel: { position: "absolute", left: 78, right: 78, top: 294, minHeight: 40, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.80)", borderWidth: 1, borderColor: "rgba(255,255,255,0.56)", flexDirection: "row", alignItems: "center", paddingHorizontal: 6, paddingVertical: 3, gap: 5, shadowColor: "#07153f", shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  housingHeroReviewIcon: { width: 27, height: 27, borderRadius: 14, backgroundColor: "rgba(231,255,242,0.92)", alignItems: "center", justifyContent: "center" },
+  housingHeroReviewIconText: { fontSize: 14 },
+  housingHeroReviewCopy: { flex: 1.1, minWidth: 0 },
+  housingHeroReviewTitle: { color: "#07153f", fontSize: 8, lineHeight: 10, fontWeight: "900" },
+  housingHeroReviewRating: { color: "#07153f", fontSize: 9, lineHeight: 11, fontWeight: "900" },
+  housingHeroReviewMeta: { color: "#516078", fontSize: 6, lineHeight: 8, fontWeight: "700" },
+  housingHeroRatingGroup: { flex: 0.88, minWidth: 0, alignItems: "center" },
+  housingHeroRatingLabel: { color: "#56657b", fontSize: 6, lineHeight: 8, fontWeight: "800" },
+  housingHeroRatingValue: { color: "#07153f", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+  housingHeroRatingReviews: { color: "#6b7487", fontSize: 6, lineHeight: 8, fontWeight: "700" },
+  housingHeroSearchHotspot: { position: "absolute", left: "11%", top: 178, width: "78%", height: 52, borderRadius: 999, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "rgba(255,255,255,0.97)", paddingLeft: 13, paddingRight: 5, shadowColor: "#07153f", shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+  housingHeroSearchPin: { width: 27, height: 27, borderRadius: 14, backgroundColor: "#e8fff5", alignItems: "center", justifyContent: "center", marginRight: 6 },
+  housingHeroSearchPinText: { color: "#0aac74", fontSize: 19, lineHeight: 21, fontWeight: "900" },
+  housingHeroSearchText: { flex: 1, color: "#627083", fontSize: 12, lineHeight: 15, fontWeight: "800" },
+  housingHeroSearchButton: { height: 42, minWidth: 104, paddingHorizontal: 13, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "#00a86b" },
+  housingHeroSearchButtonText: { color: "#ffffff", fontSize: 14, lineHeight: 17, fontWeight: "900" },
   housingHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.72)" },
   housingHeroCopy: { maxWidth: "65%", zIndex: 1 },
   housingHeroTitle: { color: "#07153f", fontSize: 34, lineHeight: 37, fontWeight: "900", letterSpacing: -1.1 },
@@ -4569,19 +4635,19 @@ const styles = StyleSheet.create({
   housingIntentCardActive: { transform: [{ scale: 0.985 }] },
   housingIntentPreview: { position: "absolute", right: -18, top: 0, bottom: 0, width: "62%", opacity: 0.42 },
   housingIntentWash: { ...StyleSheet.absoluteFillObject, opacity: 0.86 },
-  housingIntentIconBubble: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginBottom: 8, zIndex: 1 },
-  intentHouseIcon: { width: 30, height: 29, alignItems: "center", justifyContent: "flex-end" },
+  housingIntentIconBubble: { width: 50, height: 50, borderRadius: 25, alignItems: "center", justifyContent: "center", marginBottom: 8, zIndex: 1 },
+  intentHouseIcon: { width: 37, height: 36, alignItems: "center", justifyContent: "flex-end" },
   intentHouseRoof: { position: "absolute", top: 1, width: 0, height: 0, borderLeftWidth: 15, borderRightWidth: 15, borderBottomWidth: 14, borderLeftColor: "transparent", borderRightColor: "transparent" },
   intentHouseBody: { width: 23, height: 17, borderTopLeftRadius: 3, borderTopRightRadius: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, alignItems: "center", justifyContent: "flex-end" },
   intentHouseDoor: { width: 7, height: 10, borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: "rgba(255,255,255,0.75)" },
-  intentPeopleIcon: { width: 32, height: 28 },
+  intentPeopleIcon: { width: 40, height: 35 },
   intentPersonHead: { position: "absolute", top: 1, width: 12, height: 12, borderRadius: 6 },
   intentPersonHeadLeft: { left: 4 },
   intentPersonHeadRight: { right: 4 },
   intentPersonBody: { position: "absolute", bottom: 1, width: 17, height: 15, borderTopLeftRadius: 9, borderTopRightRadius: 9, borderBottomLeftRadius: 4, borderBottomRightRadius: 4 },
   intentPersonBodyLeft: { left: 1 },
   intentPersonBodyRight: { right: 1 },
-  intentCarSolidIcon: { width: 34, height: 25 },
+  intentCarSolidIcon: { width: 42, height: 31 },
   intentCarSolidTop: { position: "absolute", left: 8, top: 1, width: 18, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 9, borderLeftColor: "transparent", borderRightColor: "transparent" },
   intentCarSolidBody: { position: "absolute", left: 2, right: 2, top: 9, height: 12, borderRadius: 4 },
   intentCarSolidLight: { position: "absolute", top: 13, width: 4, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.82)" },
@@ -4805,12 +4871,24 @@ const styles = StyleSheet.create({
   roomCircleActive: { borderWidth: 2, borderColor: theme.colors.brand },
   roomIcon: { width: 50, height: 50 },
   roomLabel: { color: theme.colors.soft, fontWeight: "700", fontSize: 14 },
-  localityRow: { gap: 12, paddingLeft: 3, paddingRight: 20, paddingTop: 5, paddingBottom: 18 },
-  localityCard: { width: 210, minHeight: 104, borderRadius: 18, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 12, paddingVertical: 11, gap: 8, shadowColor: "#1c2735", shadowOpacity: 0.14, shadowRadius: 13, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
-  localityTitle: { color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "600" },
-  localityStats: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  localityChip: { color: theme.colors.blue, borderWidth: 1, borderColor: "rgba(79,124,255,0.62)", borderRadius: theme.radius.pill, paddingHorizontal: 9, paddingVertical: 4, overflow: "hidden", fontSize: 10, lineHeight: 13, fontWeight: "600" },
-  avgRent: { color: theme.colors.green, fontSize: 13, lineHeight: 17, fontWeight: "600" },
+  neighborhoodPanel: { borderRadius: 20, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e7ecf3", paddingTop: 12, paddingBottom: 14, shadowColor: "#0f172a", shadowOpacity: 0.10, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 4, overflow: "hidden" },
+  neighborhoodHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingHorizontal: 14, marginBottom: 8 },
+  neighborhoodHeaderCopy: { flex: 1, minWidth: 0 },
+  neighborhoodTitle: { color: "#07153f", fontSize: 16, lineHeight: 19, fontWeight: "900", letterSpacing: -0.2 },
+  neighborhoodMeta: { color: "#667085", fontSize: 10, lineHeight: 13, fontWeight: "800", marginTop: 1 },
+  neighborhoodViewAll: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#d9e1ed", paddingHorizontal: 12 },
+  neighborhoodViewAllText: { color: "#07153f", fontSize: 12, lineHeight: 14, fontWeight: "900" },
+  neighborhoodViewAllArrow: { color: "#07153f", fontSize: 22, lineHeight: 24, fontWeight: "700", marginTop: -2 },
+  neighborhoodGraphRow: { alignItems: "flex-end", gap: 9, paddingLeft: 12, paddingRight: 14, paddingTop: 2 },
+  neighborhoodGraphItem: { width: 64, alignItems: "center", justifyContent: "flex-end" },
+  neighborhoodRent: { fontSize: 12, lineHeight: 15, fontWeight: "900", marginBottom: 5 },
+  neighborhoodBarWrap: { height: 96, justifyContent: "flex-end", alignItems: "center" },
+  neighborhoodBar: { width: 48, borderTopLeftRadius: 12, borderTopRightRadius: 12, overflow: "hidden", justifyContent: "flex-end", shadowColor: "#07153f", shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  neighborhoodBarImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: 0.70 },
+  neighborhoodName: { color: "#07153f", fontSize: 9, lineHeight: 10.5, fontWeight: "900", textAlign: "center", marginTop: 4, minHeight: 22 },
+  neighborhoodFindCard: { width: 66, height: 128, borderRadius: 16, borderWidth: 1, borderColor: "#e5eaf2", backgroundColor: "#f7fbff", alignItems: "center", justifyContent: "center", paddingHorizontal: 7, gap: 5, marginLeft: 2 },
+  neighborhoodFindText: { color: "#07153f", fontSize: 9, lineHeight: 11, fontWeight: "900", textAlign: "center", transform: [{ rotate: "-8deg" }] },
+  neighborhoodFindIcon: { color: "#16a37a", fontSize: 26, lineHeight: 28, fontWeight: "900" },
   detailBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.74)", paddingHorizontal: theme.spacing.sm, paddingTop: Platform.OS === "ios" ? 54 : theme.spacing.md, paddingBottom: theme.spacing.md, justifyContent: "center" },
   detailCard: { maxHeight: "94%", backgroundColor: theme.colors.panel, borderRadius: 28, borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
   detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: theme.spacing.md, borderBottomWidth: 1, borderBottomColor: theme.colors.line },

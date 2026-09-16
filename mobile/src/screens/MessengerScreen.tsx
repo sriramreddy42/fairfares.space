@@ -68,6 +68,7 @@ import {
   removeChatGroupMember,
   sendEncryptedChatMessage,
   sendDirectEncryptedChatAttachment,
+  submitUserRating,
   sendCommunityGuestMessage,
   sendChatRichMessage,
   answerCommunityPost,
@@ -892,6 +893,7 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
       <View style={styles.chatCopy}>
         <View style={styles.chatTitleRow}>
           <Text style={[styles.chatName, isLight && styles.chatNameLight, unread && styles.chatNameUnread, isLight && unread && styles.chatNameUnreadLight]} numberOfLines={1}>{displayName}</Text>
+          {!isGroupConversation(chat) && chat.otherRatingSummary?.count ? <Text style={styles.chatRatingBadge}>⭐ {chat.otherRatingSummary.label}</Text> : null}
           <Text style={[styles.chatTime, unread && styles.chatTimeUnread, isLight && styles.chatTimeLight]}>{relativeTime(chat.lastMessageAt)}</Text>
         </View>
         <View style={styles.chatPreviewRow}>
@@ -2003,6 +2005,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [emojiGroup, setEmojiGroup] = useState("recent");
   const [recentEmojis, setRecentEmojis] = useState<string[]>(["❤️", "👍", "😂", "😊", "🙏", "🎉", "🔥", "😍"]);
   const [richComposer, setRichComposer] = useState<"POLL" | "EVENT" | "CONTACT" | "">("");
+  const [ratingOpen, setRatingOpen] = useState(false);
+  const [ratingScore, setRatingScore] = useState(0);
+  const [ratingComment, setRatingComment] = useState("");
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
   function replaceCommunitiesPreservingOpenGroup(incoming: Community[]) {
     setCommunities((current) => {
@@ -5596,6 +5602,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
+  async function submitActiveMemberRating() {
+    if (!activeConversationId || !activeConversation?.otherUserId || isGroupConversation(activeConversation) || ratingScore < 1) return;
+    setRatingSubmitting(true);
+    try {
+      const response = await submitUserRating({
+        reviewedUserId: activeConversation.otherUserId,
+        contextType: "CHAT",
+        contextId: activeConversationId,
+        score: ratingScore,
+        comment: ratingComment.trim(),
+      });
+      setActiveConversation((current) => current ? { ...current, otherRatingSummary: response.summary || current.otherRatingSummary, canRateOtherUser: false } : current);
+      setConversations((current) => current.map((conversation) => conversation.id === activeConversationId ? { ...conversation, otherRatingSummary: response.summary || conversation.otherRatingSummary, canRateOtherUser: false } : conversation));
+      setRatingOpen(false);
+      setRatingScore(0);
+      setRatingComment("");
+      Alert.alert("Rating submitted", "Thanks for helping keep FairFares trustworthy.");
+    } catch (error) {
+      Alert.alert("Could not submit rating", error instanceof Error ? error.message : "Try again after both members have interacted.");
+    } finally {
+      setRatingSubmitting(false);
+    }
+  }
+
   async function chooseAndSendImage() {
     setAttachmentMenuOpen(false);
     if (!signedIn) {
@@ -6972,7 +7002,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {(isGroupConversation(activeConversation) ? activeConversation?.subject : activeConversation?.otherName) || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {`${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
+              {`${presenceLabel(activeConversation)}${!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count ? ` · ⭐ ${activeConversation.otherRatingSummary.label}` : ""} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
             </Text>
           </TouchableOpacity>
           {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
@@ -6982,6 +7012,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           ) : null}
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </View>
+
+        {!isGroupConversation(activeConversation) && activeConversation?.canRateOtherUser ? (
+          <TouchableOpacity style={styles.ratingPrompt} activeOpacity={0.88} onPress={() => { setRatingScore(0); setRatingComment(""); setRatingOpen(true); }} accessibilityRole="button" accessibilityLabel={`Rate ${activeConversation.otherName || "this member"}`}>
+            <View style={styles.ratingPromptIcon}><Text style={styles.ratingPromptIconText}>★</Text></View>
+            <View style={styles.ratingPromptCopy}>
+              <Text style={styles.ratingPromptTitle}>Rate your FairFares interaction</Text>
+              <Text style={styles.ratingPromptBody} numberOfLines={1}>Help others trust {activeConversation.otherName || "this member"}.</Text>
+            </View>
+            <Text style={styles.ratingPromptAction}>Rate</Text>
+          </TouchableOpacity>
+        ) : null}
 
         <View style={styles.threadKeyboardViewport}>
         <ThreadKeyboardBody bottomSafeArea={safeAreaInsets.bottom}>
@@ -7009,6 +7050,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <View style={styles.chatOptionsPanel}>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!isGroupConversation(activeConversation) ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
+            {!isGroupConversation(activeConversation) && activeConversation?.otherUserId && activeConversation.canRateOtherUser === true ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setRatingScore(0); setRatingComment(""); setRatingOpen(true); }}><Text style={styles.chatOptionIcon}>★</Text><Text style={styles.chatOptionText}>Rate member</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Group info</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void changeActiveGroupPhoto()}><Text style={styles.chatOptionIcon}>▣</Text><Text style={styles.chatOptionText}>Change group image</Text></TouchableOpacity> : null}
@@ -7018,6 +7060,27 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
           </>
         ) : null}
+
+        <Modal visible={ratingOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setRatingOpen(false)}>
+          <Pressable style={styles.ratingBackdrop} onPress={() => !ratingSubmitting && setRatingOpen(false)}>
+            <Pressable style={styles.ratingCard} onPress={(event) => event.stopPropagation()}>
+              <Text style={styles.ratingTitle}>Rate {activeConversation?.otherName || "this member"}</Text>
+              <Text style={styles.ratingBody}>Only rate after a real FairFares interaction. Your stars help future renters, listers, riders, and community members know who they can trust.</Text>
+              <View style={styles.ratingStars}>
+                {[1, 2, 3, 4, 5].map((score) => (
+                  <TouchableOpacity key={score} style={styles.ratingStarButton} disabled={ratingSubmitting} onPress={() => setRatingScore(score)} accessibilityRole="button" accessibilityLabel={`${score} star${score === 1 ? "" : "s"}`}>
+                    <Text style={[styles.ratingStar, score <= ratingScore && styles.ratingStarActive]}>★</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput value={ratingComment} onChangeText={setRatingComment} editable={!ratingSubmitting} multiline maxLength={500} style={styles.ratingInput} placeholder="Optional: what went well?" placeholderTextColor="#7b8794" />
+              <View style={styles.ratingActions}>
+                <TouchableOpacity style={styles.ratingCancel} disabled={ratingSubmitting} onPress={() => setRatingOpen(false)}><Text style={styles.ratingCancelText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.ratingSubmit, (!ratingScore || ratingSubmitting) && styles.ratingSubmitDisabled]} disabled={!ratingScore || ratingSubmitting} onPress={() => void submitActiveMemberRating()}>{ratingSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.ratingSubmitText}>Submit rating</Text>}</TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {groupMembersOpen ? (
           <View style={styles.groupInfoPanel}>
@@ -8337,6 +8400,28 @@ const styles = StyleSheet.create({
   chatOptionsPanel: { position: "absolute", top: 58, right: 14, width: 258, backgroundColor: "#f7f3ed", borderRadius: 16, padding: 7, borderWidth: 1, borderColor: "#cbc7c0", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 }, elevation: 15, zIndex: 40 },
   chatOptionRow: { minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 11 },
   chatOptionIcon: { color: "#2864d7", width: 22, textAlign: "center", fontSize: 18, fontWeight: "900" },
+  ratingBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.42)", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  ratingCard: { width: "100%", maxWidth: 380, borderRadius: 24, backgroundColor: "#fffaf1", padding: 18, borderWidth: 1, borderColor: "rgba(22,163,112,0.22)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 16 },
+  ratingTitle: { color: "#13231c", fontSize: 20, lineHeight: 24, fontWeight: "900" },
+  ratingBody: { color: "#5c6a62", fontSize: 12, lineHeight: 17, fontWeight: "700", marginTop: 8 },
+  ratingStars: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4, marginTop: 16, marginBottom: 12 },
+  ratingStarButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,191,0,0.12)" },
+  ratingStar: { color: "rgba(15,23,42,0.22)", fontSize: 30, lineHeight: 34, fontWeight: "900" },
+  ratingStarActive: { color: "#f59e0b" },
+  ratingInput: { minHeight: 86, maxHeight: 130, borderRadius: 16, borderWidth: 1, borderColor: "rgba(15,23,42,0.12)", backgroundColor: "#ffffff", paddingHorizontal: 12, paddingTop: 11, paddingBottom: 10, color: "#17231d", fontSize: 14, lineHeight: 19, textAlignVertical: "top" },
+  ratingActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 10, marginTop: 14 },
+  ratingCancel: { minHeight: 44, borderRadius: 22, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(15,23,42,0.08)" },
+  ratingCancelText: { color: "#334155", fontSize: 14, fontWeight: "900" },
+  ratingSubmit: { minHeight: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: "center", justifyContent: "center", backgroundColor: "#12a873" },
+  ratingSubmitDisabled: { opacity: 0.48 },
+  ratingSubmitText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  ratingPrompt: { marginHorizontal: 10, marginTop: 7, marginBottom: 2, minHeight: 54, borderRadius: 18, backgroundColor: "rgba(255,250,241,0.96)", borderWidth: 1, borderColor: "rgba(245,158,11,0.26)", flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 11, shadowColor: "#000", shadowOpacity: 0.13, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
+  ratingPromptIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(245,158,11,0.18)", alignItems: "center", justifyContent: "center" },
+  ratingPromptIconText: { color: "#f59e0b", fontSize: 20, lineHeight: 23, fontWeight: "900" },
+  ratingPromptCopy: { flex: 1, minWidth: 0 },
+  ratingPromptTitle: { color: "#17231d", fontSize: 13, lineHeight: 16, fontWeight: "900" },
+  ratingPromptBody: { color: "#5f6b64", fontSize: 11, lineHeight: 14, fontWeight: "700", marginTop: 1 },
+  ratingPromptAction: { color: "#0f8b61", fontSize: 13, fontWeight: "900" },
   nearbyOptionRow: { minHeight: 58, borderTopWidth: 1, borderTopColor: "#ddd8d0", marginTop: 4, paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 8 },
   nearbyOptionCopy: { flex: 1, minWidth: 0 },
   nearbyOptionTitle: { color: "#1f2937", fontSize: 13, fontWeight: "700" },
@@ -8915,6 +9000,7 @@ const styles = StyleSheet.create({
   chatNameLight: { color: "#050505" },
   chatNameUnread: { color: "#FFFFFF", fontWeight: "800" },
   chatNameUnreadLight: { color: "#101418" },
+  chatRatingBadge: { color: "#8b5a00", backgroundColor: "rgba(255,191,0,0.18)", borderRadius: 999, overflow: "hidden", paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, lineHeight: 11, fontWeight: "900" },
   chatSubject: { color: theme.colors.soft, marginTop: 2, fontSize: 13, fontWeight: "500" },
   chatLast: { flex: 1, color: "#A8B0AC", fontSize: 13.5, lineHeight: 18 },
   chatLastLight: { color: "#65676b" },
