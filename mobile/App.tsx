@@ -503,6 +503,7 @@ function FairFaresApp() {
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
+  const lastPushRegistrationSyncRef = useRef(0);
   const notificationPermissionPromptShownRef = useRef(false);
   const startupChatKeyRegistrationRef = useRef({ userId: 0, running: false, registeredAt: 0 });
 
@@ -897,6 +898,33 @@ function FairFaresApp() {
       if (!pushTokenRef.current) void enableMobileNotifications(false);
     }, 60_000);
     return () => clearInterval(retry);
+  }, [data?.user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !data?.user) return;
+    let cancelled = false;
+    const syncGrantedNotificationToken = async (force = false) => {
+      if (cancelled || !authenticatedUserIdRef.current) return;
+      const now = Date.now();
+      if (!force && now - lastPushRegistrationSyncRef.current < 15 * 60_000) return;
+      try {
+        const permission = await Notifications.getPermissionsAsync();
+        if (cancelled || permission.status !== "granted") return;
+        if (await enableMobileNotifications(false)) {
+          lastPushRegistrationSyncRef.current = now;
+        }
+      } catch (error) {
+        console.warn("[FairFares notifications] Permission sync failed", error);
+      }
+    };
+    void syncGrantedNotificationToken(true);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void syncGrantedNotificationToken();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
   }, [data?.user?.id]);
 
   useEffect(() => {

@@ -37520,7 +37520,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     and str(row_value(existing, "device_id") or "") == device_id
                     and int(row_value(existing, "notification_schema") or 0) == notification_schema
                     and bool(int(row_value(existing, "enabled") or 0)) == enabled
-                    and (not enabled or all(bool(int(row_value(existing, f"{category}_enabled") or 0)) for category in ("chitthi", "carpool", "rentals", "housing", "support")))
+                    and (not enabled or bool(row_value(existing, "chitthi_enabled") is not None))
                 )
                 if not already_current:
                     con.execute(
@@ -37546,11 +37546,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
                             VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
                             ON CONFLICT(user_id) DO UPDATE SET
-                                chitthi_enabled = 1,
-                                carpool_enabled = 1,
-                                rentals_enabled = 1,
-                                housing_enabled = 1,
-                                support_enabled = 1,
                                 updated_at = CURRENT_TIMESTAMP
                             """,
                             (current_user_id,),

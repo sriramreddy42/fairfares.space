@@ -1615,6 +1615,38 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(int(preferences["carpool_enabled"]), 1)
             self.assertEqual(int(preferences["rentals_enabled"]), 1)
             self.assertEqual(int(preferences["housing_enabled"]), 1)
+
+            with app.db() as con:
+                con.execute(
+                    """
+                    UPDATE mobile_notification_preferences
+                    SET carpool_enabled = 0, housing_enabled = 0
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+            refresh_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/push-token",
+                data=json.dumps({
+                    "token": "ExpoPushToken[registration-device]",
+                    "platform": "ios",
+                    "deviceLabel": "iPhone test",
+                    "deviceId": "device-notification-1",
+                    "notificationSchema": 3,
+                    "enabled": True,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer push-owner-token"},
+            )
+            with urllib.request.urlopen(refresh_request, timeout=5) as response:
+                refresh_payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(refresh_payload["ok"])
+            with app.db() as con:
+                refreshed_preferences = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()
+            self.assertEqual(int(refreshed_preferences["chitthi_enabled"]), 1)
+            self.assertEqual(int(refreshed_preferences["carpool_enabled"]), 0)
+            self.assertEqual(int(refreshed_preferences["rentals_enabled"]), 1)
+            self.assertEqual(int(refreshed_preferences["housing_enabled"]), 0)
         finally:
             server.shutdown()
             server.server_close()
