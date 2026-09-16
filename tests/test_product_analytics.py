@@ -5,6 +5,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import app
@@ -103,6 +104,8 @@ class ProductAnalyticsTest(unittest.TestCase):
             thread.join(timeout=2)
 
     def test_summary_counts_unique_actors_repeat_users_and_event_signups(self):
+        day_one = datetime.utcnow() - timedelta(days=1)
+        day_two = datetime.utcnow()
         with app.db() as con:
             con.execute("INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Member', 'member@example.com', 'x', 'CUSTOMER', 0)")
             con.executemany(
@@ -110,14 +113,14 @@ class ProductAnalyticsTest(unittest.TestCase):
                    (event_name, anonymous_id, platform, session_id, dedupe_key, occurred_at)
                    VALUES (?, 'install-1', 'ios', ?, ?, ?)""",
                 [
-                    ("app_first_open", "s1", "e1", "2026-08-31 10:00:00"),
-                    ("app_open", "s1", "e2", "2026-08-31 10:00:00"),
-                    ("app_open", "s2", "e3", "2026-09-01 10:00:00"),
-                    ("signup_completed", "s2", "e-signup", "2026-09-01 10:00:30"),
-                    ("rental_search", "s2", "e4", "2026-09-01 10:01:00"),
-                    ("rental_car_view", "s2", "e5", "2026-09-01 10:02:00"),
-                    ("message_sent", "s2", "e6", "2026-09-01 10:03:00"),
-                    ("rental_booking_completed", "s2", "e7", "2026-09-01 10:04:00"),
+                    ("app_first_open", "s1", "e1", day_one.replace(hour=10, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("app_open", "s1", "e2", day_one.replace(hour=10, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("app_open", "s2", "e3", day_two.replace(hour=10, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("signup_completed", "s2", "e-signup", day_two.replace(hour=10, minute=0, second=30, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("rental_search", "s2", "e4", day_two.replace(hour=10, minute=1, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("rental_car_view", "s2", "e5", day_two.replace(hour=10, minute=2, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("message_sent", "s2", "e6", day_two.replace(hour=10, minute=3, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("rental_booking_completed", "s2", "e7", day_two.replace(hour=10, minute=4, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                 ],
             )
         summary = app.product_analytics_summary(7)
