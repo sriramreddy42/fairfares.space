@@ -1688,7 +1688,12 @@ class MobileAuthTest(unittest.TestCase):
                 [
                     (user_id, "ExpoPushToken[self-test-ios]", "ios", "Sriram iPhone"),
                     (user_id, "ExpoPushToken[self-test-android]", "android", "Sriram Android"),
+                    (user_id, "ExpoPushToken[self-test-android-old]", "android", "Old Android install"),
                 ],
+            )
+            con.execute(
+                "UPDATE mobile_push_tokens SET last_seen_at = datetime('now', '-1 day') WHERE token = ?",
+                ("ExpoPushToken[self-test-android-old]",),
             )
         server, thread = self.start_server()
         try:
@@ -1705,16 +1710,16 @@ class MobileAuthTest(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["category"], "housing")
             self.assertEqual(payload["registeredDevices"], 2)
+            self.assertEqual(payload["activeAccountDevices"], 3)
             self.assertEqual(payload["queuedDevices"], 2)
             self.assertEqual({device["platform"] for device in payload["devices"]}, {"ios", "android"})
             self.assertNotIn("ExpoPushToken", json.dumps(payload))
             with app.db() as con:
-                queued_payloads = [
-                    json.loads(row["data_json"])
-                    for row in con.execute("SELECT data_json FROM mobile_push_outbox WHERE user_id = ?", (user_id,)).fetchall()
-                ]
+                queued_rows = con.execute("SELECT token, data_json FROM mobile_push_outbox WHERE user_id = ?", (user_id,)).fetchall()
+                queued_payloads = [json.loads(row["data_json"]) for row in queued_rows]
             self.assertEqual({item["type"] for item in queued_payloads}, {"HOUSING_MATCH"})
             self.assertEqual({item["testCategory"] for item in queued_payloads}, {"housing"})
+            self.assertEqual({row["token"] for row in queued_rows}, {"ExpoPushToken[self-test-ios]", "ExpoPushToken[self-test-android]"})
 
             status_request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test?diagnostic_id={urllib.parse.quote(payload['diagnosticId'])}",

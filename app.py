@@ -37789,13 +37789,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "testCategory": category,
         }
         with db() as con:
-            devices = con.execute(
+            registered_devices = con.execute(
                 """SELECT token, platform, device_label, last_seen_at
                    FROM mobile_push_tokens
                    WHERE user_id = ? AND enabled = 1
-                   ORDER BY datetime(last_seen_at) DESC""",
+                   ORDER BY datetime(last_seen_at) DESC, id DESC""",
                 (user_id,),
             ).fetchall()
+        devices = registered_devices
+        if category != "general":
+            # A category check should reach the current installation on each
+            # platform once. Historical Expo tokens may remain valid briefly
+            # after rotation and would otherwise duplicate every test.
+            newest_by_platform: dict[str, sqlite3.Row] = {}
+            for device in registered_devices:
+                device_platform = clean_text_value(row_value(device, "platform"), 30) or "unknown"
+                newest_by_platform.setdefault(device_platform, device)
+            devices = list(newest_by_platform.values())
         targets = [(user_id, str(row_value(device, "token") or "")) for device in devices]
         queued = enqueue_mobile_pushes(
             targets,
@@ -37808,6 +37818,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "diagnosticId": diagnostic_id,
             "category": category,
             "registeredDevices": len(devices),
+            "activeAccountDevices": len(registered_devices),
             "queuedDevices": queued,
             "devices": [
                 {
