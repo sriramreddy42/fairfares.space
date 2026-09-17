@@ -673,8 +673,9 @@ function FairFaresApp() {
     const registrationUserId = authenticatedUserIdRef.current;
     pushRegistrationRunningRef.current = true;
     try {
+      let androidChannels: Array<Notifications.NotificationChannel | null> = [];
       if (Platform.OS === "android") {
-        await Promise.all([
+        androidChannels = await Promise.all([
           Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.chitthi, {
             name: "Chitthi messages",
             importance: Notifications.AndroidImportance.HIGH,
@@ -729,9 +730,43 @@ function FairFaresApp() {
         }
         return false;
       }
+      const iosPresentationHidden = Platform.OS === "ios" && Boolean(permission.ios) && !(
+        permission.ios?.allowsAlert
+        || permission.ios?.allowsDisplayInNotificationCenter
+        || permission.ios?.allowsDisplayOnLockScreen
+      );
+      const androidAppPresentationHidden = Platform.OS === "android"
+        && typeof permission.android?.importance === "number"
+        && permission.android.importance <= Notifications.AndroidImportance.NONE;
+      const blockedAndroidChannels = Platform.OS === "android"
+        ? androidChannels.filter((channel) => channel && channel.importance <= Notifications.AndroidImportance.NONE)
+        : [];
+      const systemPresentationHidden = iosPresentationHidden
+        || androidAppPresentationHidden
+        || blockedAndroidChannels.length > 0;
+      const showPresentationSettingsPrompt = () => {
+        if (!requestPermission || !systemPresentationHidden || notificationPermissionPromptShownRef.current) return;
+        notificationPermissionPromptShownRef.current = true;
+        const detail = Platform.OS === "ios"
+          ? "FairFares can update its badge, but banners or Notification Center alerts are turned off. Enable Alerts, Sounds, Lock Screen, and Notification Center in Settings."
+          : blockedAndroidChannels.length
+            ? "One or more FairFares notification categories are turned off. Enable Chitthi messages, Carpool activity, Rental bookings, and FairFares ideas and deals in Settings."
+            : "FairFares notifications are blocked at the system level. Enable notifications in Settings.";
+        Alert.alert(
+          "Notifications are hidden",
+          detail,
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() }
+          ]
+        );
+      };
       // Simulators can exercise local APNs payloads and the Notification
       // Service Extension, but cannot obtain a real Expo/APNs device token.
-      if (!Device.isDevice) return true;
+      if (!Device.isDevice) {
+        showPresentationSettingsPrompt();
+        return true;
+      }
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
@@ -748,6 +783,7 @@ function FairFaresApp() {
       if (authenticatedUserIdRef.current !== registrationUserId) return false;
       await registerMobilePushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Mobile device", true, deviceId);
       pushTokenRef.current = token.data;
+      showPresentationSettingsPrompt();
       return true;
     } catch (error) {
       console.warn("[FairFares notifications] Push registration failed", error);
