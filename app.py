@@ -224,6 +224,7 @@ _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
 _SESSION_CLEANUP_LOCK = threading.Lock()
 _SESSION_CLEANUP_LAST_RUN = 0.0
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
+_PUSH_OUTBOX_WAKE_EVENT = threading.Event()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
 _MOBILE_SEARCH_CACHE: dict[tuple[object, ...], tuple[float, object]] = {}
 _MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
@@ -22458,6 +22459,11 @@ def enqueue_mobile_pushes(
         )
         inserted = con.total_changes - before
     if inserted:
+        # Wake the long-lived worker as well as making a best-effort immediate
+        # delivery.  An immediate worker can lose the lock to another push
+        # that already took its snapshot; without this wake-up the newly
+        # inserted message then waits for the next polling interval.
+        _PUSH_OUTBOX_WAKE_EVENT.set()
         threading.Thread(target=process_mobile_push_outbox, args=(), daemon=True, name="fairfares-mobile-push").start()
     return inserted
 
@@ -22465,6 +22471,9 @@ def enqueue_mobile_pushes(
 def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
     summary = {"accepted": 0, "retried": 0, "failed": 0, "disabled": 0}
     if not _PUSH_OUTBOX_WORKER_LOCK.acquire(blocking=False):
+        # The active worker may already have selected its batch. Ensure its
+        # scheduler immediately makes another pass for rows queued afterwards.
+        _PUSH_OUTBOX_WAKE_EVENT.set()
         return summary
     try:
         with db() as con:
@@ -22592,6 +22601,20 @@ def check_expo_push_receipts(limit: int = 300) -> dict[str, int]:
                 con.execute("UPDATE mobile_push_outbox SET status = 'DISABLED', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (error, int(row_value(row, "id") or 0)))
                 con.execute("UPDATE mobile_push_tokens SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE token = ?", (str(row_value(row, "token") or ""),))
                 summary["disabled"] += 1
+            elif error == "MessageRateExceeded":
+                # Expo accepted the ticket but the downstream provider asked
+                # us to slow down. Treat this as transient and send the same
+                # durable event again instead of dropping the notification.
+                con.execute(
+                    """UPDATE mobile_push_outbox
+                       SET status = 'RETRY', expo_ticket_id = '', attempt_count = attempt_count + 1,
+                           last_error = ?, next_attempt_at = datetime('now', '+60 seconds'),
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (error, int(row_value(row, "id") or 0)),
+                )
+                _PUSH_OUTBOX_WAKE_EVENT.set()
+                summary["pending"] += 1
             else:
                 con.execute("UPDATE mobile_push_outbox SET status = 'FAILED', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", ((error or "Expo receipt rejected")[:500], int(row_value(row, "id") or 0)))
                 summary["failed"] += 1
@@ -22642,12 +22665,15 @@ def send_mobile_push_for_users(
 def start_mobile_push_scheduler() -> None:
     def worker() -> None:
         while True:
+            _PUSH_OUTBOX_WAKE_EVENT.clear()
             try:
                 process_mobile_push_outbox(250)
                 check_expo_push_receipts(500)
             except Exception as exc:
                 print(f"Mobile push worker failed: {exc}")
-            threading.Event().wait(15)
+            # New messages wake this worker immediately. The timeout remains a
+            # safety net for scheduled retries and Expo receipt checks.
+            _PUSH_OUTBOX_WAKE_EVENT.wait(15)
 
     threading.Thread(target=worker, daemon=True, name="fairfares-mobile-push-worker").start()
 

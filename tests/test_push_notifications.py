@@ -43,6 +43,7 @@ class DeferredThread:
 
 class PushNotificationTest(unittest.TestCase):
     def setUp(self):
+        app._PUSH_OUTBOX_WAKE_EVENT.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")
         self.old_seed = os.environ.get("FAIRFARES_SEED_DEFAULTS")
@@ -783,6 +784,56 @@ class PushNotificationTest(unittest.TestCase):
             row = con.execute("SELECT status, delivered_at FROM mobile_push_outbox").fetchone()
         self.assertEqual(row["status"], "DELIVERED")
         self.assertTrue(row["delivered_at"])
+
+    def test_enqueue_wakes_scheduler_even_when_immediate_worker_is_deferred(self):
+        token = "ExpoPushToken[wake-scheduler-device]"
+        with patch.object(app.threading, "Thread", DeferredThread):
+            inserted = app.enqueue_mobile_pushes(
+                [(self.user_id, token)],
+                "New message",
+                "Hello",
+                {"type": "CHITTHI_MESSAGE", "messageId": 89},
+            )
+        self.assertEqual(inserted, 1)
+        self.assertTrue(app._PUSH_OUTBOX_WAKE_EVENT.is_set())
+
+    def test_rate_limited_receipt_returns_durable_push_to_retry(self):
+        token = "ExpoPushToken[receipt-rate-limit-device]"
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.enqueue_mobile_pushes(
+                [(self.user_id, token)],
+                "New message",
+                "Hello again",
+                {"type": "CHITTHI_MESSAGE", "messageId": 90},
+            )
+        with patch.object(
+            app,
+            "send_expo_push",
+            return_value={token: {"status": "ACCEPTED", "ticketId": "ticket-rate-limit", "error": ""}},
+        ):
+            app.process_mobile_push_outbox()
+        with app.db() as con:
+            con.execute("UPDATE mobile_push_outbox SET accepted_at = datetime('now', '-1 minute')")
+        response = FakeResponse({
+            "data": {
+                "ticket-rate-limit": {
+                    "status": "error",
+                    "message": "Rate exceeded",
+                    "details": {"error": "MessageRateExceeded"},
+                }
+            }
+        })
+        with patch.object(app.urllib.request, "urlopen", return_value=response):
+            receipts = app.check_expo_push_receipts()
+        self.assertEqual(receipts["pending"], 1)
+        with app.db() as con:
+            row = con.execute(
+                "SELECT status, attempt_count, expo_ticket_id, last_error FROM mobile_push_outbox"
+            ).fetchone()
+        self.assertEqual(row["status"], "RETRY")
+        self.assertEqual(int(row["attempt_count"]), 2)
+        self.assertEqual(row["expo_ticket_id"], "")
+        self.assertEqual(row["last_error"], "MessageRateExceeded")
 
     def test_outbox_mints_group_avatar_immediately_before_expo_delivery(self):
         token = "ExpoPushToken[group-avatar-outbox]"
