@@ -37663,6 +37663,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     and bool(int(row_value(existing, "enabled") or 0)) == enabled
                     and (not enabled or bool(row_value(existing, "chitthi_enabled") is not None))
                 )
+                if already_current:
+                    # A successful foreground sync is a heartbeat even when
+                    # none of the token metadata changed. Without this update,
+                    # active phones misleadingly looked stale for weeks.
+                    con.execute(
+                        "UPDATE mobile_push_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
+                        (token,),
+                    )
                 if not already_current:
                     con.execute(
                         """
@@ -37703,6 +37711,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """,
                             (current_user_id, current_user_id),
                         )
+                if enabled and device_id:
+                    # Expo tokens rotate. Keep only the newest token bound to
+                    # this stable Chitthi device identity so one physical phone
+                    # does not accumulate duplicate deliveries indefinitely.
+                    con.execute(
+                        """UPDATE mobile_push_tokens
+                           SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+                           WHERE user_id = ? AND device_id = ? AND token != ? AND enabled = 1""",
+                        (current_user_id, device_id, token),
+                    )
         response = {"ok": True, "enabled": enabled}
         if already_current:
             response["unchanged"] = True

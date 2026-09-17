@@ -1625,6 +1625,16 @@ class MobileAuthTest(unittest.TestCase):
                     """,
                     (user_id,),
                 )
+                con.execute(
+                    "UPDATE mobile_push_tokens SET last_seen_at = datetime('now', '-30 days') WHERE token = ?",
+                    ("ExpoPushToken[registration-device]",),
+                )
+                con.execute(
+                    """INSERT INTO mobile_push_tokens
+                       (user_id, token, platform, device_label, device_id, notification_schema, enabled)
+                       VALUES (?, ?, 'ios', 'iPhone test', 'device-notification-1', 2, 1)""",
+                    (user_id, "ExpoPushToken[registration-device-old]"),
+                )
             refresh_request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/push-token",
                 data=json.dumps({
@@ -1643,10 +1653,21 @@ class MobileAuthTest(unittest.TestCase):
             self.assertTrue(refresh_payload["ok"])
             with app.db() as con:
                 refreshed_preferences = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()
+                current_token = con.execute(
+                    "SELECT enabled, last_seen_at >= datetime('now', '-1 minute') AS recently_seen FROM mobile_push_tokens WHERE token = ?",
+                    ("ExpoPushToken[registration-device]",),
+                ).fetchone()
+                rotated_token = con.execute(
+                    "SELECT enabled FROM mobile_push_tokens WHERE token = ?",
+                    ("ExpoPushToken[registration-device-old]",),
+                ).fetchone()
             self.assertEqual(int(refreshed_preferences["chitthi_enabled"]), 1)
             self.assertEqual(int(refreshed_preferences["carpool_enabled"]), 0)
             self.assertEqual(int(refreshed_preferences["rentals_enabled"]), 1)
             self.assertEqual(int(refreshed_preferences["housing_enabled"]), 0)
+            self.assertEqual(int(current_token["enabled"]), 1)
+            self.assertEqual(int(current_token["recently_seen"]), 1)
+            self.assertEqual(int(rotated_token["enabled"]), 0)
         finally:
             server.shutdown()
             server.server_close()
