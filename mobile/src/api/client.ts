@@ -1389,7 +1389,7 @@ export async function getMobileNotificationPreferences() {
   return request<{ ok: boolean; preferences: MobileNotificationPreferences }>("/api/mobile/notification-preferences");
 }
 
-export async function updateMobileNotificationPreferences(preferences: MobileNotificationPreferences) {
+export async function updateMobileNotificationPreferences(preferences: Partial<MobileNotificationPreferences>) {
   return request<{ ok: boolean; preferences: MobileNotificationPreferences }>("/api/mobile/notification-preferences", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

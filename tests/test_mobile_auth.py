@@ -1615,6 +1615,9 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(int(preferences["carpool_enabled"]), 1)
             self.assertEqual(int(preferences["rentals_enabled"]), 1)
             self.assertEqual(int(preferences["housing_enabled"]), 1)
+            self.assertEqual(int(preferences["marketing_enabled"]), 0)
+            with app.db() as con:
+                self.assertEqual(int(con.execute("SELECT promo_push_opt_in FROM users WHERE id = ?", (user_id,)).fetchone()[0]), 0)
 
             with app.db() as con:
                 con.execute(
@@ -1665,6 +1668,7 @@ class MobileAuthTest(unittest.TestCase):
             self.assertEqual(int(refreshed_preferences["carpool_enabled"]), 0)
             self.assertEqual(int(refreshed_preferences["rentals_enabled"]), 1)
             self.assertEqual(int(refreshed_preferences["housing_enabled"]), 0)
+            self.assertEqual(int(refreshed_preferences["marketing_enabled"]), 0)
             self.assertEqual(int(current_token["enabled"]), 1)
             self.assertEqual(int(current_token["recently_seen"]), 1)
             self.assertEqual(int(rotated_token["enabled"]), 0)
@@ -1672,6 +1676,98 @@ class MobileAuthTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_policy_acceptance_does_not_opt_into_marketing_push(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Policy User", "policy-push@example.com", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('policy-push-token', ?)", (user_id,))
+        server, thread = self.start_server()
+
+        def post(path, payload):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer policy-push-token"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        try:
+            self.assertTrue(post("/api/mobile/profile/consent", {"consentAccepted": True})["ok"])
+            with app.db() as con:
+                self.assertEqual(int(con.execute("SELECT promo_push_opt_in FROM users WHERE id = ?", (user_id,)).fetchone()[0]), 0)
+                self.assertIsNone(con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone())
+
+            self.assertFalse(post("/api/mobile/notification-preferences", {"marketing": "true"})["preferences"]["marketing"])
+            self.assertFalse(post("/api/mobile/notification-preferences", {"carpool": False})["preferences"]["carpool"])
+            self.assertTrue(post("/api/mobile/notification-preferences", {"marketing": True})["preferences"]["marketing"])
+            preferences = post("/api/mobile/notification-preferences", {"chitthi": False})["preferences"]
+            self.assertFalse(preferences["chitthi"])
+            self.assertFalse(preferences["carpool"])
+            self.assertTrue(preferences["housing"])
+            self.assertTrue(preferences["marketing"])
+            self.assertFalse(post("/api/mobile/notification-preferences", {"marketing": False})["preferences"]["marketing"])
+            self.assertTrue(post("/api/mobile/notification-preferences", {"chitthi": True})["preferences"]["chitthi"])
+            self.assertTrue(post("/api/mobile/notification-preferences", {"marketing": True})["preferences"]["marketing"])
+            self.assertTrue(post("/api/mobile/profile/consent", {"consentAccepted": True})["ok"])
+            with app.db() as con:
+                self.assertEqual(int(con.execute("SELECT promo_push_opt_in FROM users WHERE id = ?", (user_id,)).fetchone()[0]), 1)
+                preferences = con.execute("SELECT marketing_enabled, carpool_enabled FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()
+                self.assertEqual((int(preferences["marketing_enabled"]), int(preferences["carpool_enabled"])), (1, 0))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_marketing_push_reset_runs_once_and_cancels_pending_campaigns(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, promo_push_opt_in, promo_email_opt_in) VALUES (?, ?, ?, 1, 1, 1)",
+                ("Legacy Push User", "legacy-push@example.com", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO mobile_notification_preferences (user_id, marketing_enabled) VALUES (?, 1)", (user_id,))
+            con.execute(
+                """INSERT INTO mobile_push_outbox (user_id, token, idempotency_key, title, body, data_json)
+                   VALUES (?, 'ExpoPushToken[legacy-promo]', 'legacy-promo', 'Offer', 'Deal', '{"type":"FAIRFARES_PROMO"}')""",
+                (user_id,),
+            )
+            con.execute(
+                """INSERT INTO mobile_push_outbox (user_id, token, idempotency_key, title, body, data_json)
+                   VALUES (?, 'ExpoPushToken[diagnostic-promo]', 'diagnostic-promo', 'Test', 'Test', '{"type":"FAIRFARES_PROMO","diagnosticId":"push-test-example"}')""",
+                (user_id,),
+            )
+            con.execute(
+                """INSERT INTO mobile_push_outbox (user_id, token, idempotency_key, title, body, data_json)
+                   VALUES (?, 'ExpoPushToken[chitthi-message]', 'chitthi-message', 'Chat', 'Hello', '{"type":"CHITTHI_MESSAGE"}')""",
+                (user_id,),
+            )
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'marketing_push_requires_explicit_opt_in_v1'")
+
+        app.init_db()
+        with app.db() as con:
+            user = con.execute("SELECT promo_push_opt_in, promo_email_opt_in FROM users WHERE id = ?", (user_id,)).fetchone()
+            preferences = con.execute("SELECT marketing_enabled, chitthi_enabled FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()
+            queued = con.execute("SELECT status FROM mobile_push_outbox WHERE idempotency_key = 'legacy-promo'").fetchone()
+            self.assertEqual((int(user["promo_push_opt_in"]), int(user["promo_email_opt_in"])), (0, 1))
+            self.assertEqual((int(preferences["marketing_enabled"]), int(preferences["chitthi_enabled"])), (0, 1))
+            self.assertEqual(queued["status"], "FAILED")
+            unaffected = {
+                row["idempotency_key"]: row["status"]
+                for row in con.execute("SELECT idempotency_key, status FROM mobile_push_outbox WHERE idempotency_key != 'legacy-promo'")
+            }
+            self.assertEqual(unaffected, {"diagnostic-promo": "PENDING", "chitthi-message": "PENDING"})
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (user_id,))
+            con.execute("UPDATE mobile_notification_preferences SET marketing_enabled = 1 WHERE user_id = ?", (user_id,))
+        app.init_db()
+        with app.db() as con:
+            self.assertEqual(int(con.execute("SELECT promo_push_opt_in FROM users WHERE id = ?", (user_id,)).fetchone()[0]), 1)
+            self.assertEqual(int(con.execute("SELECT marketing_enabled FROM mobile_notification_preferences WHERE user_id = ?", (user_id,)).fetchone()[0]), 1)
 
     def test_signed_in_notification_self_test_covers_each_device_without_exposing_tokens(self):
         with app.db() as con:

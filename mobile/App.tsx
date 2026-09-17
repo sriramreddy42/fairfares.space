@@ -59,6 +59,8 @@ const NOTIFICATION_CHANNELS = {
   carpool: "carpool-v2",
   housing: "housing-v2",
   rentals: "rentals-v2",
+  support: "support-v2",
+  updates: "fairfares-updates-v2",
   marketing: "marketing-v2"
 } as const;
 const GOOGLE_AUTH_CONFIGURED = Platform.select({
@@ -704,6 +706,16 @@ function FairFaresApp() {
             sound: "default",
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#f59e0b"
+          }),
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.support, {
+            name: "Support replies",
+            importance: Notifications.AndroidImportance.DEFAULT,
+            sound: "default"
+          }),
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.updates, {
+            name: "Other FairFares updates",
+            importance: Notifications.AndroidImportance.DEFAULT,
+            sound: "default"
           }),
           Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.marketing, {
             name: "FairFares ideas and deals",

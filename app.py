@@ -8141,6 +8141,22 @@ def init_db() -> None:
                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        marketing_consent_migration = "marketing_push_requires_explicit_opt_in_v1"
+        if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (marketing_consent_migration,)).fetchone():
+            # Existing enabled values came from token registration or policy
+            # acceptance; we cannot distinguish those from a deliberate opt-in.
+            # Reset once so marketing push requires a fresh explicit choice.
+            con.execute("UPDATE mobile_notification_preferences SET marketing_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE marketing_enabled != 0")
+            con.execute("UPDATE users SET promo_push_opt_in = 0 WHERE promo_push_opt_in != 0")
+            con.execute(
+                """UPDATE mobile_push_outbox
+                   SET status = 'FAILED', last_error = 'Marketing push consent reset', updated_at = CURRENT_TIMESTAMP
+                   WHERE status IN ('PENDING', 'RETRY')
+                     AND json_valid(data_json)
+                     AND json_extract(data_json, '$.type') = 'FAIRFARES_PROMO'
+                     AND COALESCE(json_extract(data_json, '$.diagnosticId'), '') = ''"""
+            )
+            con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (marketing_consent_migration,))
         lifetime_migration = "housing_active_100_days_from_rollout_v1"
         if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (lifetime_migration,)).fetchone():
             # The product policy starts a fresh 100-day window for every post
@@ -22160,7 +22176,15 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     rich_notification = (
         notification_type == "FAIRFARES_PROMO" or is_chitthi_notification
     ) and image_url.startswith("https://")
-    channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "housing-v2" if notification_type.startswith("HOUSING_") else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
+    push_category = mobile_push_category(notification_data)
+    channel_id = {
+        "chitthi": "chitthi-messages-v2",
+        "carpool": "carpool-v2",
+        "housing": "housing-v2",
+        "rentals": "rentals-v2",
+        "support": "support-v2",
+        "marketing": "marketing-v2",
+    }.get(push_category, "fairfares-updates-v2")
     try:
         badge_count = max(0, int(notification_data.get("badge") or 0))
     except (TypeError, ValueError):
@@ -22509,10 +22533,51 @@ def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
             if not claimed:
                 continue
             token = str(row_value(row, "token") or "")
+            with db() as con:
+                active_token = con.execute(
+                    "SELECT user_id FROM mobile_push_tokens WHERE token = ? AND enabled = 1",
+                    (token,),
+                ).fetchone()
+                if not active_token or int(row_value(active_token, "user_id") or 0) != int(row_value(row, "user_id") or 0):
+                    con.execute(
+                        """UPDATE mobile_push_outbox SET status = 'DISABLED',
+                           last_error = 'Device token no longer belongs to this account', updated_at = CURRENT_TIMESTAMP
+                           WHERE id = ?""",
+                        (outbox_id,),
+                    )
+                    summary["disabled"] += 1
+                    continue
             try:
                 notification_data = json.loads(str(row_value(row, "data_json") or "{}"))
             except json.JSONDecodeError:
                 notification_data = {}
+            category = mobile_push_category(notification_data)
+            if category != "mandatory" and not notification_data.get("diagnosticId"):
+                with db() as con:
+                    consent = con.execute(
+                        """SELECT users.promo_push_opt_in, preferences.*
+                           FROM users
+                           LEFT JOIN mobile_notification_preferences preferences ON preferences.user_id = users.id
+                           WHERE users.id = ?""",
+                        (int(row_value(row, "user_id") or 0),),
+                    ).fetchone()
+                    if category == "marketing":
+                        allowed = bool(consent) and bool(int(row_value(consent, "promo_push_opt_in") or 0)) and bool(int(row_value(consent, "marketing_enabled") or 0))
+                    else:
+                        allowed = bool(consent) and (
+                            not row_value(consent, "user_id")
+                            or bool(int(row_value(consent, f"{category}_enabled") or 0))
+                        )
+                    if not allowed:
+                        error = "Marketing push not opted in" if category == "marketing" else f"{category.title()} push alerts disabled"
+                        con.execute(
+                            """UPDATE mobile_push_outbox
+                               SET status = 'FAILED', last_error = ?, updated_at = CURRENT_TIMESTAMP
+                               WHERE id = ?""",
+                            (error, outbox_id),
+                        )
+                        summary["failed"] += 1
+                        continue
             notification_title, notification_body, notification_data = refresh_queued_chitthi_notification(
                 row_value(row, "title"), row_value(row, "body"), notification_data,
             )
@@ -22637,11 +22702,13 @@ def send_mobile_push_for_users(
         rows = con.execute(
             f"""
             SELECT tokens.user_id, tokens.token, tokens.platform, tokens.notification_schema,
+                   users.promo_push_opt_in,
                    preferences.user_id AS preference_user_id,
                    preferences.chitthi_enabled, preferences.carpool_enabled,
                    preferences.rentals_enabled, preferences.housing_enabled,
                    preferences.support_enabled, preferences.marketing_enabled
             FROM mobile_push_tokens tokens
+            JOIN users ON users.id = tokens.user_id
             LEFT JOIN mobile_notification_preferences preferences ON preferences.user_id = tokens.user_id
             WHERE tokens.enabled = 1 AND tokens.user_id IN ({placeholders})
             ORDER BY datetime(last_seen_at) DESC
@@ -22649,7 +22716,20 @@ def send_mobile_push_for_users(
             tuple(unique_user_ids),
         ).fetchall()
     preference_column = f"{category}_enabled"
-    rows = [row for row in rows if category == "mandatory" or not row_value(row, "preference_user_id") or bool(int(row_value(row, preference_column) or 0))]
+    rows = [
+        row for row in rows
+        if category == "mandatory"
+        or (
+            category == "marketing"
+            and row_value(row, "preference_user_id")
+            and bool(int(row_value(row, "marketing_enabled") or 0))
+            and bool(int(row_value(row, "promo_push_opt_in") or 0))
+        )
+        or (
+            category != "marketing"
+            and (not row_value(row, "preference_user_id") or bool(int(row_value(row, preference_column) or 0)))
+        )
+    ]
     for row in rows:
         token_data = dict(data or {})
         token_data["targetPlatform"] = str(row_value(row, "platform") or "").strip().lower()
@@ -22722,6 +22802,7 @@ def queue_promotional_campaign(campaign: dict[str, str], campaign_key: str) -> d
             SELECT DISTINCT users.id
             FROM users
             JOIN mobile_push_tokens ON mobile_push_tokens.user_id = users.id AND mobile_push_tokens.enabled = 1
+            JOIN mobile_notification_preferences preferences ON preferences.user_id = users.id AND preferences.marketing_enabled = 1
             WHERE users.is_verified = 1
               AND users.promo_push_opt_in = 1
               AND NOT EXISTS (
@@ -37693,23 +37774,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             """
                             INSERT INTO mobile_notification_preferences
                             (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
-                            VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
+                            VALUES (?, 1, 1, 1, 1, 1, 0, CURRENT_TIMESTAMP)
                             ON CONFLICT(user_id) DO UPDATE SET
                                 updated_at = CURRENT_TIMESTAMP
                             """,
                             (current_user_id,),
-                        )
-                        con.execute(
-                            """
-                            UPDATE users
-                            SET promo_push_opt_in = COALESCE((
-                                SELECT marketing_enabled
-                                FROM mobile_notification_preferences
-                                WHERE user_id = ?
-                            ), promo_push_opt_in)
-                            WHERE id = ?
-                            """,
-                            (current_user_id, current_user_id),
                         )
                 if enabled and device_id:
                     # Expo tokens rotate. Keep only the newest token bound to
@@ -37887,9 +37956,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         payload = self.read_json_body()
         current_user_id = int(row_value(user, "id") or 0)
-        values = {key: 1 if bool(payload.get(key, True)) else 0 for key in ("chitthi", "carpool", "rentals", "housing", "support")}
-        values["marketing"] = 1 if bool(payload.get("marketing", False)) else 0
         with db() as con:
+            current = notification_preferences_payload(con.execute(
+                "SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (current_user_id,)
+            ).fetchone())
+            values = {
+                key: int(payload[key]) if type(payload.get(key)) is bool else int(current[key])
+                for key in ("chitthi", "carpool", "rentals", "housing", "support")
+            }
+            # A device permission or a truthy string is not marketing consent.
+            values["marketing"] = (1 if payload["marketing"] is True else 0) if "marketing" in payload else int(current["marketing"])
             con.execute(
                 """
                 INSERT INTO mobile_notification_preferences
@@ -37927,19 +38003,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             con.execute(
                 """UPDATE users SET consented_at = ?, terms_version = ?, privacy_version = ?,
-                          community_guidelines_version = ?, promo_push_opt_in = 1 WHERE id = ?""",
+                          community_guidelines_version = ? WHERE id = ?""",
                 (consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION, user_id),
-            )
-            con.execute(
-                """
-                INSERT INTO mobile_notification_preferences
-                (user_id, chitthi_enabled, carpool_enabled, rentals_enabled, housing_enabled, support_enabled, marketing_enabled, updated_at)
-                VALUES (?, 1, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    marketing_enabled = 1,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id,),
             )
             updated = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_json({"ok": True, "user": mobile_user_payload(updated)})

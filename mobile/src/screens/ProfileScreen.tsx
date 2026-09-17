@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ActivityIndicator, Alert, Image, ImageSourcePropType, Linking, Modal, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getRentalBookings, getRideActivity, requestAccountDeletion as submitAccountDeletionRequest, updateMobileProfile } from "../api/client";
+import * as Notifications from "expo-notifications";
+import { ActivityIndicator, Alert, AppState, Image, ImageSourcePropType, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
@@ -37,6 +38,14 @@ type AccountHistoryItem = { id: string; sourceId: string; title: string; meta: s
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
+const PUSH_CATEGORIES: { key: keyof MobileNotificationPreferences; title: string; copy: string }[] = [
+  { key: "chitthi", title: "Chitthi messages", copy: "Messages still arrive in Chitthi when alerts are off." },
+  { key: "housing", title: "Housing", copy: "For listing and match alerts when available." },
+  { key: "carpool", title: "Carpool", copy: "Ride and request updates." },
+  { key: "rentals", title: "Rentals", copy: "Booking updates." },
+  { key: "support", title: "Support", copy: "For support alerts when available." },
+  { key: "marketing", title: "Offers and deals", copy: "Optional push alerts. Marketing emails are separate." }
+];
 
 function firstInitial(name = "") {
   return Array.from(avatarInitials(name, "F"))[0] || "F";
@@ -85,6 +94,10 @@ export function ProfileScreen({
   const [supportMessage, setSupportMessage] = useState("");
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
+  const [notificationPreferences, setNotificationPreferences] = useState<MobileNotificationPreferences | null>(null);
+  const [notificationPreferencesError, setNotificationPreferencesError] = useState(false);
+  const [notificationPreferenceSaving, setNotificationPreferenceSaving] = useState<keyof MobileNotificationPreferences | null>(null);
+  const [systemAlertsEnabled, setSystemAlertsEnabled] = useState<boolean | null>(null);
   const [accountActivityLoading, setAccountActivityLoading] = useState(Boolean(user));
   const [historyOpeningId, setHistoryOpeningId] = useState("");
 
@@ -128,6 +141,44 @@ export function ProfileScreen({
       }
     });
     return () => { cancelled = true; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNotificationPreferences(null);
+    setNotificationPreferencesError(false);
+    if (!user?.id) return;
+    getMobileNotificationPreferences()
+      .then((result) => {
+        if (!cancelled) setNotificationPreferences(result.preferences);
+      })
+      .catch(() => {
+        if (!cancelled) setNotificationPreferencesError(true);
+      });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || Platform.OS === "web") return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const permission = await Notifications.getPermissionsAsync();
+        const iosAlertsHidden = Platform.OS === "ios" && Boolean(permission.ios) && !(
+          permission.ios?.allowsAlert || permission.ios?.allowsDisplayInNotificationCenter || permission.ios?.allowsDisplayOnLockScreen
+        );
+        const androidAlertsHidden = Platform.OS === "android" && typeof permission.android?.importance === "number"
+          && permission.android.importance <= Notifications.AndroidImportance.NONE;
+        if (!cancelled) setSystemAlertsEnabled(permission.status === "granted" && !iosAlertsHidden && !androidAlertsHidden);
+      } catch {
+        if (!cancelled) setSystemAlertsEnabled(null);
+      }
+    };
+    void refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refresh();
+    });
+    return () => { cancelled = true; subscription.remove(); };
   }, [user?.id]);
 
   useEffect(() => {
@@ -371,6 +422,22 @@ export function ProfileScreen({
     }
   }
 
+  async function changePushPreference(key: keyof MobileNotificationPreferences, enabled: boolean) {
+    const userId = Number(user?.id || 0);
+    if (!userId || !notificationPreferences || notificationPreferenceSaving) return;
+    setNotificationPreferenceSaving(key);
+    try {
+      const result = await updateMobileNotificationPreferences({ [key]: enabled });
+      if (currentProfileUserIdRef.current === userId) setNotificationPreferences(result.preferences);
+    } catch (error) {
+      if (currentProfileUserIdRef.current === userId) {
+        Alert.alert("Preference not saved", error instanceof Error ? error.message : "Please try again.");
+      }
+    } finally {
+      setNotificationPreferenceSaving(null);
+    }
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -476,6 +543,42 @@ export function ProfileScreen({
           })}
         </View>
       </View>
+
+      {user ? (
+        <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
+          <View>
+            <Text style={styles.cardTitle}>Phone notifications</Text>
+            <Text style={styles.cardCopy}>Choose alerts by category. Messages and activity still arrive in the app; other important updates may still appear.</Text>
+          </View>
+          {Platform.OS !== "web" && systemAlertsEnabled === false ? (
+            <View style={styles.privacyRow}>
+              <View style={styles.privacyCopy}>
+                <Text style={styles.menuTitle}>Phone alerts are off</Text>
+                <Text style={styles.menuCopy}>Enable FairFares notifications in your phone settings to see these alerts.</Text>
+              </View>
+              <TouchableOpacity onPress={() => void Linking.openSettings()} accessibilityRole="button" accessibilityLabel="Open phone notification settings">
+                <Text style={styles.settingsLink}>Settings ›</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {PUSH_CATEGORIES.map(({ key, title, copy }) => (
+            <View style={styles.privacyRow} key={key}>
+              <View style={styles.privacyCopy}>
+                <Text style={styles.menuTitle}>{title}</Text>
+                <Text style={styles.menuCopy}>{copy}</Text>
+              </View>
+              {notificationPreferenceSaving === key || (!notificationPreferences && !notificationPreferencesError) ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}
+              <Switch
+                value={Boolean(notificationPreferences?.[key])}
+                onValueChange={(enabled) => void changePushPreference(key, enabled)}
+                disabled={!notificationPreferences || Boolean(notificationPreferenceSaving)}
+                accessibilityLabel={`${title} push notifications`}
+              />
+            </View>
+          ))}
+          {notificationPreferencesError ? <Text style={styles.cardCopy}>Could not load notification preferences. Reopen Account to try again.</Text> : null}
+        </View>
+      ) : null}
 
       {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
         <TouchableOpacity key={title} style={[styles.menuRow, isLight && styles.flatLightCard]} onPress={onPress}>
@@ -642,6 +745,7 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginTop: 4 },
   privacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.line },
   privacyCopy: { flex: 1 },
+  settingsLink: { color: theme.colors.brand, fontWeight: "800", fontSize: 13 },
   primaryButton: { flex: 1, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
   buttonContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },

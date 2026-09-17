@@ -77,6 +77,11 @@ class PushNotificationTest(unittest.TestCase):
                 (self.user_id, token, notification_schema, enabled),
             )
 
+    def opt_in_marketing(self):
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+            con.execute("INSERT INTO mobile_notification_preferences (user_id, marketing_enabled) VALUES (?, 1)", (self.user_id,))
+
     def test_chitthi_direct_notification_has_stable_sender_layout(self):
         self.assertEqual(
             app.chitthi_notification_copy("Marisa", "Are you available?"),
@@ -741,6 +746,16 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(message["mutableContent"])
         self.assertEqual(message["richContent"], {"image": image_url})
 
+    def test_support_and_other_updates_do_not_use_chitthi_android_channel(self):
+        token = "ExpoPushToken[other-channel-device]"
+        for notification_type, expected_channel in (("SUPPORT_REPLY", "support-v2"), ("COMMUNITY_ANSWER", "fairfares-updates-v2")):
+            with self.subTest(notification_type=notification_type):
+                response = FakeResponse({"data": [{"status": "ok", "id": "ticket-other"}]})
+                with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+                    app.send_expo_push([token], "Update", "New activity", {"type": notification_type})
+                message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+                self.assertEqual(message["channelId"], expected_channel)
+
     def test_chat_payload_carries_unread_badge(self):
         token = "ExpoPushToken[badge-device]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-badge"}]})
@@ -781,8 +796,93 @@ class PushNotificationTest(unittest.TestCase):
             count = int(con.execute("SELECT COUNT(*) AS count FROM mobile_push_outbox").fetchone()["count"])
         self.assertEqual(count, 0)
 
+    def test_marketing_push_requires_explicit_account_and_category_opt_in(self):
+        self.add_token("ExpoPushToken[marketing-consent-device]")
+        payload = {"type": "FAIRFARES_PROMO", "campaign": "consent-check"}
+
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Offer", "Deal", payload)
+        with app.db() as con:
+            self.assertEqual(int(con.execute("SELECT COUNT(*) FROM mobile_push_outbox").fetchone()[0]), 0)
+            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Offer", "Deal", payload)
+        with app.db() as con:
+            self.assertEqual(int(con.execute("SELECT COUNT(*) FROM mobile_push_outbox").fetchone()[0]), 0)
+            con.execute("INSERT INTO mobile_notification_preferences (user_id, marketing_enabled) VALUES (?, 1)", (self.user_id,))
+
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Offer", "Deal", payload)
+        with app.db() as con:
+            self.assertEqual(int(con.execute("SELECT COUNT(*) FROM mobile_push_outbox").fetchone()[0]), 1)
+
+    def test_queued_marketing_push_is_cancelled_after_opt_out(self):
+        token = "ExpoPushToken[queued-marketing-device]"
+        self.add_token(token)
+        self.opt_in_marketing()
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "Offer", "Deal", {"type": "FAIRFARES_PROMO", "campaign": "opt-out-check"})
+        with app.db() as con:
+            con.execute("UPDATE users SET promo_push_opt_in = 0 WHERE id = ?", (self.user_id,))
+            con.execute("UPDATE mobile_notification_preferences SET marketing_enabled = 0 WHERE user_id = ?", (self.user_id,))
+        with patch.object(app, "send_expo_push") as send_push:
+            result = app.process_mobile_push_outbox()
+        self.assertEqual(result["failed"], 1)
+        send_push.assert_not_called()
+        with app.db() as con:
+            row = con.execute("SELECT status, last_error FROM mobile_push_outbox WHERE token = ?", (token,)).fetchone()
+        self.assertEqual(row["status"], "FAILED")
+        self.assertIn("not opted in", row["last_error"])
+
+    def test_queued_service_pushes_are_cancelled_after_opt_out(self):
+        cases = (
+            ("chitthi", "CHITTHI_MESSAGE"),
+            ("carpool", "CARPOOL_REQUEST"),
+            ("housing", "HOUSING_MATCH"),
+            ("rentals", "RENTAL_BOOKING"),
+            ("support", "SUPPORT_REPLY"),
+        )
+        for category, notification_type in cases:
+            with self.subTest(category=category):
+                with app.db() as con:
+                    con.execute("DELETE FROM mobile_push_outbox")
+                    con.execute("DELETE FROM mobile_push_tokens")
+                token = f"ExpoPushToken[queued-{category}-device]"
+                self.add_token(token)
+                with patch.object(app.threading, "Thread", DeferredThread):
+                    app.send_mobile_push_for_users(
+                        [self.user_id], "Update", "New activity", {"type": notification_type, "eventId": category}
+                    )
+                with app.db() as con:
+                    con.execute(
+                        f"INSERT INTO mobile_notification_preferences (user_id, {category}_enabled) VALUES (?, 0) "
+                        f"ON CONFLICT(user_id) DO UPDATE SET {category}_enabled = 0",
+                        (self.user_id,),
+                    )
+                with patch.object(app, "send_expo_push") as send_push:
+                    app.process_mobile_push_outbox()
+                send_push.assert_not_called()
+                with app.db() as con:
+                    row = con.execute("SELECT status FROM mobile_push_outbox WHERE token = ?", (token,)).fetchone()
+                    self.assertEqual(row["status"], "FAILED")
+                    con.execute(f"UPDATE mobile_notification_preferences SET {category}_enabled = 1 WHERE user_id = ?", (self.user_id,))
+
+    def test_queued_push_is_cancelled_after_device_logout(self):
+        token = "ExpoPushToken[logged-out-device]"
+        self.add_token(token)
+        with patch.object(app.threading, "Thread", DeferredThread):
+            app.send_mobile_push_for_users([self.user_id], "New message", "Hello", {"type": "CHITTHI_MESSAGE", "messageId": 988})
+        with app.db() as con:
+            con.execute("UPDATE mobile_push_tokens SET enabled = 0 WHERE token = ?", (token,))
+        with patch.object(app, "send_expo_push") as send_push:
+            result = app.process_mobile_push_outbox()
+        self.assertEqual(result["disabled"], 1)
+        send_push.assert_not_called()
+
     def test_outbox_records_ticket_then_receipt_delivery(self):
         token = "ExpoPushToken[receipt-device]"
+        self.add_token(token)
         with patch.object(app.threading, "Thread", DeferredThread):
             app.enqueue_mobile_pushes([(self.user_id, token)], "New message", "Hello", {"type": "CHITTHI_MESSAGE", "messageId": 88})
         with patch.object(app, "send_expo_push", return_value={token: {"status": "ACCEPTED", "ticketId": "ticket-88", "error": ""}}):
@@ -813,6 +913,7 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_rate_limited_receipt_returns_durable_push_to_retry(self):
         token = "ExpoPushToken[receipt-rate-limit-device]"
+        self.add_token(token)
         with patch.object(app.threading, "Thread", DeferredThread):
             app.enqueue_mobile_pushes(
                 [(self.user_id, token)],
@@ -851,6 +952,7 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_outbox_mints_group_avatar_immediately_before_expo_delivery(self):
         token = "ExpoPushToken[group-avatar-outbox]"
+        self.add_token(token)
         with app.db() as con:
             con.execute(
                 "INSERT INTO chat_communities (public_id, kind, name, photo_url) VALUES ('FFG-OUTBOX-AVATAR', 'GROUP', 'Outbox Avatar Group', '/uploads/outbox-group.jpg')"
@@ -983,8 +1085,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(result["sent"], 0)
         send_push.assert_not_called()
 
-        with app.db() as con:
-            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+        self.opt_in_marketing()
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             result = app.run_promotional_push_automation(scheduled)
             duplicate = app.run_promotional_push_automation(scheduled)
@@ -1002,8 +1103,7 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_promotional_push_uses_monday_wednesday_friday_schedule(self):
         self.add_token("ExpoPushToken[promo-schedule-device]")
-        with app.db() as con:
-            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+        self.opt_in_marketing()
 
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             monday = app.run_promotional_push_automation(datetime(2026, 8, 3, 11, 0))
@@ -1020,8 +1120,8 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_housing_promotion_uses_real_active_inventory_count(self):
         self.add_token("ExpoPushToken[housing-opportunity-device]")
+        self.opt_in_marketing()
         with app.db() as con:
-            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
             con.executemany(
                 """
                 INSERT INTO accommodation_posts
@@ -1051,8 +1151,8 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_carpool_promotion_uses_real_active_offer_count(self):
         self.add_token("ExpoPushToken[carpool-opportunity-device]")
+        self.opt_in_marketing()
         with app.db() as con:
-            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
             con.executemany(
                 """
                 INSERT INTO ride_posts
@@ -1083,8 +1183,7 @@ class PushNotificationTest(unittest.TestCase):
 
     def test_festival_push_uses_poster_and_sends_only_once(self):
         self.add_token("ExpoPushToken[festival-device]")
-        with app.db() as con:
-            con.execute("UPDATE users SET promo_push_opt_in = 1 WHERE id = ?", (self.user_id,))
+        self.opt_in_marketing()
         scheduled = datetime(2026, 11, 8, 10, 0)
         with patch.object(app, "send_mobile_push_for_users") as send_push:
             result = app.run_promotional_push_automation(scheduled)
