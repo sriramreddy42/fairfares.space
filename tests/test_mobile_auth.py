@@ -1652,6 +1652,56 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_signed_in_notification_self_test_covers_each_device_without_exposing_tokens(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Two Device Owner", "two-devices@example.com", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('two-device-token', ?)", (user_id,))
+            con.executemany(
+                """INSERT INTO mobile_push_tokens
+                   (user_id, token, platform, device_label, enabled)
+                   VALUES (?, ?, ?, ?, 1)""",
+                [
+                    (user_id, "ExpoPushToken[self-test-ios]", "ios", "Sriram iPhone"),
+                    (user_id, "ExpoPushToken[self-test-android]", "android", "Sriram Android"),
+                ],
+            )
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer two-device-token"},
+            )
+            with mock.patch.object(app, "process_mobile_push_outbox"):
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 202)
+                    payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["registeredDevices"], 2)
+            self.assertEqual(payload["queuedDevices"], 2)
+            self.assertEqual({device["platform"] for device in payload["devices"]}, {"ios", "android"})
+            self.assertNotIn("ExpoPushToken", json.dumps(payload))
+
+            status_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test?diagnostic_id={urllib.parse.quote(payload['diagnosticId'])}",
+                headers={"Authorization": "Bearer two-device-token"},
+            )
+            with urllib.request.urlopen(status_request, timeout=5) as response:
+                status_payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(status_payload["ok"])
+            self.assertEqual(len(status_payload["devices"]), 2)
+            self.assertEqual({device["status"] for device in status_payload["devices"]}, {"PENDING"})
+            self.assertNotIn("ExpoPushToken", json.dumps(status_payload))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1850,7 +1850,17 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
               <TouchableOpacity style={styles.composerIcon} onPress={() => setBenefitsOpen(true)} accessibilityLabel="Sign up to add an attachment"><Text style={styles.paperclipIcon}>📎</Text></TouchableOpacity>
               <TouchableOpacity style={styles.composerEmoji} onPress={() => setDraft((current) => `${current}😊`)} accessibilityLabel="Add emoji"><Text style={styles.composerEmojiText}>☺</Text></TouchableOpacity>
               <TextInput style={styles.composerInput} value={draft} onChangeText={(value) => { if (value && selectedId) setQuickReplyDismissedIds((current) => current.includes(selectedId) ? current : [...current, selectedId]); setDraft(value); }} multiline placeholder={remaining > 0 ? "Write a message…" : "Write your message, then sign up to send…"} placeholderTextColor="#a7a08d" />
-              <TouchableOpacity style={[styles.composerSend, (!draft.trim() || busy) && styles.sendDisabled]} disabled={!draft.trim() || busy} onPress={() => void sendGuestReply()} accessibilityLabel="Send message">{busy ? <Text style={styles.composerSendText}>…</Text> : <SendIcon />}</TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.composerSend, (!draft.trim() || busy) && styles.sendDisabled]}
+                disabled={!draft.trim() || busy}
+                onPress={() => void sendGuestReply()}
+                hitSlop={{ top: 5, right: 5, bottom: 5, left: 5 }}
+                pressRetentionOffset={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+              >
+                {busy ? <Text pointerEvents="none" style={styles.composerSendText}>…</Text> : <SendIcon />}
+              </TouchableOpacity>
             </View>
             <Text style={styles.guestPrivateAllowance}>{remaining} of 6 guest messages left</Text>
           </View>
@@ -7864,8 +7874,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             }}
             multiline
           />
-          <TouchableOpacity accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"} style={[styles.composerSend, (threadLoading && !activeConversationId) && styles.sendDisabled]} onPress={sendMessage} disabled={threadLoading && !activeConversationId}>
-            {editingMessageId ? <Text style={styles.composerSendText}>✓</Text> : <SendIcon />}
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={pendingAttachment || pendingImages.length ? "Send attachment" : "Send message"}
+            style={[styles.composerSend, (threadLoading && !activeConversationId) && styles.sendDisabled]}
+            onPress={sendMessage}
+            disabled={threadLoading && !activeConversationId}
+            hitSlop={{ top: 5, right: 5, bottom: 5, left: 5 }}
+            pressRetentionOffset={{ top: 12, right: 12, bottom: 12, left: 12 }}
+            activeOpacity={0.72}
+          >
+            {editingMessageId ? <Text pointerEvents="none" style={styles.composerSendText}>✓</Text> : <SendIcon />}
           </TouchableOpacity>
           </View>
         </View>
@@ -8250,7 +8269,7 @@ function PlusIcon() {
 
 function SendIcon() {
   return (
-    <View style={styles.sendIcon}>
+    <View pointerEvents="none" style={styles.sendIcon}>
       <View style={styles.sendWingTop} />
       <View style={styles.sendWingBottom} />
     </View>
@@ -8747,7 +8766,7 @@ const styles = StyleSheet.create({
   pollAddOption: { alignSelf: "flex-start", minHeight: 38, justifyContent: "center", paddingHorizontal: 4 },
   pollAddOptionText: { color: "#118A55", fontSize: 13, fontWeight: "800" },
   pollSettingsCard: { backgroundColor: "#FFF", borderRadius: 12, borderWidth: 1, borderColor: "#DDE0DC", paddingHorizontal: 13, marginTop: 8 },
-  composerInput: { flex: 1, color: "#18342A", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#B6CABD", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
+  composerInput: { flex: 1, minWidth: 0, color: "#18342A", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#B6CABD", borderRadius: 21, paddingHorizontal: 14, paddingVertical: 9, minHeight: 40, maxHeight: 110, fontSize: 16 },
   mentionPicker: { marginHorizontal: 10, marginBottom: 6, maxHeight: 264, overflow: "hidden", borderRadius: 16, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, shadowColor: "#000", shadowOpacity: .16, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
   mentionRow: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(23,61,49,.12)" },
   mentionAvatar: { width: 34, height: 34, borderRadius: 17, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#1E7654" },
@@ -8755,7 +8774,7 @@ const styles = StyleSheet.create({
   mentionCopy: { flex: 1 },
   mentionName: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
   mentionRole: { color: theme.colors.muted, fontSize: 10, textTransform: "capitalize", marginTop: 1 },
-  composerSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center" },
+  composerSend: { width: 40, height: 40, flexShrink: 0, zIndex: 2, elevation: 2, borderRadius: 20, backgroundColor: "#2B8A60", borderWidth: 1, borderColor: "#D6A95F", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   composerSendText: { color: "#FFF9ED", fontSize: 18, fontWeight: "900" },
   sendIcon: { width: 19, height: 19, justifyContent: "center", marginLeft: 2 },
   sendWingTop: { position: "absolute", width: 17, height: 4, borderRadius: 3, backgroundColor: theme.colors.text, transform: [{ rotate: "32deg" }], top: 5 },

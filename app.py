@@ -3355,6 +3355,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/mobile/student-verification": ("account-write", 20, 60),
     "/api/mobile/push-token": ("account-preference", 60, 60),
     "/api/mobile/notification-preferences": ("account-preference", 60, 60),
+    "/api/mobile/notification-test": ("account-preference", 5, 3600),
     "/api/mobile/rentals/quote": ("rental-quote", 60, 60),
     "/api/mobile/analytics/events": ("product-analytics", 120, 60),
 }
@@ -25349,6 +25350,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/notification-preferences":
             self.api_mobile_notification_preferences()
             return
+        if parsed.path == "/api/mobile/notification-test":
+            self.api_mobile_notification_test_status(parsed)
+            return
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
             return
@@ -25756,6 +25760,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/profile/consent": self.api_mobile_accept_current_policies,
             "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
+            "/api/mobile/notification-test": self.api_mobile_send_notification_test,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
@@ -37711,6 +37716,99 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             row = con.execute("SELECT * FROM mobile_notification_preferences WHERE user_id = ?", (int(row_value(user, "id") or 0),)).fetchone()
         self.send_json({"ok": True, "preferences": notification_preferences_payload(row)})
+
+    def api_mobile_send_notification_test(self) -> None:
+        """Queue an authenticated delivery test to every active device for this account."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        diagnostic_id = f"push-test-{uuid.uuid4().hex}"
+        with db() as con:
+            devices = con.execute(
+                """SELECT token, platform, device_label, last_seen_at
+                   FROM mobile_push_tokens
+                   WHERE user_id = ? AND enabled = 1
+                   ORDER BY datetime(last_seen_at) DESC""",
+                (user_id,),
+            ).fetchall()
+        targets = [(user_id, str(row_value(device, "token") or "")) for device in devices]
+        queued = enqueue_mobile_pushes(
+            targets,
+            "FairFares notification test",
+            "Notifications are connected on this device.",
+            {
+                "type": "NOTIFICATION_TEST",
+                "eventId": diagnostic_id,
+                "diagnosticId": diagnostic_id,
+                "target": "account",
+            },
+        )
+        response = {
+            "ok": bool(queued),
+            "diagnosticId": diagnostic_id,
+            "registeredDevices": len(devices),
+            "queuedDevices": queued,
+            "devices": [
+                {
+                    "platform": clean_text_value(row_value(device, "platform"), 30),
+                    "label": clean_text_value(row_value(device, "device_label"), 120) or "Mobile device",
+                    "lastSeenAt": row_value(device, "last_seen_at"),
+                }
+                for device in devices
+            ],
+        }
+        if not queued:
+            response["message"] = "No active notification device is registered for this account."
+        self.send_json(response, 202 if queued else 409)
+
+    def api_mobile_notification_test_status(self, parsed: urllib.parse.ParseResult) -> None:
+        """Return token-safe ticket and receipt state for one self-test."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
+            return
+        diagnostic_id = clean_text_value(
+            (urllib.parse.parse_qs(parsed.query).get("diagnostic_id") or [""])[0], 80,
+        )
+        if not re.fullmatch(r"push-test-[0-9a-f]{32}", diagnostic_id):
+            self.send_json({"ok": False, "message": "A valid notification test is required."}, 400)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        matched = []
+        with db() as con:
+            payload_rows = con.execute(
+                """SELECT outbox.status, outbox.attempt_count, outbox.last_error,
+                          outbox.created_at, outbox.accepted_at, outbox.delivered_at,
+                          outbox.data_json, tokens.platform, tokens.device_label
+                   FROM mobile_push_outbox outbox
+                   LEFT JOIN mobile_push_tokens tokens ON tokens.token = outbox.token
+                   WHERE outbox.user_id = ? AND outbox.created_at >= datetime('now', '-1 day')
+                   ORDER BY outbox.id DESC LIMIT 30""",
+                (user_id,),
+            ).fetchall()
+        for row in payload_rows:
+            try:
+                payload = json.loads(str(row_value(row, "data_json") or "{}"))
+            except json.JSONDecodeError:
+                continue
+            if str(payload.get("diagnosticId") or "") != diagnostic_id:
+                continue
+            matched.append({
+                "platform": clean_text_value(row_value(row, "platform"), 30),
+                "label": clean_text_value(row_value(row, "device_label"), 120) or "Mobile device",
+                "status": row_value(row, "status"),
+                "attempts": int(row_value(row, "attempt_count") or 0),
+                "error": clean_text_value(row_value(row, "last_error"), 500),
+                "queuedAt": row_value(row, "created_at"),
+                "acceptedAt": row_value(row, "accepted_at"),
+                "deliveredAt": row_value(row, "delivered_at"),
+            })
+        if not matched:
+            self.send_json({"ok": False, "message": "Notification test not found."}, 404)
+            return
+        self.send_json({"ok": True, "diagnosticId": diagnostic_id, "devices": matched})
 
     def api_mobile_update_notification_preferences(self) -> None:
         user = self.current_user()
