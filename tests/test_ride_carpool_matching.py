@@ -113,6 +113,156 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             "Chennai, Tamil Nadu, India",
         )
 
+    def test_airport_selection_keeps_its_name_when_geocoder_returns_denver(self):
+        airport = "Denver International Airport (DEN), 8500 Peña Blvd, Denver, CO"
+        point = {"label": "Denver", "lat": 39.8563486, "lng": -104.6764061}
+        self.assertEqual(app.ride_display_label(airport, point, "Denver, CO"), airport)
+        with patch.object(app, "precise_accommodation_location_point", return_value=point):
+            suggestions = app.ride_place_suggestions("Denver, CO", airport, resolve_exact=True)
+        self.assertEqual(suggestions[0]["label"], airport)
+        self.assertAlmostEqual(suggestions[0]["lat"], 39.8563486)
+
+    def test_selected_place_keeps_its_name_and_coordinates_for_any_poi(self):
+        examples = (
+            ("Coors Field, 2001 Blake St, Denver, CO", 39.7559, -104.9942),
+            ("Denver Union Station, 1701 Wynkoop St, Denver, CO", 39.7527, -105.0002),
+            ("UCHealth University of Colorado Hospital, Aurora, CO", 39.7427, -104.8411),
+        )
+        with patch.object(app, "ride_point") as geocode:
+            for label, lat, lng in examples:
+                with self.subTest(label=label):
+                    point = app.ride_submission_point(label, "Denver, CO", lat, lng)
+                    self.assertEqual(point["label"], label)
+                    self.assertEqual((point["lat"], point["lng"]), (lat, lng))
+                    self.assertEqual(app.ride_display_label(label, point, "Denver, CO"), label)
+            geocode.assert_not_called()
+
+    def test_typed_place_without_coordinates_is_still_geocoded(self):
+        label = "Coors Field, 2001 Blake St, Denver, CO"
+        resolved = {"label": "Coors Field, Denver, CO", "lat": 39.7559, "lng": -104.9942}
+        with patch.object(app, "ride_point", return_value=resolved) as geocode:
+            point = app.ride_submission_point(label, "Denver, CO", 0, 0)
+        geocode.assert_called_once_with(label, "Denver, CO")
+        self.assertEqual(point, resolved)
+
+    def test_google_prediction_resolves_by_place_id_not_cached_city_point(self):
+        label = "Coors Field, 2001 Blake St, Denver, CO"
+        place_id = "ChIJ1234567890Denver"
+        city_point = {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
+
+        def google_response(url):
+            if "/autocomplete/" in url:
+                return {"status": "OK", "predictions": [{"description": label, "place_id": place_id, "types": ["stadium"]}]}
+            if "/details/" in url:
+                return {"status": "OK", "result": {"geometry": {"location": {"lat": 39.7559, "lng": -104.9942}}}}
+            self.fail(f"Unexpected Google URL: {url}")
+
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_accommodation_geocode", return_value=None), patch.object(app, "google_api_get", side_effect=google_response), patch.object(app, "ride_point", return_value=city_point):
+            suggestions = app.ride_place_suggestions("Denver, CO", "Coors Field")
+            self.assertEqual(suggestions[0]["placeId"], place_id)
+            self.assertEqual(suggestions[0]["lat"], 0)
+            self.assertIsNone(suggestions[0]["distanceMiles"])
+            resolved = app.ride_place_suggestions("Denver, CO", label, resolve_exact=True, place_id=place_id)
+        self.assertEqual(resolved[0]["label"], label)
+        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.7559, -104.9942))
+
+    def test_failed_place_details_does_not_fall_back_to_city_center(self):
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_api_get", return_value={"status": "ZERO_RESULTS"}), patch.object(app, "ride_point") as geocode:
+            resolved = app.ride_place_suggestions("Denver, CO", "Coors Field, Denver, CO", resolve_exact=True, place_id="ChIJ1234567890Denver")
+        self.assertEqual(resolved, [])
+        geocode.assert_called_once_with("Denver, CO", allow_refresh=False)
+
+    @patch.object(app, "send_mobile_push_for_users")
+    def test_ride_post_and_activity_keep_selected_place_name_and_point(self, _mock_push):
+        token = "selected-place-ride-token"
+        destination = "Coors Field, 2001 Blake St, Denver, CO"
+        with app.db() as con:
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, self.rider_id))
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(app, "ride_point") as geocode:
+                status, posted = self.request_json(server, "POST", "/api/mobile/rides", token, {
+                    "rideType": "CARPOOL_REQUEST",
+                    "city": "Denver, CO",
+                    "origin": "Denver Union Station, 1701 Wynkoop St, Denver, CO",
+                    "originLat": 39.7527,
+                    "originLng": -105.0002,
+                    "destination": destination,
+                    "destinationLat": 39.7559,
+                    "destinationLng": -104.9942,
+                    "pickupDate": "2099-08-02",
+                    "pickupTime": "8:00 AM",
+                })
+                geocode.assert_not_called()
+            self.assertEqual(status, 201, posted)
+            self.assertEqual(posted["ride"]["destination"], destination)
+            status, activity = self.request_json(server, "GET", "/api/mobile/rides/activity", token)
+            self.assertEqual(status, 200, activity)
+            saved = next(ride for ride in activity["rides"] if ride["id"] == posted["ride"]["id"])
+            self.assertEqual(saved["destination"], destination)
+            with app.db() as con:
+                row = con.execute("SELECT destination_label, destination_lat, destination_lng FROM ride_posts WHERE public_id = ?", (saved["id"],)).fetchone()
+            self.assertEqual(row["destination_label"], destination)
+            self.assertAlmostEqual(float(row["destination_lat"]), 39.7559)
+            self.assertAlmostEqual(float(row["destination_lng"]), -104.9942)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_typed_denver_airport_uses_airport_point_not_city_center(self):
+        city_point = {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
+        with patch.object(app, "precise_accommodation_location_point", return_value=city_point):
+            suggestions = app.ride_place_suggestions("Denver, CO", "Denver Airport", resolve_exact=True)
+        self.assertEqual(suggestions[0]["label"], "Denver Airport")
+        self.assertLess(app.distance_miles_between(suggestions[0]["lat"], suggestions[0]["lng"], 39.8561, -104.6737), 0.1)
+
+        with patch.object(app, "precise_accommodation_location_point", return_value=city_point), patch.object(app, "ride_point", return_value=city_point):
+            self.assertEqual(app.ride_place_suggestions("Denver, CO", "Unknown Airport", resolve_exact=True), [])
+
+    def test_existing_den_airport_ride_labels_are_repaired_by_coordinate_only(self):
+        with app.db() as con:
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'restore_den_airport_ride_labels_v1'")
+            con.execute(
+                """INSERT INTO ride_posts
+                   (public_id, user_id, ride_type, rider_role, title, origin_label,
+                    origin_lat, origin_lng, destination_label, destination_lat, destination_lng)
+                   VALUES (?, ?, 'CARPOOL_OFFER', 'DRIVER', ?, ?, 39.7425, -104.9830,
+                           'Denver', 39.8563486, -104.6764061)""",
+                ("FRD-DEN-AIRPORT", self.driver_id, "Ride offered from 300 E 17th Ave to Denver", "300 E 17th Ave"),
+            )
+            con.execute(
+                """INSERT INTO ride_posts
+                   (public_id, user_id, ride_type, rider_role, title, origin_label,
+                    origin_lat, origin_lng, destination_label, destination_lat, destination_lng)
+                   VALUES (?, ?, 'CARPOOL_OFFER', 'DRIVER', ?, ?, 39.7425, -104.9830,
+                           'Denver', 39.7392, -104.9903)""",
+                ("FRD-DEN-CENTER", self.driver_id, "Ride offered from 300 E 17th Ave to Denver", "300 E 17th Ave"),
+            )
+            con.execute(
+                """INSERT INTO ride_posts
+                   (public_id, user_id, ride_type, rider_role, title, origin_label,
+                    origin_lat, origin_lng, destination_label, destination_lat, destination_lng)
+                   VALUES (?, ?, 'CARPOOL_OFFER', 'DRIVER', ?, ?, 39.7425, -104.9830,
+                           'Denver', 39.8640, -104.6737)""",
+                ("FRD-DEN-NEAR-AIRPORT", self.driver_id, "Ride offered from 300 E 17th Ave to Denver", "300 E 17th Ave"),
+            )
+        app.init_db()
+        with app.db() as con:
+            airport = con.execute("SELECT title, destination_label, destination_lat, destination_lng FROM ride_posts WHERE public_id = 'FRD-DEN-AIRPORT'").fetchone()
+            downtown = con.execute("SELECT title, destination_label FROM ride_posts WHERE public_id = 'FRD-DEN-CENTER'").fetchone()
+            near_airport = con.execute("SELECT title, destination_label FROM ride_posts WHERE public_id = 'FRD-DEN-NEAR-AIRPORT'").fetchone()
+        self.assertEqual(airport["destination_label"], "Denver International Airport (DEN)")
+        self.assertEqual(airport["title"], "Ride offered from 300 E 17th Ave to Denver International Airport (DEN)")
+        self.assertAlmostEqual(float(airport["destination_lat"]), 39.8563486)
+        self.assertAlmostEqual(float(airport["destination_lng"]), -104.6764061)
+        self.assertEqual(downtown["destination_label"], "Denver")
+        self.assertEqual(downtown["title"], "Ride offered from 300 E 17th Ave to Denver")
+        self.assertEqual(near_airport["destination_label"], "Denver")
+        self.assertEqual(near_airport["title"], "Ride offered from 300 E 17th Ave to Denver")
+
     def insert_ride(
         self,
         con,
@@ -1042,7 +1192,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertIsNotNone(notification)
         self.assertEqual(int(notification["driver_user_id"]), self.driver_id)
 
-    @patch.object(app, "google_accommodation_place_suggestions", return_value=[])
+    @patch.object(app, "google_accommodation_place_predictions", return_value=[])
     def test_missing_carpool_city_does_not_fall_back_to_denver(self, _mock_places):
         suggestions = app.ride_place_suggestions("", "unin", limit=10)
         self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))

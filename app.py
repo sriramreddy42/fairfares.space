@@ -664,6 +664,7 @@ ACCOMMODATION_STATIC_POINTS = {
     "union station bus concourse": (39.7541, -105.0009),
     "denver international airport": (39.8561, -104.6737),
     "denver international airport (den)": (39.8561, -104.6737),
+    "denver airport": (39.8561, -104.6737),
     "den": (39.8561, -104.6737),
     "den - united terminal": (39.8561, -104.6737),
     "du": (39.6781, -104.9618),
@@ -8157,6 +8158,56 @@ def init_db() -> None:
                      AND COALESCE(json_extract(data_json, '$.diagnosticId'), '') = ''"""
             )
             con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (marketing_consent_migration,))
+        airport_label_migration = "restore_den_airport_ride_labels_v1"
+        if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (airport_label_migration,)).fetchone():
+            # Older ride creation could save the airport coordinates with a
+            # city-only label. Repair only points very near DEN; a genuine
+            # downtown Denver route must remain untouched.
+            den_airport_label = "Denver International Airport (DEN)"
+            generated_prefixes = {
+                "CARPOOL_OFFER": "Ride offered from",
+                "SCHEDULED_REQUEST": "Recurring ride from",
+                "CARPOOL_REQUEST": "Need a ride from",
+                "GENERAL_REQUEST": "Need a ride from",
+            }
+            rows = con.execute(
+                """SELECT id, ride_type, title, origin_label, origin_lat, origin_lng,
+                          destination_label, destination_lat, destination_lng
+                   FROM ride_posts
+                   WHERE lower(origin_label) IN ('denver', 'denver, co')
+                      OR lower(destination_label) IN ('denver', 'denver, co')"""
+            ).fetchall()
+            for row in rows:
+                origin_label = row_value(row, "origin_label")
+                destination_label = row_value(row, "destination_label")
+                corrected_origin = origin_label
+                corrected_destination = destination_label
+                for label, lat_key, lng_key, endpoint in (
+                    (origin_label, "origin_lat", "origin_lng", "origin"),
+                    (destination_label, "destination_lat", "destination_lng", "destination"),
+                ):
+                    if label.strip().casefold() not in {"denver", "denver, co"}:
+                        continue
+                    lat = float(row_value(row, lat_key) or 0)
+                    lng = float(row_value(row, lng_key) or 0)
+                    if not lat or not lng or distance_miles_between(lat, lng, 39.8561, -104.6737) > 0.25:
+                        continue
+                    if endpoint == "origin":
+                        corrected_origin = den_airport_label
+                    else:
+                        corrected_destination = den_airport_label
+                if corrected_origin == origin_label and corrected_destination == destination_label:
+                    continue
+                title = row_value(row, "title")
+                prefix = generated_prefixes.get(row_value(row, "ride_type"))
+                if prefix and title == f"{prefix} {origin_label} to {destination_label}":
+                    title = f"{prefix} {corrected_origin} to {corrected_destination}"
+                con.execute(
+                    """UPDATE ride_posts SET origin_label = ?, destination_label = ?, title = ?,
+                       updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                    (corrected_origin, corrected_destination, title, int(row_value(row, "id") or 0)),
+                )
+            con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (airport_label_migration,))
         lifetime_migration = "housing_active_100_days_from_rollout_v1"
         if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (lifetime_migration,)).fetchone():
             # The product policy starts a fresh 100-day window for every post
@@ -16451,7 +16502,7 @@ def clean_google_place_prediction(description: str) -> str:
     return dedupe_repeated_location_label(description)
 
 
-def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[str]:
+def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False) -> list[dict[str, str]]:
     # Ride entry can start with a completely new route, before a city has
     # been chosen. A Maps key that is permitted for Places must work here too;
     # requiring a separate Places-only variable made autocomplete silently
@@ -16482,23 +16533,50 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
         return []
     if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
         return []
-    suggestions: list[str] = []
+    suggestions: list[dict[str, str]] = []
     seen: set[str] = set()
     blocked_types = {"hospital", "stadium", "local_government_office"}
     for prediction in payload.get("predictions") or []:
         if not isinstance(prediction, dict):
             continue
         types = set(str(item) for item in (prediction.get("types") or []))
-        if types & blocked_types:
+        if not include_all_types and types & blocked_types:
             continue
         label = clean_google_place_prediction(str(prediction.get("description") or ""))
         if not label or label.lower() in seen:
             continue
         seen.add(label.lower())
-        suggestions.append(label)
+        suggestions.append({"label": label, "placeId": str(prediction.get("place_id") or "").strip()})
         if len(suggestions) >= limit:
             break
     return suggestions
+
+
+def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[str]:
+    return [prediction["label"] for prediction in google_accommodation_place_predictions(city, area, limit, use_city_bias=use_city_bias)]
+
+
+def google_ride_place_details(place_id: str) -> dict[str, object]:
+    """Fetch the selected prediction's geometry, never a similarly named city."""
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    place_id = str(place_id or "").strip()
+    if not api_key or not re.fullmatch(r"[A-Za-z0-9_-]{8,256}", place_id):
+        return {}
+    params = urllib.parse.urlencode({"place_id": place_id, "fields": "geometry,name,formatted_address", "key": api_key})
+    try:
+        payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{params}")
+    except Exception:
+        return {}
+    if payload.get("status") != "OK" or not isinstance(payload.get("result"), dict):
+        return {}
+    result = payload["result"]
+    geometry = result.get("geometry") if isinstance(result.get("geometry"), dict) else {}
+    location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+    lat = float(location.get("lat") or 0)
+    lng = float(location.get("lng") or 0)
+    if not valid_ride_coordinate_pair(lat, lng):
+        return {}
+    return {"lat": lat, "lng": lng, "source": "google-place-details"}
 
 
 def keep_mobile_accommodation_suggestion(label: str) -> bool:
@@ -17473,6 +17551,8 @@ def ride_query_should_geocode_directly(query: str, city: str = "") -> bool:
         return True
     if re.search(r"\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|ct|court|way)\b", clean_query, flags=re.IGNORECASE):
         return True
+    if re.search(r"\b(airport|airfield)\b", clean_query, flags=re.IGNORECASE):
+        return True
     if not re.search(r"\b(university|college|airport|international|amtrak|terminal|station|mall|hotel|apartments?)\b", clean_query, flags=re.IGNORECASE):
         return len(clean_query.split()) <= 3
     return False
@@ -17506,6 +17586,13 @@ def ride_point(query: str, city: str = "", *, allow_refresh: bool = True) -> dic
         if float(point.get("lat") or 0) and float(point.get("lng") or 0):
             return point
     return fallback
+
+
+def ride_submission_point(label: str, city: str, latitude: float, longitude: float) -> dict[str, object]:
+    """Keep a selected place's label with its coordinates; geocode typed text."""
+    if valid_ride_coordinate_pair(latitude, longitude):
+        return {"label": label, "lat": float(latitude), "lng": float(longitude), "source": "client"}
+    return ride_point(label, city)
 
 
 def google_reverse_location_label(lat: float, lng: float) -> str:
@@ -17557,9 +17644,28 @@ def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: 
     # "United States" when the form still carried a US discovery-city bias.
     if fallback and resolved.lower() in country_only_labels and fallback.lower() != resolved.lower():
         return fallback
+    # A city-level cache/geocode result must not rename an explicitly chosen
+    # airport. The selected coordinates can still be the airport's exact point.
+    if fallback and re.search(r"\bairport\b", fallback, flags=re.IGNORECASE) and not re.search(r"\bairport\b", resolved, flags=re.IGNORECASE):
+        return fallback
     if fallback and resolved and city_root and resolved.lower() == city_root and fallback.lower() != city_root:
         return fallback
     return resolved or fallback or city_label or "Location open"
+
+
+def ride_airport_resolution_is_broad(query: str, point: dict[str, object]) -> bool:
+    """Reject a city center masquerading as a typed airport destination."""
+    if not re.search(r"\bairport\b", query, flags=re.IGNORECASE):
+        return False
+    label = normalize_accommodation_place_label(str(point.get("label") or ""))
+    if not label or re.search(r"\bairport\b|\b\d+\b", label, flags=re.IGNORECASE):
+        return False
+    lat = float(point.get("lat") or 0)
+    lng = float(point.get("lng") or 0)
+    city_lat, city_lng = static_accommodation_point(label)
+    if not valid_ride_coordinate_pair(city_lat, city_lng) or not valid_ride_coordinate_pair(lat, lng):
+        return False
+    return distance_miles_between(lat, lng, city_lat, city_lng) <= 2.0
 
 
 def ride_place_icon_source(label: str) -> str:
@@ -17853,13 +17959,14 @@ def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float =
     return cities
 
 
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False) -> list[dict[str, object]]:
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False, place_id: str = "") -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
     selected_country = inferred_location_country(city) if cities_only and city else ""
     labels: list[tuple[str, str]] = []
     popular_points: dict[str, dict[str, object]] = {}
+    prediction_place_ids: dict[str, str] = {}
 
     # Selection and final submission use this narrow path. It turns the exact
     # text the member chose into a coordinate-bearing route point instead of
@@ -17867,10 +17974,18 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     # legacy Places response).
     if resolve_exact and query:
         point: dict[str, object] = {}
-        if ride_query_should_geocode_directly(query, city):
+        if place_id:
+            point = google_ride_place_details(place_id)
+            if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
+                return []
+        elif ride_query_should_geocode_directly(query, city):
             point = precise_accommodation_location_point(query)
-        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
+            if ride_airport_resolution_is_broad(query, point):
+                point = {}
+        if not place_id and not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
             point = ride_point(query, city, allow_refresh=True)
+            if ride_airport_resolution_is_broad(query, point):
+                point = {}
         label = ride_display_label(query, point, city)
         lat = float(point.get("lat") or 0)
         lng = float(point.get("lng") or 0)
@@ -17884,6 +17999,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 "lat": lat,
                 "lng": lng,
                 "source": "geocoded",
+                "placeId": place_id,
                 "icon": ride_place_icon_source(label),
                 "imageUrl": "",
             }]
@@ -17908,8 +18024,12 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
 
     google_query = query
     if google_query:
-        for label in google_accommodation_place_suggestions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias):
+        for prediction in google_accommodation_place_predictions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias, include_all_types=True):
+            label = prediction["label"]
+            if not prediction.get("placeId"):
+                continue
             add_label(label, "google")
+            prediction_place_ids.setdefault(label.lower(), prediction["placeId"])
     else:
         popular_loader = google_ride_popular_cities if cities_only else google_ride_popular_places
         for place in popular_loader(
@@ -17951,7 +18071,10 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
 
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
-        point = popular_points.get(label.lower())
+        place_id = prediction_place_ids.get(label.lower(), "")
+        # Autocomplete has no geometry. A prior text-geocode cache may be a
+        # city center, so never present it as the prediction's coordinate.
+        point = {} if place_id else popular_points.get(label.lower())
         if point is None:
             try:
                 point = ride_point(label, city, allow_refresh=False)
@@ -17974,6 +18097,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 "lat": lat,
                 "lng": lng,
                 "source": source,
+                "placeId": place_id,
                 "icon": ride_place_icon_source(label),
                 "imageUrl": str(point.get("imageUrl") or ""),
             }
@@ -38363,6 +38487,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         query = clean_text_value((params.get("q", params.get("query", [""]))[0] or ""), 180)
+        place_id = clean_text_value((params.get("placeId", [""])[0] or ""), 256)
         try:
             limit = int(params.get("limit", ["10"])[0] or 10)
         except ValueError:
@@ -38375,7 +38500,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact),
+                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact, place_id=place_id if resolve_exact else ""),
                 "placesEnabled": bool(
                     os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
@@ -40132,12 +40257,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not license_plate or not license_state:
                 self.send_json({"ok": False, "error": "License plate and state are required for this ride listing."}, 400)
                 return
-        origin_point = ride_point(origin, city)
-        destination_point = ride_point(destination, city)
-        if valid_ride_coordinate_pair(origin_lat, origin_lng):
-            origin_point = {**origin_point, "lat": float(origin_lat), "lng": float(origin_lng)}
-        if valid_ride_coordinate_pair(destination_lat, destination_lng):
-            destination_point = {**destination_point, "lat": float(destination_lat), "lng": float(destination_lng)}
+        # The app clears coordinates when a member edits place text. A valid
+        # coordinate pair therefore accompanies a chosen/verified place and
+        # its displayed label must remain the label they selected. Regeocoding
+        # here previously replaced POIs with their enclosing city name.
+        origin_point = ride_submission_point(origin, city, origin_lat, origin_lng)
+        destination_point = ride_submission_point(destination, city, destination_lat, destination_lng)
+        if not valid_ride_coordinate_pair(origin_lat, origin_lng) and ride_airport_resolution_is_broad(origin, origin_point):
+            self.send_json({"ok": False, "error": "Choose the airport from suggestions or enter its full name."}, 400)
+            return
+        if not valid_ride_coordinate_pair(destination_lat, destination_lng) and ride_airport_resolution_is_broad(destination, destination_point):
+            self.send_json({"ok": False, "error": "Choose the airport from suggestions or enter its full name."}, 400)
+            return
         if not valid_ride_coordinate_pair(origin_point.get("lat"), origin_point.get("lng")):
             self.send_json({"ok": False, "error": "We couldn't locate your pickup. Choose a suggestion or enter a fuller address."}, 400)
             return

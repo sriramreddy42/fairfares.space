@@ -710,6 +710,8 @@ export function HousingScreen({
   const rideDestinationInputRef = useRef<TextInput | null>(null);
   const ridePlanSubmittingRef = useRef(false);
   const selectedRideSuggestionRef = useRef("");
+  const selectedRideLabelsRef = useRef({ origin: "", destination: "" });
+  const selectedRidePlaceIdsRef = useRef({ origin: "", destination: "" });
   const lastRideOwnerOpenTokenRef = useRef(0);
   const rideEditorRequestRef = useRef(0);
   const rideOwnerLocationSubscription = useRef<Location.LocationSubscription | null>(null);
@@ -774,6 +776,8 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
+    selectedRideLabelsRef.current = { origin: "", destination: "" };
+    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
@@ -984,13 +988,26 @@ export function HousingScreen({
     return validRates.length ? Math.min(...validRates) : null;
   }, [rentalCars]);
   const rentalLocationOptions = useMemo(() => {
-    const locations = new Set<string>();
+    const locations = new Map<string, string>();
+    const addLocation = (raw: string) => {
+      raw.split(/[\n;|]+/).forEach((part) => {
+        const location = part.trim();
+        if (!location) return;
+        const key = location.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const existing = locations.get(key);
+        if (!existing || (location.match(/,/g) || []).length > (existing.match(/,/g) || []).length) {
+          locations.set(key, location);
+        }
+      });
+    };
     cars.forEach((car) => {
-      if (car.location?.trim()) locations.add(car.location.trim());
+      if (car.location) addLocation(car.location);
     });
-    if (rentalSearch.pickupLocation.trim()) locations.add(rentalSearch.pickupLocation.trim());
-    if (rentalSearch.returnLocation.trim()) locations.add(rentalSearch.returnLocation.trim());
-    return Array.from(locations);
+    if (!locations.size) {
+      addLocation(rentalSearch.pickupLocation);
+      addLocation(rentalSearch.returnLocation);
+    }
+    return Array.from(locations.values());
   }, [cars, rentalSearch.pickupLocation, rentalSearch.returnLocation]);
   const rentalDayCount = rentalDays(rentalSearch);
   const rentalTier = durationRateTier(rentalDayCount);
@@ -1206,6 +1223,8 @@ export function HousingScreen({
           return;
         }
         setEditingRideId(ride.id);
+        selectedRideLabelsRef.current = { origin: "", destination: "" };
+        selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
         setRideForm({
           rideType: ride.type,
           city: ride.city || data?.location.city || discoveryLocation || "",
@@ -1417,6 +1436,8 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
+    selectedRideLabelsRef.current = { origin: "", destination: "" };
+    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
@@ -1447,6 +1468,8 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
+    selectedRideLabelsRef.current = { origin: "", destination: "" };
+    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
@@ -1583,6 +1606,8 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
+    selectedRideLabelsRef.current = { origin: "", destination: "" };
+    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
@@ -1658,44 +1683,57 @@ export function HousingScreen({
 
   function selectRidePlace(place: RidePlaceSuggestion) {
     const selectedField = rideFocusedField;
+    const trustedCoordinates = hasRideCoordinates(place.lat, place.lng) && !place.placeId;
+    const startRequest = selectedField === "destination" && rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId;
     selectedRideSuggestionRef.current = place.label;
+    selectedRideLabelsRef.current[selectedField] = place.label;
+    selectedRidePlaceIdsRef.current[selectedField] = place.placeId || "";
     setRideSuggestionsEnabled(false);
     setRideSuggestions([]);
     setRideForm((current) => ({
       ...current,
-      [rideFocusedField]: place.label,
-      ...(rideFocusedField === "origin"
+      [selectedField]: place.label,
+      ...(selectedField === "origin"
         ? {
             city: place.label,
-            originLat: hasRideCoordinates(place.lat, place.lng) ? place.lat : null,
-            originLng: hasRideCoordinates(place.lat, place.lng) ? place.lng : null
+            originLat: trustedCoordinates ? place.lat : null,
+            originLng: trustedCoordinates ? place.lng : null
           }
         : {
-            destinationLat: hasRideCoordinates(place.lat, place.lng) ? place.lat : null,
-            destinationLng: hasRideCoordinates(place.lat, place.lng) ? place.lng : null
+            destinationLat: trustedCoordinates ? place.lat : null,
+            destinationLng: trustedCoordinates ? place.lng : null
           })
     }));
-    // Autocomplete predictions do not always include geometry. Resolve the
-    // selected label separately so route maps and saved offers never retain a
-    // text-only (or 0,0) endpoint.
-    if (!hasRideCoordinates(place.lat, place.lng)) {
+    // Cached coordinates attached to a Google prediction may belong to its
+    // enclosing city. Its place ID must be resolved before a route is saved.
+    if (!trustedCoordinates) {
       const selectedLabel = place.label;
-      void getRidePlaceSuggestions("", selectedLabel, false, false, true)
+      void getRidePlaceSuggestions("", selectedLabel, false, false, true, place.placeId || "")
         .then(([resolved]) => {
-          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) return;
+          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) {
+            if (selectedRideLabelsRef.current[selectedField] === selectedLabel && selectedRidePlaceIdsRef.current[selectedField] === (place.placeId || "")) {
+              Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
+            }
+            return;
+          }
+          if (selectedRideLabelsRef.current[selectedField] !== selectedLabel || selectedRidePlaceIdsRef.current[selectedField] !== (place.placeId || "")) return;
           setRideForm((current) => {
-            if (current[selectedField] !== selectedLabel) return current;
+            if (current[selectedField] !== selectedLabel || selectedRideLabelsRef.current[selectedField] !== selectedLabel || selectedRidePlaceIdsRef.current[selectedField] !== (place.placeId || "")) return current;
             return selectedField === "origin"
-              ? { ...current, origin: resolved.label, city: resolved.label, originLat: resolved.lat, originLng: resolved.lng }
-              : { ...current, destination: resolved.label, destinationLat: resolved.lat, destinationLng: resolved.lng };
+              ? { ...current, origin: selectedLabel, city: selectedLabel, originLat: resolved.lat, originLng: resolved.lng }
+              : { ...current, destination: selectedLabel, destinationLat: resolved.lat, destinationLng: resolved.lng };
           });
-          if (selectedRideSuggestionRef.current === selectedLabel) selectedRideSuggestionRef.current = resolved.label;
+          if (startRequest) void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST");
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (selectedRideLabelsRef.current[selectedField] === selectedLabel && selectedRidePlaceIdsRef.current[selectedField] === (place.placeId || "")) {
+            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
+          }
+        });
     }
     if (selectedField === "origin") {
       setRideFocusedField("destination");
-    } else if (rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId) {
+    } else if (startRequest && trustedCoordinates) {
       setRideSuggestions([]);
       void planRideRoute(place, "CARPOOL_REQUEST");
     }
@@ -1705,6 +1743,8 @@ export function HousingScreen({
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = place.label;
+    selectedRideLabelsRef.current = { origin: "", destination: place.label };
+    selectedRidePlaceIdsRef.current = { origin: "", destination: place.placeId || "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
@@ -1719,21 +1759,43 @@ export function HousingScreen({
     setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
-    setRideForm({
+    const plannedForm: RideInput = {
       ...initialRideForm,
       city: rideDefaultCity,
       origin: rideDefaultPickup,
       originLat: currentRideLocation?.coords.latitude ?? null,
       originLng: currentRideLocation?.coords.longitude ?? null,
       destination: place.label,
-      destinationLat: place.lat,
-      destinationLng: place.lng,
+      destinationLat: place.placeId ? null : place.lat,
+      destinationLng: place.placeId ? null : place.lng,
       rideType: "CARPOOL_REQUEST"
-    });
+    };
+    setRideForm(plannedForm);
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
-    void useCurrentRideLocationForOrigin();
-    void planRideRoute(place, "CARPOOL_REQUEST");
+    void useCurrentRideLocationForOrigin(rideDefaultPickup);
+    if (place.placeId) {
+      void getRidePlaceSuggestions("", place.label, false, false, true, place.placeId)
+        .then(([resolved]) => {
+          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) {
+            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
+            return;
+          }
+          if (selectedRideLabelsRef.current.destination !== place.label || selectedRidePlaceIdsRef.current.destination !== place.placeId) return;
+          if (hasRideCoordinates(plannedForm.originLat, plannedForm.originLng)) {
+            void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST", plannedForm);
+          }
+        })
+        .catch(() => {
+          if (selectedRideLabelsRef.current.destination === place.label && selectedRidePlaceIdsRef.current.destination === place.placeId) {
+            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
+          }
+        });
+    } else {
+      if (hasRideCoordinates(plannedForm.originLat, plannedForm.originLng)) {
+        void planRideRoute(place, "CARPOOL_REQUEST", plannedForm);
+      }
+    }
   }
 
   function ridePlanComplete() {
@@ -1787,19 +1849,19 @@ export function HousingScreen({
     }
   }
 
-  async function planRideRoute(selectedDestination?: RidePlaceSuggestion, requestedRideType: RideType = rideForm.rideType) {
+  async function planRideRoute(selectedDestination?: RidePlaceSuggestion, requestedRideType: RideType = rideForm.rideType, formSnapshot: RideInput = rideForm) {
     if (ridePlanSubmittingRef.current) return;
-    if (ridePickupIsInPast(rideForm.pickupDate, rideForm.pickupTime)) {
+    if (ridePickupIsInPast(formSnapshot.pickupDate, formSnapshot.pickupTime)) {
       Alert.alert("Choose a future pickup", "Pickup date and time must be later than the current time.");
       return;
     }
-    const submittedDestination = selectedDestination?.label || rideForm.destination.trim();
+    const submittedDestination = selectedDestination?.label || formSnapshot.destination.trim();
     if (!submittedDestination) {
       Alert.alert("Destination needed", "Enter where you want to go.");
       return;
     }
     ridePlanSubmittingRef.current = true;
-    let effectiveOrigin = rideForm.origin.trim() || selectedLocationText || rideForm.city || discoveryLocation;
+    let effectiveOrigin = formSnapshot.origin.trim() || selectedLocationText || formSnapshot.city || discoveryLocation;
     if (!effectiveOrigin) {
       ridePlanSubmittingRef.current = false;
       Alert.alert("Current location needed", "Allow location access or enter your pickup location.");
@@ -1810,15 +1872,15 @@ export function HousingScreen({
     const destinationAlreadyPicked = Boolean(
       selectedDestination && hasRideCoordinates(selectedDestination.lat, selectedDestination.lng)
     ) || Boolean(
-      rideForm.destination.trim() && hasRideCoordinates(rideForm.destinationLat, rideForm.destinationLng)
+      formSnapshot.destination.trim() && hasRideCoordinates(formSnapshot.destinationLat, formSnapshot.destinationLng)
     );
     if (listingRide && destinationAlreadyPicked) {
-      if (!String(rideForm.vehicleMakeModel || "").trim()) {
+      if (!String(formSnapshot.vehicleMakeModel || "").trim()) {
         ridePlanSubmittingRef.current = false;
         Alert.alert("Vehicle needed", "Enter the car make/model for this ride.");
         return;
       }
-      if (!String(rideForm.licensePlate || "").trim() || !String(rideForm.licenseState || "").trim()) {
+      if (!String(formSnapshot.licensePlate || "").trim() || !String(formSnapshot.licenseState || "").trim()) {
         ridePlanSubmittingRef.current = false;
         Alert.alert("Plate needed", "Enter the license plate and state for this ride.");
         return;
@@ -1829,34 +1891,38 @@ export function HousingScreen({
     try {
       let originPoint: RidePlaceSuggestion | undefined;
       const originAlreadyPicked = Boolean(
-        rideForm.origin.trim() && hasRideCoordinates(rideForm.originLat, rideForm.originLng)
+        formSnapshot.origin.trim() && hasRideCoordinates(formSnapshot.originLat, formSnapshot.originLng)
       );
       if (!originAlreadyPicked) {
         // Resolve manually typed origins without the device/current-city bias.
         // Otherwise an international route such as Hyderabad -> Chennai can
         // be geocoded against a previous US discovery location.
-        const originMatches = await getRidePlaceSuggestions(rideForm.city, effectiveOrigin, false, false, true);
+        const originMatches = await getRidePlaceSuggestions(formSnapshot.city, effectiveOrigin, false, false, true, selectedRideLabelsRef.current.origin === effectiveOrigin ? selectedRidePlaceIdsRef.current.origin : "");
         originPoint = originMatches[0];
-        if (originPoint?.label) effectiveOrigin = originPoint.label;
+        if (originPoint?.label && selectedRideLabelsRef.current.origin !== effectiveOrigin) effectiveOrigin = originPoint.label;
       }
       const routeCity = effectiveOrigin;
       let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
       if (!destinationAlreadyPicked) {
+        const selectedDestinationPlaceId = selectedRideLabelsRef.current.destination === effectiveDestination
+          ? selectedRidePlaceIdsRef.current.destination
+          : "";
         const broadDestination = looksLikeBroadRideCityQuery(effectiveDestination);
         let destinationMatches = await getRidePlaceSuggestions(
           broadDestination ? "" : routeCity,
           effectiveDestination,
           false,
           false,
-          true
+          true,
+          selectedDestinationPlaceId
         );
-        if (!destinationMatches.length && broadDestination) {
+        if (!destinationMatches.length && !selectedDestinationPlaceId && broadDestination) {
           destinationMatches = await getRidePlaceSuggestions(routeCity, effectiveDestination, false, false, true);
-        } else if (!destinationMatches.length) {
+        } else if (!destinationMatches.length && !selectedDestinationPlaceId) {
           destinationMatches = await getRidePlaceSuggestions("", effectiveDestination, false, false, true);
         }
         destinationPoint = destinationMatches[0];
-        if (destinationPoint?.label) {
+        if (destinationPoint?.label && selectedRideLabelsRef.current.destination !== effectiveDestination) {
           effectiveDestination = destinationPoint.label;
         }
       }
@@ -1864,14 +1930,14 @@ export function HousingScreen({
       const nextRideType: RideType = listingRide ? "CARPOOL_OFFER" : "CARPOOL_REQUEST";
       setSelectedRideService("carpool");
       const nextRideForm = {
-        ...rideForm,
+        ...formSnapshot,
         city: routeCity,
         origin: effectiveOrigin,
-        originLat: originPoint?.lat ?? rideForm.originLat ?? null,
-        originLng: originPoint?.lng ?? rideForm.originLng ?? null,
+        originLat: originPoint?.lat ?? (originAlreadyPicked ? formSnapshot.originLat : null),
+        originLng: originPoint?.lng ?? (originAlreadyPicked ? formSnapshot.originLng : null),
         destination: effectiveDestination,
-        destinationLat: destinationPoint?.lat ?? rideForm.destinationLat ?? null,
-        destinationLng: destinationPoint?.lng ?? rideForm.destinationLng ?? null,
+        destinationLat: destinationPoint?.lat ?? (destinationAlreadyPicked ? formSnapshot.destinationLat : null),
+        destinationLng: destinationPoint?.lng ?? (destinationAlreadyPicked ? formSnapshot.destinationLng : null),
         rideType: nextRideType
       };
       if (!hasRideCoordinates(nextRideForm.originLat, nextRideForm.originLng) || !hasRideCoordinates(nextRideForm.destinationLat, nextRideForm.destinationLng)) {
@@ -1881,11 +1947,11 @@ export function HousingScreen({
         ...current,
         city: routeCity,
         origin: effectiveOrigin,
-        originLat: originPoint?.lat ?? current.originLat ?? null,
-        originLng: originPoint?.lng ?? current.originLng ?? null,
+        originLat: nextRideForm.originLat,
+        originLng: nextRideForm.originLng,
         destination: effectiveDestination,
-        destinationLat: destinationPoint?.lat ?? current.destinationLat ?? null,
-        destinationLng: destinationPoint?.lng ?? current.destinationLng ?? null,
+        destinationLat: nextRideForm.destinationLat,
+        destinationLng: nextRideForm.destinationLng,
         rideType: nextRideType
       }));
       if (listingRide && !destinationAlreadyPicked) {
@@ -2778,11 +2844,11 @@ export function HousingScreen({
     return (
       <Modal visible={Boolean(rentalPicker)} transparent animationType="fade" onRequestClose={() => setRentalPicker(null)}>
         <View style={styles.pickerBackdrop}>
-          <View style={styles.pickerCard}>
+          <View style={[styles.pickerCard, isLight && styles.pickerCardLight]}>
             <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>{title}</Text>
-              <TouchableOpacity style={styles.pickerClose} onPress={() => setRentalPicker(null)}>
-                <Text style={styles.pickerCloseText}>X</Text>
+              <Text style={[styles.pickerTitle, isLight && styles.pickerTitleLight]}>{title}</Text>
+              <TouchableOpacity style={[styles.pickerClose, isLight && styles.pickerCloseLight]} onPress={() => setRentalPicker(null)}>
+                <Text style={[styles.pickerCloseText, isLight && styles.pickerCloseTextLight]}>×</Text>
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={isDatePicker ? styles.calendarGrid : styles.pickerList}>
@@ -2791,19 +2857,22 @@ export function HousingScreen({
                 const timeDisabled = rentalPicker === "pickupTime"
                   && rentalSearch.pickupDate === todayIsoDate()
                   && timeTextToMinutes(value) < timeTextToMinutes(minimumPickupTimeToday());
-                const selected = value === activeValue;
+                const selected = isLocationPicker
+                  ? value.toLowerCase().replace(/[^a-z0-9]/g, "") === activeValue.toLowerCase().replace(/[^a-z0-9]/g, "")
+                  : value === activeValue;
                 return (
                   <TouchableOpacity
                     key={value}
                     disabled={disabled || timeDisabled}
                     style={[
                       isDatePicker ? styles.calendarCell : styles.pickerOption,
+                      isLight && (isDatePicker ? styles.calendarCellLight : styles.pickerOptionLight),
                       selected && styles.pickerOptionActive,
                       (disabled || timeDisabled) && styles.pickerOptionDisabled
                     ]}
                     onPress={() => selectRentalPickerValue(value)}
                   >
-                    <Text style={[styles.pickerOptionText, selected && styles.pickerOptionTextActive, (disabled || timeDisabled) && styles.pickerOptionTextDisabled]}>
+                    <Text style={[styles.pickerOptionText, isLight && styles.pickerOptionTextLight, selected && styles.pickerOptionTextActive, (disabled || timeDisabled) && styles.pickerOptionTextDisabled]}>
                       {isDatePicker ? formatDateLabel(value) : value}
                     </Text>
                     {isDatePicker ? <Text style={styles.calendarDateText}>{value.slice(5)}</Text> : null}
@@ -2959,6 +3028,14 @@ export function HousingScreen({
   }
 
   function updateRideForm<K extends keyof RideInput>(key: K, value: RideInput[K]) {
+    if (key === "origin") {
+      selectedRideLabelsRef.current.origin = "";
+      selectedRidePlaceIdsRef.current.origin = "";
+    }
+    if (key === "destination") {
+      selectedRideLabelsRef.current.destination = "";
+      selectedRidePlaceIdsRef.current.destination = "";
+    }
     setRideForm((current) => {
       const next = { ...current, [key]: value };
       if (key === "origin") {
@@ -4849,21 +4926,28 @@ const styles = StyleSheet.create({
   reviewFullMeta: { color: "#555", fontSize: 11, fontWeight: "900", marginTop: 2 },
   reviewPolicy: { color: theme.colors.soft, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   reviewPolicyLight: { color: "#667085" },
-  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.68)", padding: theme.spacing.md, justifyContent: "center" },
-  pickerCard: { maxHeight: "78%", backgroundColor: "rgba(24,24,27,0.96)", borderRadius: 28, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", padding: theme.spacing.md, gap: theme.spacing.md },
+  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)", padding: theme.spacing.md, justifyContent: "center" },
+  pickerCard: { maxHeight: "78%", backgroundColor: "#202329", borderRadius: 24, borderWidth: 1, borderColor: "#414750", padding: theme.spacing.md, gap: theme.spacing.md },
+  pickerCardLight: { backgroundColor: "#ffffff", borderColor: "#e1e6ea" },
   pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  pickerTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "900" },
-  pickerClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
-  pickerCloseText: { color: theme.colors.text, fontWeight: "900" },
+  pickerTitle: { color: "#f7f9fa", fontSize: 20, fontWeight: "800" },
+  pickerTitleLight: { color: "#14202a" },
+  pickerClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#343a43", alignItems: "center", justifyContent: "center" },
+  pickerCloseLight: { backgroundColor: "#eff2f4" },
+  pickerCloseText: { color: "#f7f9fa", fontSize: 24, lineHeight: 28, fontWeight: "600" },
+  pickerCloseTextLight: { color: "#344454" },
   pickerList: { gap: 8 },
-  pickerOption: { minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", paddingHorizontal: 14, justifyContent: "center" },
-  pickerOptionActive: { backgroundColor: theme.colors.text, borderColor: theme.colors.text },
+  pickerOption: { minHeight: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "#4a515b", backgroundColor: "#2b3038", paddingHorizontal: 14, paddingVertical: 10, justifyContent: "center" },
+  pickerOptionLight: { borderColor: "#dfe6e9", backgroundColor: "#f7f9fa" },
+  pickerOptionActive: { backgroundColor: "#0b9c74", borderColor: "#0b9c74" },
   pickerOptionDisabled: { opacity: 0.35 },
-  pickerOptionText: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
-  pickerOptionTextActive: { color: theme.colors.bg },
+  pickerOptionText: { color: "#f7f9fa", fontSize: 15, lineHeight: 20, fontWeight: "700" },
+  pickerOptionTextLight: { color: "#20303c" },
+  pickerOptionTextActive: { color: "#ffffff" },
   pickerOptionTextDisabled: { color: theme.colors.muted },
   calendarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   calendarCell: { width: "31%", minHeight: 66, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", padding: 8, justifyContent: "center" },
+  calendarCellLight: { borderColor: "#dfe6e9", backgroundColor: "#f7f9fa" },
   calendarDateText: { color: theme.colors.muted, fontSize: 11, marginTop: 3, fontWeight: "800" },
   roomTypeRow: { flexDirection: "row", justifyContent: "space-between" },
   roomType: { alignItems: "center", gap: 10, flex: 1 },

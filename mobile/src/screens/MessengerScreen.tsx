@@ -195,6 +195,7 @@ const CHAT_COLLAGE_CELL = (CHAT_MEDIA_WIDTH - CHAT_COLLAGE_GAP) / 2;
 const CHAT_HD_VIDEO_PREPARE_MIN_BYTES = 35_000_000;
 const CHITTHI_MESSAGE_SEARCH_DEBOUNCE_MS = 140;
 const CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE = 4;
+const CHITTHI_MESSAGE_SEARCH_REMOTE_CONVERSATION_LIMIT = 50;
 const unavailableEncryptedMessageText = "Encrypted message unavailable on this device. This was likely sent before this account or device had a Chitthi encryption key.";
 const pendingEncryptionStatusText = "Secure chat is being prepared. You can try again shortly.";
 function userSafeEncryptionStatus(value: string) {
@@ -211,6 +212,7 @@ function chatKeyPayloadCanSend(payload: { ready?: boolean; canSend?: boolean; ke
 const conversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.chitthi.public-keys.${userId}.${conversationId}`;
 const legacyConversationKeyCacheName = (userId: number, conversationId: string) => `fairfares.fchat.public-keys.${userId}.${conversationId}`;
 const chatConversationCacheName = (userId: number) => `fairfares.chitthi.conversations.v2.${userId}`;
+const chatNameIndexCacheName = (userId: number) => `fairfares.chitthi.name-index.v1.${userId}`;
 const legacyChatConversationCacheNames = (userId: number) => [
   `fairfares.chitthi.conversations.v1.${userId}`,
   `fairfares.fchat.conversations.v1.${userId}`
@@ -329,14 +331,40 @@ function containsExactMention(text: string, memberName: string) {
   return new RegExp(`(^|\\s)@${escapedName}(?=$|\\s|[.,!?;:])`, "u").test(text);
 }
 
-function recentChatConversations(conversations: ChatConversation[]) {
+function recentChatConversations(conversations: ChatConversation[], limit = 1000) {
   const byId = new Map<string, ChatConversation>();
   conversations.forEach((conversation) => {
     if (conversation.id) byId.set(conversation.id, conversation);
   });
   return [...byId.values()]
     .sort((left, right) => chatSortTimestamp(right.lastMessageAt) - chatSortTimestamp(left.lastMessageAt))
-    .slice(0, 50);
+    .slice(0, limit);
+}
+
+// This index deliberately contains no message text, phone number, or message
+// search terms. It lets an older chat appear in name search before its page
+// has been fetched from the server on this app launch.
+function chatNameIndexRows(conversations: ChatConversation[], userId: number) {
+  const byId = new Map<string, ChatConversation>();
+  conversations.forEach((conversation) => {
+    if (!conversation.id || !isVisibleInboxConversation(conversation, userId)) return;
+    byId.set(conversation.id, {
+      id: conversation.id,
+      communityId: conversation.communityId,
+      kind: conversation.kind,
+      subject: isGroupConversation(conversation) ? conversation.subject || conversation.otherName || "" : conversation.otherName || "",
+      otherName: conversation.otherName || "",
+      otherUserId: conversation.otherUserId,
+      otherPhotoUrl: conversation.otherPhotoUrl,
+      lastMessageId: conversation.lastMessageId,
+      lastMessageAt: conversation.lastMessageAt || "",
+      lastMessage: "",
+      unread: 0
+    });
+  });
+  return [...byId.values()]
+    .sort((left, right) => chatSortTimestamp(right.lastMessageAt) - chatSortTimestamp(left.lastMessageAt))
+    .slice(0, 1000);
 }
 
 function isGroupConversation(conversation: ChatConversation | null | undefined) {
@@ -378,6 +406,7 @@ function isVisibleInboxConversation(conversation: ChatConversation, currentUserI
 // empty-state cleanup. Serialize writes per account so a slower stale write
 // can never finish last and resurrect a removed conversation on next launch.
 const chatConversationCacheWriteChains = new Map<number, Promise<void>>();
+const chatNameIndexWriteChains = new Map<number, Promise<void>>();
 
 function mergeChatConversations(existingConversations: ChatConversation[], incomingConversations: ChatConversation[]) {
   const byId = new Map<string, ChatConversation>();
@@ -418,7 +447,7 @@ async function writeCachedChatConversations(userId: number, conversations: ChatC
     .map((conversation) => ({
       ...conversation,
       lastMessage: Number(conversation.lastMessageId || 0) > 0 ? "New encrypted message" : ""
-    })));
+    })), 50);
   const previous = chatConversationCacheWriteChains.get(userId) || Promise.resolve();
   const pending = previous.catch(() => undefined).then(async () => {
     try {
@@ -1951,6 +1980,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
+  const serverConversationSnapshotVersion = useRef(0);
   const messengerLoaderVersion = useRef(0);
   const messengerRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const messengerRefreshQueuedOptionsRef = useRef<{ showLoader?: boolean; showError?: boolean } | null>(null);
@@ -1983,11 +2013,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setLinkPreviewFaviconState((current) => current[url] === next ? current : { ...current, [url]: next });
   }, []);
   const [conversations, setConversations] = useState<ChatConversation[]>(data?.chat.conversations || []);
+  const [nameIndex, setNameIndex] = useState<ChatConversation[]>([]);
+  const [nameIndexOwner, setNameIndexOwner] = useState(0);
+  const [serverConversationListComplete, setServerConversationListComplete] = useState(false);
   const [hasMoreConversations, setHasMoreConversations] = useState((data?.chat.conversations || []).length >= 30);
   const [conversationCursor, setConversationCursor] = useState("");
   const [messageSearchResults, setMessageSearchResults] = useState<MessageSearchResult[]>([]);
   const [searchingMessages, setSearchingMessages] = useState(false);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [searchHistoryLoadFailed, setSearchHistoryLoadFailed] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
   const [hydratedConversationId, setHydratedConversationId] = useState("");
@@ -2645,9 +2679,58 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [activeConversationId, messages]);
 
   useEffect(() => {
-    if (!currentUserId) return;
+    // On an account switch this effect runs before the reset effect below.
+    // Never write the previous account's inbox under the new user's key.
+    if (!currentUserId || messengerUserIdRef.current !== currentUserId) return;
+    // An empty pre-refresh bootstrap is not authoritative; preserve the
+    // returning user's disk cache until the server confirms an empty inbox.
+    if (!conversations.length && serverConversationSnapshotVersion.current === 0) return;
     void writeCachedChatConversations(currentUserId, conversations);
   }, [conversations, currentUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNameIndex([]);
+    setNameIndexOwner(0);
+    if (currentUserId) {
+      void AsyncStorage.getItem(chatNameIndexCacheName(currentUserId)).then((stored) => {
+        if (cancelled) return;
+        let rows: ChatConversation[] = [];
+        try {
+          const parsed: unknown = stored ? JSON.parse(stored) : [];
+          rows = chatNameIndexRows(Array.isArray(parsed) ? parsed as ChatConversation[] : [], currentUserId);
+        } catch { /* A corrupt cache must not break Chitthi. */ }
+        setNameIndex(rows);
+        setNameIndexOwner(currentUserId);
+      }).catch(() => {
+        if (!cancelled) setNameIndexOwner(currentUserId);
+      });
+    }
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId || nameIndexOwner !== currentUserId) return;
+    setNameIndex((existing) => {
+      const next = chatNameIndexRows(
+        serverConversationListComplete ? conversations : [...existing, ...conversations],
+        currentUserId
+      );
+      return JSON.stringify(existing) === JSON.stringify(next) ? existing : next;
+    });
+  }, [conversations, currentUserId, nameIndexOwner, serverConversationListComplete]);
+
+  useEffect(() => {
+    if (!currentUserId || nameIndexOwner !== currentUserId) return;
+    const previous = chatNameIndexWriteChains.get(currentUserId) || Promise.resolve();
+    const pending = previous.catch(() => undefined).then(() =>
+      AsyncStorage.setItem(chatNameIndexCacheName(currentUserId), JSON.stringify(nameIndex))
+    );
+    chatNameIndexWriteChains.set(currentUserId, pending);
+    void pending.catch(() => undefined).finally(() => {
+      if (chatNameIndexWriteChains.get(currentUserId) === pending) chatNameIndexWriteChains.delete(currentUserId);
+    });
+  }, [currentUserId, nameIndex, nameIndexOwner]);
 
   useEffect(() => {
     if (!currentUserId || Platform.OS === "web") return;
@@ -2698,6 +2781,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     if (userChanged) {
       messengerUserIdRef.current = currentUserId;
       messengerRefreshVersion.current += 1;
+      serverConversationSnapshotVersion.current = 0;
       messengerLoaderVersion.current += 1;
       loadingMoreConversationsRequestRef.current += 1;
       loadingMoreConversationsRef.current = false;
@@ -2747,20 +2831,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setEncryptionStatusDetail("");
       setQuickReplyDismissedConversationIds([]);
       setConversations(bootstrapConversations);
+      setServerConversationListComplete(false);
       setConversationCursor("");
+      setHasMoreConversations(bootstrapConversations.length >= 30);
     } else if (bootstrapConversations.length) {
       setConversations((current) => mergeChatConversations(current, bootstrapConversations));
-    } else if (currentUserId) {
+      if (serverConversationSnapshotVersion.current === 0) setHasMoreConversations(bootstrapConversations.length >= 30);
+    }
+    if (!bootstrapConversations.length && currentUserId && serverConversationSnapshotVersion.current === 0) {
+      const snapshotVersion = serverConversationSnapshotVersion.current;
       void readCachedChatConversations(currentUserId).then((cachedConversations) => {
-        if (!cancelled && cachedConversations.length) setConversations((current) => mergeChatConversations(current, cachedConversations));
+        if (!cancelled && messengerUserIdRef.current === currentUserId && serverConversationSnapshotVersion.current === snapshotVersion && cachedConversations.length) {
+          setConversations((current) => mergeChatConversations(current, cachedConversations));
+        }
       });
     }
-    if (userChanged && !bootstrapConversations.length && currentUserId) {
-      void readCachedChatConversations(currentUserId).then((cachedConversations) => {
-        if (!cancelled) setConversations(cachedConversations);
-      });
-    }
-    setHasMoreConversations(bootstrapConversations.length >= 30);
     // A later bootstrap refresh may contain the default/current-city groups.
     // Do not let that stale payload replace an explicit searched-city result.
     if (!String(preferredSuggestionCity || "").trim()) {
@@ -3585,7 +3670,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           if ((payload.messages || []).some((message) => !message.mine)) {
             const nextConversations = await decryptConversationPreviews(await getChatConversations());
             if (cancelled) return;
-            setConversations(nextConversations);
+            setConversations((current) => mergeChatConversations(current, nextConversations));
             onUnreadCountChange?.(nextConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
           }
           if (!(payload.messages || []).length && (payload.typing || []).length) {
@@ -3597,6 +3682,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             cancelled = true;
             clearThreadMessages();
             setConversations((current) => current.filter((conversation) => conversation.id !== activeConversationId));
+            setNameIndex((current) => current.filter((conversation) => conversation.id !== activeConversationId));
             closeThread();
             Alert.alert("Group access ended", "You are no longer a member of this group, so its messages are no longer available.");
             return;
@@ -3788,12 +3874,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         );
         publish();
 
+        // Finish loading chat names before remote message scans. Otherwise
+        // each new inbox page cancels and restarts the same decryption work.
+        if (hasMoreConversations && !searchHistoryLoadFailed) return;
+
         try {
           const identity = await ensureChatDeviceIdentity();
           const identities = recoveredChatIdentities(currentUserId, identity);
-          for (let index = 0; index < candidates.length; index += CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE) {
+          // Name search may load hundreds of chats. Keep the existing bounded
+          // remote message scan so typing a name cannot fan out hundreds of
+          // envelope requests; already-decrypted local messages stay searchable.
+          const remoteCandidates = candidates.slice(0, CHITTHI_MESSAGE_SEARCH_REMOTE_CONVERSATION_LIMIT);
+          for (let index = 0; index < remoteCandidates.length; index += CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE) {
             if (cancelled || requestId !== messageSearchRequestRef.current) return;
-            const batch = candidates.slice(index, index + CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE);
+            const batch = remoteCandidates.slice(index, index + CHITTHI_MESSAGE_SEARCH_REMOTE_BATCH_SIZE);
             const results = await Promise.allSettled(batch.map(async (conversation) => {
               const payload = await getChatMessages(conversation.id, 0, 30, identity.deviceId);
               const envelopeResults = await Promise.allSettled(identities.map(async (candidate) => {
@@ -3840,7 +3934,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [activeConversation, conversations, currentUserId, messages, search, signedIn, tab, visiblePersonConversations]);
+  }, [activeConversation, conversations, currentUserId, hasMoreConversations, messages, search, searchHistoryLoadFailed, signedIn, tab, visiblePersonConversations]);
 
   useEffect(() => {
     const target = messageSearchTargetRef.current;
@@ -3863,15 +3957,22 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return visibleInboxConversations.filter((conversation) => {
+    const indexed = searchingInbox && nameIndexOwner === currentUserId ? nameIndex : [];
+    const byId = new Map<string, ChatConversation>();
+    indexed.forEach((conversation) => byId.set(conversation.id, conversation));
+    visibleInboxConversations.forEach((conversation) => byId.set(conversation.id, conversation));
+    const rows = searchingInbox
+      ? visiblePersonConversations([...byId.values()].sort((left, right) => chatSortTimestamp(right.lastMessageAt) - chatSortTimestamp(left.lastMessageAt)))
+      : visibleInboxConversations;
+    return rows.filter((conversation) => {
       const matchesSearch = !query || `${conversation.subject} ${conversation.otherName} ${conversation.otherPhone} ${conversation.rideRoute} ${conversation.lastMessage}`.toLowerCase().includes(query);
-      const matchesTab =
+      const matchesTab = searchingInbox ||
         tab === "All" ||
         (tab === "Unread" && conversation.unread > 0) ||
         (tab === "Groups" && (conversation.kind === "GROUP" || Boolean(conversation.communityId)));
       return matchesSearch && matchesTab;
     });
-  }, [search, tab, visibleInboxConversations]);
+  }, [currentUserId, nameIndex, nameIndexOwner, search, searchingInbox, tab, visibleInboxConversations, visiblePersonConversations]);
 
   const searchedContacts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -3937,8 +4038,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         ...conversation,
         lastMessage: safeConversationPreview(conversation)
       }));
+      serverConversationSnapshotVersion.current += 1;
       setConversations(immediateConversations);
       setHasMoreConversations(conversationPage.hasMore);
+      setServerConversationListComplete(!conversationPage.hasMore);
       setConversationCursor(conversationPage.nextCursor);
       replaceCommunitiesPreservingOpenGroup(nextCommunities);
       onUnreadCountChange?.(immediateConversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0));
@@ -4007,6 +4110,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }));
       setConversations((current) => mergeChatConversations(current, immediatePage));
       setHasMoreConversations(conversationPage.hasMore);
+      setServerConversationListComplete(!conversationPage.hasMore);
       setConversationCursor(conversationPage.nextCursor);
       void decryptConversationPreviews(page).then((decrypted) => {
         if (messengerUserIdRef.current !== requestedUserId || messengerRefreshVersion.current !== requestedRefreshVersion) return;
@@ -4018,7 +4122,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       });
     } catch (error) {
       if (messengerUserIdRef.current === requestedUserId && messengerRefreshVersion.current === requestedRefreshVersion) {
-        Alert.alert("Could not load more letters", error instanceof Error ? error.message : "Please try again.");
+        if (searchingInbox) setSearchHistoryLoadFailed(true);
+        else Alert.alert("Could not load more letters", error instanceof Error ? error.message : "Please try again.");
       }
     } finally {
       if (loadingMoreConversationsRequestRef.current === requestId) {
@@ -4027,6 +4132,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
     }
   }
+
+  useEffect(() => {
+    if (!signedIn || !searchingInbox || searchHistoryLoadFailed || loading || loadingMoreConversations || !hasMoreConversations) return;
+    void loadMoreConversations();
+  }, [conversations.length, currentUserId, hasMoreConversations, loading, loadingMoreConversations, searchHistoryLoadFailed, searchingInbox, signedIn]);
+
+  useEffect(() => {
+    setSearchHistoryLoadFailed(false);
+  }, [search]);
 
   async function openConversation(conversation: ChatConversation) {
     if (!signedIn) {
@@ -4138,6 +4252,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       }
     } catch (error) {
       if (messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === conversation.id) {
+        if (error instanceof Error && error.message.toLowerCase().includes("conversation not found")) {
+          setConversations((current) => current.filter((item) => item.id !== conversation.id));
+          setNameIndex((current) => current.filter((item) => item.id !== conversation.id));
+          closeThread();
+          Alert.alert("Chat unavailable", "This conversation is no longer available.");
+          return;
+        }
         Alert.alert("Chat failed", error instanceof Error ? error.message : "Could not open this chat.");
       }
     } finally {
@@ -5578,6 +5699,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     try {
       await leaveChatGroup(communityId);
       setConversations((current) => current.filter((conversation) => conversation.id !== departedConversationId && conversation.communityId !== communityId));
+      setNameIndex((current) => current.filter((conversation) => conversation.id !== departedConversationId && conversation.communityId !== communityId));
       if (data?.user?.id && departedConversationId) await AsyncStorage.removeItem(conversationKeyCacheName(data.user.id, departedConversationId));
       setGroupMembersOpen(false);
       closeThread();
@@ -8097,11 +8219,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         windowSize={Platform.OS === "android" ? 9 : 7}
         removeClippedSubviews={Platform.OS === "android"}
         onEndReachedThreshold={0.25}
-        onEndReached={() => { if ((tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
+        onEndReached={() => { if (!searchingInbox && (tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations) void loadMoreConversations(); }}
         ListHeaderComponent={<>
         {!signedIn && tab === "All" ? <GuestCommunityLetters onRequireSignup={onRequireSignup || onRequireLogin} onOpenCommunityPost={onOpenCommunityPost} /> : null}
         {search.trim().length >= 2 && (tab === "All" || tab === "Unread" || tab === "Groups") ? (
-          <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Chats</Text>
+          <View style={styles.messageSearchHeading}>
+            <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Chats</Text>
+            {signedIn && (loading || (hasMoreConversations && !searchHistoryLoadFailed)) ? <ActivityIndicator size="small" color={isLight ? "#147A58" : "#D7B36D"} /> : null}
+          </View>
         ) : null}
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
@@ -8147,6 +8272,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
+        {searchingInbox && signedIn ? (
+          <TouchableOpacity style={[styles.searchContactRow, isLight && styles.searchContactRowLight]} onPress={() => void findPeopleFromContacts()} accessibilityRole="button" accessibilityLabel="Find people in your contacts">
+            <View style={styles.searchLinkIcon}><Text style={styles.searchLinkIconText}>＋</Text></View>
+            <Text style={[styles.searchContactName, isLight && styles.searchContactNameLight]}>Find people in contacts</Text>
+            <Text style={[styles.messageSearchChevron, isLight && styles.messageSearchChevronLight]}>›</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {searchingInbox && signedIn && searchHistoryLoadFailed ? (
+          <TouchableOpacity style={styles.loadMoreLetters} onPress={() => setSearchHistoryLoadFailed(false)} accessibilityRole="button" accessibilityLabel="Retry searching all chats">
+            <Text style={styles.loadMoreLettersText}>Couldn't load all chats · Retry</Text>
+          </TouchableOpacity>
+        ) : null}
+
         {search.trim().length >= 2 && mediaSearchBuckets.length ? (
           <View style={styles.searchResultsSection}>
             <Text style={[styles.searchSectionTitle, isLight && styles.searchSectionTitleLight]}>Media</Text>
@@ -8175,21 +8314,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <Text style={[styles.messageSearchChevron, isLight && styles.messageSearchChevronLight]}>›</Text>
               </TouchableOpacity>
             ))}
-            {!searchingMessages && !messageSearchResults.length ? <Text style={[styles.messageSearchEmpty, isLight && styles.messageSearchEmptyLight]}>No matching messages on this device yet.</Text> : null}
+            {!loading && !searchingMessages && !hasMoreConversations && !messageSearchResults.length ? <Text style={[styles.messageSearchEmpty, isLight && styles.messageSearchEmptyLight]}>No matching messages on this device yet.</Text> : null}
           </View>
         ) : null}
 
-        {(tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations ? (
+        {(tab === "All" || tab === "Unread" || tab === "Groups") && hasMoreConversations && !searchingInbox ? (
           <TouchableOpacity style={styles.loadMoreLetters} onPress={() => void loadMoreConversations()} disabled={loadingMoreConversations}>
             <Text style={styles.loadMoreLettersText}>{loadingMoreConversations ? "Opening more letters…" : "Load more letters"}</Text>
           </TouchableOpacity>
         ) : null}
 
-        {signedIn && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length && !messageSearchResults.length ? (
+        {signedIn && !loading && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length && !searchedContacts.length && !messageSearchResults.length && (!searchingInbox || (!hasMoreConversations && !searchHistoryLoadFailed && !searchingMessages)) ? (
           <View style={styles.letterEmptyCard}>
             <Text style={styles.letterEmptyIcon}>📬</Text>
             <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
-            <Text style={styles.letterEmptyCopy}>{searchingInbox ? "Try a name, phone, group, route, or listing title." : tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
+            <Text style={styles.letterEmptyCopy}>{searchingInbox ? "No matching chats. Try another name or find someone in your contacts." : tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
           </View>
         ) : null}
 
