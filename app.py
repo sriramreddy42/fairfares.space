@@ -22160,7 +22160,7 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     rich_notification = (
         notification_type == "FAIRFARES_PROMO" or is_chitthi_notification
     ) and image_url.startswith("https://")
-    channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
+    channel_id = "marketing-v2" if notification_type == "FAIRFARES_PROMO" else "housing-v2" if notification_type.startswith("HOUSING_") else "rentals-v2" if notification_type == "RENTAL_BOOKING" else "carpool-v2" if notification_type.startswith("CARPOOL_") else "chitthi-messages-v2"
     try:
         badge_count = max(0, int(notification_data.get("badge") or 0))
     except (TypeError, ValueError):
@@ -37742,7 +37742,52 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "message": "Login is required."}, 401)
             return
         user_id = int(row_value(user, "id") or 0)
+        payload = self.read_json_body()
+        category = clean_text_value(payload.get("category"), 20).lower() or "general"
+        if category not in {"general", "chitthi", "carpool", "housing", "marketing"}:
+            self.send_json({"ok": False, "message": "Choose a supported notification category."}, 400)
+            return
         diagnostic_id = f"push-test-{uuid.uuid4().hex}"
+        notification_copy = {
+            "general": (
+                "FairFares notification test",
+                "Notifications are connected on this device.",
+                {"type": "NOTIFICATION_TEST", "target": "account"},
+            ),
+            "chitthi": (
+                "FairFares Chitthi test",
+                "Your Chitthi message notifications are working.",
+                {
+                    "type": "CHITTHI_MESSAGE",
+                    "conversationId": "notification-test",
+                    "messageId": int(time.time() * 1000),
+                    "senderName": "FairFares",
+                    "isGroup": False,
+                },
+            ),
+            "carpool": (
+                "FairFares carpool test",
+                "Your carpool notifications are working.",
+                {"type": "CARPOOL_STATUS", "rideId": diagnostic_id, "status": "TEST", "target": "activity"},
+            ),
+            "housing": (
+                "FairFares housing test",
+                "Your housing match notifications are working.",
+                {"type": "HOUSING_MATCH", "listingId": diagnostic_id, "target": "housing"},
+            ),
+            "marketing": (
+                "FairFares marketing test",
+                "Your FairFares updates and deals are working.",
+                {"type": "FAIRFARES_PROMO", "campaign": diagnostic_id, "target": "home"},
+            ),
+        }
+        title, body, notification_data = notification_copy[category]
+        notification_data = {
+            **notification_data,
+            "eventId": diagnostic_id,
+            "diagnosticId": diagnostic_id,
+            "testCategory": category,
+        }
         with db() as con:
             devices = con.execute(
                 """SELECT token, platform, device_label, last_seen_at
@@ -37754,18 +37799,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         targets = [(user_id, str(row_value(device, "token") or "")) for device in devices]
         queued = enqueue_mobile_pushes(
             targets,
-            "FairFares notification test",
-            "Notifications are connected on this device.",
-            {
-                "type": "NOTIFICATION_TEST",
-                "eventId": diagnostic_id,
-                "diagnosticId": diagnostic_id,
-                "target": "account",
-            },
+            title,
+            body,
+            notification_data,
         )
         response = {
             "ok": bool(queued),
             "diagnosticId": diagnostic_id,
+            "category": category,
             "registeredDevices": len(devices),
             "queuedDevices": queued,
             "devices": [

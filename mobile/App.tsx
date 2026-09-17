@@ -57,6 +57,7 @@ const IS_EXPO_GO = Constants.appOwnership === "expo";
 const NOTIFICATION_CHANNELS = {
   chitthi: "chitthi-messages-v2",
   carpool: "carpool-v2",
+  housing: "housing-v2",
   rentals: "rentals-v2",
   marketing: "marketing-v2"
 } as const;
@@ -690,6 +691,13 @@ function FairFaresApp() {
             vibrationPattern: [0, 250, 150, 250],
             lightColor: "#22c55e"
           }),
+          Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.housing, {
+            name: "Housing matches",
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: "default",
+            vibrationPattern: [0, 250, 150, 250],
+            lightColor: "#10b981"
+          }),
           Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.rentals, {
             name: "Rental bookings",
             importance: Notifications.AndroidImportance.HIGH,
@@ -750,7 +758,7 @@ function FairFaresApp() {
         const detail = Platform.OS === "ios"
           ? "FairFares can update its badge, but banners or Notification Center alerts are turned off. Enable Alerts, Sounds, Lock Screen, and Notification Center in Settings."
           : blockedAndroidChannels.length
-            ? "One or more FairFares notification categories are turned off. Enable Chitthi messages, Carpool activity, Rental bookings, and FairFares ideas and deals in Settings."
+            ? "One or more FairFares notification categories are turned off. Enable Chitthi messages, Carpool activity, Housing matches, Rental bookings, and FairFares ideas and deals in Settings."
             : "FairFares notifications are blocked at the system level. Enable notifications in Settings.";
         Alert.alert(
           "Notifications are hidden",
@@ -1138,6 +1146,11 @@ function FairFaresApp() {
       setSelectedNeed("ride_offer");
       setActiveTab("housing");
       setRideOwnerOpenToken((value) => value + 1);
+    } else if (type.startsWith("HOUSING_")) {
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("housing");
+      setHousingWelcomeFocusKey((current) => current + 1);
     } else if (type === "RENTAL_BOOKING") {
       setPendingPost(null);
       setPendingRide(null);

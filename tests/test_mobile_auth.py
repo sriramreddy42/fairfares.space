@@ -1694,7 +1694,7 @@ class MobileAuthTest(unittest.TestCase):
         try:
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test",
-                data=b"{}",
+                data=json.dumps({"category": "housing"}).encode("utf-8"),
                 method="POST",
                 headers={"Content-Type": "application/json", "Authorization": "Bearer two-device-token"},
             )
@@ -1703,10 +1703,18 @@ class MobileAuthTest(unittest.TestCase):
                     self.assertEqual(response.status, 202)
                     payload = json.loads(response.read().decode("utf-8"))
             self.assertTrue(payload["ok"])
+            self.assertEqual(payload["category"], "housing")
             self.assertEqual(payload["registeredDevices"], 2)
             self.assertEqual(payload["queuedDevices"], 2)
             self.assertEqual({device["platform"] for device in payload["devices"]}, {"ios", "android"})
             self.assertNotIn("ExpoPushToken", json.dumps(payload))
+            with app.db() as con:
+                queued_payloads = [
+                    json.loads(row["data_json"])
+                    for row in con.execute("SELECT data_json FROM mobile_push_outbox WHERE user_id = ?", (user_id,)).fetchall()
+                ]
+            self.assertEqual({item["type"] for item in queued_payloads}, {"HOUSING_MATCH"})
+            self.assertEqual({item["testCategory"] for item in queued_payloads}, {"housing"})
 
             status_request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test?diagnostic_id={urllib.parse.quote(payload['diagnosticId'])}",

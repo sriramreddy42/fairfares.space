@@ -610,6 +610,20 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(states[good_token], 1)
         self.assertEqual(states[stale_token], 0)
 
+    def test_housing_payload_uses_dedicated_housing_channel(self):
+        token = "ExpoPushToken[housing-channel-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-housing"}]})
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push(
+                [token],
+                "New housing match",
+                "A nearby room matches your request.",
+                {"type": "HOUSING_MATCH", "listingId": "FFH-TEST"},
+            )
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["channelId"], "housing-v2")
+        self.assertEqual(message["sound"], "default")
+
     def test_user_delivery_excludes_disabled_tokens(self):
         enabled_token = "ExpoPushToken[enabled-device]"
         self.add_token(enabled_token, 1)
