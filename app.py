@@ -28067,7 +28067,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             messages = list(reversed(fetched_messages[:limit]))
             # Installed native builds predate explicit acknowledgements. Keep
             # their thread-open behavior until they upgrade; new clients opt in.
-            if (self.headers.get("X-FairFares-Client-Platform") in ("ios", "android")
+            if (getattr(self, "headers", {}).get("X-FairFares-Client-Platform") in ("ios", "android")
                     and params.get("receipts", [""])[0] != "explicit" and before_message_id <= 0):
                 acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
             if messages:
@@ -28186,7 +28186,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (conversation_id, after_message_id, visible_from_message_id),
                 ).fetchall()
-                if (self.headers.get("X-FairFares-Client-Platform") in ("ios", "android")
+                if (getattr(self, "headers", {}).get("X-FairFares-Client-Platform") in ("ios", "android")
                         and params.get("receipts", [""])[0] != "explicit"):
                     acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
                 receipt_rows = con.execute(
