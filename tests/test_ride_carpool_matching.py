@@ -123,6 +123,32 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         self.assertEqual(suggestions[0]["label"], airport)
         self.assertAlmostEqual(suggestions[0]["lat"], 39.8563486)
 
+    def test_google_airport_suggestions_resolve_across_us_and_india(self):
+        airports = (
+            ("Denver, CO", "Denver International Airport (DEN), Denver, CO", "ChIJDenverAirport01", 39.8561, -104.6737),
+            ("New York, NY", "John F. Kennedy International Airport, Queens, NY", "ChIJNewYorkAirport01", 40.6413, -73.7781),
+            ("Hyderabad, Telangana, India", "Rajiv Gandhi International Airport, Hyderabad, Telangana, India", "ChIJHyderabadAirport01", 17.2403, 78.4294),
+        )
+        with patch.object(app, "ride_point", side_effect=fake_ride_point):
+            for city, label, place_id, lat, lng in airports:
+                with self.subTest(city=city), patch.object(
+                    app, "google_accommodation_place_predictions", return_value=[{"label": label, "placeId": place_id}]
+                ), patch.object(app, "google_ride_place_details", return_value={"lat": lat, "lng": lng, "source": "google-place-details"}):
+                    suggestions = app.ride_place_suggestions(city, "airport")
+                    selected = next(item for item in suggestions if item["label"] == label)
+                    self.assertEqual(selected["source"], "google")
+                    self.assertEqual(selected["placeId"], place_id)
+                    self.assertEqual((selected["lat"], selected["lng"]), (0.0, 0.0))
+                    resolved = app.ride_place_suggestions("", label, resolve_exact=True, place_id=place_id)
+                    self.assertEqual(len(resolved), 1)
+                    self.assertEqual((resolved[0]["label"], resolved[0]["lat"], resolved[0]["lng"]), (label, lat, lng))
+
+    @patch.object(app, "google_accommodation_place_predictions", return_value=[])
+    def test_no_denver_only_airport_suggestion_when_google_is_unavailable(self, _mock_places):
+        with patch.object(app, "ride_point", side_effect=fake_ride_point):
+            suggestions = app.ride_place_suggestions("Denver, CO", "airport")
+        self.assertFalse(any("denver international airport" in item["label"].lower() for item in suggestions))
+
     def test_selected_place_keeps_its_name_and_coordinates_for_any_poi(self):
         examples = (
             ("Coors Field, 2001 Blake St, Denver, CO", 39.7559, -104.9942),

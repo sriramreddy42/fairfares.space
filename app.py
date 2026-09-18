@@ -18094,11 +18094,6 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             return
         labels.append((clean, source))
 
-    normalized_query = re.sub(r"[^a-z0-9]+", " ", query.lower()).strip()
-    if "denver" in city.lower() and re.search(r"\b(unin|unio|union)\b", normalized_query):
-        add_label("Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
-        add_label("Denver Union Station, 1701 Wynkoop St, Denver, CO", "autocorrect")
-
     google_query = query
     if google_query:
         for prediction in google_accommodation_place_predictions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias, include_all_types=True):
@@ -18136,26 +18131,6 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 add_label(label, "country-fallback")
                 if label:
                     popular_points[label.lower()] = place
-
-    fallback_places = [
-        "Denver International Airport (DEN), 8500 Pena Blvd, Denver, CO",
-        "Union Station, 1701 Wynkoop St, Denver, CO",
-        "Denver Union Station, 1701 Wynkoop St, Denver, CO",
-        "300 East Seventeenth Apartments, 300 E 17th Ave, Denver, CO",
-        "2523 W Houstoun Waring Cir, Littleton, CO",
-        "1855 W Union Ave, Englewood, CO",
-        "Tracks, 3500 Walnut St, Denver, CO",
-        "Larimer Lounge, 2721 Larimer St, Denver, CO",
-    ]
-    use_denver_fallbacks = "denver" in city.lower()
-    for label in (fallback_places if use_denver_fallbacks and not cities_only else []):
-        normalized_label = re.sub(r"[^a-z0-9]+", " ", label.lower())
-        if not normalized_query:
-            add_label(label, "recent")
-        elif normalized_query in normalized_label:
-            add_label(label, "fallback")
-        elif "unin" in normalized_query and "union station" in normalized_label:
-            add_label(label, "fallback")
 
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
