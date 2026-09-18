@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Contacts from "expo-contacts";
 import * as Clipboard from "expo-clipboard";
@@ -183,6 +183,7 @@ function prepareChitthiSentSound() {
   return chitthiSentSoundPreparation;
 }
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
+const ChatPhotoViewerContext = createContext(0);
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
 const CHAT_MEDIA_WIDTH = Math.max(248, Math.min(320, Math.round(Dimensions.get("window").width * 0.78)));
 const CHAT_MEDIA_MIN_HEIGHT = 160;
@@ -1348,7 +1349,10 @@ function fittedChatImageSize(width: number, height: number) {
 function AdaptiveChatImage({ uri, source, compact = false, onError, imageWidth = 0, imageHeight = 0 }: { uri?: string; source?: { uri: string; headers?: Record<string, string> }; compact?: boolean; onError?: () => void; imageWidth?: number; imageHeight?: number }) {
   const suppliedSize = fittedChatImageSize(imageWidth, imageHeight);
   const [measuredSize, setMeasuredSize] = useState<{ width: number; height: number } | null>(suppliedSize);
+  const [loaded, setLoaded] = useState(false);
   const imageUri = source?.uri || uri || "";
+
+  useEffect(() => setLoaded(false), [imageUri]);
 
   useEffect(() => {
     const nextSuppliedSize = fittedChatImageSize(imageWidth, imageHeight);
@@ -1367,12 +1371,16 @@ function AdaptiveChatImage({ uri, source, compact = false, onError, imageWidth =
     return () => { cancelled = true; };
   }, [imageHeight, imageUri, imageWidth]);
 
-  return <Image
-    source={source || { uri: imageUri }}
-    style={[styles.messageImage, !compact && measuredSize, compact && styles.collageImage]}
-    resizeMode={compact ? "cover" : "contain"}
-    onError={onError}
-  />;
+  return <View style={[styles.messageImage, !compact && measuredSize, compact && styles.collageImage]}>
+    {!loaded ? <View style={styles.chatImagePending}><Text style={styles.messageImageLoadingText}>Loading photo…</Text></View> : null}
+    <Image
+      source={source || { uri: imageUri }}
+      style={styles.chatImageFill}
+      resizeMode={compact ? "cover" : "contain"}
+      onLoad={() => setLoaded(true)}
+      onError={onError}
+    />
+  </View>;
 }
 
 function EncryptedChatImage({ message, resolvePreview, compact = false }: { message: ChatMessage; resolvePreview?: (message: ChatMessage) => Promise<string>; compact?: boolean }) {
@@ -1458,16 +1466,134 @@ function PendingPhotoPreview({ uri, compact = false, full = false }: { uri: stri
   return <Image source={{ uri }} style={[styles.pendingAttachmentImage, compact && styles.pendingCollageImage, full && styles.pendingFullPreviewImage]} resizeMode={full ? "contain" : "cover"} onError={() => setFailed(true)} />;
 }
 
+function ZoomableChatPhoto({ uri, onSwipe }: { uri: string; onSwipe?: (direction: "previous" | "next") => void }) {
+  const scaleValue = useRef(new Animated.Value(1)).current;
+  const translateXValue = useRef(new Animated.Value(0)).current;
+  const translateYValue = useRef(new Animated.Value(0)).current;
+  const gesture = useRef({
+    scale: 1, x: 0, y: 0, width: 1, height: 1,
+    mode: "none" as "none" | "pan" | "pinch",
+    startX: 0, startY: 0, startPanX: 0, startPanY: 0,
+    startDistance: 1, startScale: 1, anchorX: 0, anchorY: 0,
+  }).current;
+  const updateTransform = (scale: number, x: number, y: number) => {
+    const nextScale = Math.max(1, Math.min(4, scale));
+    const maxX = (nextScale - 1) * gesture.width / 2;
+    const maxY = (nextScale - 1) * gesture.height / 2;
+    gesture.scale = nextScale;
+    gesture.x = Math.max(-maxX, Math.min(maxX, x));
+    gesture.y = Math.max(-maxY, Math.min(maxY, y));
+    scaleValue.setValue(gesture.scale);
+    translateXValue.setValue(gesture.x);
+    translateYValue.setValue(gesture.y);
+  };
+  const beginPan = (touch: { pageX: number; pageY: number }) => {
+    gesture.mode = "pan";
+    gesture.startX = touch.pageX;
+    gesture.startY = touch.pageY;
+    gesture.startPanX = gesture.x;
+    gesture.startPanY = gesture.y;
+  };
+  const beginPinch = (touches: ReadonlyArray<{ pageX: number; pageY: number; locationX: number; locationY: number }>) => {
+    if (touches.length < 2) return;
+    gesture.mode = "pinch";
+    gesture.startDistance = Math.max(1, Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY));
+    gesture.startScale = gesture.scale;
+    const midpointX = (touches[0].locationX + touches[1].locationX) / 2;
+    const midpointY = (touches[0].locationY + touches[1].locationY) / 2;
+    gesture.anchorX = (midpointX - gesture.width / 2 - gesture.x) / gesture.scale;
+    gesture.anchorY = (midpointY - gesture.height / 2 - gesture.y) / gesture.scale;
+  };
+  const settle = () => {
+    gesture.mode = "none";
+    if (gesture.scale < 1.02) updateTransform(1, 0, 0);
+  };
+  const responder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (event) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) beginPinch(touches);
+      else if (touches[0]) beginPan(touches[0]);
+    },
+    onPanResponderStart: (event) => {
+      if (event.nativeEvent.touches.length >= 2) beginPinch(event.nativeEvent.touches);
+    },
+    onPanResponderMove: (event) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) {
+        if (gesture.mode !== "pinch") beginPinch(touches);
+        const distance = Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+        const nextScale = Math.max(1, Math.min(4, gesture.startScale * distance / gesture.startDistance));
+        const midpointX = (touches[0].locationX + touches[1].locationX) / 2;
+        const midpointY = (touches[0].locationY + touches[1].locationY) / 2;
+        updateTransform(nextScale, midpointX - gesture.width / 2 - nextScale * gesture.anchorX, midpointY - gesture.height / 2 - nextScale * gesture.anchorY);
+      } else if (touches[0] && gesture.scale > 1) {
+        if (gesture.mode !== "pan") beginPan(touches[0]);
+        updateTransform(gesture.scale, gesture.startPanX + touches[0].pageX - gesture.startX, gesture.startPanY + touches[0].pageY - gesture.startY);
+      }
+    },
+    onPanResponderEnd: (event) => {
+      if (event.nativeEvent.touches.length === 1) beginPan(event.nativeEvent.touches[0]);
+    },
+    onPanResponderRelease: (event) => {
+      const lastTouch = event.nativeEvent.changedTouches[0];
+      if (lastTouch && gesture.scale < 1.02 && gesture.mode === "pan") {
+        const deltaX = lastTouch.pageX - gesture.startX;
+        const deltaY = lastTouch.pageY - gesture.startY;
+        if (Math.abs(deltaX) > 65 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) onSwipe?.(deltaX < 0 ? "next" : "previous");
+      }
+      settle();
+    },
+    onPanResponderTerminate: settle,
+  })).current;
+  return <View
+    style={styles.zoomableChatPhoto}
+    onLayout={(event) => { gesture.width = event.nativeEvent.layout.width; gesture.height = event.nativeEvent.layout.height; }}
+    accessibilityLabel="Photo. Pinch with two fingers to zoom."
+    {...responder.panHandlers}
+  >
+    <Animated.Image source={{ uri }} style={[styles.zoomableChatPhotoImage, { transform: [{ translateX: translateXValue }, { translateY: translateYValue }, { scale: scaleValue }] }]} resizeMode="contain" />
+  </View>;
+}
+
 function ChatMessagePhoto({ message, resolvePreview, compact = false }: { message: ChatMessage; resolvePreview?: (message: ChatMessage) => Promise<string>; compact?: boolean }) {
+  const viewerUserId = useContext(ChatPhotoViewerContext);
+  const [localPreview, setLocalPreview] = useState<{ messageId: number; uri: string } | null>(null);
+  const [failedUris, setFailedUris] = useState<string[]>([]);
+  const fileName = String(message.metadata?.fileName || "");
+  const mimeType = String(message.metadata?.mimeType || "image/jpeg");
+  const localUri = localPreview?.messageId === message.id ? localPreview.uri : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    setLocalPreview(null);
+    setFailedUris([]);
+    if (Platform.OS !== "web" && viewerUserId && message.id > 0) {
+      const uri = encryptedAttachmentLocalUri(viewerUserId, message.id, fileName, mimeType);
+      if (uri) void persistentChitthiMediaExists(uri).then((exists) => {
+        if (!cancelled && exists) setLocalPreview({ messageId: message.id, uri });
+      }).catch(() => undefined);
+    }
+    return () => { cancelled = true; };
+  }, [fileName, message.id, mimeType, viewerUserId]);
+
   // The encrypted envelope carries a privacy-safe thumbnail independently of
   // the full cloud attachment. Keep rendering that thumbnail after the source
   // file expires or becomes unavailable instead of replacing a valid preview
   // with the generic "Photo" card.
-  if (message.metadata?.decryptedDataUrl) {
-    return <AdaptiveChatImage uri={message.metadata.decryptedDataUrl} compact={compact} imageWidth={message.metadata.imageWidth} imageHeight={message.metadata.imageHeight} />;
+  // Prefer the bounded preview in reloaded threads. Decoding every durable
+  // full-resolution file at once can exhaust memory in a photo-heavy chat.
+  // The sender's optimistic image remains first until the server reloads it.
+  const sources = [message.metadata?.decryptedDataUrl, message.metadata?.thumbnailDataUrl, localUri]
+    .filter((uri): uri is string => Boolean(uri));
+  const imageUri = sources.find((uri) => !failedUris.includes(uri));
+  if (imageUri) {
+    return <AdaptiveChatImage key={`${message.id}:${sources.indexOf(imageUri)}`} uri={imageUri} compact={compact} imageWidth={message.metadata?.imageWidth} imageHeight={message.metadata?.imageHeight} onError={() => setFailedUris((current) => current.includes(imageUri) ? current : [...current, imageUri])} />;
   }
-  if (message.metadata?.thumbnailDataUrl) {
-    return <AdaptiveChatImage uri={message.metadata.thumbnailDataUrl} compact={compact} imageWidth={message.metadata.imageWidth} imageHeight={message.metadata.imageHeight} />;
+  if (sources.length) {
+    return <View pointerEvents="none" style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Tap to open photo</Text></View>;
   }
   if (message.metadata?.mediaExpired || !message.attachmentUrl) {
     return <View style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Media expired</Text></View>;
@@ -1484,6 +1610,19 @@ function ChatMessagePhoto({ message, resolvePreview, compact = false }: { messag
     return <View pointerEvents="none" style={[styles.messageImage, compact && styles.collageImage, styles.messageImageLoading]}><Text style={styles.messageImageLoadingText}>Tap to load photo</Text></View>;
   }
   return <AuthenticatedChatImage attachmentUrl={message.attachmentUrl} compact={compact} />;
+}
+
+function ChatVideoThumbnail({ embeddedUri, localUri }: { embeddedUri?: string; localUri?: string }) {
+  const [failedUris, setFailedUris] = useState<string[]>([]);
+  const [loadedUri, setLoadedUri] = useState("");
+  const uri = [localUri, embeddedUri].find((candidate) => candidate && !failedUris.includes(candidate));
+  if (uri) {
+    return <View style={styles.videoMessageThumbnail}>
+      {loadedUri !== uri ? <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageLoadingText}>Loading video preview…</Text></View> : null}
+      <Image source={{ uri }} style={styles.chatImageFill} resizeMode="cover" onLoad={() => setLoadedUri(uri)} onError={() => setFailedUris((current) => current.includes(uri) ? current : [...current, uri])} />
+    </View>;
+  }
+  return <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>;
 }
 
 function replyMediaKind(message: ChatMessage | null) {
@@ -1972,6 +2111,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   // newer composer selection after the user removes or replaces the old one.
   const pendingMediaSelectionGenerationRef = useRef(0);
   const activeAttachmentSendsRef = useRef(new Map<number, { controller: AbortController; conversationId: string }>());
+  // A send owns its picker/cache sources until encryption and upload finish.
+  // Closing the thread must not delete those files while the async send reads them.
+  const activeAttachmentSourceUrisRef = useRef(new Map<string, number>());
   const pendingMediaMessagesRef = useRef(new Map<string, ChatMessage[]>());
   const activeMediaTransferCountRef = useRef(0);
   const activeAttachmentSendKeysRef = useRef(new Set<string>());
@@ -2078,7 +2220,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const pendingPreviewListRef = useRef<FlatList<PendingChatAttachment> | null>(null);
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
-  const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string }>>([]);
+  const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string; messageId: number }>>([]);
+  const [selectedGroupPhotoIndex, setSelectedGroupPhotoIndex] = useState<number | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
 
@@ -2515,6 +2658,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     else pendingMediaMessagesRef.current.delete(conversationId);
   }
 
+  function releaseComposerAttachments(attachments: PendingChatAttachment[]) {
+    releasePendingAttachments(attachments.filter((attachment) => !activeAttachmentSourceUrisRef.current.has(attachment.uri)));
+  }
+
   function cancelPendingMediaUpload(messageId: number) {
     const operation = activeAttachmentSendsRef.current.get(messageId);
     if (!operation) {
@@ -2760,10 +2907,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return;
     }
     let cancelled = false;
-    const legacyVideos = recentChatMessages(messages).filter(
-      (message) => message.type === "VIDEO" && !message.metadata?.thumbnailDataUrl && message.id > 0
+    const videos = recentChatMessages(messages).filter(
+      (message) => message.type === "VIDEO" && message.id > 0
     );
-    void Promise.all(legacyVideos.map(async (message) => {
+    void Promise.all(videos.map(async (message) => {
       const uri = persistentChitthiThumbnailUri(currentUserId, message.id);
       return uri && await persistentChitthiMediaExists(uri) ? [message.id, uri] as const : null;
     })).then((entries) => {
@@ -2791,6 +2938,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setAttachmentStatusCancelable(false);
       activeAttachmentSendsRef.current.forEach(({ controller }) => controller.abort());
       activeAttachmentSendsRef.current.clear();
+      activeAttachmentSourceUrisRef.current.clear();
       pendingMediaMessagesRef.current.clear();
       activeAttachmentSendKeysRef.current.clear();
       messageCache.current.clear();
@@ -2812,6 +2960,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setLocalVideoThumbnailUris({});
       setAttachmentPreview(null);
       setAttachmentPreviewGroup([]);
+      setSelectedGroupPhotoIndex(null);
       setAttachmentStatus("");
       setAttachmentSending(false);
       setThreadLoading(false);
@@ -4292,6 +4441,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
     const operationUserId = currentUserId;
     const operationConversationId = activeConversationId;
+    const operationConversationLabel = activeConversation?.subject || activeConversation?.otherName || "the previous chat";
     const ensureSendContext = () => {
       if (!operationUserId || messengerUserIdRef.current !== operationUserId) {
         throw new Error("Attachment sending was cancelled because the account changed.");
@@ -4340,6 +4490,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const attachmentSendKey = attachments.map((attachment) => `${attachment.kind}:${attachment.uri}`).join("|");
       if (activeAttachmentSendKeysRef.current.has(attachmentSendKey)) return;
       activeAttachmentSendKeysRef.current.add(attachmentSendKey);
+      const sourceUris = [...new Set(attachments.map((attachment) => attachment.uri))];
+      sourceUris.forEach((uri) => activeAttachmentSourceUrisRef.current.set(uri, (activeAttachmentSourceUrisRef.current.get(uri) || 0) + 1));
       activeMediaTransferCountRef.current += 1;
       if (activeMediaTransferCountRef.current === 1) {
         logDevelopmentPerformance("media-navigation-retention-start", {
@@ -4352,6 +4504,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const finishMediaTransfer = () => {
         if (mediaTransferFinished) return;
         mediaTransferFinished = true;
+        sourceUris.forEach((uri) => {
+          const remaining = (activeAttachmentSourceUrisRef.current.get(uri) || 0) - 1;
+          if (remaining > 0) activeAttachmentSourceUrisRef.current.set(uri, remaining);
+          else activeAttachmentSourceUrisRef.current.delete(uri);
+        });
         activeMediaTransferCountRef.current = Math.max(0, activeMediaTransferCountRef.current - 1);
         if (activeMediaTransferCountRef.current === 0) {
           logDevelopmentPerformance("media-navigation-retention-end", {
@@ -4495,7 +4652,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setPendingPhotoPreviewOpen(true);
             setMessageText(cleanMessage);
             Alert.alert("Photo preparation failed", error instanceof Error ? error.message : "Could not prepare the selected photo.");
-          }
+          } else releasePendingAttachments(attachments);
           setAttachmentStatus("");
           setAttachmentSending(false);
           setAttachmentStatusCancelable(false);
@@ -4587,7 +4744,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             setPendingAttachment(null);
             Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
           } else {
-            releasePendingAttachments([selectedVideo]);
+            releasePendingAttachments(attachments);
           }
           setAttachmentSending(false);
           if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
@@ -4801,12 +4958,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         }
         optimisticAttachmentIds.forEach((messageId) => publishMediaProgress(messageId, null));
         scrollThreadToLatest(false);
-        const sentKind = attachments[0].kind;
         releasePendingAttachments(attachments);
         setPendingPhotoPreviewOpen(false);
         if (activeConversationIdRef.current === operationConversationId) {
-          setAttachmentStatus(attachments.length > 1 ? `${attachments.length} items sent` : sentKind === "IMAGE" ? "Photo sent" : sentKind === "VIDEO" ? "Video sent" : "File sent");
-          setTimeout(() => setAttachmentStatus(""), 1600);
+          setAttachmentStatus("");
         }
         if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
         onClearPendingPost?.();
@@ -4849,11 +5004,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           Alert.alert(failedAttachment.kind === "IMAGE" ? "Image failed" : failedAttachment.kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
         } else {
           releasePendingAttachments(remainingAttachments);
+          if (messengerUserIdRef.current === operationUserId && !sendWasCancelled) {
+            Alert.alert("Media not sent", `An upload to ${operationConversationLabel} failed. Select the remaining media again to retry. ${error instanceof Error ? error.message : ""}`.trim());
+          }
         }
       } finally {
         if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
         setAttachmentStatusCancelable(false);
-        if (mediaSendAbort.signal.aborted) setAttachmentStatus("");
+        setAttachmentStatus("");
         if (messengerUserIdRef.current === operationUserId) setAttachmentSending(false);
         optimisticAttachmentIds.forEach((messageId) => activeAttachmentSendsRef.current.delete(messageId));
         activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
@@ -5781,7 +5939,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           }
         : item);
       const selectionGeneration = ++pendingMediaSelectionGenerationRef.current;
-      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
+      releaseComposerAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
       setPendingImages(mediaWithFastDefaults);
       setPendingPreviewIndex(0);
@@ -5835,7 +5993,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const photo = await takeChatPhoto();
       if (!photo) return;
       pendingMediaSelectionGenerationRef.current += 1;
-      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
+      releaseComposerAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingAttachment(null);
       setPendingImages([{ ...photo, kind: "IMAGE" }]);
       setPendingPreviewIndex(0);
@@ -5900,7 +6058,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const file = await pickChatFile(effectiveAttachmentLimitBytes);
       if (!file) return;
       pendingMediaSelectionGenerationRef.current += 1;
-      releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
+      releaseComposerAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
       setPendingImages([]);
       setPendingAttachment({ kind: "FILE", ...file });
     } catch (error) {
@@ -6466,9 +6624,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
-  async function openPhotoGroup(group: ChatMessage[]) {
+  async function openPhotoGroup(group: ChatMessage[], selectedMessageId = 0) {
+    if (group.some((photo) => photo.id <= 0 || photo.metadata?.uploading)) return;
     try {
-      setAttachmentStatus(`Preparing ${group.length} photos…`);
       let resolvedGroup = group;
       const missingDescriptors = group.filter((message) => message.attachmentUrl && message.metadata?.encrypted && !message.metadata?.encryptedKeyPayload);
       if (missingDescriptors.length) {
@@ -6488,17 +6646,25 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           throw new Error("This photo key is unavailable on this device.");
         }
         const item = await materializeAttachment(message);
-        return item ? { ...item, createdAt: message.createdAt } : null;
+        return item ? { ...item, createdAt: message.createdAt, messageId: message.id } : null;
       }));
       const available = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
-      if (!available.length) throw new Error("These photos are unavailable.");
+      if (!available.length) {
+        const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+        throw firstFailure?.reason instanceof Error ? firstFailure.reason : new Error("These photos are unavailable.");
+      }
       setAttachmentPreview(null);
       setAttachmentPreviewGroup(available);
+      const selectedIndex = selectedMessageId ? available.findIndex((photo) => photo.messageId === selectedMessageId) : -1;
+      setSelectedGroupPhotoIndex(selectedIndex >= 0 ? selectedIndex : null);
     } catch (error) {
       Alert.alert("Photos unavailable", error instanceof Error ? error.message : "Could not open this photo set.");
-    } finally {
-      setAttachmentStatus("");
     }
+  }
+
+  function closePhotoGroupView() {
+    if (selectedGroupPhotoIndex !== null) setSelectedGroupPhotoIndex(null);
+    else setAttachmentPreviewGroup([]);
   }
 
   async function savePreviewAttachment() {
@@ -6893,11 +7059,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     setAttachmentStatus("");
     setAttachmentStatusCancelable(false);
     pendingMediaSelectionGenerationRef.current += 1;
-    releasePendingAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
+    releaseComposerAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
     setPendingAttachment(null);
     setPendingImages([]);
     setPendingPhotoPreviewOpen(false);
     setAttachmentPreview(null);
+    setAttachmentPreviewGroup([]);
+    setSelectedGroupPhotoIndex(null);
     setShareContactPickerOpen(false);
     setShareableContacts([]);
     setSelectedMessageIds([]);
@@ -6955,7 +7123,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return true;
       }
       if (attachmentPreviewGroup.length) {
-        setAttachmentPreviewGroup([]);
+        closePhotoGroupView();
         return true;
       }
       if (forwardPickerOpen) {
@@ -7006,17 +7174,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       return true;
     });
     return () => subscription.remove();
-  }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id, actionMessage, messageInfo, attachmentPreview, profilePhotoPreview, pendingPhotoPreviewOpen, attachmentPreviewGroup.length, forwardPickerOpen, forwardingMessages, shareContactPickerOpen, contactPickerOpen, contactPickerMode, richComposer, emojiPickerOpen, wallpaperPanelOpen, attachmentMenuOpen, groupMembersOpen, chatOptionsOpen, selectedMessageIds.length]);
+  }, [inThread, activeConversationId, pendingPost?.id, pendingRide?.id, actionMessage, messageInfo, attachmentPreview, profilePhotoPreview, pendingPhotoPreviewOpen, attachmentPreviewGroup.length, selectedGroupPhotoIndex, forwardPickerOpen, forwardingMessages, shareContactPickerOpen, contactPickerOpen, contactPickerMode, richComposer, emojiPickerOpen, wallpaperPanelOpen, attachmentMenuOpen, groupMembersOpen, chatOptionsOpen, selectedMessageIds.length]);
 
-  const threadRightEdgeBackResponder = useMemo(() => PanResponder.create({
+  const threadEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
       const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
-      return gesture.x0 >= screenWidth - 34 && horizontalSwipe;
+      return horizontalSwipe && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
     },
     onPanResponderRelease: (_event, gesture) => {
-      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      const screenWidth = Dimensions.get("window").width;
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
+        && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
       if (!horizontalSwipe) return;
       if (actionMessage) {
         setActionMessage(null);
@@ -7035,7 +7205,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         return;
       }
       if (attachmentPreviewGroup.length) {
-        setAttachmentPreviewGroup([]);
+        closePhotoGroupView();
         return;
       }
       if (forwardPickerOpen) {
@@ -7085,16 +7255,19 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       closeThread();
     },
     onPanResponderTerminationRequest: () => true
-  }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, wallpaperPanelOpen]);
+  }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, wallpaperPanelOpen]);
 
-  const messageInfoRightEdgeBackResponder = useMemo(() => PanResponder.create({
+  const messageInfoEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const screenWidth = Dimensions.get("window").width;
       const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
-      return gesture.x0 >= Dimensions.get("window").width - 34 && horizontalSwipe;
+      return horizontalSwipe && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
     },
     onPanResponderRelease: (_event, gesture) => {
-      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
+      const screenWidth = Dimensions.get("window").width;
+      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
+        && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
       if (horizontalSwipe) setMessageInfo(null);
     },
     onPanResponderTerminationRequest: () => true
@@ -7102,8 +7275,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   if (inThread) {
     return (
-      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]}>
-        <View style={styles.rightEdgeBackGestureZone} {...threadRightEdgeBackResponder.panHandlers} />
+      <ChatPhotoViewerContext.Provider value={currentUserId}>
+      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]} {...threadEdgeBackResponder.panHandlers}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
@@ -7461,10 +7634,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
-                {messageRunEnds && !emojiOnlyMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail, isMediaMessage && styles.photoBubbleTail]} /> : null}
+                {messageRunEnds && !emojiOnlyMessage && !isMediaMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
                 {showGroupSender ? (
                   <View style={[styles.senderLine, isMediaMessage && styles.photoSenderLine]}>
                     <Text style={[styles.senderName, isMediaMessage && styles.photoSenderName]} numberOfLines={1}>{message.senderName || activeConversation?.otherName}</Text>
@@ -7490,7 +7663,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </TouchableOpacity>
                 ) : null}
                 {message.attachmentUrl || (message.type === "IMAGE" && Boolean(message.metadata?.thumbnailDataUrl || message.metadata?.decryptedDataUrl)) ? (
-                  message.type === "IMAGE" ? <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void openPhotoGroup(mediaGroup); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  message.type === "IMAGE" ? <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void openPhotoGroup(mediaGroup, photo.id); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>
                       <Pressable
                         style={styles.videoMessageCard}
@@ -7501,7 +7674,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                         accessibilityRole="button"
                         accessibilityLabel={message.metadata?.uploading ? "Video uploading" : "Play video"}
                       >
-                        {message.metadata?.thumbnailDataUrl || localVideoThumbnailUris[message.id] ? <Image source={{ uri: String(message.metadata?.thumbnailDataUrl || localVideoThumbnailUris[message.id]) }} style={styles.videoMessageThumbnail} resizeMode="cover" /> : <View style={styles.videoMessageBackdrop}><Text style={styles.videoMessageBackdropIcon}>▧</Text></View>}
+                        <ChatVideoThumbnail embeddedUri={message.metadata?.thumbnailDataUrl} localUri={localVideoThumbnailUris[message.id]} />
                         <View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View>
                         <View style={styles.videoMessageBadge}><Text style={styles.videoMessageBadgeText}>↓ {Math.max(1, Number(message.metadata?.size || 0) / (1024 * 1024)).toFixed(1)} MB</Text></View>
                         {mediaDownloading ? (
@@ -7651,8 +7824,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </Modal>
 
         <Modal visible={Boolean(messageInfo)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setMessageInfo(null)}>
-          <SafeAreaView style={[styles.messageInfoScreen, { paddingTop: safeAreaInsets.top }]} edges={["bottom", "left", "right"]}>
-            <View style={styles.rightEdgeBackGestureZone} {...messageInfoRightEdgeBackResponder.panHandlers} />
+          <SafeAreaView style={[styles.messageInfoScreen, { paddingTop: safeAreaInsets.top }]} edges={["bottom", "left", "right"]} {...messageInfoEdgeBackResponder.panHandlers}>
             <View style={styles.messageInfoHeader}>
               <TouchableOpacity style={styles.messageInfoBack} onPress={() => setMessageInfo(null)} accessibilityLabel="Close message info"><Text style={styles.messageInfoBackText}>‹</Text></TouchableOpacity>
               <Text style={styles.messageInfoTitle}>Message info</Text>
@@ -7689,7 +7861,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => void savePreviewAttachment()} accessibilityLabel="Share or save media"><Text style={styles.mediaViewerMenuText}>•••</Text></TouchableOpacity>
             </View>
             <View style={styles.mediaViewerStage}>
-              {attachmentPreview?.type === "VIDEO" ? <ChitthiVideoPlayer uri={attachmentPreview.uri} /> : attachmentPreview ? <Image source={{ uri: attachmentPreview.uri }} style={styles.mediaViewerImage} resizeMode="contain" /> : null}
+              {attachmentPreview?.type === "VIDEO" ? <ChitthiVideoPlayer uri={attachmentPreview.uri} /> : attachmentPreview ? <ZoomableChatPhoto key={attachmentPreview.messageId} uri={attachmentPreview.uri} /> : null}
             </View>
             <View style={styles.mediaViewerBottom}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaViewerThumbnails}>
@@ -7781,15 +7953,28 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </KeyboardAvoidingView>
         </Modal>
 
-        <Modal visible={attachmentPreviewGroup.length > 0} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreviewGroup([])}>
+        <Modal visible={attachmentPreviewGroup.length > 0} transparent animationType="fade" statusBarTranslucent onRequestClose={closePhotoGroupView}>
           <View style={styles.attachmentPreviewBackdrop}>
             <View style={styles.attachmentPreviewHeader}>
-              <View style={styles.groupPreviewHeaderCopy}><Text style={styles.attachmentPreviewName}>{activeConversation?.otherName || "Chitthi photos"}</Text><Text style={styles.groupPreviewCount}>{attachmentPreviewGroup.length} photos</Text></View>
-              <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setAttachmentPreviewGroup([])} accessibilityLabel="Close photo collection"><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
+              {selectedGroupPhotoIndex !== null ? <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => setSelectedGroupPhotoIndex(null)} accessibilityLabel="Back to all photos"><Text style={styles.attachmentPreviewCloseText}>‹</Text></TouchableOpacity> : null}
+              <View style={styles.groupPreviewHeaderCopy}><Text style={styles.attachmentPreviewName}>{activeConversation?.otherName || "Chitthi photos"}</Text><Text style={styles.groupPreviewCount}>{selectedGroupPhotoIndex !== null ? `${selectedGroupPhotoIndex + 1} / ${attachmentPreviewGroup.length}` : `${attachmentPreviewGroup.length} photos`}</Text></View>
+              <TouchableOpacity style={styles.attachmentPreviewClose} onPress={() => { setSelectedGroupPhotoIndex(null); setAttachmentPreviewGroup([]); }} accessibilityLabel="Close photo collection"><Text style={styles.attachmentPreviewCloseText}>×</Text></TouchableOpacity>
             </View>
-            <ScrollView style={styles.groupPreviewScroll} contentContainerStyle={styles.groupPreviewContent} showsVerticalScrollIndicator={false}>
-              {attachmentPreviewGroup.map((item, index) => <View key={`${item.name}-${index}`} style={styles.groupPreviewPhotoWrap}><Image source={{ uri: item.uri }} style={styles.groupPreviewPhoto} resizeMode="contain" /><View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(item.createdAt)}</Text></View></View>)}
-            </ScrollView>
+            {selectedGroupPhotoIndex !== null && attachmentPreviewGroup[selectedGroupPhotoIndex] ? <>
+              <View style={styles.groupSinglePhotoStage}>
+                <ZoomableChatPhoto
+                  key={attachmentPreviewGroup[selectedGroupPhotoIndex].messageId}
+                  uri={attachmentPreviewGroup[selectedGroupPhotoIndex].uri}
+                  onSwipe={(direction) => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, Math.min(attachmentPreviewGroup.length - 1, current + (direction === "next" ? 1 : -1))))}
+                />
+              </View>
+              <View style={styles.groupSinglePhotoNavigation}>
+                <TouchableOpacity disabled={selectedGroupPhotoIndex === 0} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, current - 1))} accessibilityLabel="Previous photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === 0 && styles.groupSinglePhotoArrowDisabled]}>‹</Text></TouchableOpacity>
+                <TouchableOpacity disabled={selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.min(attachmentPreviewGroup.length - 1, current + 1))} accessibilityLabel="Next photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1 && styles.groupSinglePhotoArrowDisabled]}>›</Text></TouchableOpacity>
+              </View>
+            </> : <ScrollView style={styles.groupPreviewScroll} contentContainerStyle={styles.groupPreviewContent} showsVerticalScrollIndicator={false}>
+              {attachmentPreviewGroup.map((item, index) => <TouchableOpacity key={`${item.messageId}-${index}`} style={styles.groupPreviewPhotoWrap} activeOpacity={0.9} onPress={() => setSelectedGroupPhotoIndex(index)} accessibilityRole="button" accessibilityLabel={`Open photo ${index + 1} of ${attachmentPreviewGroup.length}`}><Image source={{ uri: item.uri }} style={styles.groupPreviewPhoto} resizeMode="contain" /><View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(item.createdAt)}</Text></View></TouchableOpacity>)}
+            </ScrollView>}
           </View>
         </Modal>
 
@@ -7915,7 +8100,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         ) : null}
 
-        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentStatusCancelable && attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
+        {attachmentStatus && !attachmentSending ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentStatusCancelable && attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
         {pendingAttachment?.kind === "FILE" ? (
           <View style={styles.pendingAttachmentCard}>
@@ -8031,6 +8216,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
       </View>
+      </ChatPhotoViewerContext.Provider>
     );
   }
 
@@ -8424,7 +8610,6 @@ const styles = StyleSheet.create({
   chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
   threadScreen: { flex: 1, backgroundColor: "#D9E5DD", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
-  rightEdgeBackGestureZone: { position: "absolute", top: 0, right: 0, bottom: 0, width: 28, zIndex: 80 },
   threadScreenAndroid: { paddingBottom: 0 },
   threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
   threadKeyboardBody: { flex: 1, position: "relative", overflow: "visible" },
@@ -8719,6 +8904,12 @@ const styles = StyleSheet.create({
   groupPreviewContent: { gap: 10, paddingBottom: 24 },
   groupPreviewPhotoWrap: { width: "100%", minHeight: 480, borderRadius: 8, overflow: "hidden", position: "relative", backgroundColor: "#080808" },
   groupPreviewPhoto: { width: "100%", height: 560 },
+  groupSinglePhotoStage: { flex: 1, minHeight: 220, overflow: "hidden" },
+  groupSinglePhotoNavigation: { minHeight: 48, flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 22 },
+  groupSinglePhotoArrow: { color: "#fff", fontSize: 38, lineHeight: 43, fontWeight: "300" },
+  groupSinglePhotoArrowDisabled: { opacity: 0.25 },
+  zoomableChatPhoto: { flex: 1, width: "100%", overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  zoomableChatPhotoImage: { width: "100%", height: "100%" },
   attachmentPreviewSave: { minHeight: 50, borderRadius: 25, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 12 },
   attachmentPreviewSaveText: { color: "#fff", fontSize: 15, fontWeight: "700" },
   mediaViewerBackdrop: { flex: 1, backgroundColor: "#000", paddingTop: Platform.OS === "ios" ? 48 : 20 },
@@ -8739,7 +8930,6 @@ const styles = StyleSheet.create({
   mediaViewerName: { maxWidth: 210, color: "#fff", fontSize: 16, lineHeight: 21, fontWeight: "800", marginTop: 5 },
   mediaViewerDate: { color: "rgba(255,255,255,0.54)", fontSize: 10, fontWeight: "700", marginTop: 1 },
   mediaViewerStage: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
-  mediaViewerImage: { width: "100%", height: "100%", maxHeight: 680 },
   attachmentPreviewVideo: { width: "100%", height: "100%", maxHeight: 680, backgroundColor: "#000" },
   videoPlaybackError: { alignItems: "center", justifyContent: "center", padding: 28, gap: 10 },
   videoPlaybackErrorText: { color: "#fff", fontSize: 18, fontWeight: "700" },
@@ -8932,6 +9122,8 @@ const styles = StyleSheet.create({
   photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
+  borderlessMediaBubble: { borderWidth: 0, shadowOpacity: 0, elevation: 0 },
+  replyForwardMediaBubble: { borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.36)" },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   selectedCollageCell: { borderWidth: 2, borderColor: "#4f7cff" },
   collageSelectionCheck: { position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 8 },
@@ -8944,7 +9136,6 @@ const styles = StyleSheet.create({
   bubbleTail: { position: "absolute", bottom: 1, width: 11, height: 11, transform: [{ rotate: "45deg" }], zIndex: -1 },
   myBubbleTail: { right: -5, backgroundColor: "#176B4A" },
   theirBubbleTail: { left: -5, backgroundColor: "#F2E8D3" },
-  photoBubbleTail: { backgroundColor: "#202321" },
   senderLine: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   forwardedLabel: { alignSelf: "flex-start", paddingHorizontal: 7, paddingTop: 3, paddingBottom: 5 },
   forwardedLabelText: { color: "rgba(214,225,219,0.68)", fontSize: 12, lineHeight: 16, fontWeight: "700", fontStyle: "italic" },
@@ -9012,6 +9203,8 @@ const styles = StyleSheet.create({
   photoMediaWrap: { position: "relative", borderRadius: 18, overflow: "hidden" },
   photoMediaWrapWithSender: { borderTopLeftRadius: 0, borderTopRightRadius: 0 },
   messageImage: { width: CHAT_MEDIA_WIDTH, height: CHAT_MEDIA_FALLBACK_HEIGHT, borderRadius: 0, backgroundColor: theme.colors.panel2 },
+  chatImagePending: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  chatImageFill: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   messageCollage: { width: CHAT_MEDIA_WIDTH, flexDirection: "row", flexWrap: "wrap", gap: CHAT_COLLAGE_GAP, borderRadius: 0, overflow: "hidden" },
   collageCell: { width: CHAT_COLLAGE_CELL, height: CHAT_COLLAGE_CELL, overflow: "hidden", position: "relative", backgroundColor: theme.colors.panel2 },
   collageImage: { width: "100%", height: "100%", borderRadius: 0, marginBottom: 0 },
@@ -9031,6 +9224,7 @@ const styles = StyleSheet.create({
   videoMessageBackdrop: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "#18382e" },
   videoMessageThumbnail: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   videoMessageBackdropIcon: { color: "rgba(255,255,255,0.10)", fontSize: 104, transform: [{ rotate: "-8deg" }] },
+  videoMessageLoadingText: { color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: "700" },
   videoDownloadOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 8, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   videoUploadCancelOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 9, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   videoUploadCancelButton: { width: 82, height: 82, alignItems: "center", justifyContent: "center" },
