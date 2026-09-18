@@ -26,7 +26,8 @@
     "web:clear": "expo start --web --clear",
     "typecheck": "tsc --noEmit",
     "test:chitthi-encryption": "node scripts/check-chitthi-encryption-regression.cjs",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "test:media-recovery": "node scripts/check-attachment-outbox.cjs && node scripts/check-media-recovery-service.cjs && node scripts/check-media-upload-recovery.cjs && node scripts/check-media-draft-recovery.cjs && node scripts/check-media-send-workflow.cjs && node scripts/check-media-crypto.cjs"
   },
   "dependencies": {
     "@bacons/apple-targets": "^5.0.0",

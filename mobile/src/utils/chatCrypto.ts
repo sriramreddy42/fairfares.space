@@ -314,7 +314,7 @@ export function decryptEnvelope(envelope: { senderPublicKey: string; nonce: stri
 
 export function encryptAttachmentForDevices(
   fileBase64: string,
-  metadata: { fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE"; forwarded?: boolean },
+  metadata: { fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE"; forwarded?: boolean; size?: number; thumbnailBase64?: string; imageWidth?: number; imageHeight?: number; mediaGroupId?: string; mediaGroupIndex?: number; mediaGroupCount?: number },
   identity: DeviceIdentity,
   keys: ConversationDeviceKey[]
 ) {
@@ -335,14 +335,16 @@ export function encryptAttachmentForDevices(
 
 export function decryptAttachmentBase64(ciphertextBase64: string, keyPayload: string) {
   const payload = JSON.parse(keyPayload) as { v?: number; format?: string; key: string; nonce: string; noncePrefix?: string; chunkSize?: number; chunkCount?: number; plaintextSize?: number; fileName: string; mimeType: string; caption: string; kind: "IMAGE" | "VIDEO" | "FILE" };
-  if (payload.v === 3 && payload.format === "CHUNKED_AES_GCM_V3") {
+  const aesChunks = payload.v === 3 && payload.format === "CHUNKED_AES_GCM_V3";
+  const secretboxChunks = payload.v === 2 && payload.format === "CHUNKED_SECRETBOX_V2";
+  if (aesChunks || secretboxChunks) {
     const key = util.decodeBase64(payload.key);
     const prefix = util.decodeBase64(payload.noncePrefix || "");
     const ciphertext = util.decodeBase64(ciphertextBase64);
     const chunkSize = Number(payload.chunkSize || 0);
     const chunkCount = Number(payload.chunkCount || 0);
     const plaintextSize = Number(payload.plaintextSize || 0);
-    if (key.byteLength !== 32 || prefix.byteLength !== 4 || !Number.isSafeInteger(chunkSize) || chunkSize <= 0 || chunkSize > 4 * 1024 * 1024 || !Number.isSafeInteger(chunkCount) || chunkCount <= 0 || !Number.isSafeInteger(plaintextSize) || plaintextSize <= 0 || plaintextSize > 100_000_000 || chunkCount !== Math.ceil(plaintextSize / chunkSize) || ciphertext.byteLength !== plaintextSize + chunkCount * 16) {
+    if (key.byteLength !== 32 || prefix.byteLength !== (aesChunks ? 4 : 16) || !Number.isSafeInteger(chunkSize) || chunkSize <= 0 || chunkSize > 4 * 1024 * 1024 || !Number.isSafeInteger(chunkCount) || chunkCount <= 0 || !Number.isSafeInteger(plaintextSize) || plaintextSize <= 0 || plaintextSize > 100_000_000 || chunkCount !== Math.ceil(plaintextSize / chunkSize) || ciphertext.byteLength !== plaintextSize + chunkCount * 16) {
       throw new Error("The encrypted attachment descriptor is invalid.");
     }
     const plaintext = new Uint8Array(plaintextSize);
@@ -351,16 +353,16 @@ export function decryptAttachmentBase64(ciphertextBase64: string, keyPayload: st
     try {
       for (let index = 0; index < chunkCount; index += 1) {
         const clearSize = Math.min(chunkSize, plaintextSize - clearOffset);
-        const nonce = new Uint8Array(12);
+        const nonce = new Uint8Array(aesChunks ? 12 : 24);
         nonce.set(prefix);
         let counter = index;
-        for (let position = 11; position >= 4; position -= 1) {
+        for (let position = nonce.length - 1; position >= prefix.length; position -= 1) {
           nonce[position] = counter & 0xff;
           counter = Math.floor(counter / 256);
         }
         const encryptedChunk = ciphertext.subarray(encryptedOffset, encryptedOffset + clearSize + 16);
-        const clearChunk = gcm(key, nonce).decrypt(encryptedChunk);
-        if (clearChunk.byteLength !== clearSize) throw new Error("Attachment authentication failed.");
+        const clearChunk = aesChunks ? gcm(key, nonce).decrypt(encryptedChunk) : nacl.secretbox.open(encryptedChunk, nonce, key);
+        if (!clearChunk || clearChunk.byteLength !== clearSize) throw new Error("Attachment authentication failed.");
         plaintext.set(clearChunk, clearOffset);
         clearChunk.fill(0);
         encryptedOffset += clearSize + 16;

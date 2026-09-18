@@ -9,14 +9,16 @@ function normalizedMimeType(name: string, provided: string) {
   return ({ pdf: "application/pdf", txt: "text/plain", csv: "text/csv", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } as Record<string, string>)[extension] || provided || "application/octet-stream";
 }
 
-export async function pickChatFile(maxBytes = 100_000_000): Promise<PickedChatFile | null> {
+export async function pickChatFiles(maxBytes = 100_000_000): Promise<PickedChatFile[]> {
   const result = await DocumentPicker.getDocumentAsync({
-    type: ["application/pdf", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    type: "*/*",
     copyToCacheDirectory: true,
-    multiple: false
+    multiple: true
   });
-  if (result.canceled || !result.assets.length) return null;
-  const asset = result.assets[0];
+  if (result.canceled || !result.assets.length) return [];
+  if (result.assets.length > 20) throw new Error("Select at most 20 files at a time.");
+  const files: PickedChatFile[] = [];
+  for (const asset of result.assets) {
   const size = Number(asset.size || 0);
   const fileLimit = Math.max(1_000_000, Math.min(100_000_000, maxBytes));
   if (!size || size > fileLimit) {
@@ -25,5 +27,7 @@ export async function pickChatFile(maxBytes = 100_000_000): Promise<PickedChatFi
   }
   const mimeType = normalizedMimeType(asset.name || "attachment", asset.mimeType || "");
   if (!asset.uri) throw new Error("Could not read the selected file.");
-  return { uri: asset.uri, blob: asset.file || undefined, name: asset.name || "attachment", mimeType, size, ownedCacheFile: true };
+  files.push({ uri: asset.uri, blob: asset.file || undefined, name: asset.name || "attachment", mimeType, size, ownedCacheFile: true });
+  }
+  return files;
 }

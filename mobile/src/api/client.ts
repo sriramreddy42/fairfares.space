@@ -1,3 +1,4 @@
+import { removeChatMediaDraft } from "../utils/chatMediaDrafts";
 import { BootstrapPayload, Car, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityPost, CommunityUserProfile, GasFuelType, GasPriceResponse, HousingActivityPost, HousingPost, RentalBooking, RentalCarListingInput, RentalQuote, RentalSearchInput, RentalServiceBooking, RideDispatchSummary, RideDriverProfile, RideInput, RidePost, RideType, ServiceItem, StaffPickupBooking } from "../types";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -103,6 +104,7 @@ function browserStorage() {
 let authToken = browserStorage()?.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
 let communityGuestToken = browserStorage()?.getItem(COMMUNITY_GUEST_TOKEN_KEY) || "";
 let authTokenGeneration = authToken ? 1 : 0;
+const encryptedUploadSessionControllers = new Set<AbortController>();
 let activeApiBase = API_URL;
 
 function diagnosticReference() {
@@ -140,7 +142,10 @@ function currentApiBase() {
 }
 
 export async function setAuthToken(token: string) {
-  if (authToken !== token) authTokenGeneration += 1;
+  if (authToken !== token) {
+    authTokenGeneration += 1;
+    encryptedUploadSessionControllers.forEach((controller) => controller.abort());
+  }
   authToken = token;
   const storage = browserStorage();
   if (storage) {
@@ -1413,7 +1418,9 @@ export async function getChatCommunity(communityId: string) {
 }
 
 export async function getChatMessages(conversationId: string, beforeMessageId = 0, limit = 30, deviceId = "") {
+  // Capability negotiation lets the backend coexist with installed old apps.
   const params = new URLSearchParams({
+    receipts: "explicit",
     conversation_id: conversationId,
     limit: String(Math.max(1, Math.min(50, Math.floor(limit || 30)))),
     compact_senders: "1",
@@ -1555,12 +1562,14 @@ async function completeEncryptedMultipartUpload(uploadId: string, parts: Complet
 }
 
 const multipartStatePrefix = "fairfares.chitthi.multipart.v1.";
-const multipartRecoveryMaxAgeMs = 25 * 60 * 60 * 1000;
 
 type PendingMultipartUpload = {
   ownerUserId: number;
+  managedByOutbox?: boolean;
   createdAt: number;
-  authorization: EncryptedUploadAuthorization;
+  authorization?: EncryptedUploadAuthorization;
+  authorizedAt?: number;
+  recoveryDraftId?: string;
   conversationId: string;
   encryptedUri: string;
   encryptedSize: number;
@@ -1570,10 +1579,15 @@ type PendingMultipartUpload = {
   silent: boolean;
   clientMessageId: string;
   uploaded?: boolean;
+  cancelled?: boolean;
+  finalizing?: boolean;
+  receipt?: Awaited<ReturnType<typeof finalizeEncryptedChatAttachment>>;
 };
 
-function multipartStateKey(ownerUserId: number, ciphertextSha256: string) {
-  return `${multipartStatePrefix}${ownerUserId}.${ciphertextSha256.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+function multipartStateKey(ownerUserId: number, ciphertextSha256: string, conversationId = "") {
+  // Keep the owner prefix for existing multipart records, but isolate new
+  // transfers to different conversations even when they reuse ciphertext.
+  return `${multipartStatePrefix}${ownerUserId}.${conversationId ? `${encodeURIComponent(conversationId)}.` : ""}${encodeURIComponent(ciphertextSha256)}`;
 }
 
 function multipartStateOwnerPrefix(ownerUserId: number) {
@@ -1604,12 +1618,14 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
       throw new Error("This encrypted upload requires the current FairFares development build to resume safely.");
     }
     for (let check = 0; check < 10; check += 1) {
+      throwIfAttachmentUploadCancelled(signal);
       const activeParts = await FairFaresCrypto.activeMultipartPartNumbers(authorization.uploadId);
       if (!activeParts.length) break;
       if (check === 9) throw new Error("This encrypted upload is still continuing in the background.");
       await wait(1000);
     }
   }
+  throwIfAttachmentUploadCancelled(signal);
   const remote = await getEncryptedMultipartStatus(authorization.uploadId);
   if (remote.completed) {
     onProgress?.(1);
@@ -1676,12 +1692,13 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
           );
           if (staged.size !== expectedSize || !staged.md5Base64) throw new Error(`Encrypted upload part ${partNumber} could not be staged completely.`);
           partMd5 = staged.md5Base64;
+          throwIfAttachmentUploadCancelled(signal);
           partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partMd5);
         } catch (error) {
           if (partFile.exists) partFile.delete();
           throw error;
         }
-        scheduled.push((async () => {
+        const scheduledPart = (async () => {
           try {
             let uploaded: { status: number; headers: Record<string, string> } | undefined;
             for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1712,7 +1729,10 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
           } finally {
             if (partFile.exists) partFile.delete();
           }
-        })());
+        })();
+        // Observe early failures while later parts are still being staged.
+        void scheduledPart.catch(() => undefined);
+        scheduled.push(scheduledPart);
       }
     } catch (error) {
       await Promise.allSettled(scheduled);
@@ -1773,6 +1793,7 @@ async function uploadEncryptedMultipartFile(authorization: EncryptedUploadAuthor
           partFile.create({ overwrite: true, intermediates: true });
           partFile.write(bytes);
         }
+        throwIfAttachmentUploadCancelled(signal);
         partAuthorization = await authorizeEncryptedMultipartPart(authorization.uploadId, partNumber, expectedSize, partMd5);
       } catch (error) {
         if (partFile.exists) partFile.delete();
@@ -1898,7 +1919,8 @@ export async function forwardEncryptedChatAttachment(
   sourceMessageId: number,
   conversationId: string,
   envelopes: Array<Record<string, unknown>>,
-  silent = false
+  silent = false,
+  clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
 ) {
   const result = await request<{ ok: boolean; message: ChatMessage }>("/api/chat/e2ee/attachments/forward", {
     method: "POST",
@@ -1908,139 +1930,303 @@ export async function forwardEncryptedChatAttachment(
       conversationId,
       envelopes,
       silent,
-      clientMessageId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      clientMessageId
     })
   }, { attempts: 3 });
   void trackProductEvent("message_sent", { source: "chitthi_forward" });
   return result;
 }
 
-export async function sendDirectEncryptedChatAttachment(
-  ownerUserId: number,
-  conversationId: string,
-  encrypted: { ciphertextBase64?: string; encryptedUri?: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> },
-  mediaMimeType: string,
-  silent = false,
-  signal?: AbortSignal,
-  onProgress?: (progress: number) => void
-) {
-  throwIfAttachmentUploadCancelled(signal);
-  if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new Error("A signed-in account is required to upload an encrypted attachment.");
-  const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
-  const metric = startDevelopmentPerformanceOperation("attachment-send", {
-    sizeMb: Math.round(encrypted.encryptedSize / 1024 / 1024 * 10) / 10,
-    transferMode: authorization.transferMode,
-    mediaType: mediaMimeType.split("/", 1)[0] || "unknown",
+type EncryptedAttachmentUpload = { ciphertextBase64?: string; encryptedUri?: string; ciphertextSha256: string; encryptedSize: number; envelopes: Array<Record<string, unknown>> };
+type RefreshAttachmentEnvelopes = (conversationId: string, envelopes: Array<Record<string, unknown>>) => Promise<Array<Record<string, unknown>>>;
+type AttachmentReceipt = Awaited<ReturnType<typeof finalizeEncryptedChatAttachment>>;
+const encryptedUploadLocks = new Map<string, Promise<unknown>>();
+const activeEncryptedUploads = new Map<string, AbortController>();
+const completedEncryptedUploads = new Map<string, { receipt: AttachmentReceipt; clientMessageId: string }>();
+
+function withEncryptedUploadLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = encryptedUploadLocks.get(key) || Promise.resolve();
+  const operation = previous.catch(() => undefined).then(work);
+  encryptedUploadLocks.set(key, operation);
+  return operation.finally(() => {
+    if (encryptedUploadLocks.get(key) === operation) encryptedUploadLocks.delete(key);
   });
-  const stateKey = multipartStateKey(ownerUserId, encrypted.ciphertextSha256);
-  const clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  if (authorization.transferMode === "MULTIPART") {
-    if (!encrypted.encryptedUri || Platform.OS === "web") throw new Error("Multipart encrypted uploads require the native app.");
-    const pending: PendingMultipartUpload = {
-      ownerUserId, createdAt: Date.now(), authorization, conversationId, encryptedUri: encrypted.encryptedUri,
-      encryptedSize: encrypted.encryptedSize, ciphertextSha256: encrypted.ciphertextSha256,
-      envelopes: encrypted.envelopes, mediaMimeType, silent, clientMessageId,
-    };
-    await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
-    let multipartError: unknown;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await uploadEncryptedMultipartFile(authorization, encrypted.encryptedUri, signal, onProgress);
-        multipartError = undefined;
-        break;
-      } catch (error) {
-        multipartError = error;
-        if (signal?.aborted) break;
-        if (attempt < 2) await wait([750, 1750][attempt]);
-      }
-    }
-    if (multipartError) {
-      metric.fail(multipartError, { phase: "upload" });
-      if (signal?.aborted) {
-        await FairFaresCrypto.cancelMultipartUpload(authorization.uploadId);
-        await abortEncryptedChatAttachmentMultipart(authorization.uploadId).catch(() => undefined);
-        await AsyncStorage.removeItem(stateKey);
-        const encryptedFile = new File(encrypted.encryptedUri);
-        if (encryptedFile.exists) encryptedFile.delete();
-        throw attachmentUploadCancelledError();
-      }
-      throw multipartError;
-    }
-    pending.uploaded = true;
-    await AsyncStorage.setItem(stateKey, JSON.stringify(pending));
-  } else {
-    try {
-      if (encrypted.encryptedUri && authorization.uploadUrl && authorization.headers) {
-        await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, encrypted.encryptedUri, signal, onProgress);
-      }
-      else if (encrypted.ciphertextBase64 && authorization.uploadUrl && authorization.headers) await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
-      else throw new Error("Encrypted attachment data is missing.");
-    } catch (error) {
-      metric.fail(error, { phase: "upload" });
-      // Single PUT is restarted from the original media on the next user retry;
-      // it has no resumable state, so its encrypted cache must not be orphaned.
-      if (encrypted.encryptedUri && Platform.OS !== "web") {
-        const temporary = new File(encrypted.encryptedUri);
-        if (temporary.exists) temporary.delete();
-      }
-      throw error;
-    }
-  }
-  try {
-    throwIfAttachmentUploadCancelled(signal);
-    const finalized = await finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent, clientMessageId);
-    if (authorization.transferMode === "MULTIPART") await AsyncStorage.removeItem(stateKey);
-    metric.complete({ phase: "finalized" });
-    return finalized;
-  } catch (error) {
-    metric.fail(error, { phase: "finalize" });
-    if (authorization.transferMode === "SINGLE" && encrypted.encryptedUri && Platform.OS !== "web") {
-      const temporary = new File(encrypted.encryptedUri);
-      if (temporary.exists) temporary.delete();
-    }
-    throw error;
-  }
 }
 
-export async function resumePendingEncryptedChatUploads(ownerUserId: number) {
-  if (Platform.OS === "web" || !Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) return [] as ChatMessage[];
-  const ownerPrefix = multipartStateOwnerPrefix(ownerUserId);
-  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(ownerPrefix));
-  const finalized: ChatMessage[] = [];
-  for (const key of keys.slice(0, 5)) {
+function assertUploadSession(generation: number) {
+  if (generation !== authTokenGeneration) throw new Error("Attachment sending paused because the account changed.");
+}
+
+function rememberCompletedUpload(key: string, pending: PendingMultipartUpload, receipt: AttachmentReceipt) {
+  completedEncryptedUploads.set(key, { receipt, clientMessageId: pending.clientMessageId });
+  // These entries only bridge overlapping live callers; durable receipts in
+  // AsyncStorage cover a crash while local cleanup is unfinished.
+  if (completedEncryptedUploads.size > 100) completedEncryptedUploads.delete(completedEncryptedUploads.keys().next().value!);
+}
+
+async function cleanupCompletedUpload(key: string, pending: PendingMultipartUpload) {
+  // If any metadata write fails, retain the ciphertext and receipt for retry.
+  // Never report an accepted server message as a failed send.
+  try {
+    if (pending.recoveryDraftId) await removeChatMediaDraft(pending.ownerUserId, {
+      recoveryDraftId: pending.recoveryDraftId,
+    }, true);
+    await AsyncStorage.removeItem(key);
+    const file = new File(pending.encryptedUri);
+    if (file.exists) file.delete();
+  } catch { /* Recovery retries cleanup using the same server receipt. */ }
+}
+
+// Commit a complete ciphertext file before its queue record. An interrupted
+// copy leaves only a .part file, which the next attempt safely replaces.
+export async function queueEncryptedChatAttachment(
+  ownerUserId: number, conversationId: string, encrypted: EncryptedAttachmentUpload,
+  mediaMimeType: string, silent = false, recoveryDraftId?: string, clientMessageId?: string
+) {
+  if (!Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) throw new Error("A signed-in account is required to upload an encrypted attachment.");
+  if (Platform.OS === "web" || !encrypted.encryptedUri) return;
+  const key = multipartStateKey(ownerUserId, encrypted.ciphertextSha256, conversationId);
+  return withEncryptedUploadLock(key, async () => {
+    const completed = completedEncryptedUploads.get(key);
+    if (completed) return completed.clientMessageId;
+    const existing = await AsyncStorage.getItem(key);
+    if (existing) {
+      const pending = JSON.parse(existing) as PendingMultipartUpload;
+      if (pending.cancelled) throw attachmentUploadCancelledError();
+      return pending.clientMessageId;
+    }
+    const directory = new Directory(Paths.document, "chitthi-outgoing");
+    directory.create({ intermediates: true, idempotent: true });
+    const destination = new File(directory, `${ownerUserId}-${encodeURIComponent(conversationId)}-${encodeURIComponent(encrypted.ciphertextSha256)}.ffenc2`);
+    if (!destination.exists || destination.size !== encrypted.encryptedSize) {
+      const temporaryUri = `${destination.uri}.part`;
+      await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
+      await FileSystem.copyAsync({ from: encrypted.encryptedUri!, to: temporaryUri });
+      const temporary = new File(temporaryUri);
+      if (!temporary.exists || temporary.size !== encrypted.encryptedSize) throw new Error("Could not save the encrypted attachment for sending.");
+      if (FairFaresCrypto.available) await FairFaresCrypto.commitProtectedFile(temporaryUri, destination.uri);
+      else {
+        if (destination.exists) destination.delete();
+        await FileSystem.moveAsync({ from: temporaryUri, to: destination.uri });
+      }
+    }
+    const pending: PendingMultipartUpload = {
+      ownerUserId, createdAt: Date.now(), conversationId, recoveryDraftId, encryptedUri: destination.uri,
+      encryptedSize: encrypted.encryptedSize, ciphertextSha256: encrypted.ciphertextSha256,
+      envelopes: encrypted.envelopes, mediaMimeType, silent,
+      clientMessageId: clientMessageId || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      managedByOutbox: Boolean(clientMessageId),
+    };
+    await AsyncStorage.setItem(key, JSON.stringify(pending));
+    return pending.clientMessageId;
+  });
+}
+
+async function discardPendingEncryptedUpload(key: string, pending: PendingMultipartUpload) {
+  // Tombstone first: failed cleanup must never resurrect a cancelled send.
+  pending.cancelled = true;
+  await AsyncStorage.setItem(key, JSON.stringify(pending));
+  const file = new File(pending.encryptedUri);
+  if (file.exists) file.delete();
+  if (pending.recoveryDraftId) await removeChatMediaDraft(pending.ownerUserId, {
+    recoveryDraftId: pending.recoveryDraftId,
+  });
+  await AsyncStorage.removeItem(key);
+}
+
+export async function discardQueuedEncryptedChatAttachment(ownerUserId: number, ciphertextSha256: string, conversationId: string) {
+  const key = multipartStateKey(ownerUserId, ciphertextSha256, conversationId);
+  activeEncryptedUploads.get(key)?.abort();
+  return withEncryptedUploadLock(key, async () => {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return false;
+    const pending = JSON.parse(raw) as PendingMultipartUpload;
+    if (pending.receipt) { await cleanupCompletedUpload(key, pending); return false; }
+    if (pending.finalizing) return false; // Server acceptance may already have happened.
+    await discardPendingEncryptedUpload(key, pending);
+    return true;
+  });
+}
+
+function expiredUploadAuthorization(error: unknown) {
+  const status = Number((error as { fairFaresHttpStatus?: number })?.fairFaresHttpStatus || 0);
+  const message = error instanceof Error ? error.message : String(error);
+  return (status === 404 || status === 409) && /upload.*(?:not found|expired)/i.test(message);
+}
+
+async function deliverPendingEncryptedUpload(key: string, generation: number, signal?: AbortSignal, onProgress?: (progress: number) => void, refreshEnvelopes?: RefreshAttachmentEnvelopes): Promise<AttachmentReceipt | null> {
+  return withEncryptedUploadLock(key, async () => {
+    assertUploadSession(generation);
+    const completed = completedEncryptedUploads.get(key);
+    if (completed) {
+      const leftover = await AsyncStorage.getItem(key);
+      if (leftover) await cleanupCompletedUpload(key, { ...JSON.parse(leftover), receipt: completed.receipt });
+      return completed.receipt;
+    }
+    // Re-read after acquiring ownership. A stale recovery snapshot must not
+    // re-upload a file a live sender already finished or cancelled.
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return null;
+    const pending = JSON.parse(raw) as PendingMultipartUpload;
+    if (pending.cancelled) {
+      await discardPendingEncryptedUpload(key, pending);
+      return null;
+    }
+    if (pending.receipt) {
+      rememberCompletedUpload(key, pending, pending.receipt);
+      await cleanupCompletedUpload(key, pending);
+      return pending.receipt;
+    }
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) controller.abort();
+    encryptedUploadSessionControllers.add(controller);
+    activeEncryptedUploads.set(key, controller);
+    let finalizeAttempted = false;
+    const check = () => {
+      assertUploadSession(generation);
+      throwIfAttachmentUploadCancelled(controller.signal);
+    };
     try {
-      const raw = await AsyncStorage.getItem(key);
+      let refreshedKeys = false;
+      let renewedAuthorization = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          check();
+          const expiredSingleUrl = pending.authorization?.transferMode === "SINGLE"
+            && Date.now() - (pending.authorizedAt || pending.createdAt) >= Math.max(0, pending.authorization.expiresIn - 60) * 1000;
+          if (!pending.authorization || (!pending.uploaded && expiredSingleUrl)) {
+            pending.authorization = await authorizeEncryptedChatAttachment(pending.conversationId, pending.encryptedSize, pending.ciphertextSha256, pending.mediaMimeType);
+            pending.authorizedAt = Date.now();
+            await AsyncStorage.setItem(key, JSON.stringify(pending));
+          }
+          check();
+          const authorization = pending.authorization;
+          if (!pending.uploaded) {
+            if (authorization.transferMode === "MULTIPART") {
+              await uploadEncryptedMultipartFile(authorization, pending.encryptedUri, controller.signal, onProgress);
+            } else if (authorization.uploadUrl && authorization.headers) {
+              await uploadEncryptedFile(authorization.uploadUrl, authorization.headers, pending.encryptedUri, controller.signal, onProgress);
+            } else throw new Error("Encrypted upload authorization is incomplete.");
+            pending.uploaded = true;
+            await AsyncStorage.setItem(key, JSON.stringify(pending));
+          }
+          check();
+          finalizeAttempted = true;
+          pending.finalizing = true;
+          await AsyncStorage.setItem(key, JSON.stringify(pending));
+          const receipt = await finalizeEncryptedChatAttachment(authorization.uploadId, pending.envelopes, pending.silent, pending.clientMessageId);
+          pending.receipt = receipt;
+          rememberCompletedUpload(key, pending, receipt);
+          // Keep the previous uploaded record if writing the receipt fails;
+          // finalization is idempotent for this authorization/client ID.
+          await AsyncStorage.setItem(key, JSON.stringify(pending)).catch(() => undefined);
+          await cleanupCompletedUpload(key, pending);
+          return receipt;
+        } catch (error) {
+          const status = Number((error as { fairFaresHttpStatus?: number })?.fairFaresHttpStatus || 0);
+          if (!refreshedKeys && refreshEnvelopes && status === 409 && /encryption keys changed/i.test(error instanceof Error ? error.message : String(error))) {
+            check();
+            pending.envelopes = await refreshEnvelopes(pending.conversationId, pending.envelopes);
+            check();
+            refreshedKeys = true;
+            pending.finalizing = false;
+            finalizeAttempted = false;
+            await AsyncStorage.setItem(key, JSON.stringify(pending));
+            continue;
+          }
+          if (!renewedAuthorization && expiredUploadAuthorization(error)) {
+            renewedAuthorization = true;
+            check();
+            pending.authorization = undefined;
+            pending.uploaded = false;
+            finalizeAttempted = false;
+            pending.finalizing = false;
+            await AsyncStorage.setItem(key, JSON.stringify(pending));
+            continue;
+          }
+          if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+            // An explicit rejection is not an ambiguous acceptance. Keeping
+            // finalizing set here would prevent safe cancellation indefinitely.
+            pending.finalizing = false;
+            finalizeAttempted = false;
+            await AsyncStorage.setItem(key, JSON.stringify(pending));
+          }
+          throw error;
+        }
+      }
+      return null;
+    } catch (error) {
+      if (controller.signal.aborted && generation === authTokenGeneration && !finalizeAttempted) {
+        if (pending.authorization?.transferMode === "MULTIPART") {
+          await FairFaresCrypto.cancelMultipartUpload(pending.authorization.uploadId).catch(() => undefined);
+          await abortEncryptedChatAttachmentMultipart(pending.authorization.uploadId).catch(() => undefined);
+        }
+        await discardPendingEncryptedUpload(key, pending);
+        throw attachmentUploadCancelledError();
+      }
+      // Session changes and ambiguous finalize responses retain the record.
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+      encryptedUploadSessionControllers.delete(controller);
+      activeEncryptedUploads.delete(key);
+    }
+  });
+}
+
+export async function sendDirectEncryptedChatAttachment(
+  ownerUserId: number, conversationId: string, encrypted: EncryptedAttachmentUpload,
+  mediaMimeType: string, silent = false, signal?: AbortSignal, onProgress?: (progress: number) => void, refreshEnvelopes?: RefreshAttachmentEnvelopes, clientMessageId?: string
+) {
+  const generation = authTokenGeneration;
+  throwIfAttachmentUploadCancelled(signal);
+  await queueEncryptedChatAttachment(ownerUserId, conversationId, encrypted, mediaMimeType, silent, undefined, clientMessageId);
+  assertUploadSession(generation);
+  if (Platform.OS !== "web" && encrypted.encryptedUri) {
+    const result = await deliverPendingEncryptedUpload(multipartStateKey(ownerUserId, encrypted.ciphertextSha256, conversationId), generation, signal, onProgress, refreshEnvelopes);
+    if (!result) throw new Error("The saved encrypted attachment is missing or was cancelled.");
+    return result;
+  }
+  const authorization = await authorizeEncryptedChatAttachment(conversationId, encrypted.encryptedSize, encrypted.ciphertextSha256, mediaMimeType);
+  assertUploadSession(generation);
+  if (!encrypted.ciphertextBase64 || !authorization.uploadUrl || !authorization.headers) throw new Error("Encrypted attachment data is missing.");
+  await uploadEncryptedBinary(authorization.uploadUrl, authorization.headers, encrypted.ciphertextBase64);
+  assertUploadSession(generation);
+  throwIfAttachmentUploadCancelled(signal);
+  return finalizeEncryptedChatAttachment(authorization.uploadId, encrypted.envelopes, silent, clientMessageId || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
+
+export async function resumePendingEncryptedChatUploads(ownerUserId: number, shouldContinue: () => boolean = () => true, refreshEnvelopes?: RefreshAttachmentEnvelopes) {
+  if (Platform.OS === "web" || !Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) return [] as Array<ChatMessage & { recoveredConversationId: string }>;
+  const generation = authTokenGeneration;
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStateOwnerPrefix(ownerUserId)));
+  const records: Array<{ key: string; pending: PendingMultipartUpload }> = [];
+  for (const [key, raw] of await AsyncStorage.multiGet(keys)) {
+    try {
       if (!raw) continue;
       const pending = JSON.parse(raw) as PendingMultipartUpload;
-      if (pending.ownerUserId !== ownerUserId) continue;
-      const encryptedFile = new File(pending.encryptedUri);
-      if (!Number.isFinite(pending.createdAt) || Date.now() - pending.createdAt > multipartRecoveryMaxAgeMs) {
-        await AsyncStorage.removeItem(key);
-        if (encryptedFile.exists) encryptedFile.delete();
-        continue;
-      }
-      if (!pending.authorization?.uploadId || !encryptedFile.exists || encryptedFile.size !== pending.encryptedSize) {
-        await AsyncStorage.removeItem(key);
-        continue;
-      }
-      if (!pending.uploaded) {
-        await uploadEncryptedMultipartFile(pending.authorization, pending.encryptedUri);
-        pending.uploaded = true;
-        await AsyncStorage.setItem(key, JSON.stringify(pending));
-      }
-      const result = await finalizeEncryptedChatAttachment(pending.authorization.uploadId, pending.envelopes, pending.silent, pending.clientMessageId);
-      finalized.push(result.message);
-      await AsyncStorage.removeItem(key);
-      encryptedFile.delete();
-    } catch {
-      // Keep valid state and encrypted ciphertext for the next foreground retry.
-    }
+      if (pending.ownerUserId === ownerUserId) records.push({ key, pending });
+    } catch { /* A malformed record must not hide the other files. */ }
+  }
+  records.sort((left, right) => left.pending.createdAt - right.pending.createdAt);
+  const finalized: Array<ChatMessage & { recoveredConversationId: string }> = [];
+  for (const { key, pending } of records) {
+    if (generation !== authTokenGeneration || !shouldContinue()) break;
+    if ((pending.managedByOutbox && !pending.receipt) || activeEncryptedUploads.has(key)) continue;
+    try {
+      const result = await deliverPendingEncryptedUpload(key, generation, undefined, undefined, refreshEnvelopes);
+      if (!result) continue;
+      finalized.push({ ...result.message, localClientMessageId: pending.clientMessageId, recoveredConversationId: pending.conversationId });
+      if (pending.recoveryDraftId) await removeChatMediaDraft(pending.ownerUserId, { recoveryDraftId: pending.recoveryDraftId });
+    } catch { /* One failed attachment must not block the remaining batch. */ }
   }
   await cleanupOrphanedEncryptedChatFiles().catch(() => undefined);
   return finalized;
 }
 
-export async function pendingEncryptedChatUploadSummary(ownerUserId: number) {
+export async function pendingEncryptedChatUploadSummary(ownerUserId: number, conversationId = "") {
   if (Platform.OS === "web" || !Number.isSafeInteger(ownerUserId) || ownerUserId <= 0) return { count: 0, validCount: 0, encryptedBytes: 0, uploadedCount: 0 };
   const ownerPrefix = multipartStateOwnerPrefix(ownerUserId);
   const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(ownerPrefix));
@@ -2048,22 +2234,13 @@ export async function pendingEncryptedChatUploadSummary(ownerUserId: number) {
   let validCount = 0;
   let encryptedBytes = 0;
   let uploadedCount = 0;
-  for (const [key, raw] of await AsyncStorage.multiGet(keys.slice(0, 20))) {
+  for (const [key, raw] of await AsyncStorage.multiGet(keys)) {
     if (!raw) continue;
     try {
       const pending = JSON.parse(raw) as PendingMultipartUpload;
-      if (pending.ownerUserId !== ownerUserId) continue;
+      if (pending.managedByOutbox || pending.ownerUserId !== ownerUserId || (conversationId && pending.conversationId !== conversationId)) continue;
       const file = new File(pending.encryptedUri);
-      if (!Number.isFinite(pending.createdAt) || Date.now() - pending.createdAt > multipartRecoveryMaxAgeMs) {
-        if (key) await AsyncStorage.removeItem(key);
-        if (file.exists) file.delete();
-        continue;
-      }
-      if (!pending.authorization?.uploadId || !file.exists || file.size !== pending.encryptedSize) {
-        if (key) await AsyncStorage.removeItem(key);
-        if (file.exists) file.delete();
-        continue;
-      }
+      if (!pending.receipt && !pending.uploaded && !pending.cancelled && (!file.exists || file.size !== pending.encryptedSize)) continue;
       count += 1;
       validCount += 1;
       encryptedBytes += Number(file.size || 0);
@@ -2077,13 +2254,21 @@ export async function pendingEncryptedChatUploadSummary(ownerUserId: number) {
 
 async function cleanupOrphanedEncryptedChatFiles() {
   if (Platform.OS === "web") return;
-  const stateKeys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(multipartStatePrefix));
+  const allKeys = await AsyncStorage.getAllKeys();
+  const stateKeys = allKeys.filter((key) => key.startsWith(multipartStatePrefix));
   const retainedUris = new Set<string>();
+  for (const key of allKeys) {
+    const match = /^fairfares\.chitthi\.media-draft\.v1\.(\d+)\.([a-zA-Z0-9_-]+)$/.exec(key);
+    if (match) retainedUris.add(new File(Paths.document, "chitthi-pending-media", `${match[1]}-${match[2]}`).uri);
+  }
   for (const [, raw] of await AsyncStorage.multiGet(stateKeys)) {
     if (!raw) continue;
     try {
       const pending = JSON.parse(raw) as PendingMultipartUpload;
       if (pending.encryptedUri) retainedUris.add(pending.encryptedUri);
+      if (pending.ownerUserId > 0 && pending.recoveryDraftId && /^[a-zA-Z0-9_-]+$/.test(pending.recoveryDraftId)) {
+        retainedUris.add(new File(Paths.document, "chitthi-pending-media", `${pending.ownerUserId}-${pending.recoveryDraftId}`).uri);
+      }
     } catch {
       // Malformed state cannot authorize or safely retain an encrypted file.
     }
@@ -2093,16 +2278,21 @@ async function cleanupOrphanedEncryptedChatFiles() {
   const cleanupEntries = [...Paths.cache.list()];
   const preparedVideoDirectory = new Directory(Paths.cache, "chitthi-prepared");
   if (preparedVideoDirectory.exists) cleanupEntries.push(...preparedVideoDirectory.list());
+  for (const name of ["chitthi-outgoing", "chitthi-pending-media"]) {
+    const directory = new Directory(Paths.document, name);
+    if (directory.exists) cleanupEntries.push(...directory.list());
+  }
   for (const entry of cleanupEntries) {
     if (!(entry instanceof File) || retainedUris.has(entry.uri)) continue;
-    const isPartial = /\/chitthi-[^/]+\.ffenc2\.part$/.test(entry.uri);
+    const isOutgoingOrphan = /\/(?:chitthi-outgoing|chitthi-pending-media)\/[^/]+$/.test(entry.uri);
+    const isPartial = /\/chitthi-[^/]+\.ffenc2\.part$/.test(entry.uri) || (isOutgoingOrphan && entry.uri.endsWith(".part"));
     const isEncrypted = /\/chitthi-[^/]+\.ffenc2$/.test(entry.uri);
     const isUploadPart = /\/chitthi-upload-[^/]+\.part$/.test(entry.uri);
     const isUploadPartial = /\/chitthi-upload-[^/]+\.part\.partial$/.test(entry.uri);
     const isPreparedVideo = /\/chitthi-prepared\/video-[^/]+\.mp4$/.test(entry.uri);
     const isInterruptedDownload = /\/chitthi-download-[^/]+(?:\.ffenc|\.ffenc\.range-\d+|\.ffenc\.resume\.json)$/.test(entry.uri);
     const isPreview = /\/chitthi-(?:preview|decrypted)-[^/]+\.(?:img|jpg|jpeg|png|webp)$/.test(entry.uri);
-    if (!isPartial && !isEncrypted && !isUploadPart && !isUploadPartial && !isPreparedVideo && !isInterruptedDownload && !isPreview) continue;
+    if (!isOutgoingOrphan && !isPartial && !isEncrypted && !isUploadPart && !isUploadPartial && !isPreparedVideo && !isInterruptedDownload && !isPreview) continue;
     const modifiedAt = Number(entry.modificationTime || now);
     const age = now - modifiedAt;
     // A background URLSession may still own an upload part while the app is
@@ -2330,6 +2520,7 @@ export async function getChatKeyBackup() {
 
 export async function pollChatEvents(conversationId: string, afterMessageId: number) {
   const query = new URLSearchParams({
+    receipts: "explicit",
     conversation_id: conversationId,
     after: String(Math.max(0, Math.floor(afterMessageId || 0))),
     compact_senders: "1",
@@ -2472,6 +2663,13 @@ export async function reportChatMessage(conversationId: string, messageId: numbe
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ conversation_id: conversationId, message_id: String(messageId), reason })
+  });
+}
+
+export async function acknowledgeChatMessages(conversationId: string, messageIds: number[], state: "delivered" | "read") {
+  return request<{ ok: boolean }>("/api/chat/receipts", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, messageIds, state })
   });
 }
 

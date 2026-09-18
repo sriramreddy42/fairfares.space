@@ -4,7 +4,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { createVideoPlayer } from "expo-video";
-import { Platform } from "react-native";
+import { Alert, Platform } from "react-native";
 import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { manipulateImageSafely } from "./imageManipulation";
 
@@ -207,6 +207,7 @@ function preferredImageEncoding() {
 }
 
 type PreparedChatMedia = {
+  imagePrepared?: boolean;
   uri: string;
   blob?: Blob;
   name: string;
@@ -274,8 +275,13 @@ async function compressedUpload(asset: ImagePicker.ImagePickerAsset, index: numb
     imageHeight: Number(asset.height || 0),
     thumbnailBase64,
     ownedCacheFile: Platform.OS !== "web",
+    imagePrepared: true,
     kind: "IMAGE" as const
   };
+}
+
+export async function prepareSavedChatImage(media: { uri: string; size: number; imageWidth?: number; imageHeight?: number }) {
+  return compressedUpload({ uri: media.uri, fileSize: media.size, width: media.imageWidth || 0, height: media.imageHeight || 0 }, 0, "chitthi", 1280, 0.62, 350_000);
 }
 
 export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality = 0.72) {
@@ -438,6 +444,7 @@ export async function pickChatMedia(limit = 4, maxWidth = 1280, quality = 0.62, 
     }
   }
   if (!prepared.length && firstFailure) throw firstFailure;
+  if (firstFailure) Alert.alert("Some media could not be selected", `${selectedAssets.length - prepared.length} item(s) could not be added. ${firstFailure instanceof Error ? firstFailure.message : "Please select them again."}`);
   return prepared;
 }
 

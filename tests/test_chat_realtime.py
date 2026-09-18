@@ -153,6 +153,61 @@ class ChatRealtimeTest(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=3) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
 
+    def test_two_encrypted_photos_keep_both_envelopes_after_chat_reopen(self):
+        sender_key = base64.b64encode(b"A" * 32).decode("ascii")
+        recipient_key = base64.b64encode(b"B" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.sender_id, "sender-photo-device", sender_key))
+        self.assertFalse(app.register_chat_device_key(self.recipient_id, "recipient-photo-device", recipient_key))
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone()
+            message_ids = []
+            for index in (1, 2):
+                envelopes = [
+                    {
+                        "recipientUserId": user_id,
+                        "recipientDeviceId": device_id,
+                        "senderPublicKey": sender_key,
+                        "nonce": f"nonce-{index}-{user_id}",
+                        "ciphertext": f"encrypted-photo-{index}-{user_id}",
+                    }
+                    for user_id, device_id in (
+                        (self.sender_id, "sender-photo-device"),
+                        (self.recipient_id, "recipient-photo-device"),
+                    )
+                ]
+                message, error = app.save_encrypted_chat_message(
+                    con, conversation, sender, envelopes, f"photo-batch-{index}"
+                )
+                self.assertFalse(error)
+                self.assertIsNotNone(message)
+                message_id = int(message["id"])
+                message_ids.append(message_id)
+                con.execute(
+                    "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = ? WHERE id = ?",
+                    (f"r2://private/photo-{index}", message_id),
+                )
+
+        server, thread = self.start_server()
+        try:
+            for token, device_id in (
+                ("sender-token", "sender-photo-device"),
+                ("recipient-token", "recipient-photo-device"),
+            ):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/chat/messages?conversation_id=CHAT-REALTIME&device_id={device_id}&limit=20",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    payload = json.loads(response.read())
+                self.assertEqual([row["id"] for row in payload["messages"]], message_ids)
+                self.assertEqual([row["messageId"] for row in payload["envelopes"]], message_ids)
+                self.assertTrue(all(row["type"] == "ENCRYPTED_ATTACHMENT" for row in payload["messages"]))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_chat_read_endpoints_do_not_run_remote_storage_housekeeping(self):
         server, thread = self.start_server()
         try:
@@ -179,6 +234,83 @@ class ChatRealtimeTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def acknowledge(self, server, token, ids, state="read"):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/chat/receipts",
+            data=json.dumps({"conversationId": "CHAT-REALTIME", "messageIds": ids, "state": state}).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_legacy_explicit_read_endpoint_updates_recipient_receipts(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            recipient = con.execute("SELECT * FROM users WHERE id = ?", (self.recipient_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "legacy read", "legacy-read")
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: recipient
+        handler.read_form = lambda: {"conversation_id": "CHAT-REALTIME", "last_message_id": str(message["id"])}
+        responses = []
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+        handler.api_mark_chat_read()
+        self.assertEqual(responses[-1][1], 200)
+        with app.db() as con:
+            self.assertTrue(con.execute("SELECT read_at FROM chat_message_receipts WHERE message_id = ? AND recipient_user_id = ?", (message["id"], self.recipient_id)).fetchone()["read_at"])
+
+    def test_installed_native_receipts_remain_compatible_until_upgrade(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            recipient = con.execute("SELECT * FROM users WHERE id = ?", (self.recipient_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "compatibility", "compatibility")
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: recipient
+        handler.headers = {"X-FairFares-Client-Platform": "ios"}
+        handler.public_origin = lambda: "https://example.test"
+        handler.send_json = lambda *args, **kwargs: None
+        for capability, expected in (("&receipts=explicit", False), ("", True)):
+            handler.api_chat_messages(app.urllib.parse.urlparse("/api/chat/messages?conversation_id=CHAT-REALTIME" + capability))
+            with app.db() as con:
+                row = con.execute("SELECT read_at FROM chat_message_receipts WHERE message_id = ? AND recipient_user_id = ?", (message["id"], self.recipient_id)).fetchone()
+                self.assertEqual(bool(row["read_at"]), expected)
+
+    def test_receipt_migration_preserves_direct_history_without_marking_all_group_members_read(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            direct = app.save_chat_message(con, self.conversation_id, sender, "direct", "legacy-direct")
+            con.execute("UPDATE chat_messages SET delivered_at = '2026-01-01', read_at = '2026-01-01' WHERE id = ?", (direct["id"],))
+            con.execute("INSERT INTO chat_conversations (public_id, conversation_type) VALUES ('MIGRATION-GROUP', 'GROUP')")
+            group_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            for user_id in [self.sender_id, self.recipient_id, self.outsider_id]:
+                con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (group_id, user_id))
+            group = app.save_chat_message(con, group_id, sender, "group", "legacy-group")
+            con.execute("UPDATE chat_messages SET delivered_at = '2026-01-02', read_at = '2026-01-02' WHERE id = ?", (group["id"],))
+            con.execute("UPDATE chat_participants SET last_read_message_id = ?, last_read_at = '2026-01-02' WHERE conversation_id = ? AND user_id = ?", (group["id"], group_id, self.recipient_id))
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'explicit_per_recipient_chat_receipts_v1'")
+        app.init_db()
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (direct["id"],)).fetchone()["read_at"], '2026-01-01')
+            self.assertIsNone(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (group["id"],)).fetchone()["read_at"])
+            readers = con.execute("SELECT recipient_user_id FROM chat_message_receipts WHERE message_id = ? AND read_at IS NOT NULL", (group["id"],)).fetchall()
+            self.assertEqual([row[0] for row in readers], [self.recipient_id])
+
+    def test_group_receipts_require_each_original_recipient_and_do_not_infer_older_reads(self):
+        with app.db() as con:
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (self.conversation_id, self.outsider_id))
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            first = app.save_chat_message(con, self.conversation_id, sender, "first", "group-first")
+            second = app.save_chat_message(con, self.conversation_id, sender, "second", "group-second")
+            conversation = app.get_chat_conversation_by_public_id(con, "CHAT-REALTIME", self.recipient_id)
+            app.acknowledge_chat_messages(con, conversation, self.recipient_id, [int(second["id"])], True)
+            self.assertIsNone(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (second["id"],)).fetchone()["read_at"])
+            conversation = app.get_chat_conversation_by_public_id(con, "CHAT-REALTIME", self.outsider_id)
+            app.acknowledge_chat_messages(con, conversation, self.outsider_id, [int(second["id"])], False)
+            status = con.execute("SELECT * FROM chat_messages WHERE id = ?", (second["id"],)).fetchone()
+            self.assertTrue(status["delivered_at"])
+            self.assertIsNone(status["read_at"])
+            app.acknowledge_chat_messages(con, conversation, self.outsider_id, [int(second["id"])], True)
+            self.assertTrue(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (second["id"],)).fetchone()["read_at"])
+            self.assertIsNone(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (first["id"],)).fetchone()["read_at"])
+
     def test_event_stream_authorizes_delivers_receipts_and_reconnects(self):
         with app.db() as con:
             sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
@@ -203,6 +335,12 @@ class ChatRealtimeTest(unittest.TestCase):
             self.assertEqual(reconnect["messages"], [])
             self.assertEqual(reconnect["cursor"], message_id)
 
+            _, untouched = self.event_request(server, "sender-token", message_id)
+            self.assertEqual(next(row for row in untouched["receipts"] if row["id"] == message_id)["status"], "sent")
+            self.acknowledge(server, "recipient-token", [message_id], "delivered")
+            _, received = self.event_request(server, "sender-token", message_id)
+            self.assertEqual(next(row for row in received["receipts"] if row["id"] == message_id)["status"], "delivered")
+            self.acknowledge(server, "recipient-token", [message_id])
             _, sender_view = self.event_request(server, "sender-token", message_id)
             receipt = next(row for row in sender_view["receipts"] if row["id"] == message_id)
             self.assertEqual(receipt["status"], "seen")
@@ -258,6 +396,9 @@ class ChatRealtimeTest(unittest.TestCase):
                 payload = json.loads(response.read())
             self.assertEqual([row["id"] for row in payload["messages"]], [int(first["id"]), int(target["id"])])
             with app.db() as con:
+                self.assertIsNone(con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (target["id"],)).fetchone()["read_at"])
+            self.acknowledge(server, "recipient-token", [int(target["id"])])
+            with app.db() as con:
                 target_row = con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (int(target["id"]),)).fetchone()
                 newer_row = con.execute("SELECT read_at FROM chat_messages WHERE id = ?", (int(newer["id"]),)).fetchone()
                 participant = con.execute(
@@ -291,6 +432,7 @@ class ChatRealtimeTest(unittest.TestCase):
             self.assertEqual(before["readBy"], [])
             self.assertEqual([person["id"] for person in before["notReadBy"]], [self.recipient_id])
             self.event_request(server, "recipient-token")
+            self.acknowledge(server, "recipient-token", [message_id])
             after = info("sender-token")
             self.assertEqual([person["id"] for person in after["readBy"]], [self.recipient_id])
             self.assertTrue(after["readBy"][0]["readAt"])

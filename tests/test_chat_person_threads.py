@@ -534,14 +534,11 @@ class ChatPersonThreadsTest(unittest.TestCase):
             second_conversation_id = self.insert_direct_conversation(
                 con, current_user_id, second_sender_id, 2, 0,
             )
-            con.executemany(
-                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, ?)",
-                (
-                    (first_conversation_id, first_sender_id, "first unread letter"),
-                    (second_conversation_id, second_sender_id, "second unread letter one"),
-                    (second_conversation_id, second_sender_id, "second unread letter two"),
-                ),
-            )
+            first_sender = con.execute("SELECT * FROM users WHERE id = ?", (first_sender_id,)).fetchone()
+            second_sender = con.execute("SELECT * FROM users WHERE id = ?", (second_sender_id,)).fetchone()
+            app.save_chat_message(con, first_conversation_id, first_sender, "first unread letter")
+            app.save_chat_message(con, second_conversation_id, second_sender, "second unread letter one")
+            app.save_chat_message(con, second_conversation_id, second_sender, "second unread letter two")
             current_user = con.execute("SELECT * FROM users WHERE id = ?", (current_user_id,)).fetchone()
             first_public_id = str(con.execute(
                 "SELECT public_id FROM chat_conversations WHERE id = ?", (first_conversation_id,),
@@ -562,6 +559,12 @@ class ChatPersonThreadsTest(unittest.TestCase):
         handler.api_chat_messages(urllib.parse.urlparse(
             f"/api/chat/messages?conversation_id={first_public_id}"
         ))
+        self.assertEqual(responses[-1][1], 200)
+        fetched_only = {row["id"]: row["unread"] for row in app.get_chat_conversations_for_user(current_user_id)}
+        self.assertEqual(fetched_only[first_public_id], 1, "Fetching must not imply reading")
+        ids = [message["id"] for message in responses[-1][0]["messages"]]
+        handler.read_json_body = lambda: {"conversationId": first_public_id, "messageIds": ids, "state": "read"}
+        handler.api_chat_receipts()
         self.assertEqual(responses[-1][1], 200)
 
         after = {row["id"]: row["unread"] for row in app.get_chat_conversations_for_user(current_user_id)}

@@ -167,6 +167,8 @@ export type ChatMessage = {
     encrypted?: boolean;
     forwarded?: boolean;
     uploading?: boolean;
+    outboxId?: string;
+    outboxState?: string;
     kind?: "IMAGE" | "VIDEO" | "FILE";
     decryptedDataUrl?: string;
     thumbnailDataUrl?: string;

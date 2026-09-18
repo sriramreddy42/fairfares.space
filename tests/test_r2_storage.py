@@ -4,6 +4,8 @@ import hashlib
 import json
 import tempfile
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -205,6 +207,14 @@ class R2StorageTest(unittest.TestCase):
             cleanup = app.cleanup_expired_chitthi_attachments()
             self.assertEqual(cleanup["deleted"], 1)
             self.assertIn(("fairfares-attachments", object_key), client.objects)
+            repeated, _, error = app.forward_chitthi_attachment(
+                user=forwarder, source_message_id=source_message_id,
+                destination_conversation_public_id="destination-chat", envelopes=[],
+                client_message_id="forwarded-media")
+            self.assertFalse(error)
+            self.assertEqual(repeated["id"], forwarded["id"])
+            self.assertEqual(repeated["attachment_url"], reference)
+            self.assertEqual(repeated["metadata_json"], forwarded["metadata_json"])
             with app.db() as con:
                 self.assertEqual(con.execute("SELECT attachment_url FROM chat_messages WHERE id = ?", (int(forwarded["id"]),)).fetchone()[0], reference)
 
@@ -402,6 +412,64 @@ class R2StorageTest(unittest.TestCase):
             )
             self.assertFalse(second_error)
             self.assertEqual(second["id"], message["id"])
+            # New ciphertext/upload after a restart must not replace the
+            # accepted object's bytes while the original envelopes survive.
+            retry_checksum = base64.b64encode(hashlib.sha256(b"different ciphertext").digest()).decode()
+            retry, error = app.create_chitthi_upload_authorization(
+                user_id=sender_id, conversation_public_id="finalize-upload", encrypted_size=20,
+                ciphertext_sha256=retry_checksum, media_mime_type="image/jpeg")
+            self.assertFalse(error)
+            repeated, error = app.finalize_chitthi_upload(user=sender, upload_id=retry["uploadId"], envelopes=envelopes, client_message_id="finalized-1")
+            self.assertFalse(error)
+            self.assertEqual(repeated["attachment_url"], message["attachment_url"])
+            self.assertEqual(repeated["metadata_json"], message["metadata_json"])
+
+            # Both requests pass the initial lookup before either publishes.
+            # Their distinct ciphertext must never overwrite the accepted pair.
+            concurrent_uploads = []
+            for payload in (b"ciphertext-one", b"ciphertext-two"):
+                digest = base64.b64encode(hashlib.sha256(payload).digest()).decode()
+                authorization, error = app.create_chitthi_upload_authorization(
+                    user_id=sender_id, conversation_public_id="finalize-upload", encrypted_size=len(payload),
+                    ciphertext_sha256=digest, media_mime_type="image/jpeg")
+                self.assertFalse(error)
+                params = client.presigned["params"]
+                client.put_object(Bucket=params["Bucket"], Key=params["Key"], Body=payload,
+                    ContentType=params["ContentType"], ChecksumSHA256=digest, Metadata={"upload-id": authorization["uploadId"]})
+                concurrent_uploads.append(authorization)
+            barrier = threading.Barrier(2)
+            original_head = client.head_object
+            def simultaneous_head(**kwargs):
+                result = original_head(**kwargs)
+                barrier.wait(timeout=10)
+                return result
+            def publish(authorization):
+                return app.finalize_chitthi_upload(user=sender, upload_id=authorization["uploadId"],
+                    envelopes=envelopes, client_message_id="concurrent-media")
+            with mock.patch.object(client, "head_object", side_effect=simultaneous_head), ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(publish, concurrent_uploads))
+            self.assertTrue(all(not error for _, error in results))
+            self.assertEqual(results[0][0]["id"], results[1][0]["id"])
+            self.assertEqual(results[0][0]["attachment_url"], results[1][0]["attachment_url"])
+            self.assertEqual(results[0][0]["metadata_json"], results[1][0]["metadata_json"])
+
+            authorization, error = app.create_chitthi_upload_authorization(
+                user_id=sender_id, conversation_public_id="finalize-upload", encrypted_size=len(encrypted),
+                ciphertext_sha256=checksum, media_mime_type="image/jpeg")
+            self.assertFalse(error)
+            params = client.presigned["params"]
+            client.put_object(Bucket=params["Bucket"], Key=params["Key"], Body=encrypted,
+                ContentType=params["ContentType"], ChecksumSHA256=checksum, Metadata={"upload-id": authorization["uploadId"]})
+            def remove_sender_during_verification(**kwargs):
+                result = original_head(**kwargs)
+                with app.db() as con:
+                    con.execute("DELETE FROM chat_participants WHERE conversation_id = ? AND user_id = ?", (conversation_id, sender_id))
+                return result
+            with mock.patch.object(client, "head_object", side_effect=remove_sender_during_verification):
+                rejected, error = app.finalize_chitthi_upload(user=sender, upload_id=authorization["uploadId"],
+                    envelopes=envelopes, client_message_id="removed-during-verification")
+            self.assertIsNone(rejected)
+            self.assertEqual(error, "Conversation not found.")
 
     def test_finalize_rejects_checksum_mismatch_without_message(self):
         self.addCleanup(app.refresh_storage_paths)

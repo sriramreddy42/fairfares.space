@@ -257,7 +257,7 @@ POST_RETURN_FEE_RULES = (
     ("Extra mileage", "PER_MILE", 0.15, "Mileage over agreed allowance", 50),
 )
 ASSET_VERSION = "20260811-navigation-detail-motion"
-BACKEND_RELEASE = "chitthi-group-reaction-intent-v10"
+BACKEND_RELEASE = "chitthi-durable-outbox-v11"
 DEFAULT_CORS_ALLOWED_ORIGINS = {
     "https://fairfares.onrender.com",
     "https://fairfare.space",
@@ -1630,6 +1630,19 @@ def finalize_chitthi_upload(
         block_error = chat_conversation_block_error(con, conversation, current_user_id)
         if block_error:
             return None, block_error
+        # A durable send may obtain a fresh upload authorization after restart.
+        # Never replace an accepted message's object while retaining its old
+        # encrypted envelopes: the old key cannot decrypt newly encrypted bytes.
+        if client_message_id:
+            existing = con.execute(
+                """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                   FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+                   WHERE messages.conversation_id = ? AND messages.sender_id = ?
+                     AND messages.client_message_id = ? LIMIT 1""",
+                (int(conversation["id"]), current_user_id, clean_text_value(client_message_id, 120)),
+            ).fetchone()
+            if existing:
+                return existing, ""
         try:
             head = r2_storage_client().head_object(
                 Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), ChecksumMode="ENABLED",
@@ -1645,6 +1658,35 @@ def finalize_chitthi_upload(
                 or not checksum_verified
                 or not secrets.compare_digest(str(metadata.get("upload-id") or ""), upload_id)):
             return None, "Encrypted upload verification failed."
+        # Serialize publication only after remote verification. Concurrent
+        # authorizations for one client ID must not overwrite the winner's blob
+        # while INSERT OR IGNORE retains the winner's encryption envelopes.
+        con.execute("BEGIN IMMEDIATE")
+        # Membership/block state may have changed during remote object I/O.
+        conversation = con.execute(
+            """SELECT conversations.* FROM chat_conversations conversations
+               JOIN chat_participants participants ON participants.conversation_id = conversations.id
+               WHERE conversations.id = ? AND participants.user_id = ? LIMIT 1""",
+            (int(upload["conversation_id"]), current_user_id),
+        ).fetchone()
+        if not conversation:
+            return None, "Conversation not found."
+        block_error = chat_conversation_block_error(con, conversation, current_user_id)
+        if block_error:
+            return None, block_error
+        latest_upload = con.execute("SELECT * FROM chat_attachment_uploads WHERE id = ?", (upload["id"],)).fetchone()
+        if not latest_upload:
+            return None, "Upload authorization was not found or has expired."
+        existing = con.execute(
+            """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+               FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+               WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ? LIMIT 1""",
+            (int(conversation["id"]), current_user_id, clean_text_value(client_message_id, 120)),
+        ).fetchone() if client_message_id else None
+        if existing:
+            return existing, ""
+        if row_value(latest_upload, "finalized_at"):
+            return None, "Upload was already finalized."
         message, error = save_encrypted_chat_message(
             con, conversation, user, envelopes, clean_text_value(client_message_id, 120),
         )
@@ -1690,6 +1732,22 @@ def forward_chitthi_attachment(
     if source_message_id <= 0:
         return None, None, "A valid source attachment is required."
     with db() as con:
+        con.execute("BEGIN IMMEDIATE")
+        destination = get_chat_conversation_by_public_id(con, destination_conversation_public_id, current_user_id)
+        if not destination:
+            return None, None, "Destination conversation was not found."
+        if client_message_id:
+            existing = con.execute(
+                """SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
+                   FROM chat_messages messages JOIN users ON users.id = messages.sender_id
+                   WHERE messages.conversation_id = ? AND messages.sender_id = ? AND messages.client_message_id = ? LIMIT 1""",
+                (int(destination["id"]), current_user_id, clean_text_value(client_message_id, 120)),
+            ).fetchone()
+            if existing:
+                return existing, destination, ""
+        block_error = chat_conversation_block_error(con, destination, current_user_id)
+        if block_error:
+            return None, None, block_error
         source = con.execute(
             """SELECT messages.* FROM chat_messages messages
                JOIN chat_participants participants ON participants.conversation_id = messages.conversation_id
@@ -1730,12 +1788,6 @@ def forward_chitthi_attachment(
             source_metadata = {}
         if not isinstance(source_metadata, dict) or source_metadata.get("mediaExpired"):
             return None, None, "This attachment has expired."
-        destination = get_chat_conversation_by_public_id(con, destination_conversation_public_id, current_user_id)
-        if not destination:
-            return None, None, "Destination conversation was not found."
-        block_error = chat_conversation_block_error(con, destination, current_user_id)
-        if block_error:
-            return None, None, block_error
         message, error = save_encrypted_chat_message(
             con, destination, user, envelopes, clean_text_value(client_message_id, 120),
         )
@@ -3353,6 +3405,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/chat/messages/react": ("chat-action", 180, 60),
     "/api/chat/polls/vote": ("chat-action", 180, 60),
     "/api/chat/read": ("chat-action", 180, 60),
+    "/api/chat/receipts": ("chat-action", 180, 60),
     "/api/chat/mute": ("chat-action", 180, 60),
     "/api/chat/block": ("chat-action", 180, 60),
     "/api/chat/people/by-contacts": ("chat-contact-lookup", 30, 60),
@@ -6653,6 +6706,14 @@ def init_db() -> None:
                 FOREIGN KEY(reply_to_message_id) REFERENCES chat_messages(id)
             );
 
+            CREATE TABLE IF NOT EXISTS chat_message_receipts (
+                message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                recipient_user_id INTEGER NOT NULL,
+                delivered_at TEXT,
+                read_at TEXT,
+                PRIMARY KEY (message_id, recipient_user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_communities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -8149,6 +8210,32 @@ def init_db() -> None:
                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        receipt_migration = "explicit_per_recipient_chat_receipts_v1"
+        if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (receipt_migration,)).fetchone():
+            # Preserve historical per-person read cursors, but never copy a
+            # group's shared timestamp to every member. New receipts require
+            # explicit client acknowledgements.
+            con.execute("""INSERT OR IGNORE INTO chat_message_receipts (message_id, recipient_user_id)
+                SELECT e.message_id, e.recipient_user_id FROM chat_message_envelopes e
+                JOIN chat_messages m ON m.id = e.message_id WHERE e.recipient_user_id != m.sender_id""")
+            con.execute("""INSERT OR IGNORE INTO chat_message_receipts (message_id, recipient_user_id)
+                SELECT m.id, p.user_id FROM chat_messages m
+                JOIN chat_participants p ON p.conversation_id = m.conversation_id
+                WHERE p.user_id != m.sender_id AND m.id >= COALESCE(p.visible_from_message_id, 0)
+                  AND NOT EXISTS (SELECT 1 FROM chat_message_envelopes e WHERE e.message_id = m.id)""")
+            con.execute("""UPDATE chat_message_receipts SET read_at = COALESCE(
+                (SELECT p.last_read_at FROM chat_participants p JOIN chat_messages m ON m.conversation_id = p.conversation_id
+                 WHERE m.id = chat_message_receipts.message_id AND p.user_id = chat_message_receipts.recipient_user_id
+                   AND p.last_read_message_id >= m.id),
+                (SELECT m.read_at FROM chat_messages m WHERE m.id = chat_message_receipts.message_id
+                   AND (SELECT COUNT(*) FROM chat_message_receipts r WHERE r.message_id = m.id) = 1))""")
+            con.execute("""UPDATE chat_message_receipts SET delivered_at = COALESCE(read_at,
+                (SELECT m.delivered_at FROM chat_messages m WHERE m.id = chat_message_receipts.message_id
+                   AND (SELECT COUNT(*) FROM chat_message_receipts r WHERE r.message_id = m.id) = 1))""")
+            con.execute("""UPDATE chat_messages SET
+                delivered_at = (SELECT CASE WHEN COUNT(*) = COUNT(r.delivered_at) THEN MAX(r.delivered_at) END FROM chat_message_receipts r WHERE r.message_id = chat_messages.id),
+                read_at = (SELECT CASE WHEN COUNT(*) = COUNT(r.read_at) THEN MAX(r.read_at) END FROM chat_message_receipts r WHERE r.message_id = chat_messages.id)""")
+            con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (receipt_migration,))
         marketing_consent_migration = "marketing_push_requires_explicit_opt_in_v1"
         if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (marketing_consent_migration,)).fetchone():
             # Existing enabled values came from token registration or policy
@@ -22080,6 +22167,9 @@ def save_chat_message(
         if existing:
             return existing
     message_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    con.execute("""INSERT OR IGNORE INTO chat_message_receipts (message_id, recipient_user_id)
+        SELECT ?, user_id FROM chat_participants WHERE conversation_id = ? AND user_id != ?""",
+        (message_id, conversation_id, sender_id))
     con.execute(
         """
         UPDATE chat_conversations
@@ -22106,6 +22196,34 @@ def save_chat_message(
         """,
         (message_id,),
     ).fetchone()
+
+
+def acknowledge_chat_messages(con: sqlite3.Connection, conversation: sqlite3.Row, user_id: int, message_ids: list[int], read: bool) -> None:
+    if not message_ids:
+        return
+    placeholders = ",".join("?" for _ in message_ids)
+    authorized = [int(row["id"]) for row in con.execute(
+        f"""SELECT m.id FROM chat_messages m JOIN chat_message_receipts r ON r.message_id = m.id
+            WHERE m.conversation_id = ? AND m.id >= ? AND m.deleted_at IS NULL
+              AND r.recipient_user_id = ? AND m.id IN ({placeholders})""",
+        (int(conversation["id"]), int(row_value(conversation, "visible_from_message_id") or 0), user_id, *message_ids)).fetchall()]
+    if not authorized:
+        return
+    marks = ",".join("?" for _ in authorized)
+    con.execute(f"""UPDATE chat_message_receipts SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
+        read_at = CASE WHEN ? THEN COALESCE(read_at, CURRENT_TIMESTAMP) ELSE read_at END
+        WHERE recipient_user_id = ? AND message_id IN ({marks})""", (read, user_id, *authorized))
+    con.execute(f"""UPDATE chat_messages SET
+        delivered_at = (SELECT CASE WHEN COUNT(*) = COUNT(r.delivered_at) THEN MAX(r.delivered_at) END
+            FROM chat_message_receipts r WHERE r.message_id = chat_messages.id),
+        read_at = (SELECT CASE WHEN COUNT(*) = COUNT(r.read_at) THEN MAX(r.read_at) END
+            FROM chat_message_receipts r WHERE r.message_id = chat_messages.id)
+        WHERE id IN ({marks})""", authorized)
+    if read:
+        last_id = max(authorized)
+        con.execute("""UPDATE chat_participants SET last_read_at = CURRENT_TIMESTAMP,
+            last_read_message_id = MAX(last_read_message_id, ?) WHERE conversation_id = ? AND user_id = ?""",
+            (last_id, int(conversation["id"]), user_id))
 
 
 def chat_message_payload(
@@ -22153,7 +22271,7 @@ def chat_message_payload(
             metadata["closed"] = False
         metadata["allowMultiple"] = allow_multiple
     if mine:
-        if read_at or (seen_message_id and message_id <= seen_message_id):
+        if read_at:
             status = "seen"
         elif delivered_at:
             status = "delivered"
@@ -22176,6 +22294,7 @@ def chat_message_payload(
         "senderName": row_value(row, "sender_name"),
         "senderPhotoUrl": avatar_delivery_path(row_value(row, "sender_photo_url"), sender_id) if include_sender_photo else "",
         "mine": mine,
+        "localClientMessageId": row_value(row, "client_message_id") if mine else "",
         "type": row_value(row, "message_type") or "TEXT",
         "text": row_value(row, "message_text"),
         "attachmentUrl": attachment_url,
@@ -26089,6 +26208,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/diagnostics": self.api_mobile_diagnostics,
             "/api/mobile/analytics/events": self.api_mobile_product_analytics,
             "/api/chat/read": self.api_mark_chat_read,
+            "/api/chat/receipts": self.api_chat_receipts,
             "/api/chat/typing": self.api_chat_typing,
             "/api/chat/mute": self.api_mute_chat_conversation,
             "/api/chat/block": self.api_block_chat_user,
@@ -27874,16 +27994,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
             rows = con.execute(
-                """SELECT users.id, users.name, users.profile_photo_url,
-                          participants.last_read_message_id, participants.last_read_at
-                   FROM chat_participants participants
-                   JOIN users ON users.id = participants.user_id
-                   WHERE participants.conversation_id = ? AND participants.user_id != ?
-                     AND participants.visible_from_message_id <= ?
-                   ORDER BY CASE WHEN participants.last_read_message_id >= ? THEN 0 ELSE 1 END,
-                            COALESCE(participants.last_read_at, participants.joined_at) DESC,
-                            users.name COLLATE NOCASE""",
-                (int(message["conversation_id"]), current_user_id, message_id, message_id),
+                """SELECT users.id, users.name, users.profile_photo_url, receipts.read_at
+                   FROM chat_message_receipts receipts JOIN users ON users.id = receipts.recipient_user_id
+                   WHERE receipts.message_id = ? ORDER BY receipts.read_at DESC, users.name COLLATE NOCASE""",
+                (message_id,),
             ).fetchall()
         readers = []
         unread = []
@@ -27892,9 +28006,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "id": int(row["id"]),
                 "name": row_value(row, "name") or "FairFares member",
                 "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row["id"])),
-                "readAt": row_value(row, "last_read_at") if int(row_value(row, "last_read_message_id") or 0) >= message_id else "",
+                "readAt": row_value(row, "read_at") or "",
             }
-            (readers if int(row_value(row, "last_read_message_id") or 0) >= message_id else unread).append(entry)
+            (readers if row_value(row, "read_at") else unread).append(entry)
         self.send_json({
             "ok": True,
             "messageId": message_id,
@@ -27951,41 +28065,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ).fetchall()
             has_more = len(fetched_messages) > limit
             messages = list(reversed(fetched_messages[:limit]))
+            # Installed native builds predate explicit acknowledgements. Keep
+            # their thread-open behavior until they upgrade; new clients opt in.
+            if (self.headers.get("X-FairFares-Client-Platform") in ("ios", "android")
+                    and params.get("receipts", [""])[0] != "explicit" and before_message_id <= 0):
+                acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
             if messages:
-                page_last_message_id = max(int(row_value(message, "id") or 0) for message in messages)
-                unread_receipt = con.execute(
-                    """SELECT 1 FROM chat_messages
-                       WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
-                         AND id >= ?
-                         AND id <= ?
-                         AND (delivered_at IS NULL OR read_at IS NULL)
-                       LIMIT 1""",
-                    (conversation["id"], current_user_id, visible_from_message_id, page_last_message_id),
-                ).fetchone()
-                if unread_receipt:
-                    con.execute(
-                        """
-                        UPDATE chat_messages
-                        SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
-                            read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
-                        WHERE conversation_id = ? AND sender_id != ? AND deleted_at IS NULL
-                          AND id >= ?
-                          AND id <= ?
-                          AND (delivered_at IS NULL OR read_at IS NULL)
-                        """,
-                        (conversation["id"], current_user_id, visible_from_message_id, page_last_message_id),
-                    )
-                messages = con.execute(
-                    """
-                    SELECT messages.*, users.name AS sender_name, users.profile_photo_url AS sender_photo_url
-                    FROM chat_messages messages
-                    JOIN users ON users.id = messages.sender_id
-                    WHERE messages.conversation_id = ?
-                      AND messages.id IN ({placeholders})
-                    ORDER BY messages.id ASC
-                    """.format(placeholders=",".join("?" for _ in messages)),
-                    (conversation["id"], *[int(row_value(message, "id") or 0) for message in messages]),
-                ).fetchall()
                 if device_id:
                     page_envelopes = con.execute(
                         """SELECT message_id, sender_public_key, nonce, ciphertext
@@ -28008,27 +28093,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "count": int(row_value(reaction, "total") or 0),
                         "mine": bool(int(row_value(reaction, "mine") or 0)),
                     })
-            seen_row = con.execute(
-                """
-                SELECT MAX(last_read_message_id) AS seen_message_id
-                FROM chat_participants
-                WHERE conversation_id = ? AND user_id != ?
-                """,
-                (conversation["id"], current_user_id),
-            ).fetchone()
-            seen_message_id = int(row_value(seen_row, "seen_message_id") or 0)
-            last_message_id = int(row_value(messages[-1], "id") or 0) if messages else 0
-            current_last_read_message_id = int(row_value(conversation, "last_read_message_id") or 0)
-            if last_message_id > current_last_read_message_id:
-                con.execute(
-                    """
-                    UPDATE chat_participants
-                    SET last_read_at = CURRENT_TIMESTAMP,
-                        last_read_message_id = MAX(last_read_message_id, ?)
-                    WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
-                    """,
-                    (last_message_id, conversation["id"], current_user_id, last_message_id),
-                )
+            seen_message_id = 0
         conversation_payload = chat_row_payload(conversation, current_user_id)
         other_user_id = int(conversation_payload.get("otherUserId") or 0)
         community_id = int(conversation_payload.get("_communityRecordId") or 0)
@@ -28121,29 +28186,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (conversation_id, after_message_id, visible_from_message_id),
                 ).fetchall()
-                incoming_ids = [int(row_value(message, "id") or 0) for message in messages if int(row_value(message, "sender_id") or 0) != current_user_id]
-                if incoming_ids:
-                    newest_incoming_id = max(incoming_ids)
-                    con.execute(
-                        """
-                        UPDATE chat_messages
-                        SET delivered_at = COALESCE(delivered_at, CURRENT_TIMESTAMP),
-                            read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
-                        WHERE conversation_id = ? AND sender_id != ? AND id <= ? AND deleted_at IS NULL
-                          AND id >= ?
-                          AND (delivered_at IS NULL OR read_at IS NULL)
-                        """,
-                        (conversation_id, current_user_id, newest_incoming_id, visible_from_message_id),
-                    )
-                    con.execute(
-                        """
-                        UPDATE chat_participants
-                        SET last_read_at = CURRENT_TIMESTAMP,
-                            last_read_message_id = MAX(last_read_message_id, ?)
-                        WHERE conversation_id = ? AND user_id = ? AND last_read_message_id < ?
-                        """,
-                        (newest_incoming_id, conversation_id, current_user_id, newest_incoming_id),
-                    )
+                if (self.headers.get("X-FairFares-Client-Platform") in ("ios", "android")
+                        and params.get("receipts", [""])[0] != "explicit"):
+                    acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
                 receipt_rows = con.execute(
                     """
                     SELECT id, delivered_at, read_at
@@ -30010,6 +30055,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
         self.send_json({"ok": True, "blocked": blocked, "targetUserId": target_user_id})
 
+    def api_chat_receipts(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True}, 401)
+            return
+        payload = self.read_json_body()
+        raw_ids = payload.get("messageIds")
+        if not isinstance(raw_ids, list) or len(raw_ids) > 100 or payload.get("state") not in ("delivered", "read"):
+            self.send_json({"ok": False, "message": "Invalid receipt."}, 400)
+            return
+        ids = sorted({value for value in raw_ids if isinstance(value, int) and not isinstance(value, bool) and value > 0})
+        with db() as con:
+            conversation = get_chat_conversation_by_public_id(con, clean_text_value(payload.get("conversationId"), 80), int(user["id"]))
+            if not conversation:
+                self.send_json({"ok": False, "message": "Conversation not found."}, 404)
+                return
+            acknowledge_chat_messages(con, conversation, int(user["id"]), ids, payload["state"] == "read")
+        self.send_json({"ok": True})
+
     def api_mark_chat_read(self) -> None:
         user = self.current_user()
         if not user:
@@ -30029,6 +30093,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     (conversation["id"],),
                 ).fetchone()
                 last_message_id = int(row_value(row, "id") or 0)
+            pending_ids = [int(row["id"]) for row in con.execute(
+                """SELECT m.id FROM chat_messages m JOIN chat_message_receipts r ON r.message_id = m.id
+                   WHERE m.conversation_id = ? AND m.id >= ? AND m.id <= ? AND m.deleted_at IS NULL
+                     AND r.recipient_user_id = ? AND r.read_at IS NULL""",
+                (conversation["id"], int(row_value(conversation, "visible_from_message_id") or 0), last_message_id, user["id"]),
+            ).fetchall()]
+            for offset in range(0, len(pending_ids), 100):
+                acknowledge_chat_messages(con, conversation, int(user["id"]), pending_ids[offset:offset + 100], True)
             con.execute(
                 """
                 UPDATE chat_participants
