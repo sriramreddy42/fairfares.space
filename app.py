@@ -16509,6 +16509,41 @@ def clean_google_place_prediction(description: str) -> str:
     return dedupe_repeated_location_label(description)
 
 
+_GOOGLE_PLACES_ISSUE_LOG_LOCK = threading.Lock()
+_GOOGLE_PLACES_ISSUE_LOGGED_AT: dict[tuple[str, str, str], float] = {}
+
+
+def log_google_places_issue(operation: str, status: str, error_message: str = "") -> None:
+    """Log provider failure categories without keys, searches, or locations."""
+    safe_operation = operation if operation in {"autocomplete", "details"} else "unknown"
+    safe_status = status if status in {
+        "REQUEST_DENIED", "OVER_QUERY_LIMIT", "ZERO_RESULTS", "INVALID_REQUEST",
+        "UNKNOWN_ERROR", "EMPTY_PREDICTIONS", "INVALID_RESPONSE", "EXCEPTION",
+        "NETWORK_ERROR", "TIMEOUT",
+    } or re.fullmatch(r"HTTP_[1-5][0-9]{2}", status) else "OTHER"
+    message = error_message.casefold()
+    if "billing" in message or "payment" in message:
+        category = "billing"
+    elif "quota" in message or "rate limit" in message:
+        category = "quota"
+    elif "referer" in message or "referrer" in message or "ip address" in message or "restriction" in message:
+        category = "key_restriction"
+    elif "not enabled" in message or "has not been used" in message or "api is disabled" in message:
+        category = "api_disabled"
+    elif "invalid" in message and "key" in message:
+        category = "invalid_key"
+    else:
+        category = "unspecified"
+    signature = (safe_operation, safe_status, category)
+    now = time.monotonic()
+    with _GOOGLE_PLACES_ISSUE_LOG_LOCK:
+        previous = _GOOGLE_PLACES_ISSUE_LOGGED_AT.get(signature)
+        if previous is not None and now - previous < 60:
+            return
+        _GOOGLE_PLACES_ISSUE_LOGGED_AT[signature] = now
+    print(f"Google Places {safe_operation}: status={safe_status} category={category}", flush=True)
+
+
 def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False) -> list[dict[str, str]]:
     # Ride entry can start with a completely new route, before a city has
     # been chosen. A Maps key that is permitted for Places must work here too;
@@ -16536,10 +16571,21 @@ def google_accommodation_place_predictions(city: str, area: str = "", limit: int
         params["radius"] = "96560"
     try:
         payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}")
-    except Exception:
+    except urllib.error.HTTPError as exc:
+        log_google_places_issue("autocomplete", f"HTTP_{exc.code}")
+        return []
+    except Exception as exc:
+        status = "TIMEOUT" if isinstance(exc, (TimeoutError, socket.timeout)) else "NETWORK_ERROR" if isinstance(exc, urllib.error.URLError) else "EXCEPTION"
+        log_google_places_issue("autocomplete", status)
+        return []
+    if not isinstance(payload, dict):
+        log_google_places_issue("autocomplete", "INVALID_RESPONSE")
         return []
     if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
+        log_google_places_issue("autocomplete", str(payload.get("status") or ""), str(payload.get("error_message") or ""))
         return []
+    if payload.get("status") == "ZERO_RESULTS" or not payload.get("predictions"):
+        log_google_places_issue("autocomplete", "ZERO_RESULTS" if payload.get("status") == "ZERO_RESULTS" else "EMPTY_PREDICTIONS")
     suggestions: list[dict[str, str]] = []
     seen: set[str] = set()
     blocked_types = {"hospital", "stadium", "local_government_office"}
@@ -16572,9 +16618,18 @@ def google_ride_place_details(place_id: str) -> dict[str, object]:
     params = urllib.parse.urlencode({"place_id": place_id, "fields": "geometry,name,formatted_address", "key": api_key})
     try:
         payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{params}")
-    except Exception:
+    except urllib.error.HTTPError as exc:
+        log_google_places_issue("details", f"HTTP_{exc.code}")
+        return {}
+    except Exception as exc:
+        status = "TIMEOUT" if isinstance(exc, (TimeoutError, socket.timeout)) else "NETWORK_ERROR" if isinstance(exc, urllib.error.URLError) else "EXCEPTION"
+        log_google_places_issue("details", status)
+        return {}
+    if not isinstance(payload, dict):
+        log_google_places_issue("details", "INVALID_RESPONSE")
         return {}
     if payload.get("status") != "OK" or not isinstance(payload.get("result"), dict):
+        log_google_places_issue("details", str(payload.get("status") or "INVALID_RESPONSE"), str(payload.get("error_message") or ""))
         return {}
     result = payload["result"]
     geometry = result.get("geometry") if isinstance(result.get("geometry"), dict) else {}
