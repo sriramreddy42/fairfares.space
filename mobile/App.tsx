@@ -1150,6 +1150,18 @@ function FairFaresApp() {
       setPendingRide(null);
       setLinkedCommunityPostId(String(response?.notification.request.content.data?.postId || ""));
       setActiveTab("community");
+    } else if (type === "CARPOOL_MATCH") {
+      const rideId = String(response?.notification.request.content.data?.rideId || "");
+      setPendingPost(null);
+      setPendingRide(null);
+      setSelectedNeed("ride_need");
+      setActiveTab("housing");
+      if (rideId) {
+        void getRideListing(rideId).then((ride) => {
+          if (ride && !ride.isExpired) setLinkedCarpoolRide(ride);
+          else Alert.alert("Ride unavailable", "This matching ride is no longer available.");
+        }).catch(() => Alert.alert("Ride unavailable", "Could not open this ride. Please try again."));
+      }
     } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
       setPendingPost(null);
       setPendingRide(null);

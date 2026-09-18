@@ -656,7 +656,14 @@ ACCOMMODATION_METRO_GROUPS = {
 
 ACCOMMODATION_STATIC_POINTS = {
     "denver, co": (39.7392, -104.9903),
+    "denver, co, usa": (39.7392, -104.9903),
     "denver": (39.7392, -104.9903),
+    "new york, ny": (40.7128, -74.0060),
+    "new york, ny, usa": (40.7128, -74.0060),
+    "los angeles, ca": (34.0522, -118.2437),
+    "los angeles, ca, usa": (34.0522, -118.2437),
+    "chicago, il": (41.8781, -87.6298),
+    "chicago, il, usa": (41.8781, -87.6298),
     "denver metro area": (39.7392, -104.9903),
     "union station": (39.7527, -105.0008),
     "union station, denver, co": (39.7527, -105.0008),
@@ -17760,6 +17767,13 @@ INDIA_RIDE_POPULAR_CITY_FALLBACKS = (
     ("Warangal", "Telangana, India", 17.9689, 79.5941),
 )
 
+US_RIDE_POPULAR_CITY_FALLBACKS = (
+    ("New York", "NY, USA", 40.7128, -74.0060),
+    ("Los Angeles", "CA, USA", 34.0522, -118.2437),
+    ("Chicago", "IL, USA", 41.8781, -87.6298),
+    ("Denver", "CO, USA", 39.7392, -104.9903),
+)
+
 
 def google_city_photo_reference(city_name: str, country_scope: str) -> str:
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
@@ -17817,6 +17831,42 @@ def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]
             }
         )
     return places
+
+
+def us_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]:
+    places: list[dict[str, object]] = []
+    for name, secondary, lat, lng in US_RIDE_POPULAR_CITY_FALLBACKS[:max(1, min(int(limit or 8), 8))]:
+        places.append({
+            "label": f"{name}, {secondary}",
+            "lat": lat,
+            "lng": lng,
+            "imageUrl": explorer_city_photo_url(name, "USA"),
+        })
+    return places
+
+
+def ride_known_popular_cities(query: str, city: str, limit: int = 8, *, exact: bool = False) -> list[dict[str, object]]:
+    """Keep known city choices usable when Places autocomplete is unavailable."""
+    country = inferred_location_country(city) or inferred_location_country(query)
+    rows = US_RIDE_POPULAR_CITY_FALLBACKS if country == "US" else INDIA_RIDE_POPULAR_CITY_FALLBACKS if country == "IN" else ()
+    clean_query = normalize_accommodation_place_label(query).casefold()
+    if not clean_query or not rows:
+        return []
+    matches: list[dict[str, object]] = []
+    for name, secondary, lat, lng in rows:
+        label = f"{name}, {secondary}"
+        variants = {name.casefold(), label.casefold(), label.rsplit(", ", 1)[0].casefold()}
+        matches_query = clean_query in variants if exact else any(value.startswith(clean_query) for value in variants)
+        if matches_query:
+            matches.append({
+                "label": label,
+                "lat": lat,
+                "lng": lng,
+                "imageUrl": explorer_city_photo_url(name, "USA" if country == "US" else "India"),
+            })
+        if len(matches) >= max(1, min(int(limit or 8), 8)):
+            break
+    return matches
 
 
 def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
@@ -17976,17 +18026,44 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         point: dict[str, object] = {}
         if place_id:
             point = google_ride_place_details(place_id)
-            if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
-                return []
-        elif ride_query_should_geocode_directly(query, city):
+        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and (known_cities := ride_known_popular_cities(query, city, limit=1, exact=True)):
+            point = known_cities[0]
+        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and ride_query_should_geocode_directly(query, city):
             point = precise_accommodation_location_point(query)
             if ride_airport_resolution_is_broad(query, point):
                 point = {}
-        if not place_id and not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
+        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
             point = ride_point(query, city, allow_refresh=True)
             if ride_airport_resolution_is_broad(query, point):
                 point = {}
-        label = ride_display_label(query, point, city)
+        # A geocoder can return a city's center for a selected venue. Keep
+        # the member's chosen label, but never attach that unrelated point.
+        # Place Details has no label here, so its exact geometry is unaffected.
+        if valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
+            point_label = normalize_accommodation_place_label(str(point.get("label") or ""))
+            point_name = point_label.split(",", 1)[0].casefold()
+            query_name = re.sub(r"\s*\([^)]*\)", "", query.split(",", 1)[0]).strip().casefold()
+            requested_country = inferred_location_country(query)
+            resolved_country = inferred_location_country(point_label) if point_label else ""
+            requested_state = explicit_us_state_from_label(query)
+            resolved_state = explicit_us_state_from_label(point_label) if point_label else ""
+            if (requested_country and resolved_country and requested_country != resolved_country) or (
+                requested_state and resolved_state and requested_state != resolved_state
+            ):
+                point = {}
+            if point and point_name and point_name != query_name:
+                is_broad_city_label = len(point_label.split(",")) <= 3 and not re.search(r"\d|\b(?:airport|station|university|hotel|mall)\b", point_label, re.I)
+                if is_broad_city_label:
+                    city_center = static_accommodation_point(point_label)
+                    if city_center == (0.0, 0.0):
+                        cached_center = accommodation_location_point(point_label, allow_refresh=False)
+                        city_center = (float(cached_center.get("lat") or 0), float(cached_center.get("lng") or 0))
+                    near_city_center = city_center != (0.0, 0.0) and distance_miles_between(
+                        city_center[0], city_center[1], float(point["lat"]), float(point["lng"])
+                    ) <= 5
+                    if near_city_center or not re.search(r"\b(?:airport|airfield)\b", query, re.I):
+                        point = {}
+        label = query if place_id else ride_display_label(query, point, city)
         lat = float(point.get("lat") or 0)
         lng = float(point.get("lng") or 0)
         if label and lat and lng:
@@ -18026,10 +18103,15 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     if google_query:
         for prediction in google_accommodation_place_predictions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias, include_all_types=True):
             label = prediction["label"]
-            if not prediction.get("placeId"):
-                continue
             add_label(label, "google")
-            prediction_place_ids.setdefault(label.lower(), prediction["placeId"])
+            if prediction.get("placeId"):
+                prediction_place_ids.setdefault(label.lower(), prediction["placeId"])
+        if not labels:
+            for place in ride_known_popular_cities(query, city, limit=limit):
+                label = str(place.get("label") or "")
+                add_label(label, "country-fallback")
+                if label:
+                    popular_points[label.lower()] = place
     else:
         popular_loader = google_ride_popular_cities if cities_only else google_ride_popular_places
         for place in popular_loader(
@@ -18044,6 +18126,12 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 popular_points[label.lower()] = place
         if cities_only and not labels and selected_country == "IN":
             for place in india_ride_popular_city_fallbacks(limit):
+                label = str(place.get("label") or "")
+                add_label(label, "country-fallback")
+                if label:
+                    popular_points[label.lower()] = place
+        if cities_only and not labels and selected_country == "US":
+            for place in us_ride_popular_city_fallbacks(limit):
                 label = str(place.get("label") or "")
                 add_label(label, "country-fallback")
                 if label:
@@ -18072,9 +18160,9 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
         place_id = prediction_place_ids.get(label.lower(), "")
-        # Autocomplete has no geometry. A prior text-geocode cache may be a
-        # city center, so never present it as the prediction's coordinate.
-        point = {} if place_id else popular_points.get(label.lower())
+        # Autocomplete has no geometry, even when its place ID is missing.
+        # Never let a cached city center masquerade as this suggestion's point.
+        point = {} if source == "google" else popular_points.get(label.lower())
         if point is None:
             try:
                 point = ride_point(label, city, allow_refresh=False)
@@ -18574,45 +18662,28 @@ def mobile_ride_posts(
     city = normalize_accommodation_place_label(city)
     ride_type = normalize_ride_type(ride_type) if ride_type else ""
     pickup_date = clean_text_value(pickup_date, 30)
-    if origin_lat and origin_lng:
-        origin_point = accommodation_location_point(origin or city, city, allow_refresh=False)
-        if not origin_point or not float(origin_point.get("lat") or 0) or not float(origin_point.get("lng") or 0):
-            origin_point = {"label": origin or city, "lat": float(origin_lat), "lng": float(origin_lng), "source": "CLIENT"}
+
+    def selected_search_point(label: str, latitude: float, longitude: float) -> dict[str, object]:
+        known_lat, known_lng = static_accommodation_point(label)
+        # A known, explicitly named city or landmark can expose a stale client
+        # coordinate (for example Miami text paired with Miamisburg geometry).
+        # Unknown places keep their selected coordinates rather than an
+        # unrelated broad/cached geocode from another country.
+        if valid_ride_coordinate_pair(known_lat, known_lng) and distance_miles_between(latitude, longitude, known_lat, known_lng) > 75:
+            return {"label": label, "lat": known_lat, "lng": known_lng, "source": "KNOWN_PLACE"}
+        return {"label": label, "lat": float(latitude), "lng": float(longitude), "source": "CLIENT"}
+
+    if valid_ride_coordinate_pair(origin_lat, origin_lng):
+        # The client clears coordinates whenever the place text is edited.
+        # A selected point is more reliable than a stale or broad text cache,
+        # particularly when the member searches outside their discovery city.
+        origin_point = selected_search_point(origin or city, origin_lat, origin_lng)
     else:
         origin_point = ride_point(origin, city) if origin else (ride_point(city) if city else {})
-    if destination_lat and destination_lng:
-        destination_point = accommodation_location_point(destination, city, allow_refresh=False)
-        if not destination_point or not float(destination_point.get("lat") or 0) or not float(destination_point.get("lng") or 0):
-            destination_point = {"label": destination, "lat": float(destination_lat), "lng": float(destination_lng), "source": "CLIENT"}
+    if valid_ride_coordinate_pair(destination_lat, destination_lng):
+        destination_point = selected_search_point(destination, destination_lat, destination_lng)
     else:
         destination_point = ride_point(destination, city) if destination else {}
-    if origin_lat and origin_lng:
-        supplied_origin = {"lat": float(origin_lat), "lng": float(origin_lng)}
-        resolved_origin_lat = float(origin_point.get("lat") or 0)
-        resolved_origin_lng = float(origin_point.get("lng") or 0)
-        discrepancy = (
-            distance_miles_between(resolved_origin_lat, resolved_origin_lng, supplied_origin["lat"], supplied_origin["lng"])
-            if resolved_origin_lat and resolved_origin_lng
-            else 0
-        )
-        if not resolved_origin_lat or not resolved_origin_lng or discrepancy <= 75:
-            origin_point = {**origin_point, **supplied_origin}
-    if destination_lat and destination_lng:
-        supplied_destination = {"lat": float(destination_lat), "lng": float(destination_lng)}
-        resolved_destination_lat = float(destination_point.get("lat") or 0)
-        resolved_destination_lng = float(destination_point.get("lng") or 0)
-        discrepancy = (
-            distance_miles_between(
-                resolved_destination_lat,
-                resolved_destination_lng,
-                supplied_destination["lat"],
-                supplied_destination["lng"],
-            )
-            if resolved_destination_lat and resolved_destination_lng
-            else 0
-        )
-        if not resolved_destination_lat or not resolved_destination_lng or discrepancy <= 75:
-            destination_point = {**destination_point, **supplied_destination}
     clauses = ["ride_posts.status = 'ACTIVE'"]
     values: list[object] = []
     ride_public_id = clean_text_value(ride_public_id, 80)
@@ -18805,7 +18876,11 @@ def create_ride_dispatch_notifications(
     }
 
 
-def create_dispatch_for_ride_offer(con: sqlite3.Connection, offer_row: sqlite3.Row) -> int:
+def create_dispatch_for_ride_offer(
+    con: sqlite3.Connection,
+    offer_row: sqlite3.Row,
+    matched_riders: list[dict[str, object]] | None = None,
+) -> int:
     """Back-match a newly created or edited offer to requests that already exist."""
     if row_value(offer_row, "ride_type") != "CARPOOL_OFFER":
         return 0
@@ -18828,15 +18903,49 @@ def create_dispatch_for_ride_offer(con: sqlite3.Connection, offer_row: sqlite3.R
         """,
         (offer_user_id, trip_date.isoformat()),
     ).fetchall()
-    return sum(
-        int(create_ride_dispatch_notifications(
+    matched_count = 0
+    for request_row in requests:
+        dispatch = create_ride_dispatch_notifications(
             con,
             request_row,
             int(row_value(request_row, "user_id") or 0),
             driver_ride_post_id=offer_id,
-        ).get("notifiedCount") or 0)
-        for request_row in requests
-    )
+        )
+        newly_matched = int(dispatch.get("notifiedCount") or 0)
+        matched_count += newly_matched
+        if newly_matched and matched_riders is not None:
+            matched_riders.append({
+                "userId": int(row_value(request_row, "user_id") or 0),
+                "requestId": row_value(request_row, "public_id"),
+                "origin": row_value(request_row, "origin_label"),
+                "destination": row_value(request_row, "destination_label"),
+            })
+    return matched_count
+
+
+def notify_riders_of_new_ride_match(offer_row: sqlite3.Row | None, matched_riders: list[dict[str, object]]) -> None:
+    """Alert each rider once per request/offer; push outbox dedupes offer edits."""
+    if not offer_row or not matched_riders:
+        return
+    offer_public_id = row_value(offer_row, "public_id")
+    for rider in matched_riders:
+        rider_user_id = int(rider.get("userId") or 0)
+        request_id = str(rider.get("requestId") or "")
+        if not rider_user_id or not request_id:
+            continue
+        route = " → ".join(str(rider.get(key) or "").strip() for key in ("origin", "destination"))
+        try:
+            send_mobile_push_for_users(
+                [rider_user_id],
+                "Ride found for your trip",
+                f"A ride is available for {route}. Open FairFares to view it."[:240],
+                {"type": "CARPOOL_MATCH", "rideId": offer_public_id, "requestId": request_id,
+                 "event": f"MATCH_FOUND:{offer_public_id}", "target": "ride"},
+            )
+        except Exception as exc:
+            # The offer is already saved; a temporary push failure must not
+            # turn the listing response into an error or trigger a repost.
+            print(f"Ride match push enqueue failed: {exc}")
 
 
 def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -> tuple[int, dict[str, object]]:
@@ -40322,6 +40431,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     create_ride_instances(con, int(row_value(existing, "id") or 0), start_date, end_date, days_of_week, pickup_time)
                 row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (int(row_value(existing, "id") or 0),)).fetchone()
                 matched_request_count = 0
+                matched_riders: list[dict[str, object]] = []
                 if row and ride_type == "CARPOOL_OFFER":
                     # Route/date edits invalidate pending matches for this offer.
                     # Preserve declined/completed history, then calculate fresh
@@ -40330,14 +40440,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "DELETE FROM ride_dispatch_notifications WHERE driver_ride_post_id = ? AND status = 'PENDING'",
                         (int(row_value(existing, "id") or 0),),
                     )
-                    matched_request_count = create_dispatch_for_ride_offer(con, row)
+                    matched_request_count = create_dispatch_for_ride_offer(con, row, matched_riders)
             invalidate_mobile_search_cache("rides")
+            notify_riders_of_new_ride_match(row, matched_riders)
             self.send_json({
                 "ok": True,
                 "ride": mobile_ride_payload(row, origin_point, destination_point, include_private_vehicle=True) if row else None,
                 "matchedRequestCount": matched_request_count,
             })
             return
+        matched_riders: list[dict[str, object]] = []
         with db() as con:
             recent_rides = int(con.execute(
                 "SELECT COUNT(*) AS count FROM ride_posts WHERE user_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')",
@@ -40415,11 +40527,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 create_ride_instances(con, ride_post_id, start_date, end_date, days_of_week, pickup_time)
             row = con.execute("SELECT * FROM ride_posts WHERE id = ?", (ride_post_id,)).fetchone()
             if row and ride_type == "CARPOOL_OFFER":
-                matched_request_count = create_dispatch_for_ride_offer(con, row)
+                matched_request_count = create_dispatch_for_ride_offer(con, row, matched_riders)
                 dispatch = {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": [], "matchedRequestCount": matched_request_count}
             else:
                 dispatch = create_ride_dispatch_notifications(con, row, int(row_value(user, "id") or 0)) if row else {"notifiedCount": 0, "nearestRadius": 0, "radiusBuckets": []}
         invalidate_mobile_search_cache("rides")
+        notify_riders_of_new_ride_match(row, matched_riders)
         notified_driver_user_ids = list(dispatch.pop("driverUserIds", []))
         driver_detours = dict(dispatch.pop("driverDetours", {}))
         if notified_driver_user_ids:

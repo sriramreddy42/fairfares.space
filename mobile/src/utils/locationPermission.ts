@@ -15,7 +15,14 @@ export async function requestUserLocationPermission(copy: LocationPermissionCopy
   if (permission.canAskAgain) {
     permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status === Location.PermissionStatus.GRANTED || permission.granted) return true;
-    Alert.alert(title, copy.requestMessage);
+    Alert.alert(
+      title,
+      copy.settingsMessage || copy.requestMessage,
+      [
+        { text: "Not now", style: "cancel" },
+        { text: "Open Settings", onPress: () => void Linking.openSettings() }
+      ]
+    );
     return false;
   }
 

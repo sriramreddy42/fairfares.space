@@ -228,6 +228,12 @@ const indiaRidePopularCities: RidePlaceSuggestion[] = [
   { label: "Visakhapatnam, Andhra Pradesh, India", main: "Visakhapatnam", secondary: "Andhra Pradesh, India", distanceMiles: null, lat: 17.6868, lng: 83.2185, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Visakhapatnam&country=India" },
   { label: "Warangal, Telangana, India", main: "Warangal", secondary: "Telangana, India", distanceMiles: null, lat: 17.9689, lng: 79.5941, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Warangal&country=India" },
 ];
+const usRidePopularCities: RidePlaceSuggestion[] = [
+  { label: "New York, NY, USA", main: "New York", secondary: "NY, USA", distanceMiles: null, lat: 40.7128, lng: -74.0060, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=New%20York&country=USA" },
+  { label: "Los Angeles, CA, USA", main: "Los Angeles", secondary: "CA, USA", distanceMiles: null, lat: 34.0522, lng: -118.2437, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Los%20Angeles&country=USA" },
+  { label: "Chicago, IL, USA", main: "Chicago", secondary: "IL, USA", distanceMiles: null, lat: 41.8781, lng: -87.6298, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Chicago&country=USA" },
+  { label: "Denver, CO, USA", main: "Denver", secondary: "CO, USA", distanceMiles: null, lat: 39.7392, lng: -104.9903, source: "country-fallback", imageUrl: "/api/explorer/city-photo?city=Denver&country=USA" },
+];
 const rideServicePosters: Array<{
   key: "scheduled" | "general" | "carpool";
   type: RideType;
@@ -684,10 +690,12 @@ export function HousingScreen({
   const [failedRidePopularImages, setFailedRidePopularImages] = useState<Record<string, boolean>>({});
   const [currentRideLocation, setCurrentRideLocation] = useState<CurrentRideLocation | null>(null);
   const [currentRideLocationBusy, setCurrentRideLocationBusy] = useState(false);
+  const currentRideLocationRequestRef = useRef<Promise<CurrentRideLocation | null> | null>(null);
   const [currentRideLocationError, setCurrentRideLocationError] = useState("");
   const [selectedRideChoice, setSelectedRideChoice] = useState("");
   const [selectedRideService, setSelectedRideService] = useState<"scheduled" | "general" | "carpool">("carpool");
   const [rideRequestStatus, setRideRequestStatus] = useState("");
+  const [savedUnmatchedRideId, setSavedUnmatchedRideId] = useState("");
   const [rideOwnerOpen, setRideOwnerOpen] = useState(false);
   const [selectedRideOfferSurface, setSelectedRideOfferSurface] = useState<"scheduled" | "general" | "carpool">("carpool");
   const [rideDriverProfile, setRideDriverProfile] = useState<RideDriverProfile | null>(null);
@@ -709,6 +717,7 @@ export function HousingScreen({
   const rideOriginInputRef = useRef<TextInput | null>(null);
   const rideDestinationInputRef = useRef<TextInput | null>(null);
   const ridePlanSubmittingRef = useRef(false);
+  const rideAutoOriginRef = useRef("");
   const selectedRideSuggestionRef = useRef("");
   const selectedRideLabelsRef = useRef({ origin: "", destination: "" });
   const selectedRidePlaceIdsRef = useRef({ origin: "", destination: "" });
@@ -799,6 +808,8 @@ export function HousingScreen({
       destination: linkedCarpoolRide.destination,
       destinationLat: linkedCarpoolRide.destinationLat ?? null,
       destinationLng: linkedCarpoolRide.destinationLng ?? null,
+      pickupDate: linkedCarpoolRide.pickupDate,
+      pickupTime: linkedCarpoolRide.pickupTime,
       rideType: "CARPOOL_REQUEST"
     });
     setSelectedRideChoice(`offer:${linkedCarpoolRide.id}`);
@@ -1223,6 +1234,7 @@ export function HousingScreen({
           return;
         }
         setEditingRideId(ride.id);
+        rideAutoOriginRef.current = "";
         selectedRideLabelsRef.current = { origin: "", destination: "" };
         selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
         setRideForm({
@@ -1310,17 +1322,21 @@ export function HousingScreen({
     // searches must never retarget this discovery rail.
     const selectedCity = currentRideLocation?.label || discoveryLocation || data?.location.city || "";
     if (!selectedCity) {
-      setRidePopularPlaces([]);
       return;
     }
+    const selectedCountry = locationCountryCodeFromLabel(selectedCity);
     let cancelled = false;
     getRidePlaceSuggestions(selectedCity, "", true, true)
       .then((places) => {
-        if (!cancelled) setRidePopularPlaces(places.slice(0, 8));
+        if (cancelled) return;
+        const usablePlaces = places.filter((place) => {
+          const placeCountry = locationCountryCodeFromLabel(`${place.label} ${place.main || ""} ${place.secondary || ""}`);
+          return !selectedCountry || !placeCountry || placeCountry === selectedCountry;
+        });
+        // A failed or empty location refresh must not erase a populated rail.
+        if (usablePlaces.length) setRidePopularPlaces(usablePlaces.slice(0, 8));
       })
-      .catch(() => {
-        if (!cancelled) setRidePopularPlaces([]);
-      });
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -1366,50 +1382,58 @@ export function HousingScreen({
 
   async function resolveCurrentRideLocation() {
     if (currentRideLocation) return currentRideLocation;
-    if (currentRideLocationBusy) return null;
-    setCurrentRideLocationBusy(true);
-    setCurrentRideLocationError("");
-    try {
-      const hasLocationPermission = await requestUserLocationPermission({
-        title: "Location permission is off",
-        requestMessage: "Allow location access, or type your pickup address manually.",
-        settingsMessage: "Enable location for FairFares in Settings, or type your pickup address manually."
-      });
-      if (!hasLocationPermission) {
-        setCurrentRideLocationError("Location permission is off. Type a pickup address or enable location access.");
-        return null;
-      }
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const coords = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      };
-      let label = "";
+    if (currentRideLocationRequestRef.current) return currentRideLocationRequestRef.current;
+    const request = (async (): Promise<CurrentRideLocation | null> => {
+      setCurrentRideLocationBusy(true);
+      setCurrentRideLocationError("");
       try {
-        label = await reverseGeocodeRideLocation(coords.latitude, coords.longitude);
-      } catch {
-        label = "";
-      }
-      try {
-        if (!label) {
-          const [address] = await Location.reverseGeocodeAsync(coords);
-          label = formatDeviceAddress(address);
+        const hasLocationPermission = await requestUserLocationPermission({
+          title: "Location permission is off",
+          requestMessage: "Allow location access, or type your pickup address manually.",
+          settingsMessage: "Enable location for FairFares in Settings, or type your pickup address manually."
+        });
+        if (!hasLocationPermission) {
+          setCurrentRideLocationError("Location permission is off. Type a pickup address or enable location access.");
+          return null;
         }
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        };
+        let label = "";
+        try {
+          label = await reverseGeocodeRideLocation(coords.latitude, coords.longitude);
+        } catch {
+          label = "";
+        }
+        try {
+          if (!label) {
+            const [address] = await Location.reverseGeocodeAsync(coords);
+            label = formatDeviceAddress(address);
+          }
+        } catch {
+          label = "";
+        }
+        const fallbackLocationName = selectedLocationText || data?.location.suggested || rideDefaultCity || "your selected city";
+        const nextLocation = {
+          label: label || `Current location near ${fallbackLocationName}`,
+          coords
+        };
+        setCurrentRideLocation(nextLocation);
+        return nextLocation;
       } catch {
-        label = "";
+        setCurrentRideLocationError("Could not detect your current location. Type a pickup address instead.");
+        return null;
+      } finally {
+        setCurrentRideLocationBusy(false);
       }
-      const fallbackLocationName = selectedLocationText || data?.location.suggested || rideDefaultCity || "your selected city";
-      const nextLocation = {
-        label: label || `Current location near ${fallbackLocationName}`,
-        coords
-      };
-      setCurrentRideLocation(nextLocation);
-      return nextLocation;
-    } catch {
-      setCurrentRideLocationError("Could not detect your current location. Type a pickup address instead.");
-      return null;
+    })();
+    currentRideLocationRequestRef.current = request;
+    try {
+      return await request;
     } finally {
-      setCurrentRideLocationBusy(false);
+      if (currentRideLocationRequestRef.current === request) currentRideLocationRequestRef.current = null;
     }
   }
 
@@ -1433,6 +1457,7 @@ export function HousingScreen({
 
   function openRidePlanner() {
     const initialOrigin = rideDefaultPickup;
+    rideAutoOriginRef.current = initialOrigin;
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
@@ -1466,6 +1491,7 @@ export function HousingScreen({
 
   function closeRidePlanner() {
     ridePlanSubmittingRef.current = false;
+    rideAutoOriginRef.current = "";
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
@@ -1604,6 +1630,7 @@ export function HousingScreen({
   function openRideOfferPlanner(profile?: RideDriverProfile | null) {
     const offerSurface = rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
     ridePlanSubmittingRef.current = false;
+    rideAutoOriginRef.current = rideDefaultPickup;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
@@ -1683,6 +1710,7 @@ export function HousingScreen({
 
   function selectRidePlace(place: RidePlaceSuggestion) {
     const selectedField = rideFocusedField;
+    if (selectedField === "origin") rideAutoOriginRef.current = "";
     const trustedCoordinates = hasRideCoordinates(place.lat, place.lng) && !place.placeId;
     const startRequest = selectedField === "destination" && rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId;
     selectedRideSuggestionRef.current = place.label;
@@ -1741,6 +1769,7 @@ export function HousingScreen({
 
   function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
     ridePlanSubmittingRef.current = false;
+    rideAutoOriginRef.current = rideDefaultPickup;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = place.label;
     selectedRideLabelsRef.current = { origin: "", destination: place.label };
@@ -1782,9 +1811,7 @@ export function HousingScreen({
             return;
           }
           if (selectedRideLabelsRef.current.destination !== place.label || selectedRidePlaceIdsRef.current.destination !== place.placeId) return;
-          if (hasRideCoordinates(plannedForm.originLat, plannedForm.originLng)) {
-            void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST", plannedForm);
-          }
+          void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST", plannedForm);
         })
         .catch(() => {
           if (selectedRideLabelsRef.current.destination === place.label && selectedRidePlaceIdsRef.current.destination === place.placeId) {
@@ -1792,9 +1819,7 @@ export function HousingScreen({
           }
         });
     } else {
-      if (hasRideCoordinates(plannedForm.originLat, plannedForm.originLng)) {
-        void planRideRoute(place, "CARPOOL_REQUEST", plannedForm);
-      }
+      void planRideRoute(place, "CARPOOL_REQUEST", plannedForm);
     }
   }
 
@@ -1849,6 +1874,33 @@ export function HousingScreen({
     }
   }
 
+  async function saveUnmatchedRideRequest(input: RideInput): Promise<RidePost> {
+    const matchesTrip = (ride: RidePost) => ride.type === "CARPOOL_REQUEST"
+      && !ride.isExpired
+      && ride.status.toUpperCase() === "ACTIVE"
+      && ride.origin.trim().toLowerCase() === input.origin.trim().toLowerCase()
+      && ride.destination.trim().toLowerCase() === input.destination.trim().toLowerCase()
+      && ride.pickupDate === input.pickupDate
+      && ride.pickupTime === input.pickupTime;
+    const activity = await getRideActivity().catch(() => [] as RidePost[]);
+    const existing = activity.find(matchesTrip);
+    if (existing) return existing;
+    try {
+      const result = await createMobileRide({ ...input, rideType: "CARPOOL_REQUEST" });
+      if (!result.ride) throw new Error("The ride request was not saved.");
+      return result.ride;
+    } catch (error) {
+      // A repeat search may race another save or meet the server's recent-post
+      // guard. Confirm the existing request before claiming a failed save.
+      if (error instanceof Error && error.message.toLowerCase().includes("already posted recently")) {
+        const latest = await getRideActivity().catch(() => [] as RidePost[]);
+        const saved = latest.find(matchesTrip);
+        if (saved) return saved;
+      }
+      throw error;
+    }
+  }
+
   async function planRideRoute(selectedDestination?: RidePlaceSuggestion, requestedRideType: RideType = rideForm.rideType, formSnapshot: RideInput = rideForm) {
     if (ridePlanSubmittingRef.current) return;
     if (ridePickupIsInPast(formSnapshot.pickupDate, formSnapshot.pickupTime)) {
@@ -1886,6 +1938,10 @@ export function HousingScreen({
         return;
       }
     }
+    if (!listingRide) {
+      setSavedUnmatchedRideId("");
+      setRideRequestStatus("");
+    }
     setRideBusy(true);
     setRidePlanBusy(true);
     try {
@@ -1894,12 +1950,32 @@ export function HousingScreen({
         formSnapshot.origin.trim() && hasRideCoordinates(formSnapshot.originLat, formSnapshot.originLng)
       );
       if (!originAlreadyPicked) {
+        // The planner starts detecting the current pickup in the background.
+        // If Find rides wins that race, share the same location request rather
+        // than trying to geocode the placeholder text as an address.
+        if (rideAutoOriginRef.current && formSnapshot.origin.trim() === rideAutoOriginRef.current && !selectedRideLabelsRef.current.origin) {
+          const location = await resolveCurrentRideLocation();
+          if (location && hasRideCoordinates(location.coords.latitude, location.coords.longitude)) {
+            effectiveOrigin = location.label;
+            originPoint = {
+              label: location.label,
+              main: location.label,
+              secondary: "",
+              distanceMiles: null,
+              lat: location.coords.latitude,
+              lng: location.coords.longitude,
+              source: "device"
+            };
+          }
+        }
         // Resolve manually typed origins without the device/current-city bias.
         // Otherwise an international route such as Hyderabad -> Chennai can
         // be geocoded against a previous US discovery location.
-        const originMatches = await getRidePlaceSuggestions(formSnapshot.city, effectiveOrigin, false, false, true, selectedRideLabelsRef.current.origin === effectiveOrigin ? selectedRidePlaceIdsRef.current.origin : "");
-        originPoint = originMatches[0];
-        if (originPoint?.label && selectedRideLabelsRef.current.origin !== effectiveOrigin) effectiveOrigin = originPoint.label;
+        if (!originPoint) {
+          const originMatches = await getRidePlaceSuggestions(formSnapshot.city, effectiveOrigin, false, false, true, selectedRideLabelsRef.current.origin === effectiveOrigin ? selectedRidePlaceIdsRef.current.origin : "");
+          originPoint = originMatches[0];
+          if (originPoint?.label && selectedRideLabelsRef.current.origin !== effectiveOrigin) effectiveOrigin = originPoint.label;
+        }
       }
       const routeCity = effectiveOrigin;
       let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
@@ -1940,8 +2016,11 @@ export function HousingScreen({
         destinationLng: destinationPoint?.lng ?? (destinationAlreadyPicked ? formSnapshot.destinationLng : null),
         rideType: nextRideType
       };
-      if (!hasRideCoordinates(nextRideForm.originLat, nextRideForm.originLng) || !hasRideCoordinates(nextRideForm.destinationLat, nextRideForm.destinationLng)) {
-        throw new Error("We couldn't locate one of those places. Choose a suggestion or enter a fuller address.");
+      if (!hasRideCoordinates(nextRideForm.originLat, nextRideForm.originLng)) {
+        throw new Error("We couldn't locate your pickup. Use current location or choose a pickup suggestion.");
+      }
+      if (!hasRideCoordinates(nextRideForm.destinationLat, nextRideForm.destinationLng)) {
+        throw new Error("We couldn't locate your destination. Choose a suggestion or enter a fuller address.");
       }
       setRideForm((current) => ({
         ...current,
@@ -1985,6 +2064,28 @@ export function HousingScreen({
       setRideRows(rides);
       setSelectedRideChoice("");
       setRidePlannerStage("choices");
+      setSavedUnmatchedRideId("");
+      if (!rides.length) {
+        if (!data?.user) {
+          setRideRequestStatus("No rides found. Sign in to save your request and get match alerts.");
+          Alert.alert("No rides found", "Sign in to save your ride request. We'll notify you when a matching ride is listed.", [
+            { text: "Not now", style: "cancel" },
+            { text: "Sign in", onPress: () => onRequireLogin?.() }
+          ]);
+        } else {
+          try {
+            const saved = await saveUnmatchedRideRequest(nextRideForm);
+            setSavedUnmatchedRideId(saved.id);
+            setRideActivityRows((current) => [saved, ...current.filter((ride) => ride.id !== saved.id)]);
+            setRidePosted(true);
+            setRideRequestStatus("Your ride request is saved. We'll notify you when a matching ride is listed.");
+            Alert.alert("Ride request saved", "No rides are available yet. We'll notify you when a matching ride is listed.");
+          } catch (saveError) {
+            setRideRequestStatus("No rides found. Your request was not saved.");
+            Alert.alert("Request not saved", saveError instanceof Error ? saveError.message : "Please try saving your ride request again.");
+          }
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to search rides.";
       if (listingRide && message.toLowerCase().includes("driver profile")) {
@@ -2018,16 +2119,17 @@ export function HousingScreen({
     const selectedLabel = selectedOffer?.title || "Ride request";
     setRideBusy(true);
     try {
-      const result = await createMobileRide({
-        ...rideForm,
-        rideType: rideForm.rideType === "CARPOOL_OFFER" ? "CARPOOL_REQUEST" : rideForm.rideType,
-        notes: [rideForm.notes, `${selectedLabel} selected.`]
-          .filter(Boolean)
-          .join(" ")
-      });
+      const result = selectedOffer
+        ? await createMobileRide({
+            ...rideForm,
+            rideType: "CARPOOL_REQUEST",
+            notes: [rideForm.notes, `${selectedLabel} selected.`].filter(Boolean).join(" ")
+          })
+        : { ride: await saveUnmatchedRideRequest(rideForm), dispatch: undefined };
       const ride = result.ride;
       if (!ride) throw new Error("Ride request was not saved.");
-      setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+      if (selectedOffer) setRideRows((current) => [ride, ...current.filter((item) => item.id !== ride.id)]);
+      else setSavedUnmatchedRideId(ride.id);
       setRidePosted(true);
       const notifiedCount = Number(result.dispatch?.notifiedCount || 0);
       const radius = Number(result.dispatch?.nearestRadius || 0);
@@ -2035,14 +2137,16 @@ export function HousingScreen({
       setRideRequestStatus(
         notifiedCount
           ? `Request sent to ${notifiedCount} nearby driver offer${notifiedCount === 1 ? "" : "s"} within ${radius || 10} miles. You can use Chitthi with a selected listing owner before acceptance; the pickup PIN appears after acceptance.`
-          : "Request saved. FairFares will keep checking nearby driver offers. Select a specific driver offer to message in Chitthi before acceptance."
+          : "Your ride request is saved. We'll notify you when a matching ride is listed."
       );
-      Alert.alert("Ride request sent", selectedOffer
-        ? "You can message this driver in Chitthi now. Acceptance confirms the seat and unlocks the pickup PIN."
-        : "When a driver accepts your general request, you can coordinate the pickup, ETA, and PIN in Chitthi.", [
-        { text: "Stay here", style: "cancel" },
-        { text: "Open Chitthi", onPress: () => selectedOffer ? onRideMessage(selectedOffer) : onOpenMessenger() }
-      ]);
+      if (selectedOffer) {
+        Alert.alert("Ride request sent", "You can message this driver in Chitthi now. Acceptance confirms the seat and unlocks the pickup PIN.", [
+          { text: "Stay here", style: "cancel" },
+          { text: "Open Chitthi", onPress: () => onRideMessage(selectedOffer) }
+        ]);
+      } else {
+        Alert.alert("Ride request saved", "We'll notify you when a matching ride is listed.");
+      }
     } catch (error) {
       Alert.alert("Ride request failed", error instanceof Error ? error.message : "Unable to request this ride.");
     } finally {
@@ -2391,7 +2495,7 @@ export function HousingScreen({
                           {ride.isExpired ? "Expired" : isIncoming ? status.replace("_", " ") : "Listed"}
                         </Text>
                       </View>
-                      <Text style={styles.rideOwnerRequestRoute} numberOfLines={2}>{ride.origin} → {ride.destination}</Text>
+                      <Text style={styles.rideOwnerRequestRoute}>{ride.origin} → {ride.destination}</Text>
                       <View style={styles.rideOwnerRequestFacts}>
                         <Text style={styles.rideOwnerRequestFact}>{formatRidePickupDropDetail(ride) || "Pickup/drop-off calculating"}</Text>
                         <Text style={styles.rideOwnerRequestFact}>{formatRideTotalDetour(ride)}</Text>
@@ -3029,6 +3133,7 @@ export function HousingScreen({
 
   function updateRideForm<K extends keyof RideInput>(key: K, value: RideInput[K]) {
     if (key === "origin") {
+      rideAutoOriginRef.current = "";
       selectedRideLabelsRef.current.origin = "";
       selectedRidePlaceIdsRef.current.origin = "";
     }
@@ -3459,7 +3564,7 @@ export function HousingScreen({
                 <Text style={styles.rideDriverNotify}>
                   {driverOffers.length
                     ? "These driver offers match your route. You can use Chitthi before requesting or accepting; acceptance confirms the seat and unlocks the pickup PIN."
-                    : "No live driver offer is selected yet. Send the request and FairFares will notify nearby drivers first, then expand the radius if needed."}
+                    : "No rides are available for this route yet. Save your request to get an alert when a matching ride is listed."}
                 </Text>
                 {driverOffers.length ? (
                   driverOffers.map((offer) => {
@@ -3487,7 +3592,7 @@ export function HousingScreen({
                           <Text style={styles.rideChoiceRouteBadgeText}>A→B</Text>
                         </View>
                         <View style={styles.rideChoiceCopy}>
-                          <Text style={styles.rideChoiceName} numberOfLines={2}>{offer.origin} → {offer.destination}</Text>
+                          <Text style={styles.rideChoiceName}>{offer.origin} → {offer.destination}</Text>
                           <Text style={styles.rideChoiceLister} numberOfLines={1}>Listed by {offer.ownerName?.trim() || "FairFares member"}</Text>
                           {riderTrip ? <Text style={styles.rideChoiceUserTrip} numberOfLines={2}>Your trip: {riderTrip}</Text> : null}
                           <View style={styles.rideChoiceChipRow}>
@@ -3537,9 +3642,11 @@ export function HousingScreen({
                   })
                 ) : (
                   <View style={styles.rideNoOffersCard}>
-                    <Text style={styles.rideNoOffersTitle}>No driver offers yet</Text>
+                    <Text style={styles.rideNoOffersTitle}>No matching rides yet</Text>
                     <Text style={styles.rideNoOffersCopy}>
-                      Send your request and nearby registered drivers can accept it. Chitthi needs a specific driver recipient; once a driver accepts, you will also see ETA and the pickup PIN.
+                      {savedUnmatchedRideId
+                        ? "Your request is saved. We'll notify you when a matching ride is listed."
+                        : "Save this trip to get an alert when a matching ride is listed."}
                     </Text>
                   </View>
                 )}
@@ -3567,9 +3674,9 @@ export function HousingScreen({
                     <Text style={styles.rideRequestStatusText}>{rideRequestStatus}</Text>
                   </View>
                 ) : null}
-                {!driverOffers.length ? (
-                  <TouchableOpacity style={styles.rideChoiceButton} onPress={() => void requestPlannedRide()} disabled={rideBusy}>
-                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Sending..." : "Send ride request"}</Text>
+                {!driverOffers.length && !savedUnmatchedRideId ? (
+                  <TouchableOpacity style={styles.rideChoiceButton} onPress={() => data?.user ? void requestPlannedRide() : onRequireLogin?.()} disabled={rideBusy}>
+                    <Text style={styles.rideChoiceButtonText}>{rideBusy ? "Saving..." : data?.user ? "Save ride request" : "Sign in to save request"}</Text>
                   </TouchableOpacity>
                 ) : null}
               </ScrollView>
@@ -3617,7 +3724,7 @@ export function HousingScreen({
             <View style={styles.rideListingSuccessIcon}><Text style={styles.rideListingSuccessCheck}>✓</Text></View>
             <Text style={styles.rideListingSuccessEyebrow}>Successfully listed</Text>
             <Text style={styles.rideListingSuccessTitle}>Your carpool ride is live</Text>
-            <Text style={styles.rideListingSuccessRoute} numberOfLines={3}>
+            <Text style={styles.rideListingSuccessRoute}>
               {ride ? `${ride.origin} → ${ride.destination}` : ""}
             </Text>
             <View style={styles.rideListingSuccessFacts}>
@@ -3653,9 +3760,11 @@ export function HousingScreen({
           return !placeCountry || placeCountry === rideActiveCountry;
         })
       : ridePopularPlaces;
-    const visibleRideHomeCities = rideHomeCities.length || rideActiveCountry !== "IN"
+    const visibleRideHomeCities = rideHomeCities.length
       ? rideHomeCities
-      : indiaRidePopularCities;
+      : rideActiveCountry === "IN" ? indiaRidePopularCities
+      : rideActiveCountry === "US" ? usRidePopularCities
+      : [];
     const ridePopularCardWidth = Math.max(
       108,
       Math.min(132, (viewportWidth - 28 - 20) / 3)

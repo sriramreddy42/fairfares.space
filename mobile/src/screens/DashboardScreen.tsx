@@ -787,7 +787,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <View style={styles.listingRouteCircle}><ActivityIcon kind="route" color="#ffffff" /></View>
               <View style={styles.requestMain}>
                 <Text style={[styles.listingBadge, ride.isExpired && styles.expiredBadge]}>{ride.isExpired ? "Expired" : statusCopy(ride)}</Text>
-                <Text style={styles.requestRouteTitle} numberOfLines={2}>{routeLabel(ride)}</Text>
+                <Text style={styles.requestRouteTitle}>{routeLabel(ride)}</Text>
                 <View style={styles.metricRow}>
                   <View style={styles.iconMetricPill}><ActivityIcon kind="person" color="#d5dbea" /><Text style={styles.iconMetricText}>{ride.seats || 1} seat{ride.seats === 1 ? "" : "s"}</Text></View>
                   <Text style={styles.metricPill}>{ride.contributionPerSeat ? money(ride.contributionPerSeat, ride.currencySymbol || "") : "Direct agreement"}</Text>

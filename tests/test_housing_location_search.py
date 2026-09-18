@@ -1247,6 +1247,43 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(all(str(item.get("secondary") or "").endswith("India") for item in results))
         self.assertTrue(all(str(item.get("imageUrl") or "").startswith("/api/explorer/") for item in results))
 
+    def test_us_popular_ride_cities_remain_visible_when_google_returns_none(self):
+        with patch.object(app, "google_ride_popular_cities", return_value=[]), patch.object(
+            app, "ride_point", return_value={"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
+        ):
+            results = app.ride_place_suggestions("Denver, CO", "", cities_only=True)
+        self.assertEqual([item["main"] for item in results], ["New York", "Los Angeles", "Chicago", "Denver"])
+        self.assertTrue(all(item["source"] == "country-fallback" for item in results))
+        self.assertTrue(all(str(item["imageUrl"]).startswith("/api/explorer/city-photo?") for item in results))
+
+    def test_us_popular_destination_labels_resolve_without_google(self):
+        expected = {
+            "New York, NY, USA": (40.7128, -74.0060),
+            "Los Angeles, CA, USA": (34.0522, -118.2437),
+            "Chicago, IL, USA": (41.8781, -87.6298),
+            "Denver, CO, USA": (39.7392, -104.9903),
+        }
+        with patch.object(app, "google_accommodation_geocode", return_value=None):
+            for label, coordinates in expected.items():
+                with self.subTest(label=label):
+                    suggestions = app.ride_place_suggestions("", label, resolve_exact=True)
+                    self.assertEqual(len(suggestions), 1)
+                    self.assertEqual((suggestions[0]["lat"], suggestions[0]["lng"]), coordinates)
+                    self.assertEqual(suggestions[0]["label"], label)
+
+    def test_known_city_ride_autocomplete_and_typed_search_survive_places_outage(self):
+        with patch.object(app, "google_accommodation_place_predictions", return_value=[]), patch.object(
+            app, "google_accommodation_geocode", return_value=None
+        ):
+            denver_suggestions = app.ride_place_suggestions("Denver, CO", "New York")
+            india_suggestions = app.ride_place_suggestions("Hyderabad, Telangana, India", "Chennai")
+            typed_new_york = app.ride_place_suggestions("Denver, CO", "New York", resolve_exact=True)
+        self.assertEqual([item["label"] for item in denver_suggestions], ["New York, NY, USA"])
+        self.assertEqual((denver_suggestions[0]["lat"], denver_suggestions[0]["lng"]), (40.7128, -74.0060))
+        self.assertEqual([item["label"] for item in india_suggestions], ["Chennai, Tamil Nadu, India"])
+        self.assertEqual(typed_new_york[0]["label"], "New York, NY, USA")
+        self.assertFalse(app.ride_known_popular_cities("New York", "Hyderabad, Telangana, India"))
+
 
 if __name__ == "__main__":
     unittest.main()

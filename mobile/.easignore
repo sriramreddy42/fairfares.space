@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.*.local
+/credentials.json
+/credentials/
+/*__fairfares-mobile.jks
+/android/keystore.properties
 node_modules/
 /artifacts/
 /modules/*/android/build/
@@ -10,6 +14,7 @@ node_modules/
 !/ios/
 !/ios/**
 /android/local.properties
+/android/build/
 /android/app/build/
 /android/app/.cxx/
 /android/.gradle/

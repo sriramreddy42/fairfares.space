@@ -95,6 +95,7 @@ export function ProfileScreen({
   const [supportUrgent, setSupportUrgent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
   const [notificationPreferences, setNotificationPreferences] = useState<MobileNotificationPreferences | null>(null);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [notificationPreferencesError, setNotificationPreferencesError] = useState(false);
   const [notificationPreferenceSaving, setNotificationPreferenceSaving] = useState<keyof MobileNotificationPreferences | null>(null);
   const [systemAlertsEnabled, setSystemAlertsEnabled] = useState<boolean | null>(null);
@@ -145,6 +146,7 @@ export function ProfileScreen({
 
   useEffect(() => {
     let cancelled = false;
+    setNotificationSettingsOpen(false);
     setNotificationPreferences(null);
     setNotificationPreferencesError(false);
     if (!user?.id) return;
@@ -544,42 +546,6 @@ export function ProfileScreen({
         </View>
       </View>
 
-      {user ? (
-        <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
-          <View>
-            <Text style={styles.cardTitle}>Phone notifications</Text>
-            <Text style={styles.cardCopy}>Choose alerts by category. Messages and activity still arrive in the app; other important updates may still appear.</Text>
-          </View>
-          {Platform.OS !== "web" && systemAlertsEnabled === false ? (
-            <View style={styles.privacyRow}>
-              <View style={styles.privacyCopy}>
-                <Text style={styles.menuTitle}>Phone alerts are off</Text>
-                <Text style={styles.menuCopy}>Enable FairFares notifications in your phone settings to see these alerts.</Text>
-              </View>
-              <TouchableOpacity onPress={() => void Linking.openSettings()} accessibilityRole="button" accessibilityLabel="Open phone notification settings">
-                <Text style={styles.settingsLink}>Settings ›</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          {PUSH_CATEGORIES.map(({ key, title, copy }) => (
-            <View style={styles.privacyRow} key={key}>
-              <View style={styles.privacyCopy}>
-                <Text style={styles.menuTitle}>{title}</Text>
-                <Text style={styles.menuCopy}>{copy}</Text>
-              </View>
-              {notificationPreferenceSaving === key || (!notificationPreferences && !notificationPreferencesError) ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}
-              <Switch
-                value={Boolean(notificationPreferences?.[key])}
-                onValueChange={(enabled) => void changePushPreference(key, enabled)}
-                disabled={!notificationPreferences || Boolean(notificationPreferenceSaving)}
-                accessibilityLabel={`${title} push notifications`}
-              />
-            </View>
-          ))}
-          {notificationPreferencesError ? <Text style={styles.cardCopy}>Could not load notification preferences. Reopen Account to try again.</Text> : null}
-        </View>
-      ) : null}
-
       {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
         <TouchableOpacity key={title} style={[styles.menuRow, isLight && styles.flatLightCard]} onPress={onPress}>
           <View style={[styles.menuIconCircle, danger && styles.menuDangerIconCircle]}>
@@ -597,10 +563,64 @@ export function ProfileScreen({
         </TouchableOpacity>
       ))}
       {user ? (
+        <TouchableOpacity style={[styles.menuRow, isLight && styles.flatLightCard]} onPress={() => setNotificationSettingsOpen(true)} accessibilityRole="button" accessibilityLabel="Notification settings">
+          <View style={styles.menuIconCircle}><Text style={styles.menuGlyph}>♩</Text></View>
+          <View style={styles.menuTextBlock}>
+            <Text style={styles.menuTitle}>Notification settings</Text>
+            <Text style={styles.menuCopy}>Choose which phone alerts you receive</Text>
+          </View>
+          <Text style={styles.menuChevron}>›</Text>
+        </TouchableOpacity>
+      ) : null}
+      {user ? (
         <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
           <Text style={styles.logoutText}>Log out of FairFares</Text>
         </TouchableOpacity>
       ) : null}
+      <Modal visible={Boolean(user && notificationSettingsOpen)} transparent animationType="slide" onRequestClose={() => setNotificationSettingsOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.notificationSheet}>
+            <View style={styles.supportHeader}>
+              <View style={styles.supportHeaderCopy}>
+                <Text style={styles.cardTitle}>Notification settings</Text>
+                <Text style={styles.cardCopy}>Choose phone alerts by category. Messages and activity still appear in the app when alerts are off.</Text>
+              </View>
+              <TouchableOpacity style={styles.closeButton} onPress={() => setNotificationSettingsOpen(false)} accessibilityRole="button" accessibilityLabel="Close notification settings">
+                <Text style={styles.closeButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.supportScroll} contentContainerStyle={styles.notificationContent} showsVerticalScrollIndicator={false}>
+              {Platform.OS !== "web" && systemAlertsEnabled === false ? (
+                <View style={styles.privacyRow}>
+                  <View style={styles.privacyCopy}>
+                    <Text style={styles.menuTitle}>Phone alerts are off</Text>
+                    <Text style={styles.menuCopy}>Enable FairFares notifications in your phone settings to see these alerts.</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => void Linking.openSettings()} accessibilityRole="button" accessibilityLabel="Open phone notification settings">
+                    <Text style={styles.settingsLink}>Settings ›</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              {PUSH_CATEGORIES.map(({ key, title, copy }) => (
+                <View style={styles.privacyRow} key={key}>
+                  <View style={styles.privacyCopy}>
+                    <Text style={styles.menuTitle}>{title}</Text>
+                    <Text style={styles.menuCopy}>{copy}</Text>
+                  </View>
+                  {notificationPreferenceSaving === key || (!notificationPreferences && !notificationPreferencesError) ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}
+                  <Switch
+                    value={Boolean(notificationPreferences?.[key])}
+                    onValueChange={(enabled) => void changePushPreference(key, enabled)}
+                    disabled={!notificationPreferences || Boolean(notificationPreferenceSaving)}
+                    accessibilityLabel={`${title} push notifications`}
+                  />
+                </View>
+              ))}
+              {notificationPreferencesError ? <Text style={styles.cardCopy}>Could not load notification preferences. Close and reopen Account to try again.</Text> : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <Modal visible={Boolean(historySection)} transparent animationType="slide" onRequestClose={() => setHistorySection(null)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.historySheet}>
@@ -783,6 +803,8 @@ const styles = StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.68)" },
   supportModalBackdrop: { justifyContent: "flex-start" },
   supportSheet: { flex: 1, width: "100%", backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, paddingTop: 52, paddingHorizontal: 18, paddingBottom: 18, gap: 14 },
+  notificationSheet: { maxHeight: "85%", width: "100%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 10 },
+  notificationContent: { paddingBottom: 16 },
   supportScroll: { flex: 1 },
   supportContent: { gap: 11, paddingBottom: 28 },
   historySheet: { height: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 14 },
