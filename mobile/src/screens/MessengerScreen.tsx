@@ -1036,7 +1036,13 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
     onShouldBlockNativeResponder: () => true,
     onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start()
   }), [translateX]);
-  return <View style={styles.swipeReplyWrap}><Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX: displayedTranslateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View></View>;
+  return <View style={styles.swipeReplyWrap}>
+    <View pointerEvents="none" style={styles.swipeReplyAction} accessibilityElementsHidden>
+      <Text style={styles.swipeReplyActionIcon}>↩</Text>
+      <Text style={styles.swipeReplyActionText}>Reply</Text>
+    </View>
+    <Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX: displayedTranslateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View>
+  </View>;
 }
 
 function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: string; mine: boolean; onOpen: () => void; onFaviconResolved?: (url: string, available: boolean) => void }) {
@@ -8794,6 +8800,9 @@ const styles = StyleSheet.create({
   highlightedMessageRow: { borderRadius: 16, backgroundColor: "rgba(214,169,95,0.24)" },
   swipeReplyWrap: { position: "relative", overflow: "visible" },
   swipeReplyBody: { overflow: "visible" },
+  swipeReplyAction: { position: "absolute", left: 12, top: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderRadius: 18, backgroundColor: "rgba(33, 102, 79, 0.92)" },
+  swipeReplyActionIcon: { color: "#fff", fontSize: 17, fontWeight: "800" },
+  swipeReplyActionText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
