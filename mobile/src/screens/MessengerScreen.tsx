@@ -2090,6 +2090,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     ? data?.chat.conversations.find((item) => item.id === notificationConversationId) || null
     : null;
   const messagesScrollRef = useRef<FlatList<ThreadMessageItem>>(null);
+  const threadEdgeTranslateX = useRef(new Animated.Value(0)).current;
   const activeConversationIdRef = useRef(notificationConversationId || "");
   const messagesContentHeightRef = useRef(0);
   const messagesViewportHeightRef = useRef(0);
@@ -7197,29 +7198,42 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
       return horizontalSwipe && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
     },
+    onPanResponderMove: (_event, gesture) => {
+      const screenWidth = Dimensions.get("window").width;
+      threadEdgeTranslateX.setValue(Math.max(-screenWidth * 0.72, Math.min(screenWidth * 0.72, gesture.dx)));
+    },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
       const horizontalSwipe = Math.abs(gesture.dx) > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
         && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
-      if (!horizontalSwipe) return;
+      const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 300, mass: 0.7 }).start();
+      if (!horizontalSwipe) {
+        returnToThread();
+        return;
+      }
       if (actionMessage) {
         setActionMessage(null);
+        returnToThread();
         return;
       }
       if (attachmentPreview) {
         setAttachmentPreview(null);
+        returnToThread();
         return;
       }
       if (profilePhotoPreview) {
         setProfilePhotoPreview(null);
+        returnToThread();
         return;
       }
       if (pendingPhotoPreviewOpen) {
         closePendingMediaPreview();
+        returnToThread();
         return;
       }
       if (attachmentPreviewGroup.length) {
         closePhotoGroupView();
+        returnToThread();
         return;
       }
       if (forwardPickerOpen) {
@@ -7228,48 +7242,62 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           setSelectedMessageIds([]);
           setSelectedForwardConversationIds([]);
         }
+        returnToThread();
         return;
       }
       if (shareContactPickerOpen) {
         setShareContactPickerOpen(false);
+        returnToThread();
         return;
       }
       if (contactPickerOpen && contactPickerMode === "add") {
         setContactPickerOpen(false);
+        returnToThread();
         return;
       }
       if (richComposer) {
         setRichComposer("");
+        returnToThread();
         return;
       }
       if (emojiPickerOpen) {
         setEmojiPickerOpen(false);
+        returnToThread();
         return;
       }
       if (wallpaperPanelOpen) {
         setWallpaperPanelOpen(false);
+        returnToThread();
         return;
       }
       if (attachmentMenuOpen) {
         setAttachmentMenuOpen(false);
+        returnToThread();
         return;
       }
       if (groupMembersOpen) {
         setGroupMembersOpen(false);
+        returnToThread();
         return;
       }
       if (chatOptionsOpen) {
         setChatOptionsOpen(false);
+        returnToThread();
         return;
       }
       if (selectedMessageIds.length) {
         setSelectedMessageIds([]);
+        returnToThread();
         return;
       }
-      closeThread();
+      Animated.timing(threadEdgeTranslateX, { toValue: gesture.dx > 0 ? screenWidth : -screenWidth, duration: 180, useNativeDriver: true }).start(({ finished }) => {
+        threadEdgeTranslateX.setValue(0);
+        if (finished) closeThread();
+      });
     },
+    onPanResponderTerminate: () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 300, mass: 0.7 }).start(),
     onPanResponderTerminationRequest: () => true
-  }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, wallpaperPanelOpen]);
+  }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, threadEdgeTranslateX, wallpaperPanelOpen]);
 
   const messageInfoEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
@@ -7290,7 +7318,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   if (inThread) {
     return (
       <ChatPhotoViewerContext.Provider value={currentUserId}>
-      <View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }]} {...threadEdgeBackResponder.panHandlers}>
+      <Animated.View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }, { transform: [{ translateX: threadEdgeTranslateX }] }]} {...threadEdgeBackResponder.panHandlers}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
@@ -8229,7 +8257,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
           </View>
         </Modal>
-      </View>
+      </Animated.View>
       </ChatPhotoViewerContext.Provider>
     );
   }
