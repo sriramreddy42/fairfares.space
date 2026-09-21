@@ -190,6 +190,8 @@ const CHAT_MEDIA_MIN_HEIGHT = 160;
 const CHAT_MEDIA_MAX_HEIGHT = 430;
 const CHAT_MEDIA_FALLBACK_HEIGHT = Math.round(CHAT_MEDIA_WIDTH * 1.05);
 const CHAT_PREVIEW_SCREEN_WIDTH = Dimensions.get("window").width;
+const CHAT_EDGE_BACK_ZONE = 64;
+const CHAT_EDGE_BACK_DISTANCE = 36;
 const CHAT_PREVIEW_MEDIA_HEIGHT = Math.max(300, Math.min(560, Dimensions.get("window").height - (Platform.OS === "ios" ? 220 : 190)));
 const CHAT_COLLAGE_GAP = 3;
 const CHAT_COLLAGE_CELL = (CHAT_MEDIA_WIDTH - CHAT_COLLAGE_GAP) / 2;
@@ -7190,13 +7192,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
-      return horizontalSwipe && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
+      // Reserve the outer screen edge for navigation. A reply gesture begins
+      // on a message away from the edge, so the two actions never compete.
+      const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
+      return horizontalSwipe && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
-        && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
+      const horizontalSwipe = Math.abs(gesture.dx) > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
+        && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
       if (!horizontalSwipe) return;
       if (actionMessage) {
         setActionMessage(null);
@@ -7271,13 +7275,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
-      return horizontalSwipe && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
+      const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
+      return horizontalSwipe && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
-        && ((gesture.x0 <= 44 && gesture.dx > 0) || (gesture.x0 >= screenWidth - 44 && gesture.dx < 0));
+      const horizontalSwipe = Math.abs(gesture.dx) > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
+        && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
       if (horizontalSwipe) setMessageInfo(null);
     },
     onPanResponderTerminationRequest: () => true
