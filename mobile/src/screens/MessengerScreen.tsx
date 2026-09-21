@@ -1,6 +1,3 @@
-import { acknowledgeChatMessages } from "../api/client";
-import { AttachmentJob, enqueueAttachmentBatch, enqueueForwardBatch, readAttachmentOutbox, subscribeAttachmentOutbox, retryAttachmentJob, cancelAttachmentJob } from "../utils/chatAttachmentOutbox";
-import { removeChatMediaDraft } from "../utils/chatMediaDrafts";
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Contacts from "expo-contacts";
@@ -65,12 +62,12 @@ import {
   pollChatEvents,
   pendingEncryptedChatUploadSummary,
   reportChatMessage,
+  resumePendingEncryptedChatUploads,
   registerChatDeviceKey,
   reactToChatMessage,
   removeChatGroupMember,
   sendEncryptedChatMessage,
   sendDirectEncryptedChatAttachment,
-  discardQueuedEncryptedChatAttachment,
   submitUserRating,
   sendCommunityGuestMessage,
   sendChatRichMessage,
@@ -89,10 +86,9 @@ import { theme } from "../theme";
 import { shareChitthiGroup } from "../utils/listingShare";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityAnswer, CommunityPost, HousingPost, RidePost } from "../types";
 import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
-import { pickChatFiles } from "../utils/fileUpload";
+import { pickChatFile } from "../utils/fileUpload";
 import { contactDiscoveryHash, contactDiscoveryVariants, decryptAttachmentBase64, decryptEnvelope, DeviceIdentity, encryptAttachmentForDevices, encryptForDevices, getOrCreateDeviceIdentity } from "../utils/chatCrypto";
 import { createOutboxClientMessageId, EncryptedOutboxItem, enqueueEncryptedMessage, isRetryableChatNetworkError, readEncryptedOutbox, removeEncryptedOutboxItem, updateEncryptedOutboxItem } from "../utils/chatOutbox";
-import { subscribeMediaRecovery } from "../utils/chatMediaRecovery";
 import { awaitChatIdentityRecovery, recoveredChatIdentities } from "../utils/chatRecovery";
 import { NEARBY_RELAY_ENABLED_FOR_BUILD, useNearbyRelay } from "../providers/NearbyRelayProvider";
 import { AdaptiveGlassView } from "../components/AdaptiveGlassView";
@@ -102,7 +98,6 @@ import { FairFaresCrypto } from "../../modules/fairfares-crypto/src";
 import { logDevelopmentPerformance } from "../utils/performanceDiagnostics";
 
 type Props = {
-  isVisible?: boolean;
   data: BootstrapPayload | null;
   preferredSuggestionCity?: string;
   pendingPost: HousingPost | null;
@@ -137,7 +132,7 @@ type MediaSearchBucket = {
 type MessengerTab = "All" | "Unread" | "Groups" | "Communities" | "Contacts";
 
 const blankGroup = { name: "" };
-type PendingChatAttachment = { imagePrepared?: boolean; recoveryDraftId?: string; recoveryBatchId?: string; recoveryGroupIndex?: number; recoveryGroupCount?: number; kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; imageWidth?: number; imageHeight?: number; pickerAssetId?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver"; preparation?: Promise<Omit<PendingChatAttachment, "preparation" | "cancelPreparation">>; cancelPreparation?: () => void };
+type PendingChatAttachment = { kind: "IMAGE" | "VIDEO" | "FILE"; uri: string; blob?: Blob; name: string; mimeType: string; size: number; thumbnailBase64?: string; imageWidth?: number; imageHeight?: number; pickerAssetId?: string; ownedCacheFile?: boolean; videoQuality?: "original" | "data-saver"; preparation?: Promise<Omit<PendingChatAttachment, "preparation" | "cancelPreparation">>; cancelPreparation?: () => void };
 type ContactDiscoveryResult = {
   matches: Array<{ id: number; name: string; localName: string; photoUrl: string }>;
   invitations: Array<{ id: string; name: string; phone: string }>;
@@ -1741,6 +1736,69 @@ function CircularDownloadProgress({ progress }: { progress: number }) {
 const mediaProgressValues = new Map<number, number>();
 const mediaProgressListeners = new Map<number, Set<(progress: number) => void>>();
 
+type VideoSendWaiter = {
+  signal: AbortSignal;
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  abort: () => void;
+};
+
+let videoSendPipelineBusy = false;
+const videoSendPipelineWaiters: VideoSendWaiter[] = [];
+
+function videoSendCancelledError() {
+  const error = new Error("Video sending was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function releaseVideoSendPipeline() {
+  while (videoSendPipelineWaiters.length) {
+    const waiter = videoSendPipelineWaiters.shift()!;
+    waiter.signal.removeEventListener("abort", waiter.abort);
+    if (waiter.signal.aborted) {
+      waiter.reject(videoSendCancelledError());
+      continue;
+    }
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      releaseVideoSendPipeline();
+    });
+    return;
+  }
+  videoSendPipelineBusy = false;
+}
+
+function acquireVideoSendPipeline(signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject(videoSendCancelledError());
+  return new Promise<() => void>((resolve, reject) => {
+    if (!videoSendPipelineBusy) {
+      videoSendPipelineBusy = true;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        releaseVideoSendPipeline();
+      });
+      return;
+    }
+    const waiter: VideoSendWaiter = {
+      signal,
+      resolve,
+      reject,
+      abort: () => {
+        const index = videoSendPipelineWaiters.indexOf(waiter);
+        if (index >= 0) videoSendPipelineWaiters.splice(index, 1);
+        reject(videoSendCancelledError());
+      }
+    };
+    videoSendPipelineWaiters.push(waiter);
+    signal.addEventListener("abort", waiter.abort, { once: true });
+  });
+}
+
 function publishMediaProgress(messageId: number, progress: number | null) {
   if (progress === null) mediaProgressValues.delete(messageId);
   else mediaProgressValues.set(messageId, progress);
@@ -1997,7 +2055,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
   </View>;
 }
 
-export function MessengerScreen({ isVisible = true, data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
+export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -2047,13 +2105,20 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   const jumpToLatestVisibleRef = useRef(false);
   const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
+  const multipartResumeStateRef = useRef({ userId: 0, running: false, lastAttemptAt: 0 });
+  const attachmentCryptoAbortRef = useRef<AbortController | null>(null);
   // Background picker work is allowed to finish, but it must never mutate a
   // newer composer selection after the user removes or replaces the old one.
   const pendingMediaSelectionGenerationRef = useRef(0);
+  const activeAttachmentSendsRef = useRef(new Map<number, { controller: AbortController; conversationId: string }>());
   // A send owns its picker/cache sources until encryption and upload finish.
   // Closing the thread must not delete those files while the async send reads them.
   const activeAttachmentSourceUrisRef = useRef(new Map<string, number>());
+  const pendingMediaMessagesRef = useRef(new Map<string, ChatMessage[]>());
+  const activeMediaTransferCountRef = useRef(0);
+  const activeAttachmentSendKeysRef = useRef(new Set<string>());
   const activeTextSendKeysRef = useRef(new Set<string>());
+  const nextOptimisticAttachmentIdRef = useRef(-Date.now());
   const deviceRegistration = useRef<{ key: string; registeredAt: number } | null>(null);
   const deviceRegistrationPromise = useRef<Promise<void> | null>(null);
   const messengerRefreshVersion = useRef(0);
@@ -2107,14 +2172,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   const activeCommunityIdRef = useRef(activeConversation?.communityId || "");
   activeCommunityIdRef.current = activeConversation?.communityId || "";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [attachmentJobs, setAttachmentJobs] = useState<AttachmentJob[]>([]);
-  const [visibleReceiptIds, setVisibleReceiptIds] = useState<number[]>([]);
-  const receiptAcknowledgements = useRef(new Set<string>());
-  const receiptViewability = useRef({ itemVisiblePercentThreshold: 60, minimumViewTime: 500 }).current;
-  const receiptViewabilityChanged = useRef(({ viewableItems }: { viewableItems: Array<{ item: ThreadMessageItem }> }) => {
-    setVisibleReceiptIds(viewableItems.flatMap(({ item }) => item.kind === "message" ? [item.message.id, ...item.mediaGroup.map(message => message.id)] : []));
-  }).current;
-  const importingAttachmentsRef = useRef(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState(0);
   const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
@@ -2152,11 +2209,11 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   const [pollClosesInHours, setPollClosesInHours] = useState(24);
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
+  const [attachmentStatusCancelable, setAttachmentStatusCancelable] = useState(false);
   const [localMediaMessageIds, setLocalMediaMessageIds] = useState<number[]>([]);
   const [localVideoThumbnailUris, setLocalVideoThumbnailUris] = useState<Record<number, string>>({});
   const [downloadingMediaMessageIds, setDownloadingMediaMessageIds] = useState<number[]>([]);
   const downloadingMediaMessageIdsRef = useRef(new Set<number>());
-  const [savedUploadCount, setSavedUploadCount] = useState(0);
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingChatAttachment[]>([]);
   const [pendingPreviewIndex, setPendingPreviewIndex] = useState(0);
@@ -2218,6 +2275,16 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
       .catch(() => undefined);
   }
 
+  // Upload bubbles are local, ephemeral UI records (negative IDs). They must
+  // never survive an account/chat transition or Fast Refresh after their
+  // owning async operation has disappeared.
+  useEffect(() => {
+    setMessages((current) => current.filter((message) => {
+      if (!(message.id < 0 && message.metadata?.uploading)) return true;
+      const operation = activeAttachmentSendsRef.current.get(message.id);
+      return operation?.conversationId === activeConversationId;
+    }));
+  }, [currentUserId, activeConversationId]);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [privateReplyContext, setPrivateReplyContext] = useState<PrivateReplyContext | null>(null);
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
@@ -2265,19 +2332,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   const suggestionRequestId = useRef(0);
   const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const pendingChatContext = Boolean(pendingPost || pendingRide);
-  const outboxMessages = useMemo<ChatMessage[]>(() => attachmentJobs.filter(job => job.state !== "cancelled" && !(job.forward && job.state === "sent") && !messages.some(message => message.localClientMessageId === job.id || (job.message && message.id === job.message.id))).map(job => ({
-    ...(job.message || {}), id: job.message?.id || job.localId, localClientMessageId: job.id,
-    senderId: currentUserId, senderName: "You", mine: true, type: job.forward?.type || job.attachment.kind,
-    text: job.caption, attachmentUrl: job.message?.attachmentUrl || job.sourceUri,
-    metadata: { ...job.message?.metadata, kind: job.attachment.kind, fileName: job.attachment.name, mimeType: job.attachment.mimeType,
-      size: job.attachment.size, thumbnailDataUrl: job.attachment.thumbnailBase64 ? `data:image/jpeg;base64,${job.attachment.thumbnailBase64}` : undefined,
-      uploading: job.state !== "sent", outboxId: job.id, outboxState: job.state,
-      ...(job.state === "sent" && job.count > 1 ? { mediaGroupId: job.attachment.recoveryBatchId || job.batchId, mediaGroupIndex: job.index, mediaGroupCount: job.count } : {}) },
-    createdAt: job.message?.createdAt || new Date(job.createdAt + job.index).toISOString(),
-    deliveredAt: job.message?.deliveredAt || "", readAt: job.message?.readAt || "", editedAt: "", deletedAt: "", canEdit: false,
-    status: job.state === "sent" ? job.message?.status || "sent" : job.state === "failed" ? "failed" : "pending",
-  })), [attachmentJobs, messages, currentUserId]);
-  const visibleMessages = useMemo(() => collapseLocationUpdates(mergeChatMessages(messages, outboxMessages)), [messages, outboxMessages]);
+  const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const threadMessageItems = useMemo<ThreadMessageItem[]>(() => {
     const messageById = new Map<number, ChatMessage>();
     const mediaGroups = new Map<string, ChatMessage[]>();
@@ -2286,7 +2341,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     });
     visibleMessages.forEach((message) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-      if (!mediaGroupId || !["IMAGE", "VIDEO"].includes(message.type) || message.metadata?.uploading) return;
+      if (!mediaGroupId || message.type !== "IMAGE") return;
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
       const group = mediaGroups.get(mediaGroupKey) || [];
       group.push(message);
@@ -2300,8 +2355,8 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     visibleMessages.forEach((message, index) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
-      const mediaGroup = mediaGroupId && ["IMAGE", "VIDEO"].includes(message.type) ? mediaGroups.get(mediaGroupKey) || [] : [];
-      const imageGroupKey = ["IMAGE", "VIDEO"].includes(message.type) && mediaGroup.length > 1 ? mediaGroupKey : "";
+      const mediaGroup = mediaGroupId && message.type === "IMAGE" ? mediaGroups.get(mediaGroupKey) || [] : [];
+      const imageGroupKey = message.type === "IMAGE" && mediaGroup.length > 1 ? mediaGroupKey : "";
       const imageGroupAlreadyRendered = Boolean(imageGroupKey && renderedImageGroupIds.has(imageGroupKey));
       if (imageGroupKey && !imageGroupAlreadyRendered) renderedImageGroupIds.add(imageGroupKey);
       const showDateDivider = index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt);
@@ -2565,7 +2620,8 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   function replaceThreadMessages(conversationId: string, nextMessages: ChatMessage[]) {
     if (activeConversationIdRef.current && activeConversationIdRef.current !== conversationId) return;
     messagesConversationIdRef.current = conversationId;
-    setMessages(nextMessages);
+    const pending = pendingMediaMessagesRef.current.get(conversationId) || [];
+    setMessages(mergeChatMessages(nextMessages, pending));
   }
 
   function mergeThreadMessages(conversationId: string, incomingMessages: ChatMessage[], historyStartMessageId = 0) {
@@ -2576,10 +2632,30 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
       const visibleMessage = (message: ChatMessage) => message.id < 0 || message.id >= historyStartMessageId;
       const baseMessages = (sameConversation ? current : []).filter(visibleMessage);
       const visibleIncomingMessages = incomingMessages.filter(visibleMessage);
-      const merged = mergeChatMessages(baseMessages, visibleIncomingMessages);
+      const pending = pendingMediaMessagesRef.current.get(conversationId) || [];
+      const merged = mergeChatMessages(mergeChatMessages(baseMessages, visibleIncomingMessages), pending);
       messageCache.current.set(conversationId, merged);
       return merged;
     });
+  }
+
+  function upsertPendingMediaMessage(conversationId: string, pendingMessage: ChatMessage) {
+    const existing = pendingMediaMessagesRef.current.get(conversationId) || [];
+    pendingMediaMessagesRef.current.set(conversationId, [
+      ...existing.filter((message) => message.id !== pendingMessage.id),
+      pendingMessage,
+    ]);
+  }
+
+  function updatePendingMediaMessage(conversationId: string, messageId: number, update: (message: ChatMessage) => ChatMessage) {
+    const existing = pendingMediaMessagesRef.current.get(conversationId) || [];
+    pendingMediaMessagesRef.current.set(conversationId, existing.map((message) => message.id === messageId ? update(message) : message));
+  }
+
+  function removePendingMediaMessage(conversationId: string, messageId: number) {
+    const remaining = (pendingMediaMessagesRef.current.get(conversationId) || []).filter((message) => message.id !== messageId);
+    if (remaining.length) pendingMediaMessagesRef.current.set(conversationId, remaining);
+    else pendingMediaMessagesRef.current.delete(conversationId);
   }
 
   function releaseComposerAttachments(attachments: PendingChatAttachment[]) {
@@ -2587,8 +2663,37 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   }
 
   function cancelPendingMediaUpload(messageId: number) {
-    const job = attachmentJobs.find(item => item.localId === messageId);
-    if (job) void cancelAttachmentJob(job).catch(() => undefined);
+    const operation = activeAttachmentSendsRef.current.get(messageId);
+    if (!operation) {
+      logDevelopmentPerformance("media-cancel-missing-operation", { messageId }, true);
+      return;
+    }
+    const pendingMessage = (pendingMediaMessagesRef.current.get(operation.conversationId) || []).find((message) => message.id === messageId);
+    const batchCount = Number(pendingMessage?.metadata?.mediaGroupCount || 0);
+    if (batchCount > 1) {
+      // A multi-file send is currently one encrypted/upload transaction under
+      // one AbortController. Treat batch bubbles as progress-only so tapping or
+      // any stale cancel route cannot accidentally abort every selected file.
+      logDevelopmentPerformance("media-cancel-ignored-for-batch", {
+        conversationId: operation.conversationId,
+        messageId,
+        batchCount,
+      });
+      return;
+    }
+    // Cancellation is optimistic just like sending: acknowledge the tap
+    // immediately, then let the same AbortSignal unwind preparation, crypto,
+    // native URLSession tasks and the server multipart authorization.
+    removePendingMediaMessage(operation.conversationId, messageId);
+    if (activeConversationIdRef.current === operation.conversationId) {
+      setMessages((current) => current.filter((message) => message.id !== messageId));
+    }
+    publishMediaProgress(messageId, null);
+    logDevelopmentPerformance("media-cancel-requested", {
+      conversationId: operation.conversationId,
+      messageId,
+    });
+    operation.controller.abort();
   }
 
   function clearThreadMessages() {
@@ -2643,64 +2748,68 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   }, [inThread]);
 
   useEffect(() => {
-    let disposed = false;
-    let generation = 0;
-    setAttachmentJobs([]);
-    const refresh = async () => {
-      const ticket = ++generation;
-      const jobs = await readAttachmentOutbox(currentUserId, activeConversationId);
-      if (!disposed && ticket === generation) setAttachmentJobs(activeConversationId ? jobs : []);
-    };
-    const unsubscribe = subscribeAttachmentOutbox(() => { void refresh().catch(() => undefined); });
-    void refresh().catch(() => undefined);
-    return () => { disposed = true; unsubscribe(); };
-  }, [currentUserId, activeConversationId]);
-
-  useEffect(() => {
-    if (!currentUserId || !activeConversationId) return;
-    let disposed = false;
-    let running = false;
-    const acknowledge = async () => {
-      if (disposed || running || AppState.currentState !== "active") return;
-      running = true;
+    if (!currentUserId) return;
+    let cancelled = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const interactionTask = InteractionManager.runAfterInteractions(() => {
+      idleTimer = setTimeout(() => {
+        if (!cancelled && AppState.currentState === "active") void resume();
+      }, 500);
+    });
+    const resume = async () => {
+      const state = multipartResumeStateRef.current;
+      const now = Date.now();
+      if (state.running || (state.userId === currentUserId && now - state.lastAttemptAt < 5_000)) return;
+      state.userId = currentUserId;
+      state.running = true;
+      state.lastAttemptAt = now;
       try {
-        const received = messages.filter(message => message.id > 0 && !message.mine && !message.type.startsWith("ENCRYPTED"));
-        for (const state of ["delivered", "read"] as const) {
-          if (state === "read" && !isVisible) continue;
-          const ids = received.filter(message => (state !== "read" || visibleReceiptIds.includes(message.id))
-            && !receiptAcknowledgements.current.has(`${currentUserId}:${state}:${message.id}`)).map(message => message.id);
-          for (let offset = 0; offset < ids.length && !disposed; offset += 100) {
-            if (AppState.currentState !== "active" || messengerUserIdRef.current !== currentUserId
-              || activeConversationIdRef.current !== activeConversationId) return;
-            const batch = ids.slice(offset, offset + 100);
-            await acknowledgeChatMessages(activeConversationId, batch, state);
-            batch.forEach(id => receiptAcknowledgements.current.add(`${currentUserId}:${state}:${id}`));
-            if (!disposed && state === "read") void refreshMessenger({ showLoader: false, showError: false });
-          }
+        const summary = await pendingEncryptedChatUploadSummary(currentUserId);
+        if (cancelled) return;
+        logDevelopmentPerformance("multipart-recovery-start", {
+          pending: summary.count,
+          valid: summary.validCount,
+          uploaded: summary.uploadedCount,
+          encryptedMb: Number((summary.encryptedBytes / 1_000_000).toFixed(1)),
+          nativeStaging: FairFaresCrypto.multipartStagingAvailable,
+        }, summary.validCount > 0);
+        if (!summary.validCount) return;
+        if (Platform.OS === "ios" && !FairFaresCrypto.multipartStagingAvailable) {
+          logDevelopmentPerformance("multipart-recovery-deferred", {
+            reason: "native-staging-unavailable",
+            pending: summary.validCount,
+          }, true);
+          return;
         }
-      } catch { /* Retry explicit acknowledgements after reconnect. */ }
-      finally { running = false; }
+        const startedAt = Date.now();
+        const resumed = await resumePendingEncryptedChatUploads(currentUserId);
+        logDevelopmentPerformance("multipart-recovery-complete", {
+          durationMs: Date.now() - startedAt,
+          finalized: resumed.length,
+        }, Date.now() - startedAt >= 5000);
+        if (!cancelled && resumed.length) void refreshMessenger({ showLoader: false, showError: false });
+      } catch {
+        // Offline/background transitions are expected. The encrypted file and
+        // durable multipart state remain available for the next foreground.
+      } finally {
+        state.running = false;
+      }
     };
-    void acknowledge();
-    const timer = setInterval(() => { void acknowledge(); }, 5000);
-    return () => { disposed = true; clearInterval(timer); };
-  }, [currentUserId, activeConversationId, messages, visibleReceiptIds, isVisible]);
-
-  useEffect(() => subscribeMediaRecovery((owner, resumed) => {
-    if (owner !== messengerUserIdRef.current) return;
-    void (async () => {
-          const recoveredIds = new Set(resumed.map((message) => message.localClientMessageId));
-          const conversationId = activeConversationIdRef.current;
-          const recoveredHere = resumed.filter((message) => message.recoveredConversationId === conversationId);
-          if (conversationId && recoveredHere.length) {
-            const decrypted = await decryptMessages(conversationId, recoveredHere, undefined, { updateEncryptionStatus: false });
-            if (messengerUserIdRef.current === owner && activeConversationIdRef.current === conversationId) {
-              setMessages((current) => mergeThreadHistoryMessages(current.filter((message) => !message.localClientMessageId || !recoveredIds.has(message.localClientMessageId)), decrypted));
-            }
-          }
-          void refreshMessenger({ showLoader: false, showError: false });
-    })().catch(() => undefined);
-  }), [currentUserId]);
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active" && !cancelled) {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (!cancelled) void resume();
+        }, 500);
+      }
+    });
+    return () => {
+      cancelled = true;
+      interactionTask.cancel();
+      if (idleTimer) clearTimeout(idleTimer);
+      subscription.remove();
+    };
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!activeConversationId || messagesConversationIdRef.current !== activeConversationId) return;
@@ -2824,7 +2933,14 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
       loadingMoreConversationsRequestRef.current += 1;
       loadingMoreConversationsRef.current = false;
       setLoadingMoreConversations(false);
+      attachmentCryptoAbortRef.current?.abort();
+      attachmentCryptoAbortRef.current = null;
+      setAttachmentStatusCancelable(false);
+      activeAttachmentSendsRef.current.forEach(({ controller }) => controller.abort());
+      activeAttachmentSendsRef.current.clear();
       activeAttachmentSourceUrisRef.current.clear();
+      pendingMediaMessagesRef.current.clear();
+      activeAttachmentSendKeysRef.current.clear();
       messageCache.current.clear();
       attachmentMaterializationJobs.current.clear();
       downloadingMediaMessageIdsRef.current.clear();
@@ -3103,20 +3219,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     };
   }, [activeConversationId, currentUserId, encryptionReady]);
 
-  useEffect(() => {
-    setSavedUploadCount(0);
-    if (!currentUserId || !activeConversationId) return;
-    let cancelled = false;
-    const refresh = async () => {
-      const summary = await pendingEncryptedChatUploadSummary(currentUserId, activeConversationId).catch(() => null);
-      if (!cancelled && summary) setSavedUploadCount(summary.count);
-    };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 5_000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [currentUserId, activeConversationId, attachmentSending]);
-
-
   async function getEncryptionKeysForSend(conversationId: string) {
     const userId = Number(data?.user?.id || 0);
     try {
@@ -3145,29 +3247,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
       if (!cached) throw error;
       return JSON.parse(cached) as Awaited<ReturnType<typeof getChatDeviceKeys>>;
     }
-  }
-
-  async function refreshAttachmentEnvelopes(conversationId: string, envelopes: Array<Record<string, unknown>>) {
-    const operationUserId = currentUserId;
-    const identity = await ensureChatDeviceIdentity();
-    const identities = recoveredChatIdentities(operationUserId, identity);
-    let descriptor = "";
-    for (const candidate of identities) {
-      for (const envelope of envelopes) {
-        if (envelope.recipientDeviceId !== candidate.deviceId) continue;
-        try {
-          descriptor = decryptEnvelope(envelope as Parameters<typeof decryptEnvelope>[0], candidate);
-          if (descriptor) break;
-        } catch { /* Try another locally recovered identity. */ }
-      }
-      if (descriptor) break;
-    }
-    if (!descriptor) throw new Error("This device cannot recover the saved attachment key.");
-    const keyPayload = await getChatDeviceKeys(conversationId);
-    if (messengerUserIdRef.current !== operationUserId) throw new Error("The account changed while preparing the attachment.");
-    if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
-    const kind = JSON.parse(descriptor).kind;
-    return encryptForDevices(descriptor, identity, keyPayload.keys, kind === "IMAGE" ? "Photo" : kind === "VIDEO" ? "Video" : "File");
   }
 
   function queuedMessage(item: EncryptedOutboxItem, identity: DeviceIdentity): ChatMessage {
@@ -4338,35 +4417,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
 
   openConversationRef.current = openConversation;
 
-  async function enqueueNativeAttachments(attachments: PendingChatAttachment[], caption: string, conversationId: string, owner: number) {
-    if (Platform.OS === "web") return false;
-    if (importingAttachmentsRef.current) return true;
-    importingAttachmentsRef.current = true;
-    const sourceUris = [...new Set(attachments.map(item => item.uri))];
-    sourceUris.forEach(uri => activeAttachmentSourceUrisRef.current.set(uri, 1));
-    onMediaTransferActiveChange?.(true);
-    setAttachmentSending(true);
-    setAttachmentStatus("Saving attachments…");
-    try {
-      const jobs = await enqueueAttachmentBatch(owner, conversationId, attachments, caption);
-      // Each source now either has a durable copy or an explicit failed job.
-      // Do not clear a different conversation/account's composer after awaits.
-      if (messengerUserIdRef.current === owner && activeConversationIdRef.current === conversationId) {
-        pendingMediaSelectionGenerationRef.current += 1;
-        setPendingImages([]); setPendingAttachment(null); setMessageText(""); setPendingPhotoPreviewOpen(false);
-      }
-      releasePendingAttachments(attachments.filter((_, index) => jobs[index].state === "queued"));
-    } catch (error) {
-      Alert.alert("Could not save attachments", error instanceof Error ? error.message : "Please try again.");
-    } finally {
-      sourceUris.forEach(uri => activeAttachmentSourceUrisRef.current.delete(uri));
-      onMediaTransferActiveChange?.(false);
-      importingAttachmentsRef.current = false;
-      setAttachmentSending(false); setAttachmentStatus("");
-    }
-    return true;
-  }
-
   async function sendMessage() {
     const cleanMessage = messageText.trim();
     const mentionIdsSnapshot = mentionedUserIds.filter((userId) => {
@@ -4397,6 +4447,9 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
         throw new Error("Attachment sending was cancelled because the account changed.");
       }
     };
+    // The established composer keeps a document in its own slot and media in
+    // the review tray. Send both slots together so a file selected with photos
+    // or videos is never silently dropped.
     let attachments = [...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])];
     if (attachments.length) {
       // A just-selected image can still be compressing in the background. Its
@@ -4419,66 +4472,554 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
         Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
         return;
       }
-      if (await enqueueNativeAttachments(attachments, cleanMessage, operationConversationId, operationUserId)) return;
-      // Browser transfers stay sequential to bound base64/encryption memory.
-      // Native sends are owned entirely by the persistent outbox above.
+      const selectedVideo = attachments.find((attachment) => attachment.kind === "VIDEO") || null;
+      const attachmentOperationStartedAt = Date.now();
+      if (selectedVideo) logDevelopmentPerformance("media-send-start", {
+        kind: "VIDEO",
+        sizeMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
+        quality: selectedVideo.videoQuality || "original",
+      });
+      const shouldPrepareVideoAttachment = (attachment: PendingChatAttachment) =>
+        attachment.kind === "VIDEO"
+        && Platform.OS === "ios"
+        && (attachment.videoQuality === "data-saver"
+          || (!attachment.ownedCacheFile && FairFaresCrypto.videoPreparationAvailable && attachment.size >= CHAT_HD_VIDEO_PREPARE_MIN_BYTES));
+      const hasVideoNeedingPreparation = attachments.some(shouldPrepareVideoAttachment);
+      if (hasVideoNeedingPreparation &&
+          ((!FairFaresCrypto.videoPreparationAvailable && !FairFaresCrypto.videoOptimizationAvailable) || !FileSystem.cacheDirectory)) {
+        Alert.alert("Development build required", "Video preparation needs the latest FairFares iOS build. Install the newest build or choose HD in the current build.");
+        return;
+      }
+      const attachmentSendKey = attachments.map((attachment) => `${attachment.kind}:${attachment.uri}`).join("|");
+      if (activeAttachmentSendKeysRef.current.has(attachmentSendKey)) return;
+      activeAttachmentSendKeysRef.current.add(attachmentSendKey);
+      const sourceUris = [...new Set(attachments.map((attachment) => attachment.uri))];
+      sourceUris.forEach((uri) => activeAttachmentSourceUrisRef.current.set(uri, (activeAttachmentSourceUrisRef.current.get(uri) || 0) + 1));
+      activeMediaTransferCountRef.current += 1;
+      if (activeMediaTransferCountRef.current === 1) {
+        logDevelopmentPerformance("media-navigation-retention-start", {
+          conversationId: operationConversationId,
+          kind: attachments[0]?.kind || "unknown",
+        });
+        onMediaTransferActiveChange?.(true);
+      }
+      let mediaTransferFinished = false;
+      const finishMediaTransfer = () => {
+        if (mediaTransferFinished) return;
+        mediaTransferFinished = true;
+        sourceUris.forEach((uri) => {
+          const remaining = (activeAttachmentSourceUrisRef.current.get(uri) || 0) - 1;
+          if (remaining > 0) activeAttachmentSourceUrisRef.current.set(uri, remaining);
+          else activeAttachmentSourceUrisRef.current.delete(uri);
+        });
+        activeMediaTransferCountRef.current = Math.max(0, activeMediaTransferCountRef.current - 1);
+        if (activeMediaTransferCountRef.current === 0) {
+          logDevelopmentPerformance("media-navigation-retention-end", {
+            conversationId: operationConversationId,
+          });
+          onMediaTransferActiveChange?.(false);
+        }
+      };
       setAttachmentSending(true);
-      const failed: PendingChatAttachment[] = [];
-      const batchId = attachments[0].recoveryBatchId || createOutboxClientMessageId("media");
-      attachments = attachments.map((attachment, index) => ({ ...attachment,
-        recoveryDraftId: attachment.recoveryDraftId || `${batchId}-${index}`,
-        recoveryBatchId: batchId, recoveryGroupIndex: attachment.recoveryGroupIndex ?? index,
-        recoveryGroupCount: attachment.recoveryGroupCount || attachments.length }));
-      setPendingImages([]); setPendingAttachment(null); setMessageText(""); setPendingPhotoPreviewOpen(false);
+      // Image preparation is not abortable at the native manipulator layer.
+      // Do not expose a cancel action until the actual encrypted transfer has
+      // begun and its AbortController can honor it.
+      setAttachmentStatusCancelable(false);
+      const mediaSendAbort = new AbortController();
+      attachmentCryptoAbortRef.current = mediaSendAbort;
+      const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
+      const optimisticAttachmentIds = attachments.map(() => nextOptimisticAttachmentIdRef.current--);
+      const removeOptimisticMessages = (messageIds = optimisticAttachmentIds) => {
+        messageIds.forEach((messageId) => {
+          removePendingMediaMessage(operationConversationId, messageId);
+          publishMediaProgress(messageId, null);
+          activeAttachmentSendsRef.current.delete(messageId);
+        });
+        if (activeConversationIdRef.current === operationConversationId) {
+          setMessages((current) => current.filter((message) => !messageIds.includes(message.id)));
+        }
+      };
+      let optimisticThumbnailPromise: Promise<string> | null = null;
+      let releaseVideoPipeline: (() => void) | null = null;
+      const optimisticCreatedAt = Date.now();
+      const optimisticMessages = attachments.map((attachment, index): ChatMessage => {
+        const optimisticAttachmentId = optimisticAttachmentIds[index];
+        const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+        return {
+          id: optimisticAttachmentId,
+          senderId: Number(data?.user?.id || 0),
+          senderName: data?.user?.name || "You",
+          mine: true,
+          type: attachment.kind,
+          text: index === 0 ? cleanMessage : "",
+          attachmentUrl: attachment.uri,
+          metadata: {
+            encrypted: true, uploading: true, kind: attachment.kind,
+            fileName: attachment.name, mimeType: attachment.mimeType,
+            size: attachment.size,
+            imageWidth: attachment.imageWidth,
+            imageHeight: attachment.imageHeight,
+            decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+            thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+            ...mediaMetadata,
+          },
+          createdAt: new Date(optimisticCreatedAt + index).toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
+          canEdit: false, status: "pending",
+        };
+      });
+      optimisticMessages.forEach((message) => {
+        upsertPendingMediaMessage(operationConversationId, message);
+        publishMediaProgress(message.id, 0);
+        activeAttachmentSendsRef.current.set(message.id, { controller: mediaSendAbort, conversationId: operationConversationId });
+      });
+      messagesConversationIdRef.current = operationConversationId;
+      setMessages((current) => mergeChatMessages(current.filter((message) => !optimisticAttachmentIds.includes(message.id)), optimisticMessages));
+      // Transfer visual ownership only after the optimistic bubbles are queued.
+      // Closing/clearing the preview first caused a visible gap where selected
+      // media disappeared before the chat showed the outgoing bubbles.
+      setPendingAttachment(null);
+      setPendingImages([]);
+      setPendingPhotoPreviewOpen(false);
+      const selectedVideoIndex = selectedVideo ? attachments.findIndex((attachment) => attachment === selectedVideo) : -1;
+      const selectedVideoOptimisticId = selectedVideoIndex >= 0 ? optimisticAttachmentIds[selectedVideoIndex] : 0;
+      if (selectedVideo && selectedVideoOptimisticId && !selectedVideo.thumbnailBase64) {
+          optimisticThumbnailPromise = selectedVideo.pickerAssetId
+            ? FairFaresCrypto.generatePhotoLibraryVideoThumbnail(selectedVideo.pickerAssetId).catch(() => createLightweightVideoThumbnail(selectedVideo.uri))
+            : createLightweightVideoThumbnail(selectedVideo.uri);
+          void optimisticThumbnailPromise.then((thumbnailBase64) => {
+            if (!thumbnailBase64) return;
+            updatePendingMediaMessage(operationConversationId, selectedVideoOptimisticId, (message) => ({
+              ...message,
+              metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` },
+            }));
+            setMessages((current) => current.map((message) => message.id === selectedVideoOptimisticId
+              ? { ...message, metadata: { ...message.metadata, thumbnailDataUrl: `data:image/jpeg;base64,${thumbnailBase64}` } }
+              : message));
+          }).catch(() => undefined);
+      }
+      setMessageText("");
+      scrollThreadToLatest(false);
+      const pendingImagePreparation = attachments.some((attachment) => attachment.kind === "IMAGE" && attachment.preparation);
+      if (pendingImagePreparation) {
+        setAttachmentStatus("Preparing selected media…");
+        try {
+          const preparedAttachments = await Promise.all(attachments.map(async (attachment) => {
+            if (!attachment.preparation) return attachment;
+            const prepared = await attachment.preparation;
+            return { ...prepared, videoQuality: attachment.videoQuality };
+          }));
+          ensureSendContext();
+          attachments = preparedAttachments;
+          attachments.forEach((attachment, index) => {
+            const optimisticAttachmentId = optimisticAttachmentIds[index];
+            updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+              ...message,
+              attachmentUrl: attachment.uri,
+              metadata: {
+                ...message.metadata,
+                fileName: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                imageWidth: attachment.imageWidth,
+                imageHeight: attachment.imageHeight,
+                decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+                thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              }
+            }));
+          });
+          setMessages((current) => current.map((message) => {
+            const index = optimisticAttachmentIds.indexOf(message.id);
+            if (index < 0) return message;
+            const attachment = attachments[index];
+            return {
+              ...message,
+              attachmentUrl: attachment.uri,
+              metadata: {
+                ...message.metadata,
+                fileName: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                imageWidth: attachment.imageWidth,
+                imageHeight: attachment.imageHeight,
+                decryptedDataUrl: attachment.kind === "IMAGE" ? attachment.uri : undefined,
+                thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              }
+            };
+          }));
+          setAttachmentStatus("");
+        } catch (error) {
+          removeOptimisticMessages();
+          if (activeConversationIdRef.current === operationConversationId) {
+            setPendingImages(attachments);
+            setPendingAttachment(null);
+            setPendingPhotoPreviewOpen(true);
+            setMessageText(cleanMessage);
+            Alert.alert("Photo preparation failed", error instanceof Error ? error.message : "Could not prepare the selected photo.");
+          } else releasePendingAttachments(attachments);
+          setAttachmentStatus("");
+          setAttachmentSending(false);
+          setAttachmentStatusCancelable(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          finishMediaTransfer();
+          return;
+        }
+      }
+      if (selectedVideo) {
+        try {
+          // Keep the UI fully concurrent while bounding expensive native video
+          // preparation/encryption/upload to one pipeline. Every selection has
+          // its own bubble and AbortController; cancelling one never touches a
+          // different queued or active video.
+          releaseVideoPipeline = await acquireVideoSendPipeline(mediaSendAbort.signal);
+        } catch {
+          removeOptimisticMessages();
+          releasePendingAttachments(attachments);
+          setAttachmentSending(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          finishMediaTransfer();
+          return;
+        }
+      }
+      if (attachments.length === 1 && selectedVideo && shouldPrepareVideoAttachment(selectedVideo)) {
+        setAttachmentStatus("");
+        const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+        try {
+          const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+          if (Number.isFinite(freeBytes) && freeBytes < selectedVideo.size + 32 * 1024 * 1024) {
+            throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
+          }
+          const preparationStartedAt = Date.now();
+          const profile = selectedVideo.videoQuality === "data-saver" ? "data-saver" : "hd";
+            const optimized = FairFaresCrypto.videoPreparationAvailable
+            ? await FairFaresCrypto.prepareVideo(selectedVideo.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", selectedVideoOptimisticId, 0, 0.35), mediaSendAbort.signal)
+            : await FairFaresCrypto.optimizeVideo(selectedVideo.uri, optimizedUri, attachmentProgressReporter("Preparing video…", selectedVideoOptimisticId, 0, 0.35), mediaSendAbort.signal);
+          ensureSendContext();
+          logDevelopmentPerformance("media-prepare-complete", {
+            durationMs: Date.now() - preparationStartedAt,
+            inputMb: Number((selectedVideo.size / 1_000_000).toFixed(1)),
+            outputMb: Number((optimized.outputSize / 1_000_000).toFixed(1)),
+          });
+          if (optimized.outputSize > 0) {
+            if (optimized.outputSize > effectiveAttachmentLimitBytes) {
+              throw new Error(`The prepared video exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
+            }
+            const preparedThumbnail = await createLightweightVideoThumbnail(optimizedUri).catch(() => "");
+            const thumbnailBase64 = preparedThumbnail || selectedVideo.thumbnailBase64 || await optimisticThumbnailPromise?.catch(() => "") || "";
+            const preparedVideo: PendingChatAttachment = {
+              ...selectedVideo,
+              uri: optimizedUri,
+              name: selectedVideo.name.replace(/\.[^.]+$/, "") + ".mp4",
+              mimeType: optimized.mimeType || "video/mp4",
+              size: optimized.outputSize,
+              thumbnailBase64,
+              ownedCacheFile: true,
+              // Keep the existing persisted/UI value for backward-compatible
+              // cached drafts; "original" is presented to users as HD.
+              videoQuality: profile === "hd" ? "original" : "data-saver"
+            };
+            releasePendingAttachments([selectedVideo]);
+            attachments = attachments.map((attachment) => attachment.uri === selectedVideo.uri ? preparedVideo : attachment);
+            updatePendingMediaMessage(operationConversationId, selectedVideoOptimisticId, (message) => ({
+              ...message,
+              attachmentUrl: preparedVideo.uri,
+              metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
+            }));
+            setMessages((current) => current.map((message) => message.id === selectedVideoOptimisticId ? {
+              ...message,
+              attachmentUrl: preparedVideo.uri,
+              metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl }
+            } : message));
+          } else {
+            await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+            const originalVideo = { ...selectedVideo, videoQuality: "original" as const };
+            attachments = attachments.map((attachment) => attachment.uri === selectedVideo.uri ? originalVideo : attachment);
+          }
+        } catch (error) {
+          await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+          removeOptimisticMessages();
+          setAttachmentStatus("");
+          const preparationWasCancelled = mediaSendAbort.signal.aborted || (error instanceof Error && error.name === "AbortError");
+          const preparationConversationStillActive = activeConversationIdRef.current === operationConversationId;
+          if (!preparationWasCancelled && preparationConversationStillActive) {
+            setPendingImages(attachments);
+            setPendingAttachment(null);
+            Alert.alert("Video preparation failed", error instanceof Error ? error.message : "Could not optimize this video.");
+          } else {
+            releasePendingAttachments(attachments);
+          }
+          setAttachmentSending(false);
+          if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+          activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+          releaseVideoPipeline?.();
+          releaseVideoPipeline = null;
+          finishMediaTransfer();
+          return;
+        }
+      }
+      // A batch uses one encrypted upload transaction. Its individual preview
+      // cards are intentionally progress-only, so never expose a global cancel
+      // affordance that would discard every selected item.
+      setAttachmentStatusCancelable(attachments.length === 1);
+      setAttachmentStatus(attachments.length > 1 ? `Sending ${attachments.length} items…` : attachments[0].kind === "IMAGE" ? "Sending photo…" : attachments[0].kind === "VIDEO" ? "" : "Sending file…");
+      let completedAttachmentCount = 0;
       try {
-        const identity = await ensureChatDeviceIdentity();
-        const keys = await getEncryptionKeysForSend(operationConversationId);
+        await allowBusyUiToPaint();
         ensureSendContext();
-        if (!chatKeyPayloadCanSend(keys)) throw new Error(userSafeEncryptionStatus(keys.warning) || pendingEncryptionStatusText);
-        for (const selected of attachments) {
-          let attachment = selected;
+        const identity = await ensureChatDeviceIdentity();
+        const keyPayload = await getEncryptionKeysForSend(activeConversationId);
+        ensureSendContext();
+        if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || pendingEncryptionStatusText);
+        setEncryptionReady(Boolean(keyPayload.ready));
+        const sentMessages: ChatMessage[] = [];
+        for (let index = 0; index < attachments.length; index += 1) {
+          let attachment = attachments[index];
+          const optimisticAttachmentId = optimisticAttachmentIds[index];
+          const mediaMetadata = mediaGroupId ? { mediaGroupId, mediaGroupIndex: index, mediaGroupCount: attachments.length } : {};
+          if (attachments.length > 1 && shouldPrepareVideoAttachment(attachment)) {
+            const optimizedUri = `${FileSystem.cacheDirectory}chitthi-prepared/video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+            try {
+              const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+              if (Number.isFinite(freeBytes) && freeBytes < attachment.size + 32 * 1024 * 1024) {
+                throw new Error("Not enough free storage to optimize this video safely. Choose HD quality or free some space.");
+              }
+              const profile = attachment.videoQuality === "data-saver" ? "data-saver" : "hd";
+              const optimized = FairFaresCrypto.videoPreparationAvailable
+                ? await FairFaresCrypto.prepareVideo(attachment.uri, optimizedUri, profile, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal)
+                : await FairFaresCrypto.optimizeVideo(attachment.uri, optimizedUri, attachmentProgressReporter("Preparing video…", optimisticAttachmentId, 0, 0.35), mediaSendAbort.signal);
+              ensureSendContext();
+              if (optimized.outputSize > 0) {
+                if (optimized.outputSize > effectiveAttachmentLimitBytes) {
+                  throw new Error(`The prepared video exceeds your current ${effectiveAttachmentLimitMb} MB Chitthi upload limit.`);
+                }
+                const preparedThumbnail = await createLightweightVideoThumbnail(optimizedUri).catch(() => "");
+                const preparedVideo: PendingChatAttachment = {
+                  ...attachment,
+                  uri: optimizedUri,
+                  name: attachment.name.replace(/\.[^.]+$/, "") + ".mp4",
+                  mimeType: optimized.mimeType || "video/mp4",
+                  size: optimized.outputSize,
+                  thumbnailBase64: preparedThumbnail || attachment.thumbnailBase64,
+                  ownedCacheFile: true,
+                  videoQuality: profile === "hd" ? "original" : "data-saver",
+                };
+                releasePendingAttachments([attachment]);
+                attachments[index] = preparedVideo;
+                attachment = preparedVideo;
+                updatePendingMediaMessage(operationConversationId, optimisticAttachmentId, (message) => ({
+                  ...message,
+                  attachmentUrl: preparedVideo.uri,
+                  metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl },
+                }));
+                setMessages((current) => current.map((message) => message.id === optimisticAttachmentId ? {
+                  ...message,
+                  attachmentUrl: preparedVideo.uri,
+                  metadata: { ...message.metadata, fileName: preparedVideo.name, mimeType: preparedVideo.mimeType, size: preparedVideo.size, thumbnailDataUrl: preparedVideo.thumbnailBase64 ? `data:image/jpeg;base64,${preparedVideo.thumbnailBase64}` : message.metadata?.thumbnailDataUrl },
+                } : message));
+              } else {
+                await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+                attachment = { ...attachment, videoQuality: "original" };
+                attachments[index] = attachment;
+              }
+            } catch (error) {
+              await FileSystem.deleteAsync(optimizedUri, { idempotent: true }).catch(() => undefined);
+              throw error;
+            }
+          }
+          // Video previews use a zero-decoding local placeholder. Native frame
+          // extraction belongs in a background queue in a custom app build,
+          // never in this send-critical JavaScript path.
+          const encryptedMediaMetadata = {
+            ...mediaMetadata,
+            size: attachment.size,
+            ...(attachment.kind === "IMAGE" && attachment.imageWidth && attachment.imageHeight ? { imageWidth: attachment.imageWidth, imageHeight: attachment.imageHeight } : {}),
+            ...(attachment.thumbnailBase64 ? { thumbnailBase64: attachment.thumbnailBase64 } : {})
+          };
+          const caption = index === 0 ? cleanMessage : "";
+          let fileBase64 = "";
+          let encryptedTemporaryUri = "";
+          const encryptionStartedAt = Date.now();
+          const encrypted = Platform.OS === "web"
+            ? (() => undefined)()
+            : await encryptAttachmentFileForDevices(
+                attachment.uri,
+                { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata },
+                identity,
+                keyPayload.keys,
+                attachmentProgressReporter(`Encrypting ${attachment.kind === "VIDEO" ? "video" : attachment.kind === "IMAGE" ? "photo" : "file"}…`, optimisticAttachmentId, attachment.kind === "VIDEO" && attachment.ownedCacheFile ? 0.35 : 0, 0.62),
+                cryptoThrottleForSize(attachment.size),
+                mediaSendAbort.signal
+              );
+          if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-encryption-complete", {
+            durationMs: Date.now() - encryptionStartedAt,
+            sizeMb: Number((attachment.size / 1_000_000).toFixed(1)),
+          });
+          if (Platform.OS === "web") {
+            fileBase64 = await new Promise<string>(async (resolve, reject) => {
+                try {
+                  let blob = attachment.blob;
+                  if (!blob) blob = await fetch(attachment.uri).then((item) => item.blob());
+                  const reader = new FileReader();
+                  reader.onerror = () => reject(new Error("Could not read this attachment."));
+                  reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+                  reader.readAsDataURL(blob as Blob);
+                } catch (error) { reject(error); }
+              });
+          }
+          const encryptedPayload = encrypted || encryptAttachmentForDevices(fileBase64, { fileName: attachment.name, mimeType: attachment.mimeType, caption, kind: attachment.kind, ...encryptedMediaMetadata }, identity, keyPayload.keys);
+          ensureSendContext();
+          encryptedTemporaryUri = "encryptedUri" in encryptedPayload ? String(encryptedPayload.encryptedUri || "") : "";
+          let response;
+          let encryptedUploadFinalized = false;
           try {
-            if (selected.preparation) {
-              const prepared = await selected.preparation;
-              attachment = { ...selected, ...prepared, preparation: undefined, cancelPreparation: undefined };
-            }
-            ensureSendContext();
-            setAttachmentStatus(`Sending ${attachment.name}…`);
-            const blob = attachment.blob || await fetch(attachment.uri).then(response => response.blob());
-            if (!blob) throw new Error("Could not read this file.");
-            const base64 = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onerror = () => reject(new Error("Could not read this file."));
-              reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-              reader.readAsDataURL(blob);
+            // Video upload progress is already visible inside the optimistic
+            // message bubble. Avoid a second floating status label below the
+            // preview; retain it for photos and files that lack that treatment.
+            setAttachmentStatus(attachment.kind === "VIDEO" ? "" : `Uploading ${attachment.kind === "IMAGE" ? "photo" : "file"} securely…`);
+            const uploadStartedAt = Date.now();
+            response = await sendDirectEncryptedChatAttachment(
+              operationUserId,
+              activeConversationId,
+              encryptedPayload,
+              attachment.mimeType,
+              index + 1 < attachments.length,
+              mediaSendAbort.signal,
+              (progress) => publishMediaProgress(optimisticAttachmentId, 0.62 + progress * 0.36)
+            );
+            if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-upload-complete", {
+              durationMs: Date.now() - uploadStartedAt,
+              totalDurationMs: Date.now() - attachmentOperationStartedAt,
+              sizeMb: Number((attachment.size / 1_000_000).toFixed(1)),
             });
-            ensureSendContext();
-            const caption = attachment.recoveryGroupIndex === 0 ? cleanMessage : "";
-            const group = (attachment.recoveryGroupCount || 0) > 1 ? { mediaGroupId: batchId, mediaGroupIndex: attachment.recoveryGroupIndex, mediaGroupCount: attachment.recoveryGroupCount } : {};
-            const encrypted = encryptAttachmentForDevices(base64, { kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType,
-              caption, size: attachment.size, thumbnailBase64: attachment.thumbnailBase64, ...group }, identity, keys.keys);
-            const response = await sendDirectEncryptedChatAttachment(operationUserId, operationConversationId, encrypted, attachment.mimeType, false, undefined, undefined, refreshAttachmentEnvelopes, attachment.recoveryDraftId);
-            if (messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId) {
-              setMessages(current => mergeThreadHistoryMessages(current, [{ ...response.message, type: attachment.kind, text: caption,
-                metadata: { ...response.message.metadata, encrypted: true, kind: attachment.kind, fileName: attachment.name, mimeType: attachment.mimeType,
-                  decryptedDataUrl: `data:${attachment.mimeType};base64,${base64}`, ...group } }]));
+            encryptedUploadFinalized = true;
+          } finally {
+            if (encryptedTemporaryUri && encryptedUploadFinalized) deleteChunkedTemporaryFile(encryptedTemporaryUri);
+          }
+          ensureSendContext();
+          const acceptedMessage: ChatMessage = {
+            ...response.message,
+            type: attachment.kind,
+            text: caption,
+            metadata: {
+              ...response.message.metadata,
+              encrypted: true,
+              kind: attachment.kind,
+              fileName: attachment.name,
+              mimeType: attachment.mimeType,
+              decryptedDataUrl: Platform.OS === "web"
+                ? `data:${attachment.mimeType};base64,${fileBase64}`
+                : attachment.kind === "IMAGE" ? attachment.uri : undefined,
+              thumbnailDataUrl: attachment.thumbnailBase64 ? `data:image/jpeg;base64,${attachment.thumbnailBase64}` : undefined,
+              imageWidth: attachment.imageWidth,
+              imageHeight: attachment.imageHeight,
+              ...mediaMetadata
             }
-          } catch (error) {
-            const { preparation, cancelPreparation, ...retry } = attachment;
-            failed.push(retry);
+          };
+          removePendingMediaMessage(operationConversationId, optimisticAttachmentId);
+          activeAttachmentSendsRef.current.delete(optimisticAttachmentId);
+          // Server acceptance is the reconciliation boundary. Do not keep the
+          // optimistic row visible while a potentially 100 MB local cache copy
+          // runs; realtime refresh may already have rendered the server row.
+          if (activeConversationIdRef.current === operationConversationId) {
+            setMessages((current) => mergeThreadHistoryMessages(
+              current.filter((item) => item.id !== optimisticAttachmentId),
+              [acceptedMessage]
+            ));
+          }
+          if (index === attachments.length - 1) playChitthiSentSound();
+          publishMediaProgress(optimisticAttachmentId, null);
+          let senderLocalUri = "";
+          if (Platform.OS !== "web") {
+            const localUri = encryptedAttachmentLocalUri(currentUserId, response.message.id, attachment.name, attachment.mimeType);
+            if (localUri) {
+              // The server has already accepted the message. A local-storage
+              // failure must not present it as unsent or encourage duplicates.
+              await copyPersistentChitthiMedia(localUri, attachment.uri)
+                .then(() => {
+                  senderLocalUri = localUri;
+                  setLocalMediaMessageIds((current) => current.includes(response.message.id) ? current : [...current, response.message.id]);
+                  return cleanupPersistentChitthiMedia(localUri);
+                })
+                .catch(() => undefined);
+            }
+          }
+          sentMessages.push({
+            ...acceptedMessage,
+            metadata: {
+              ...acceptedMessage.metadata,
+              decryptedDataUrl: Platform.OS === "web"
+                ? `data:${attachment.mimeType};base64,${fileBase64}`
+                : attachment.kind === "IMAGE" ? senderLocalUri || attachment.uri : undefined
+            }
+          });
+          completedAttachmentCount = index + 1;
+          setAttachmentStatus(attachments.length > 1 ? `Sending item ${index + 1} of ${attachments.length}…` : attachment.kind === "IMAGE" ? "Sending photo…" : attachment.kind === "VIDEO" ? "" : "Sending file…");
+        }
+        if (activeConversationIdRef.current === operationConversationId) {
+          setMessages((current) => mergeThreadHistoryMessages(current.filter((item) => !optimisticAttachmentIds.includes(item.id)), sentMessages));
+        }
+        optimisticAttachmentIds.forEach((messageId) => publishMediaProgress(messageId, null));
+        scrollThreadToLatest(false);
+        releasePendingAttachments(attachments);
+        setPendingPhotoPreviewOpen(false);
+        if (activeConversationIdRef.current === operationConversationId) {
+          setAttachmentStatus("");
+        }
+        if (startedFromCardContext) onCardMessageSent?.(cardMessageContext);
+        onClearPendingPost?.();
+        onClearPendingRide?.();
+        void refreshMessenger({ showLoader: false, showError: false });
+      } catch (error) {
+        const sendWasCancelled = mediaSendAbort.signal.aborted || (error instanceof Error && error.name === "AbortError");
+        if (attachments[0]?.kind === "VIDEO") logDevelopmentPerformance("media-send-failed", {
+          durationMs: Date.now() - attachmentOperationStartedAt,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        }, true);
+        const sendContextStillActive = messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId;
+        const completedAttachments = attachments.slice(0, completedAttachmentCount);
+        const remainingAttachments = attachments.slice(completedAttachmentCount);
+        const remainingOptimisticIds = optimisticAttachmentIds.slice(completedAttachmentCount);
+        releasePendingAttachments(completedAttachments);
+        removeOptimisticMessages(remainingOptimisticIds);
+        if (remainingOptimisticIds.length && sendContextStillActive) {
+          if (!sendWasCancelled) {
+            // Preparation may already have replaced and deleted the picker
+            // source. Restore the current durable remaining batch, not those
+            // stale original URIs, so Retry can actually read every file.
+            const retryAttachments = remainingAttachments.length ? remainingAttachments : attachments.slice(-1);
+            const retryMediaAttachments = retryAttachments.filter((attachment) => attachment.kind === "IMAGE" || attachment.kind === "VIDEO");
+            if (retryMediaAttachments.length === retryAttachments.length) {
+              setPendingImages(retryMediaAttachments);
+              setPendingAttachment(null);
+            } else {
+              setPendingAttachment(retryAttachments[0] || null);
+              setPendingImages([]);
+            }
+            setMessageText(cleanMessage);
           }
         }
-      } catch (error) {
-        failed.push(...attachments);
-        Alert.alert("Could not send attachments", error instanceof Error ? error.message : "Please try again.");
-      } finally {
-        if (messengerUserIdRef.current === operationUserId && activeConversationIdRef.current === operationConversationId && failed.length) {
-          setPendingImages(failed); setPendingAttachment(null);
-          setMessageText(failed.some(attachment => attachment.recoveryGroupIndex === 0) ? cleanMessage : "");
-          Alert.alert("Some files were not sent", `${failed.length} file(s) remain selected. Retry when connected. Keep this browser tab open until sending finishes.`);
+        if (sendWasCancelled) {
+          releasePendingAttachments(remainingAttachments);
+        } else if (sendContextStillActive) {
+          setAttachmentStatus("");
+          const failedAttachment = remainingAttachments[0] || attachments[attachments.length - 1];
+          Alert.alert(failedAttachment.kind === "IMAGE" ? "Image failed" : failedAttachment.kind === "VIDEO" ? "Video failed" : "File failed", error instanceof Error ? error.message : "Could not send this attachment.");
+        } else {
+          releasePendingAttachments(remainingAttachments);
+          if (messengerUserIdRef.current === operationUserId && !sendWasCancelled) {
+            Alert.alert("Media not sent", `An upload to ${operationConversationLabel} failed. Select the remaining media again to retry. ${error instanceof Error ? error.message : ""}`.trim());
+          }
         }
-        setAttachmentSending(false); setAttachmentStatus("");
-        void refreshMessenger({ showLoader: false, showError: false });
+      } finally {
+        if (attachmentCryptoAbortRef.current === mediaSendAbort) attachmentCryptoAbortRef.current = null;
+        setAttachmentStatusCancelable(false);
+        setAttachmentStatus("");
+        if (messengerUserIdRef.current === operationUserId) setAttachmentSending(false);
+        optimisticAttachmentIds.forEach((messageId) => activeAttachmentSendsRef.current.delete(messageId));
+        activeAttachmentSendKeysRef.current.delete(attachmentSendKey);
+        releaseVideoPipeline?.();
+        finishMediaTransfer();
       }
       return;
     }
@@ -5379,10 +5920,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   }
 
   async function chooseAndSendImage() {
-    if (importingAttachmentsRef.current) return;
-    const pickerOwner = currentUserId;
-    const pickerConversation = activeConversationId;
-    const pickerGeneration = pendingMediaSelectionGenerationRef.current;
     setAttachmentMenuOpen(false);
     if (!signedIn) {
       onRequireLogin();
@@ -5395,11 +5932,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     try {
       setAttachmentStatus("Preparing selected media…");
       const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes, true);
-      if (messengerUserIdRef.current !== pickerOwner || activeConversationIdRef.current !== pickerConversation
-        || pendingMediaSelectionGenerationRef.current !== pickerGeneration || importingAttachmentsRef.current) {
-        releasePendingAttachments(media);
-        return;
-      }
       setAttachmentStatus("");
       if (!media.length) return;
       const canPrepareVideo = Platform.OS === "ios" && (FairFaresCrypto.videoPreparationAvailable || FairFaresCrypto.videoOptimizationAvailable);
@@ -5410,12 +5942,10 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
           }
         : item);
       const selectionGeneration = ++pendingMediaSelectionGenerationRef.current;
-      if (pendingImages.length + mediaWithFastDefaults.length + (pendingAttachment ? 1 : 0) > 20) {
-        releasePendingAttachments(mediaWithFastDefaults);
-        throw new Error("Send at most 20 attachments in one batch.");
-      }
-      setPendingAttachment(null);
-      setPendingImages(current => [...current, ...(pendingAttachment ? [pendingAttachment] : []), ...mediaWithFastDefaults]);
+      // Replace the media review selection while retaining a separately
+      // selected document. Both slots are sent by sendMessage().
+      releaseComposerAttachments(pendingImages);
+      setPendingImages(mediaWithFastDefaults);
       setPendingPreviewIndex(0);
       // Selected media lives in the dedicated review surface instead of a
       // large preview card above the composer. The paperclip count reopens it.
@@ -5454,10 +5984,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   }
 
   async function takeAndSendPhoto() {
-    if (importingAttachmentsRef.current) return;
-    const pickerOwner = currentUserId;
-    const pickerConversation = activeConversationId;
-    const pickerGeneration = pendingMediaSelectionGenerationRef.current;
     setAttachmentMenuOpen(false);
     if (!signedIn) {
       onRequireLogin();
@@ -5470,18 +5996,9 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     try {
       const photo = await takeChatPhoto();
       if (!photo) return;
-      if (messengerUserIdRef.current !== pickerOwner || activeConversationIdRef.current !== pickerConversation
-        || pendingMediaSelectionGenerationRef.current !== pickerGeneration || importingAttachmentsRef.current) {
-        releasePendingAttachments([{ ...photo, kind: "IMAGE" }]);
-        return;
-      }
-      if (pendingImages.length + (pendingAttachment ? 1 : 0) >= 20) {
-        releasePendingAttachments([{ ...photo, kind: "IMAGE" }]);
-        throw new Error("Send at most 20 attachments in one batch.");
-      }
       pendingMediaSelectionGenerationRef.current += 1;
-      setPendingAttachment(null);
-      setPendingImages(current => [...current, ...(pendingAttachment ? [pendingAttachment] : []), { ...photo, kind: "IMAGE" }]);
+      releaseComposerAttachments(pendingImages);
+      setPendingImages([{ ...photo, kind: "IMAGE" }]);
       setPendingPreviewIndex(0);
       setPendingPhotoPreviewOpen(true);
     } catch (error) {
@@ -5535,32 +6052,19 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
   }
 
   async function chooseAndSendFile() {
-    if (importingAttachmentsRef.current) return;
-    const pickerOwner = currentUserId;
-    const pickerConversation = activeConversationId;
-    const pickerGeneration = pendingMediaSelectionGenerationRef.current;
     setAttachmentMenuOpen(false);
     if (!activeConversationId) {
       Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
     try {
-      const files = await pickChatFiles(effectiveAttachmentLimitBytes);
-      if (!files.length) return;
-      if (messengerUserIdRef.current !== pickerOwner || activeConversationIdRef.current !== pickerConversation
-        || pendingMediaSelectionGenerationRef.current !== pickerGeneration || importingAttachmentsRef.current) {
-        releasePendingAttachments(files.map(file => ({ ...file, kind: "FILE" })));
-        return;
-      }
-      if (pendingImages.length + files.length + (pendingAttachment ? 1 : 0) > 20) {
-        releasePendingAttachments(files.map(file => ({ ...file, kind: "FILE" })));
-        throw new Error("Send at most 20 attachments in one batch.");
-      }
+      const file = await pickChatFile(effectiveAttachmentLimitBytes);
+      if (!file) return;
       pendingMediaSelectionGenerationRef.current += 1;
-      setPendingImages(current => [...current, ...(pendingAttachment ? [pendingAttachment] : []), ...files.map(file => ({ kind: "FILE" as const, ...file }))]);
-      setPendingAttachment(null);
-      setPendingPreviewIndex(0);
-      setPendingPhotoPreviewOpen(true);
+      // A document is shown in its own composer row. Replacing it must not
+      // discard the media currently being reviewed.
+      releaseComposerAttachments(pendingAttachment ? [pendingAttachment] : []);
+      setPendingAttachment({ kind: "FILE", ...file });
     } catch (error) {
       setAttachmentStatus("");
       Alert.alert("File failed", error instanceof Error ? error.message : "Could not send this file.");
@@ -6404,70 +6908,129 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
 
   async function forwardSelectedMessages() {
     const chosenMessages = selectedMessages();
-    if (!chosenMessages.length || !selectedForwardConversationIds.length || forwardingMessages) return;
-    const owner = currentUserId;
-    const destinations = [...selectedForwardConversationIds];
+    if (!chosenMessages.length || !selectedForwardConversationIds.length) return;
     setForwardingMessages(true);
-    setForwardingStatus("Saving messages for selected chats…");
+    setForwardingStatus(`Securing ${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} for ${selectedForwardConversationIds.length} chat${selectedForwardConversationIds.length === 1 ? "" : "s"}…`);
     try {
-      const identity = await ensureChatDeviceIdentity();
-      const inputs: Parameters<typeof enqueueForwardBatch>[1] = [];
-      const albumId = `forward-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const legacySources = new Map<number, Awaited<ReturnType<typeof materializeAttachment>>>();
-      for (const message of chosenMessages) {
-        if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && !message.metadata?.encryptedKeyPayload) {
-          legacySources.set(message.id, await materializeAttachment(message));
-        }
-      }
-      for (const conversationId of destinations) {
-        const keys = await getChatDeviceKeys(conversationId);
-        if (messengerUserIdRef.current !== owner) throw new Error("The account changed. Forwarding was not started.");
-        if (!chatKeyPayloadCanSend(keys)) throw new Error(userSafeEncryptionStatus(keys.warning) || "A selected chat is not ready for encrypted forwarding.");
-        for (const [index, message] of chosenMessages.entries()) {
-          const media = ["IMAGE", "VIDEO", "FILE"].includes(message.type);
-          let payload: string;
-          const legacy = legacySources.get(message.id);
-          if (media && legacy && Platform.OS !== "web") {
-            const info = await FileSystem.getInfoAsync(legacy.uri);
-            if (!info.exists || !info.size) throw new Error("This attachment is unavailable on this device.");
-            inputs.push({ conversationId, copySource: true, envelopes: [], type: message.type, caption: message.text || "",
-              attachment: { kind: message.type as "IMAGE" | "VIDEO" | "FILE", uri: legacy.uri, name: legacy.name, mimeType: legacy.mimeType, size: info.size,
-                imagePrepared: message.type === "IMAGE", forwarded: true } });
-            continue;
+      // Let React commit the busy state before CPU-heavy encryption starts.
+      // Without this frame handoff the native button can look unresponsive.
+      await allowBusyUiToPaint();
+      // Prepare each reusable media descriptor once, concurrently with device
+      // identity and destination-key requests. Previously an old photo without
+      // an embedded thumbnail was downloaded and thumbnailed again for every
+      // selected destination, serially extending the forwarding delay.
+      const preparedDescriptors = new Map<number, Promise<{ descriptor: string; error?: unknown }>>();
+      chosenMessages.forEach((message) => {
+        const existingDescriptor = typeof message.metadata?.encryptedKeyPayload === "string" ? message.metadata.encryptedKeyPayload : "";
+        if (message.id <= 0 || !existingDescriptor || !["IMAGE", "VIDEO", "FILE"].includes(message.type)) return;
+        preparedDescriptors.set(message.id, (async () => {
+          try {
+            const parsed = JSON.parse(existingDescriptor) as Record<string, unknown>;
+            let thumbnailBase64 = typeof parsed.thumbnailBase64 === "string" ? parsed.thumbnailBase64 : "";
+            if (["IMAGE", "VIDEO"].includes(message.type) && !thumbnailBase64) {
+              const localAttachment = await materializeAttachment(message);
+              thumbnailBase64 = await (message.type === "VIDEO"
+                ? createLightweightVideoThumbnail(localAttachment.uri)
+                : createLightweightChatThumbnail(localAttachment.uri)).catch(() => "");
+            }
+            return { descriptor: JSON.stringify({
+              ...parsed,
+              forwarded: true,
+              ...(thumbnailBase64 ? { thumbnailBase64 } : {})
+            }) };
+          } catch (error) {
+            return { descriptor: "", error };
           }
-          if (media && legacy && Platform.OS === "web") {
-            const base64 = legacy.uri.slice(legacy.uri.indexOf(",") + 1);
-            const encrypted = encryptAttachmentForDevices(base64, { kind: message.type as "IMAGE" | "VIDEO" | "FILE", fileName: legacy.name,
-              mimeType: legacy.mimeType, caption: message.text || "", forwarded: true,
-              mediaGroupId: chosenMessages.length > 1 ? albumId : undefined, mediaGroupIndex: index, mediaGroupCount: chosenMessages.length }, identity, keys.keys);
-            inputs.push({ conversationId, upload: { ciphertextBase64: encrypted.ciphertextBase64, ciphertextSha256: encrypted.ciphertextSha256, encryptedSize: encrypted.encryptedSize },
-              envelopes: encrypted.envelopes, type: message.type, caption: message.text || "",
-              attachment: { kind: message.type as "IMAGE" | "VIDEO" | "FILE", uri: "", name: legacy.name, mimeType: legacy.mimeType, size: 0, forwarded: true } });
-            continue;
-          }
-          if (media) {
-            if (message.id <= 0 || !message.metadata?.encryptedKeyPayload) throw new Error("Open this attachment first so its encryption key is available, then forward again.");
-            payload = JSON.stringify({ ...JSON.parse(message.metadata.encryptedKeyPayload), forwarded: true,
-              mediaGroupId: chosenMessages.length > 1 ? albumId : undefined, mediaGroupIndex: index, mediaGroupCount: chosenMessages.length });
+        })());
+      });
+      const [identity, destinationKeys] = await Promise.all([
+        ensureChatDeviceIdentity(),
+        Promise.all(selectedForwardConversationIds.map(async (conversationId) => ({ conversationId, keyPayload: await getChatDeviceKeys(conversationId) })))
+      ]);
+      for (const [conversationIndex, destination] of destinationKeys.entries()) {
+        const { conversationId, keyPayload } = destination;
+        setForwardingStatus(`Encrypting for chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
+        if (!chatKeyPayloadCanSend(keyPayload)) throw new Error(userSafeEncryptionStatus(keyPayload.warning) || "A selected chat is not ready for encrypted forwarding.");
+        for (const [messageIndex, message] of chosenMessages.entries()) {
+          setForwardingStatus(`Forwarding message ${messageIndex + 1} of ${chosenMessages.length} to chat ${conversationIndex + 1} of ${selectedForwardConversationIds.length}…`);
+          if (["IMAGE", "VIDEO", "FILE"].includes(message.type) && message.attachmentUrl) {
+            const existingDescriptor = typeof message.metadata?.encryptedKeyPayload === "string" ? message.metadata.encryptedKeyPayload : "";
+            if (message.id > 0 && existingDescriptor) {
+              const preparedDescriptor = await preparedDescriptors.get(message.id)!;
+              if (preparedDescriptor.error || !preparedDescriptor.descriptor) {
+                throw new Error("This attachment descriptor is invalid and cannot be forwarded securely.");
+              }
+              const forwardedDescriptor = preparedDescriptor.descriptor;
+              const preview = message.text || (message.type === "IMAGE" ? "Forwarded a photo" : message.type === "VIDEO" ? "Forwarded a video" : "Forwarded a file");
+              const envelopes = encryptForDevices(forwardedDescriptor, identity, keyPayload.keys, preview);
+              try {
+                await forwardEncryptedChatAttachment(message.id, conversationId, envelopes, messageIndex + 1 < chosenMessages.length);
+                continue;
+              } catch (error) {
+                const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
+                // Keep forwarding usable while the mobile app and backend are
+                // being rolled out independently. Older servers do not expose
+                // the reference-forward route, so use the established secure
+                // download/encrypt/upload flow until that server is upgraded.
+                if (status !== 404 && status !== 405) throw error;
+                setForwardingStatus(`Preparing message ${messageIndex + 1} of ${chosenMessages.length} for compatibility…`);
+              }
+            }
+            const attachment = await materializeAttachment(message, (progress) => setForwardingStatus(`Preparing message ${messageIndex + 1} of ${chosenMessages.length}… ${Math.round(progress)}%`));
+            if (!attachment) continue;
+            const kind = message.type as "IMAGE" | "VIDEO" | "FILE";
+            const thumbnailDataUrl = typeof message.metadata?.thumbnailDataUrl === "string" ? message.metadata.thumbnailDataUrl : "";
+            let thumbnailBase64 = thumbnailDataUrl.startsWith("data:image/jpeg;base64,") ? thumbnailDataUrl.slice(thumbnailDataUrl.indexOf(",") + 1) : "";
+            if (["IMAGE", "VIDEO"].includes(kind) && !thumbnailBase64) {
+              thumbnailBase64 = await (kind === "VIDEO"
+                ? createLightweightVideoThumbnail(attachment.uri)
+                : createLightweightChatThumbnail(attachment.uri)).catch(() => "");
+            }
+            const materializedInfo = Platform.OS === "web" ? null : await FileSystem.getInfoAsync(attachment.uri);
+            const plaintextSize = materializedInfo?.exists && "size" in materializedInfo ? Number(materializedInfo.size || 0) : 0;
+            const forwardMetadata = { fileName: attachment.name, mimeType: attachment.mimeType, caption: message.text || "", kind, size: plaintextSize || undefined, forwarded: true, ...(thumbnailBase64 ? { thumbnailBase64 } : {}) };
+            if (Platform.OS === "web") {
+              const fileBase64 = attachment.uri.slice(attachment.uri.indexOf(",") + 1);
+              const encrypted = encryptAttachmentForDevices(fileBase64, forwardMetadata, identity, keyPayload.keys);
+              await sendDirectEncryptedChatAttachment(currentUserId, conversationId, encrypted, attachment.mimeType);
+            } else {
+              const encrypted = await encryptAttachmentFileForDevices(
+                attachment.uri,
+                forwardMetadata,
+                identity,
+                keyPayload.keys,
+                (progress) => setForwardingStatus(`Encrypting message ${messageIndex + 1} of ${chosenMessages.length}… ${Math.round(progress * 100)}%`),
+                cryptoThrottleForSize(Number(message.metadata?.size || 0))
+              );
+              let encryptedUploadFinalized = false;
+              try {
+                await sendDirectEncryptedChatAttachment(currentUserId, conversationId, encrypted, attachment.mimeType);
+                encryptedUploadFinalized = true;
+              } finally {
+                if (encryptedUploadFinalized) deleteChunkedTemporaryFile(encrypted.encryptedUri);
+              }
+            }
           } else {
-            payload = `FFFORWARD:${JSON.stringify({ text: shareableMessageText({ ...message, senderName: "" }) })}`;
+            const text = shareableMessageText({ ...message, senderName: "" });
+            if (!text) continue;
+            const envelopes = encryptForDevices(`FFFORWARD:${JSON.stringify({ text })}`, identity, keyPayload.keys, text);
+            await sendEncryptedChatMessage(conversationId, envelopes);
           }
-          inputs.push({ conversationId, sourceMessageId: media ? message.id : undefined,
-            envelopes: encryptForDevices(payload, identity, keys.keys, message.text || "Forwarded a message"),
-            type: media ? message.type : "TEXT", caption: message.text || "",
-            attachment: { kind: media ? message.type as "IMAGE" | "VIDEO" | "FILE" : "FILE", uri: "", name: message.metadata?.fileName || "Forwarded message", mimeType: message.metadata?.mimeType || "application/octet-stream", size: message.metadata?.size || 0 }
-          });
         }
       }
-      if (messengerUserIdRef.current !== owner) throw new Error("The account changed. Forwarding was not started.");
-      // Commit every destination before any publication can begin.
-      await enqueueForwardBatch(owner, inputs);
-      setForwardPickerOpen(false); setSelectedMessageIds([]); setSelectedForwardConversationIds([]);
-      setAttachmentStatus("Forwarding saved. Each destination will retry independently.");
-      setTimeout(() => setAttachmentStatus(""), 2500);
+      setForwardPickerOpen(false);
+      setSelectedMessageIds([]);
+      setSelectedForwardConversationIds([]);
+      playChitthiSentSound();
+      setAttachmentStatus(`${chosenMessages.length} message${chosenMessages.length === 1 ? "" : "s"} forwarded securely`);
+      setTimeout(() => setAttachmentStatus(""), 1600);
+      void refreshMessenger({ showLoader: false, showError: false });
     } catch (error) {
-      Alert.alert("Forward failed", error instanceof Error ? error.message : "Could not save forwarding.");
-    } finally { setForwardingMessages(false); setForwardingStatus(""); }
+      Alert.alert("Forward failed", error instanceof Error ? error.message : "Could not forward the selected messages.");
+    } finally {
+      setForwardingMessages(false);
+      setForwardingStatus("");
+    }
   }
 
   function closeThread() {
@@ -6498,6 +7061,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
     setGroupMembers([]);
     setGroupMemberSearch("");
     setAttachmentStatus("");
+    setAttachmentStatusCancelable(false);
     pendingMediaSelectionGenerationRef.current += 1;
     releaseComposerAttachments([...pendingImages, ...(pendingAttachment ? [pendingAttachment] : [])]);
     setPendingAttachment(null);
@@ -6916,8 +7480,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
             ref={messagesScrollRef}
             style={styles.threadMessagesList}
             data={threadMessageItems}
-            viewabilityConfig={receiptViewability}
-            onViewableItemsChanged={receiptViewabilityChanged}
             inverted
             // Keep the same bubble pinned while envelopes decrypt, thumbnails
             // resolve, older pages arrive, or realtime updates insert rows.
@@ -7040,7 +7602,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
                 <View style={styles.systemEventPill}><Text style={styles.systemEventText}>~ {message.text}</Text></View>
               </View>;
             }
-            const mediaUploading = Boolean(message.metadata?.uploading) && !message.metadata?.outboxId;
+            const mediaUploading = Boolean(message.metadata?.uploading);
             const mediaUploadBatchCount = Number(message.metadata?.mediaGroupCount || 0);
             const mediaUploadingBatch = mediaUploading && mediaUploadBatchCount > 1;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
@@ -7105,7 +7667,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
                   </TouchableOpacity>
                 ) : null}
                 {message.attachmentUrl || (message.type === "IMAGE" && Boolean(message.metadata?.thumbnailDataUrl || message.metadata?.decryptedDataUrl)) ? (
-                  (message.type === "IMAGE" || mediaGroup.length > 1) ? <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void (photo.type === "VIDEO" ? openAttachment(photo) : openPhotoGroup(mediaGroup.filter(item => item.type === "IMAGE"), photo.id)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open ${photo.type === "VIDEO" ? "video" : "photo"} ${photoIndex + 1} of ${mediaGroup.length}`}>{photo.type === "VIDEO" ? <View style={styles.videoMessageCard}><ChatVideoThumbnail embeddedUri={photo.metadata?.thumbnailDataUrl} localUri={localVideoThumbnailUris[photo.id]} /><View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View></View> : <ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />}{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  message.type === "IMAGE" ? <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? <View style={styles.messageCollage}>{mediaGroup.slice(0, 4).map((photo, photoIndex) => { const photoSelected = selectedMessageIds.includes(messageSelectionKey(photo)); return <Pressable key={photo.id} style={[styles.collageCell, photoSelected && styles.selectedCollageCell]} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(photo) : void openPhotoGroup(mediaGroup, photo.id); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(photo); }} accessibilityRole="button" accessibilityLabel={`Open all ${mediaGroup.length} photos`}><ChatMessagePhoto message={photo} resolvePreview={resolveEncryptedPhotoPreview} compact />{photoSelected ? <View style={styles.collageSelectionCheck} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}<View style={styles.collageTimeOverlay} pointerEvents="none"><Text style={styles.collageTimeText}>{chatClock(photo.createdAt)}</Text></View>{photoIndex === 3 && mediaGroup.length > 4 ? <View style={styles.collageMore} pointerEvents="none"><Text style={styles.collageMoreText}>+{mediaGroup.length - 3}</Text></View> : null}</Pressable>; })}</View> : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>
                       <Pressable
                         style={styles.videoMessageCard}
@@ -7196,11 +7758,6 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
                     }}
                   />
                 ) : null}
-                {message.metadata?.outboxId && message.metadata?.outboxState !== "sent" ? <View style={{ padding: 8, gap: 6, alignSelf: "stretch" }}>
-                  <Text style={styles.bubbleMeta}>{attachmentJobs.find(job => job.id === message.metadata?.outboxId)?.error || ({ saving: "Saving…", queued: "Waiting to send", preparing: "Preparing…", uploading: "Sending…", waiting: "Waiting to retry", failed: "Could not send" } as Record<string, string>)[String(message.metadata?.outboxState)]}</Text>
-                  {["failed", "waiting"].includes(String(message.metadata?.outboxState)) ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry attachment" onPress={() => { const job = attachmentJobs.find(item => item.id === message.metadata?.outboxId); if (job) void retryAttachmentJob(job).catch(() => Alert.alert("Retry unavailable", "Please try again.")); }}><Text style={styles.attachmentStatusText}>Retry</Text></TouchableOpacity> : null}
-                  {["queued", "preparing", "failed", "waiting"].includes(String(message.metadata?.outboxState)) ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel attachment" onPress={() => { const job = attachmentJobs.find(item => item.id === message.metadata?.outboxId); if (job) void cancelAttachmentJob(job).then(cancelled => { if (!cancelled) Alert.alert("Sending in progress", "This file may already be reaching the recipient. Wait for its send result before removing it."); }).catch(() => undefined); }}><Text style={styles.attachmentStatusText}>Cancel</Text></TouchableOpacity> : null}
-                </View> : null}
                 {!isMediaMessage ? <View style={styles.bubbleMetaRow} accessibilityLabel={`${chatClock(message.createdAt)}${message.mine ? `, ${messageReceiptLabel(message.status)}` : ""}`}>
                   {message.editedAt ? <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>Edited · </Text> : null}
                   <Text style={[styles.bubbleMeta, message.mine ? styles.myBubbleMeta : styles.theirBubbleMeta]}>{chatClock(message.createdAt)}</Text>
@@ -7365,24 +7922,15 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
               }}
               getItemLayout={(_data, index) => ({ length: CHAT_PREVIEW_SCREEN_WIDTH, offset: CHAT_PREVIEW_SCREEN_WIDTH * index, index })}
               renderItem={({ item: photo, index }) => <View style={styles.pendingFullPreviewPage}><View style={styles.pendingFullPreviewPhotoCard}>
-                  {photo.kind === "FILE" ? <View style={styles.pendingVideoPreview}><Text style={styles.pendingVideoPreviewText}>{photo.name}</Text><Text style={styles.pendingFullPreviewSubtitle}>{Math.ceil(photo.size / 1024)} KB</Text></View> : photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={[styles.pendingVideoThumbnail, styles.pendingFullVideoThumbnail]} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
+                  {photo.kind === "VIDEO" ? <View style={[styles.pendingVideoPreview, styles.pendingFullPreviewImage]}>{photo.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${photo.thumbnailBase64}` }} style={[styles.pendingVideoThumbnail, styles.pendingFullVideoThumbnail]} resizeMode="contain" /> : null}<View style={styles.pendingVideoPlayBadge}><Text style={styles.pendingVideoPreviewText}>▶</Text></View></View> : <PendingPhotoPreview uri={photo.uri} full />}
                   {photo.kind === "VIDEO" && Platform.OS === "ios" && FairFaresCrypto.videoOptimizationAvailable ? <View style={styles.pendingFullPreviewVideoOptions}>
                     <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality !== "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "original" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality !== "data-saver" && styles.videoQualityChoiceTextSelected]}>HD</Text></TouchableOpacity>
                     <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: photo.videoQuality === "data-saver" }} style={[styles.videoQualityChoice, photo.videoQuality === "data-saver" && styles.videoQualityChoiceSelected]} onPress={() => setPendingImages((current) => current.map((item) => item.uri === photo.uri ? { ...item, videoQuality: "data-saver" } : item))}><Text style={[styles.videoQualityChoiceText, photo.videoQuality === "data-saver" && styles.videoQualityChoiceTextSelected]}>Data saver</Text></TouchableOpacity>
                   </View> : null}
-                  {pendingImages.length > 1 ? <View style={[styles.pendingFullPreviewVideoOptions, { bottom: 66 }]}>
-                    {[-1, 1].map(direction => <TouchableOpacity key={direction} disabled={attachmentSending || index + direction < 0 || index + direction >= pendingImages.length} accessibilityLabel={direction < 0 ? "Move attachment earlier" : "Move attachment later"} onPress={() => {
-                      setPendingImages(current => { const next = [...current]; [next[index], next[index + direction]] = [next[index + direction], next[index]]; return next; });
-                      setPendingPreviewIndex(index + direction); scrollPendingPreviewToIndex(index + direction);
-                    }}><Text style={styles.videoQualityChoiceText}>{direction < 0 ? "← Earlier" : "Later →"}</Text></TouchableOpacity>)}
-                  </View> : null}
                   <View style={styles.pendingFullPreviewNumber}><Text style={styles.pendingFullPreviewNumberText}>{index + 1}/{pendingImages.length}</Text></View>
                   <TouchableOpacity
                     style={styles.pendingFullPreviewRemove}
-                    disabled={attachmentSending}
-                    onPress={async () => {
-                      try { await removeChatMediaDraft(currentUserId, photo); }
-                      catch { Alert.alert("Could not remove media", "Please try again."); return; }
+                    onPress={() => {
                       if (!pendingImages.some((item, itemIndex) => itemIndex !== index && item.uri === photo.uri)) releasePendingAttachments([photo]);
                       setPendingImages((current) => {
                         const next = current.filter((_, itemIndex) => itemIndex !== index);
@@ -7398,7 +7946,7 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
             <View style={styles.pendingFullPreviewFooter}>
               {pendingImages.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingFullPreviewThumbs}>
                 {pendingImages.map((item, index) => <TouchableOpacity key={`${item.uri}-thumb-${index}`} style={[styles.pendingFullPreviewThumb, index === pendingPreviewIndex && styles.pendingFullPreviewThumbActive]} onPress={() => { setPendingPreviewIndex(index); scrollPendingPreviewToIndex(index); }} accessibilityRole="button" accessibilityLabel={`Preview item ${index + 1}`}>
-                  {item.kind === "FILE" ? <View style={styles.pendingFullPreviewThumbVideo}><Text style={styles.pendingFullPreviewThumbPlay}>▰</Text></View> : item.kind === "VIDEO" ? <View style={styles.pendingFullPreviewThumbVideo}>{item.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${item.thumbnailBase64}` }} style={styles.pendingFullPreviewThumbImage} resizeMode="cover" /> : null}<Text style={styles.pendingFullPreviewThumbPlay}>▶</Text></View> : <PendingPhotoPreview uri={item.uri} compact />}
+                  {item.kind === "VIDEO" ? <View style={styles.pendingFullPreviewThumbVideo}>{item.thumbnailBase64 ? <Image source={{ uri: `data:image/jpeg;base64,${item.thumbnailBase64}` }} style={styles.pendingFullPreviewThumbImage} resizeMode="cover" /> : null}<Text style={styles.pendingFullPreviewThumbPlay}>▶</Text></View> : <PendingPhotoPreview uri={item.uri} compact />}
                 </TouchableOpacity>)}
               </ScrollView> : null}
               <View style={styles.pendingFullPreviewComposerRow}>
@@ -7556,21 +8104,13 @@ export function MessengerScreen({ isVisible = true, data, preferredSuggestionCit
           </View>
         ) : null}
 
-        {savedUploadCount > 0 && !attachmentSending && !attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{savedUploadCount} saved upload{savedUploadCount === 1 ? "" : "s"} waiting to send</Text></View> : null}
-        {attachmentStatus ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text></View> : null}
+        {attachmentStatus && !attachmentSending ? <View style={styles.attachmentStatus}><Text style={styles.attachmentStatusText}>{attachmentStatus}</Text>{attachmentStatusCancelable && attachmentCryptoAbortRef.current ? <TouchableOpacity onPress={() => attachmentCryptoAbortRef.current?.abort()} accessibilityLabel="Cancel media processing"><Text style={styles.attachmentStatusCancel}>Cancel</Text></TouchableOpacity> : null}</View> : null}
 
         {pendingAttachment?.kind === "FILE" ? (
           <View style={styles.pendingAttachmentCard}>
             <View style={[styles.attachmentIcon, styles.fileIcon, styles.pendingAttachmentFileIcon]}><Text style={styles.attachmentIconText}>▰</Text></View>
             <View style={styles.pendingAttachmentCopy}><Text style={styles.pendingAttachmentName} numberOfLines={1}>{pendingAttachment.name}</Text><Text style={styles.pendingAttachmentMeta}>{Math.max(1, Math.round(pendingAttachment.size / 1024))} KB · Ready to send</Text></View>
-            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={async () => {
-              if (pendingAttachment) {
-                try { await removeChatMediaDraft(currentUserId, pendingAttachment); }
-                catch { Alert.alert("Could not remove file", "Please try again."); return; }
-              }
-              releasePendingAttachments(pendingAttachment ? [pendingAttachment] : []);
-              setPendingAttachment(null);
-            }} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.pendingAttachmentRemove} onPress={() => { releasePendingAttachments(pendingAttachment ? [pendingAttachment] : []); setPendingAttachment(null); }} accessibilityLabel="Remove selected attachment"><Text style={styles.pendingAttachmentRemoveText}>×</Text></TouchableOpacity>
           </View>
         ) : null}
 

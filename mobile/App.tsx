@@ -33,8 +33,6 @@ import { shareHousingListing } from "./src/utils/listingShare";
 import { deviceAddressCityLabel } from "./src/utils/locationRegion";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
-import { wakeAttachmentOutbox } from "./src/utils/chatAttachmentOutbox";
-import { startMediaRecovery } from "./src/utils/chatMediaRecovery";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { ServicesScreen } from "./src/screens/ServicesScreen";
@@ -468,14 +466,6 @@ function FairFaresApp() {
   const listingSubmittingRef = useRef(false);
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
   const [messengerMediaTransferActive, setMessengerMediaTransferActive] = useState(false);
-  const mediaTransferActiveRef = useRef(false);
-  mediaTransferActiveRef.current = messengerMediaTransferActive;
-  useEffect(() => { if (!messengerMediaTransferActive) wakeAttachmentOutbox(); }, [messengerMediaTransferActive]);
-  useEffect(() => {
-    const owner = Number(data?.user?.id || 0);
-    if (!owner) return;
-    return startMediaRecovery(owner, () => authenticatedUserIdRef.current === owner && !mediaTransferActiveRef.current);
-  }, [data?.user?.id]);
 
   useEffect(() => startJavaScriptResponsivenessMonitor(), []);
 
@@ -2721,7 +2711,6 @@ function FairFaresApp() {
 
   const messengerScreen = (
     <MessengerScreen
-              isVisible={activeTab === "messenger"}
       key={`messenger-${Number(data?.user?.id || 0)}`}
       data={data}
       preferredSuggestionCity={chitthiSuggestionCity}

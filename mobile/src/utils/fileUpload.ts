@@ -31,3 +31,31 @@ export async function pickChatFiles(maxBytes = 100_000_000): Promise<PickedChatF
   }
   return files;
 }
+
+// Keep the established composer contract while the multi-file picker is
+// available to callers that explicitly support a batch. The stable Chitthi
+// screen owns one document slot and must not silently replace it with an
+// array-shaped result.
+export async function pickChatFile(maxBytes = 100_000_000): Promise<PickedChatFile | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: "*/*",
+    copyToCacheDirectory: true,
+    multiple: false
+  });
+  const asset = result.assets?.[0];
+  if (result.canceled || !asset?.uri) return null;
+  const size = Number(asset.size || 0);
+  const fileLimit = Math.max(1_000_000, Math.min(100_000_000, maxBytes));
+  if (!size || size > fileLimit) {
+    await FileSystem.deleteAsync(asset.uri, { idempotent: true }).catch(() => undefined);
+    throw new Error(!size ? "Could not determine the selected file size." : `Choose a file no larger than ${Math.round(fileLimit / 1_000_000)} MB.`);
+  }
+  return {
+    uri: asset.uri,
+    blob: asset.file || undefined,
+    name: asset.name || "attachment",
+    mimeType: normalizedMimeType(asset.name || "attachment", asset.mimeType || ""),
+    size,
+    ownedCacheFile: true
+  };
+}
