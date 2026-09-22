@@ -953,6 +953,74 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(session, {})
         self.assertIn("confirmed booking", status.lower())
 
+    def test_modification_is_applied_only_after_admin_confirmation(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        hold_amount = app.booking_price_breakdown(booking)["booking_hold"]
+        app.confirm_booking_hold_payment(booking["id"], hold_amount, payment_option="hold")
+        with app.db() as con:
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.user_id,)).fetchone()
+
+        class CustomerRequest:
+            def __init__(self):
+                self.response = None
+
+            def current_user(self):
+                return user
+
+            def read_json_body(self):
+                return {
+                    "bookingId": booking["booking_id"],
+                    "vehicleId": car["id"],
+                    "pickupLocation": "Approval test pickup",
+                    "returnLocation": "Approval test return",
+                }
+
+            def public_origin(self):
+                return "https://example.test"
+
+            def send_json(self, response, status=200):
+                self.response = (response, status)
+
+        customer_request = CustomerRequest()
+        with patch.object(app, "send_rental_booking_push"):
+            app.FairFaresHandler.api_mobile_rental_modify_request(customer_request)
+        self.assertEqual(customer_request.response[1], 200)
+        with app.db() as con:
+            pending = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(pending["booking_status"], "MODIFIED")
+        self.assertEqual(pending["pickup_location"], booking["pickup_location"])
+        self.assertEqual(app.pending_booking_modification(pending)["pickupLocation"], "Approval test pickup")
+
+        class AdminConfirmation:
+            def __init__(self):
+                self.redirected_to = ""
+
+            def require_admin(self):
+                return user
+
+            def read_form(self):
+                return {"booking_id": str(booking["id"]), "booking_status": "CONFIRMED", "payment_status": "HOLD_PAID"}
+
+            def public_origin(self):
+                return "https://example.test"
+
+            def redirect(self, location):
+                self.redirected_to = location
+
+            def send_error(self, status, message):
+                raise AssertionError(f"Unexpected admin error {status}: {message}")
+
+        confirmation = AdminConfirmation()
+        with patch.object(app, "send_rental_booking_push"), patch.object(app, "notify_slack_payment"):
+            app.FairFaresHandler.update_admin_booking_status(confirmation)
+        self.assertEqual(confirmation.redirected_to, "/admin/bookings")
+        with app.db() as con:
+            approved = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(approved["booking_status"], "CONFIRMED")
+        self.assertEqual(approved["pickup_location"], "Approval test pickup")
+        self.assertEqual(approved["modification_request_json"], "")
+
     def test_checkout_confirmation_verifies_stripe_before_recording_deposit(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

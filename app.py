@@ -7774,6 +7774,7 @@ def init_db() -> None:
         ensure_column(con, "bookings", "payment_status", "payment_status TEXT NOT NULL DEFAULT 'PAID'")
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "modification_request_json", "modification_request_json TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "subtotal_price", "subtotal_price REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "discount_code", "discount_code TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "discount_amount", "discount_amount REAL NOT NULL DEFAULT 0")
@@ -14292,6 +14293,16 @@ def render_user_trip_rows(bookings: list[sqlite3.Row], saved_cars: list[sqlite3.
             """
         )
     return "\n".join(rows)
+
+
+def pending_booking_modification(booking: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
+    if not booking:
+        return {}
+    try:
+        proposal = json.loads(str(row_value(booking, "modification_request_json") or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return proposal if isinstance(proposal, dict) else {}
 
 
 def booking_status_label(status: str, payment_status: str = "") -> str:
@@ -31242,66 +31253,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         next_breakdown = rental_price_breakdown(next_daily_price, next_days, discount_amount, additional_driver_fee)
         subtotal = float(next_breakdown["base"])
         total_price = float(next_breakdown["total"])
+        proposal = {
+            "carId": car_id,
+            "pickupDate": format_booking_date(new_pickup_date, new_pickup_date),
+            "pickupTime": new_pickup_time,
+            "returnDate": format_booking_date(new_return_date, new_return_date),
+            "returnTime": new_return_time,
+            "pickupLocation": new_pickup_location,
+            "returnLocation": new_dropoff_location,
+            "days": next_days,
+            "subtotalPrice": subtotal,
+            "discountAmount": discount_amount,
+            "taxFeeAmount": next_breakdown["tax_fee_amount"],
+            "bookingHoldAmount": next_breakdown["booking_hold"],
+            "dueAtPickupAmount": next_breakdown["due_at_pickup"],
+            "estimatedMarketTotal": next_breakdown["market_total"],
+            "fairfaresSavingsAmount": next_breakdown["savings"],
+            "totalPrice": total_price,
+            "additionalDriverRequested": additional_driver_requested,
+            "additionalDriverName": form.get("driver_name", "") if additional_driver_requested else "",
+            "additionalDriverAge": form.get("driver_age", "") if additional_driver_requested else "",
+            "additionalDriverFeeAmount": additional_driver_fee,
+            "note": change_note,
+        }
         with db() as con:
             con.execute(
                 """
                 UPDATE bookings
-                SET car_id = ?,
-                    pickup_date = ?,
-                    pickup_time = ?,
-                    dropoff_date = ?,
-                    dropoff_time = ?,
-                    pickup_location = ?,
-                    dropoff_location = ?,
-                    return_location = ?,
-                    days = ?,
-                    subtotal_price = ?,
-                    discount_amount = ?,
-                    total_price = ?,
-                    tax_fee_amount = ?,
-                    booking_hold_amount = ?,
-                    due_at_pickup_amount = ?,
-                    estimated_market_total = ?,
-                    fairfares_savings_amount = ?,
-                    additional_driver_requested = ?,
-                    additional_driver_name = ?,
-                    additional_driver_age = ?,
-                    additional_driver_fee_amount = ?,
-                    booking_status = 'MODIFIED',
-                    status = 'MODIFIED',
-                    cancellation_reason = ?
+                SET booking_status = 'MODIFIED', status = 'MODIFIED',
+                    cancellation_reason = ?, modification_request_json = ?
                 WHERE id = ? AND user_id = ?
                 """,
-                (
-                    car_id,
-                    format_booking_date(new_pickup_date, new_pickup_date),
-                    new_pickup_time,
-                    format_booking_date(new_return_date, new_return_date),
-                    new_return_time,
-                    new_pickup_location,
-                    new_dropoff_location,
-                    new_dropoff_location,
-                    next_days,
-                    subtotal,
-                    discount_amount,
-                    total_price,
-                    next_breakdown["tax_fee_amount"],
-                    next_breakdown["booking_hold"],
-                    next_breakdown["due_at_pickup"],
-                    next_breakdown["market_total"],
-                    next_breakdown["savings"],
-                    int(additional_driver_requested),
-                    form.get("driver_name", "") if additional_driver_requested else "",
-                    form.get("driver_age", "") if additional_driver_requested else "",
-                    additional_driver_fee,
-                    change_note,
-                    booking["id"],
-                    user["id"],
-                ),
+                (change_note, json.dumps(proposal, separators=(",", ":")), booking["id"], user["id"]),
             )
-            if requested_car and requested_car["id"] != booking["car_id"]:
-                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (booking["car_id"],))
-                con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car["id"],))
         self.send_json(
             {
                 "ok": True,
@@ -31338,7 +31322,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     status = ?,
                     payment_status = ?,
                     {hold_sql}
-                    cancellation_reason = ''
+                    cancellation_reason = '',
+                    modification_request_json = ''
                 WHERE id = ? AND user_id = ?
                 """,
                 (next_status, next_status, next_payment_status, booking["id"], user["id"]),
@@ -34603,6 +34588,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def render_admin_booking_row(self, row: sqlite3.Row, user: sqlite3.Row) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
+        modification = pending_booking_modification(row)
         payment_label, pickup_balance_label = admin_payment_summary(row)
         refund_allowed, refund_block_reason = booking_refund_allowed(row)
         refund_action = ""
@@ -34649,10 +34635,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for status, label in payment_status_options
         )
         request_note = ""
+        requested_trip = ""
         if is_request:
             request_type = "Cancellation approval requested" if row["booking_status"] == "CANCELLATION_REQUESTED" else "Modification approval requested"
-            action_copy = "Choose CANCELLED to approve cancellation, or CONFIRMED to keep booking." if row["booking_status"] == "CANCELLATION_REQUESTED" else "Review requested changes, then choose CONFIRMED to approve or keep MODIFIED while pending."
+            action_copy = "Choose CANCELLED to approve cancellation, or CONFIRMED to keep booking." if row["booking_status"] == "CANCELLATION_REQUESTED" else "Choose CONFIRMED to apply the requested trip, or keep MODIFIED while it is pending."
             request_note = f'<small class="approval-note"><b>{escape(request_type)}</b>{escape(action_copy)}</small>'
+        if row["booking_status"] == "MODIFIED" and modification:
+            requested_vehicle = modification.get("carId")
+            requested_pickup = f"{modification.get('pickupDate') or ''} at {modification.get('pickupTime') or ''}".strip()
+            requested_return = f"{modification.get('returnDate') or ''} at {modification.get('returnTime') or ''}".strip()
+            requested_trip = (
+                '<div class="admin-request-summary"><b>Requested trip</b>'
+                f"Vehicle #{escape(str(requested_vehicle or row['car_id']))} · "
+                f"{escape(requested_pickup)} to {escape(requested_return)}"
+                f"<br>{escape(str(modification.get('pickupLocation') or row['pickup_location']))} → "
+                f"{escape(str(modification.get('returnLocation') or row['dropoff_location']))}</div>"
+            )
         return f"""
         <tr class="{'admin-request-row' if is_request else ''}">
             <td data-label="Booking"><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
@@ -34669,6 +34667,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             </td>
             <td data-label="Status">
                 {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
+                {requested_trip}
                 <form method="post" action="/admin/bookings/status" class="admin-stack-form">
                     <input type="hidden" name="booking_id" value="{row["id"]}">
                     <select name="booking_status">{status_options}</select>
@@ -35632,6 +35631,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not previous_booking:
             self.send_error(404, "Booking not found.")
             return
+        approved_modification = (
+            row_value(previous_booking, "booking_status") == "MODIFIED"
+            and booking_status == "CONFIRMED"
+            and pending_booking_modification(previous_booking)
+        )
+        proposal: dict[str, object] = pending_booking_modification(previous_booking) if approved_modification else {}
+        if approved_modification:
+            try:
+                requested_car_id = int(float_from_value(proposal.get("carId") or 0))
+                proposed_pickup_date, proposed_return_date, proposed_pickup_time, proposed_return_time, proposed_days, proposed_start, proposed_end = normalize_booking_window(
+                    pickup_date=str(proposal.get("pickupDate") or "").strip(),
+                    return_date=str(proposal.get("returnDate") or "").strip(),
+                    pickup_time=str(proposal.get("pickupTime") or "").strip(),
+                    return_time=str(proposal.get("returnTime") or "").strip(),
+                    strict=True,
+                )
+            except (TypeError, ValueError):
+                self.send_error(409, "The requested trip details are no longer valid. Ask the customer to submit the change again.")
+                return
+            if not requested_car_id:
+                self.send_error(409, "The requested vehicle is missing. Ask the customer to submit the change again.")
+                return
         if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
             self.send_error(
                 409,
@@ -35649,17 +35670,80 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not deposit_released:
                 cancellation_deposit_message = f"Deposit release requires review: {cancellation_deposit_message}"
         with db() as con:
-            con.execute(
-                """
-                UPDATE bookings
-                SET booking_status = ?,
-                    payment_status = ?,
-                    status = ?,
-                    cancellation_reason = ?
-                WHERE id = ?
-                """,
-                (booking_status, payment_status, booking_status, reason, form.get("booking_id")),
-            )
+            if approved_modification:
+                # Recheck while holding the write lock: a vehicle can be booked between
+                # the customer's request and the administrator's decision.
+                con.execute("BEGIN IMMEDIATE")
+                requested_car = con.execute("SELECT * FROM cars WHERE id = ?", (requested_car_id,)).fetchone()
+                if not car_is_publicly_rentable(requested_car):
+                    self.send_error(409, "The requested vehicle is no longer available.")
+                    return
+                if active_booking_conflict_for_car_in_connection(
+                    con,
+                    requested_car_id,
+                    proposed_start,
+                    proposed_end,
+                    int(row_value(previous_booking, "id") or 0),
+                ):
+                    self.send_error(409, "The requested vehicle is no longer available for those dates.")
+                    return
+                con.execute(
+                    """
+                    UPDATE bookings
+                    SET car_id = ?, pickup_date = ?, pickup_time = ?,
+                        dropoff_date = ?, dropoff_time = ?, pickup_location = ?,
+                        dropoff_location = ?, return_location = ?, days = ?,
+                        subtotal_price = ?, discount_amount = ?, total_price = ?,
+                        tax_fee_amount = ?, booking_hold_amount = ?, due_at_pickup_amount = ?,
+                        estimated_market_total = ?, fairfares_savings_amount = ?,
+                        additional_driver_requested = ?, additional_driver_name = ?,
+                        additional_driver_age = ?, additional_driver_fee_amount = ?,
+                        booking_status = ?, payment_status = ?, status = ?,
+                        cancellation_reason = '', modification_request_json = ''
+                    WHERE id = ?
+                    """,
+                    (
+                        requested_car_id, proposed_pickup_date, proposed_pickup_time,
+                        proposed_return_date, proposed_return_time,
+                        str(proposal.get("pickupLocation") or row_value(previous_booking, "pickup_location")),
+                        str(proposal.get("returnLocation") or row_value(previous_booking, "dropoff_location")),
+                        str(proposal.get("returnLocation") or row_value(previous_booking, "return_location")),
+                        proposed_days, float_from_value(proposal.get("subtotalPrice")),
+                        float_from_value(proposal.get("discountAmount")), float_from_value(proposal.get("totalPrice")),
+                        float_from_value(proposal.get("taxFeeAmount")), float_from_value(proposal.get("bookingHoldAmount")),
+                        float_from_value(proposal.get("dueAtPickupAmount")), float_from_value(proposal.get("estimatedMarketTotal")),
+                        float_from_value(proposal.get("fairfaresSavingsAmount")),
+                        int(bool(proposal.get("additionalDriverRequested"))),
+                        str(proposal.get("additionalDriverName") or "")[:120],
+                        str(proposal.get("additionalDriverAge") or "")[:20],
+                        float_from_value(proposal.get("additionalDriverFeeAmount")),
+                        booking_status, payment_status, booking_status, form.get("booking_id"),
+                    ),
+                )
+                if requested_car_id != int(row_value(previous_booking, "car_id") or 0):
+                    other_active_booking = con.execute(
+                        """
+                        SELECT 1 FROM bookings
+                        WHERE car_id = ? AND id != ?
+                          AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                        LIMIT 1
+                        """,
+                        (row_value(previous_booking, "car_id"), row_value(previous_booking, "id")),
+                    ).fetchone()
+                    if not other_active_booking:
+                        con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(previous_booking, "car_id"),))
+                    con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
+            else:
+                con.execute(
+                    """
+                    UPDATE bookings
+                    SET booking_status = ?, payment_status = ?, status = ?,
+                        cancellation_reason = ?,
+                        modification_request_json = CASE WHEN ? = 'MODIFIED' THEN modification_request_json ELSE '' END
+                    WHERE id = ?
+                    """,
+                    (booking_status, payment_status, booking_status, reason, booking_status, form.get("booking_id")),
+                )
             if booking_status in {"CANCELLED", "EXPIRED_HOLD"}:
                 con.execute(
                     """
@@ -39985,6 +40069,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED"}:
             self.send_json({"ok": False, "error": "This booking cannot be modified now."}, 400)
             return
+        if row_value(booking, "booking_status") in {"MODIFIED", "CANCELLATION_REQUESTED"}:
+            self.send_json({"ok": False, "error": "This booking already has a request awaiting review."}, 409)
+            return
         new_pickup_date = str(payload.get("pickupDate") or payload.get("pickup_date") or row_value(booking, "pickup_date")).strip()
         new_pickup_time = str(payload.get("pickupTime") or payload.get("pickup_time") or row_value(booking, "pickup_time")).strip()
         new_return_date = str(payload.get("returnDate") or payload.get("return_date") or row_value(booking, "dropoff_date")).strip()
@@ -40060,64 +40147,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ):
                 self.send_json({"ok": False, "error": "Selected vehicle is no longer available for those dates."}, 409)
                 return
+            proposal = {
+                "carId": requested_car_id,
+                "pickupDate": new_pickup_date,
+                "pickupTime": new_pickup_time,
+                "returnDate": new_return_date,
+                "returnTime": new_return_time,
+                "pickupLocation": new_pickup_location,
+                "returnLocation": new_return_location,
+                "days": next_days,
+                "subtotalPrice": breakdown["base"],
+                "discountAmount": discount_amount,
+                "taxFeeAmount": breakdown["tax_fee_amount"],
+                "bookingHoldAmount": breakdown["booking_hold"],
+                "dueAtPickupAmount": breakdown["due_at_pickup"],
+                "estimatedMarketTotal": breakdown["market_total"],
+                "fairfaresSavingsAmount": breakdown["savings"],
+                "totalPrice": breakdown["total"],
+                "additionalDriverRequested": additional_driver_requested,
+                "additionalDriverName": driver_name,
+                "additionalDriverAge": driver_age,
+                "additionalDriverFeeAmount": additional_driver_fee,
+                "note": change_note,
+            }
             con.execute(
-                """
-                UPDATE bookings
-                SET car_id = ?,
-                    pickup_date = ?,
-                    pickup_time = ?,
-                    dropoff_date = ?,
-                    dropoff_time = ?,
-                    pickup_location = ?,
-                    dropoff_location = ?,
-                    return_location = ?,
-                    days = ?,
-                    subtotal_price = ?,
-                    discount_amount = ?,
-                    tax_fee_amount = ?,
-                    booking_hold_amount = ?,
-                    due_at_pickup_amount = ?,
-                    estimated_market_total = ?,
-                    fairfares_savings_amount = ?,
-                    total_price = ?,
-                    additional_driver_requested = ?,
-                    additional_driver_name = ?,
-                    additional_driver_age = ?,
-                    additional_driver_fee_amount = ?,
-                    booking_status = 'MODIFIED',
-                    status = 'MODIFIED',
-                    cancellation_reason = ?
-                WHERE id = ?
-                """,
-                (
-                    requested_car_id,
-                    new_pickup_date,
-                    new_pickup_time,
-                    new_return_date,
-                    new_return_time,
-                    new_pickup_location,
-                    new_return_location,
-                    new_return_location,
-                    next_days,
-                    breakdown["base"],
-                    discount_amount,
-                    breakdown["tax_fee_amount"],
-                    breakdown["booking_hold"],
-                    breakdown["due_at_pickup"],
-                    breakdown["market_total"],
-                    breakdown["savings"],
-                    breakdown["total"],
-                    1 if additional_driver_requested else 0,
-                    driver_name,
-                    driver_age,
-                    additional_driver_fee,
-                    change_note,
-                    row_value(booking, "id"),
-                ),
+                """UPDATE bookings
+                   SET booking_status = 'MODIFIED', status = 'MODIFIED',
+                       cancellation_reason = ?, modification_request_json = ?
+                   WHERE id = ?""",
+                (change_note, json.dumps(proposal, separators=(",", ":")), row_value(booking, "id")),
             )
-            if requested_car_id != int(row_value(booking, "car_id") or 0):
-                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
-                con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (requested_car_id,))
         updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
         send_rental_booking_push(
             updated or booking,
