@@ -1,7 +1,11 @@
 import os
+import json
 import sqlite3
 import tempfile
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -1119,6 +1123,105 @@ class BookingHoldTest(unittest.TestCase):
             app.parse_booking_datetime(approved["dropoff_date"], approved["dropoff_time"]),
             current_return + timedelta(days=1),
         )
+
+    def test_extension_mobile_api_to_admin_approval_to_stripe_completion(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute("UPDATE bookings SET booking_status = 'PICKED_UP', status = 'PICKED_UP', payment_status = 'PAID' WHERE id = ?", (booking["id"],))
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('extension-customer', ?)", (self.user_id,))
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Extension Admin', 'extension-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('extension-admin', ?)", (admin_id,))
+
+        class QuietHandler(app.FairFaresHandler):
+            suppress_operational_alerts = True
+
+            def log_message(self, _format, *_args):
+                return
+
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+
+        def post_json(path, payload, token):
+            request = urllib.request.Request(
+                f"{origin}{path}", data=json.dumps(payload).encode(), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode())
+
+        try:
+            current_return = app.parse_booking_datetime(booking["dropoff_date"], booking["dropoff_time"])
+            pickup = app.parse_booking_datetime(booking["pickup_date"], booking["pickup_time"])
+            self.assertIsNotNone(current_return)
+            self.assertIsNotNone(pickup)
+            with patch.object(app, "send_rental_booking_push"):
+                status, requested = post_json(
+                    "/api/mobile/rentals/modify-request",
+                    {
+                        "bookingId": booking["booking_id"], "vehicleId": car["id"],
+                        "pickupDate": pickup.strftime("%Y-%m-%d"), "pickupTime": booking["pickup_time"],
+                        "returnDate": (current_return + timedelta(days=1)).strftime("%Y-%m-%d"), "returnTime": booking["dropoff_time"],
+                        "pickupLocation": booking["pickup_location"], "returnLocation": booking["dropoff_location"],
+                    },
+                    "extension-customer",
+                )
+            self.assertEqual(status, 200)
+            self.assertEqual(requested["booking"]["status"], "MODIFIED")
+
+            form = urllib.parse.urlencode({"booking_id": booking["id"], "booking_status": "CONFIRMED", "payment_status": "PAID"}).encode()
+            admin_request = urllib.request.Request(
+                f"{origin}/admin/bookings/status", data=form, method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Bearer extension-admin"},
+            )
+            no_redirect = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
+            with patch.object(app, "send_rental_booking_push"), patch.object(app, "notify_slack_payment"):
+                with no_redirect.open(admin_request, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+
+            with app.db() as con:
+                approved = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            self.assertEqual(approved["booking_status"], "PICKED_UP")
+            self.assertEqual(approved["extension_payment_status"], "PENDING")
+            self.assertGreater(float(approved["extension_payment_due_amount"]), 0)
+
+            stripe_session = {"id": "cs_extension", "url": "https://checkout.stripe.test/extension"}
+            with patch.object(app, "stripe_api_request", return_value=(stripe_session, "ok")) as stripe_create:
+                status, checkout = post_json(
+                    "/api/mobile/rentals/checkout-session",
+                    {"bookingId": booking["booking_id"], "paymentOption": "extension"},
+                    "extension-customer",
+                )
+            self.assertEqual(status, 200)
+            self.assertEqual(checkout["paymentOption"], "extension")
+            self.assertEqual(stripe_create.call_args.args[0], "checkout/sessions")
+            self.assertEqual(stripe_create.call_args.args[1]["metadata[payment_option]"], "extension")
+
+            paid_session = {
+                "metadata": {"booking_id": str(booking["id"]), "user_id": str(self.user_id), "payment_option": "extension"},
+                "payment_status": "paid", "amount_total": int(round(float(approved["extension_payment_due_amount"]) * 100)),
+                "payment_intent": "pi_extension_e2e", "customer_email": "hold@example.com",
+            }
+            payment_request = urllib.request.Request(
+                f"{origin}/payment/success?session_id=cs_extension", headers={"Authorization": "Bearer extension-customer"}
+            )
+            with patch.object(app, "stripe_api_get", return_value=(paid_session, "ok")), patch.object(app, "send_rental_booking_push"):
+                with urllib.request.urlopen(payment_request, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+            with app.db() as con:
+                paid = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            self.assertEqual(paid["booking_status"], "PICKED_UP")
+            self.assertEqual(paid["extension_payment_status"], "PAID")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_checkout_confirmation_verifies_stripe_before_recording_deposit(self):
         car = app.get_cars()[0]
