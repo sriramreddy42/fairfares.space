@@ -361,6 +361,7 @@ export function ServicesScreen({
 
   const bookingIsPast = Boolean(selectedBooking && ["CANCELLED", "RETURNED", "EXPIRED_HOLD"].includes(selectedBooking.status));
   const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED", "PICKED_UP"].includes(selectedBooking.status));
+  const bookingCanCancel = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED"].includes(selectedBooking.status));
   const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
   const inProgressRental = selectedBooking?.status === "PICKED_UP";
   const extensionPaymentDue = Boolean(inProgressRental && selectedBooking?.extensionPaymentStatus === "PENDING" && Number(selectedBooking?.extensionPaymentDue || 0) > 0);
@@ -387,7 +388,8 @@ export function ServicesScreen({
       onPress: () => openPanel("details")
     }
   ].filter((action) => !bookingIsPast || ["Download Invoice", "View Details"].includes(action.label))
-    .filter((action) => bookingCanChange || !["Modify Reservation", "Extend Rental", "Cancel Reservation"].includes(action.label));
+    .filter((action) => bookingCanChange || !["Modify Reservation", "Extend Rental"].includes(action.label))
+    .filter((action) => bookingCanCancel || action.label !== "Cancel Reservation");
 
   const selectedDocumentSet = selectedBooking?.documents?.find((item) => item.id === selectedDocumentSetId)
     || selectedBooking?.documents?.[0]

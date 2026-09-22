@@ -1047,6 +1047,79 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(float(refreshed["extension_payment_due_amount"]), 0.0)
         self.assertEqual(transaction["transaction_status"], "EXTENSION_PAID")
 
+    def test_in_progress_extension_reserves_new_return_window_after_approval(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'PICKED_UP', status = 'PICKED_UP', payment_status = 'PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.user_id,)).fetchone()
+        pickup = app.parse_booking_datetime(booking["pickup_date"], booking["pickup_time"])
+        current_return = app.parse_booking_datetime(booking["dropoff_date"], booking["dropoff_time"])
+        self.assertIsNotNone(pickup)
+        self.assertIsNotNone(current_return)
+
+        class ExtensionRequest:
+            def __init__(self):
+                self.response = None
+
+            def current_user(self):
+                return user
+
+            def read_json_body(self):
+                return {
+                    "bookingId": booking["booking_id"], "vehicleId": car["id"],
+                    "pickupDate": pickup.strftime("%Y-%m-%d"), "pickupTime": booking["pickup_time"],
+                    "returnDate": (current_return + timedelta(days=1)).strftime("%Y-%m-%d"), "returnTime": booking["dropoff_time"],
+                    "pickupLocation": booking["pickup_location"], "returnLocation": booking["dropoff_location"],
+                }
+
+            def public_origin(self):
+                return "https://example.test"
+
+            def send_json(self, response, status=200):
+                self.response = (response, status)
+
+        request = ExtensionRequest()
+        with patch.object(app, "send_rental_booking_push"):
+            app.FairFaresHandler.api_mobile_rental_modify_request(request)
+        self.assertEqual(request.response[1], 200)
+        with app.db() as con:
+            pending = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        proposal = app.pending_booking_modification(pending)
+        self.assertEqual(proposal["originalStatus"], "PICKED_UP")
+        self.assertGreater(float(proposal["extensionAmount"]), 0)
+
+        class AdminApproval:
+            def require_admin(self):
+                return user
+
+            def read_form(self):
+                return {"booking_id": str(booking["id"]), "booking_status": "CONFIRMED", "payment_status": "PAID"}
+
+            def public_origin(self):
+                return "https://example.test"
+
+            def redirect(self, _location):
+                pass
+
+            def send_error(self, status, message):
+                raise AssertionError(f"Unexpected admin error {status}: {message}")
+
+        with patch.object(app, "send_rental_booking_push"), patch.object(app, "notify_slack_payment"):
+            app.FairFaresHandler.update_admin_booking_status(AdminApproval())
+        with app.db() as con:
+            approved = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(approved["booking_status"], "PICKED_UP")
+        self.assertEqual(approved["extension_payment_status"], "PENDING")
+        self.assertGreater(float(approved["extension_payment_due_amount"]), 0)
+        self.assertEqual(
+            app.parse_booking_datetime(approved["dropoff_date"], approved["dropoff_time"]),
+            current_return + timedelta(days=1),
+        )
+
     def test_checkout_confirmation_verifies_stripe_before_recording_deposit(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

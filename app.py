@@ -9549,6 +9549,54 @@ def confirm_booking_hold_payment(
     return True, invoice_number
 
 
+def confirm_rental_extension_payment(
+    booking_id: int,
+    amount: float,
+    payment_method: str = "Stripe Checkout",
+    cardholder_name: str = "Stripe customer",
+    payment_reference: str = "",
+    origin: str = "",
+) -> tuple[bool, str]:
+    """Record an approved in-progress rental extension without altering its pickup state."""
+    with db() as con:
+        booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not booking:
+            return False, "Booking not found."
+        due = round(float(row_value(booking, "extension_payment_due_amount") or 0), 2)
+        if row_value(booking, "booking_status") != "PICKED_UP" or row_value(booking, "extension_payment_status") != "PENDING" or due <= 0:
+            return False, "This rental has no approved extension payment due."
+        paid_amount = round(float(amount or 0), 2)
+        if paid_amount + 0.01 < due:
+            return False, "The extension payment amount does not match the approved amount."
+        invoice_number = payment_reference or f"EXT-{secrets.randbelow(900000) + 100000}"
+        if con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
+            return True, "Extension payment already recorded."
+        con.execute(
+            """
+            INSERT INTO transactions
+            (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
+            VALUES (?, ?, ?, ?, 'EXTENSION_PAID', 'MATCHED', 'Approved rental extension paid by Stripe checkout.', ?)
+            """,
+            (booking_id, payment_method, cardholder_name, paid_amount, invoice_number),
+        )
+        con.execute(
+            """
+            UPDATE bookings
+            SET extension_payment_due_amount = 0, extension_payment_status = 'PAID'
+            WHERE id = ?
+            """,
+            (booking_id,),
+        )
+    updated = get_booking_by_id(booking_id)
+    send_rental_booking_push(
+        updated or booking,
+        "Rental extension paid",
+        f"Your approved extension payment of {format_money(paid_amount)} was received.",
+        "EXTENSION_PAID",
+    )
+    return True, invoice_number
+
+
 def create_pickup_balance_payment_intent(booking: sqlite3.Row, admin: sqlite3.Row) -> tuple[dict[str, object], str]:
     if row_value(booking, "payment_status") != "HOLD_PAID":
         return {}, "Pickup balance can only be collected after the 10% hold is paid."
@@ -35679,7 +35727,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 # CONFIRMED is the admin action submitted by the form. The rental
                 # itself remains in progress after its extension is approved.
                 booking_status = "PICKED_UP"
-        if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
+        if (
+            booking_status == "PICKED_UP"
+            and str(proposal.get("originalStatus") or "") != "PICKED_UP"
+            and not booking_releasable_at_pickup(previous_booking)
+        ):
             self.send_error(
                 409,
                 "Pickup blocked: confirm payment and authorize the refundable security deposit first.",
@@ -40122,6 +40174,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         is_in_progress_extension = row_value(booking, "booking_status") == "PICKED_UP"
         if is_in_progress_extension:
+            if row_value(booking, "payment_status") != "PAID":
+                self.send_json({"ok": False, "error": "Complete the rental payment before requesting an in-progress extension."}, 409)
+                return
             current_pickup = parse_booking_datetime(row_value(booking, "pickup_date"), row_value(booking, "pickup_time"))
             current_return = parse_booking_datetime(row_value(booking, "dropoff_date"), row_value(booking, "dropoff_time"))
             if (
@@ -40159,6 +40214,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         additional_driver_requested = bool(payload.get("additionalDriverRequested") or payload.get("additional_driver_requested"))
         driver_name = str(payload.get("additionalDriverName") or payload.get("additional_driver_name") or "").strip()[:120]
         driver_age = str(payload.get("additionalDriverAge") or payload.get("additional_driver_age") or "").strip()[:20]
+        if is_in_progress_extension:
+            additional_driver_requested = bool(row_value(booking, "additional_driver_requested"))
+            driver_name = str(row_value(booking, "additional_driver_name") or "")[:120]
+            driver_age = str(row_value(booking, "additional_driver_age") or "")[:20]
         additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
         breakdown = rental_price_breakdown(daily_price, next_days, discount_amount, additional_driver_fee)
         extension_amount = round(max(0.0, float(breakdown["total"]) - float(row_value(booking, "total_price") or 0)), 2) if is_in_progress_extension else 0.0
