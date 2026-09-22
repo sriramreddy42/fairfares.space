@@ -644,7 +644,7 @@ class HousingLocationSearchTest(unittest.TestCase):
 
         self.assertEqual(results[0]["id"], "NEAR-DAYTON")
         self.assertFalse(results[0].get("sample", False))
-        self.assertEqual(len(results), 11)
+        self.assertEqual(len(results), 3)
         self.assertTrue(all(item.get("sample") is False for item in results[1:]))
         self.assertTrue(all(item.get("posterName") == app.SAMPLE_HOUSING_OWNER_NAME for item in results[1:]))
         self.assertTrue(all("posterEmail" not in item for item in results))
@@ -656,7 +656,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         "accommodation_location_point",
         return_value={"label": "Madison, WI", "lat": 43.0731, "lng": -89.4012, "source": "test"},
     )
-    def test_empty_location_returns_ten_local_contactable_seeded_posts(self, _mock_point):
+    def test_empty_location_returns_two_local_contactable_seeded_posts(self, _mock_point):
         profile_photo = "https://cdn.example.test/sample-owner-current.jpg"
         with app.db() as con:
             con.execute("UPDATE users SET profile_photo_url = ? WHERE id = ?", (profile_photo, self.sample_owner_id))
@@ -668,7 +668,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             limit=30,
         )
 
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 2)
         self.assertTrue(all(item["sample"] is False for item in results))
         self.assertTrue(all(item["posterName"] == app.SAMPLE_HOUSING_OWNER_NAME for item in results))
         self.assertTrue(all("posterEmail" not in item for item in results))
@@ -677,7 +677,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(all("University of Wisconsin" in item["location"] for item in results))
         self.assertTrue(all(item["mode"] == "HAVE_PLACE" for item in results))
         self.assertTrue(all(float(item["distanceMiles"]) <= 5 for item in results))
-        self.assertGreaterEqual(len({item["category"] for item in results}), 6)
+        self.assertEqual(len({item["category"] for item in results}), 2)
         self.assertIn("Shared Room", {item["categoryLabel"] for item in results})
         self.assertTrue(all(str(item["imageUrl"]).startswith("/static/demo-housing/") for item in results))
 
@@ -695,7 +695,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             limit=30,
         )
 
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 2)
         self.assertTrue(all(item["category"] == "shared_room" for item in results))
         self.assertTrue(all(item["mode"] == "NEED_PLACE" for item in results))
         self.assertTrue(all(int(item["rentValue"]) <= 600 for item in results))
@@ -1172,6 +1172,11 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(str(result["rent"]).startswith("₹"))
         self.assertEqual(result["country"], "IN")
         self.assertEqual(result["currencyCode"], "INR")
+
+    def test_housing_demo_fallback_is_limited_to_two_listings(self):
+        results = app.mobile_sample_housing_posts(city="Denver, CO", limit=24)
+        self.assertEqual(len(results), 2)
+        self.assertEqual([str(result["id"])[-2:] for result in results], ["01", "02"])
 
     def test_listing_country_is_structured_and_drives_payload_currency(self):
         with app.db() as con:

@@ -19904,15 +19904,9 @@ SAMPLE_HOUSING_OWNER_NAME = "Sriram Reddy Bandari"
 SAMPLE_HOUSING_VARIANTS = (
     ("Private furnished room", "single_room", 850, "Private Bath", "Flexible", 1, 0, "Furnished, WiFi, Laundry, Utilities included"),
     ("Shared room near transit", "shared_room", 575, "Shared Bath", "3-6 months", 2, 1, "Transit nearby, WiFi, Laundry"),
-    ("Roommate wanted for modern apartment", "apartment", 950, "Private/Shared Bath", "12 months", 2, 1, "Gym, Parking, In-unit laundry"),
-    ("Private room in shared townhouse", "town_house", 780, "Shared Bath", "6-12 months", 1, 0, "Parking, Patio, Laundry"),
-    ("Furnished paying guest room", "paying_guest", 700, "Shared Bath", "Short stay", 1, 0, "Furnished, Utilities included, Kitchen access"),
-    ("Basement suite with separate space", "basement_apartment", 1100, "Private Bath", "Flexible", 2, 0, "Private entrance, Parking, Utilities included"),
-    ("Unfurnished room for long-term renter", "single_room", 650, "Shared Bath", "12 months", 1, 0, "Laundry, Street parking, Kitchen access"),
-    ("Two roommates needed for shared home", "single_family_home", 725, "Private/Shared Bath", "6-12 months", 3, 1, "Backyard, Parking, Laundry"),
-    ("Short-term shared room", "shared_room", 525, "Shared Bath", "Short stay", 2, 1, "Furnished, WiFi, Flexible move-in"),
-    ("Private room with utilities included", "condo", 925, "Private Bath", "3-6 months", 1, 0, "Utilities included, Gym, Secure entry"),
 )
+
+SAMPLE_HOUSING_MAX_RESULTS = 2
 
 
 def mobile_sample_housing_posts(
@@ -19925,7 +19919,7 @@ def mobile_sample_housing_posts(
     radius: float = 0,
     center_lat: float = 0,
     center_lng: float = 0,
-    limit: int = 10,
+    limit: int = SAMPLE_HOUSING_MAX_RESULTS,
 ) -> list[dict[str, object]]:
     """Return location-aware FairFares housing cards after live local results."""
     if int(limit or 0) <= 0:
@@ -19948,7 +19942,8 @@ def mobile_sample_housing_posts(
     move_in_base = datetime.utcnow().date() + timedelta(days=7)
     max_distance = max(0.5, min(10.0, float_from_value(radius) or 10.0))
     samples: list[dict[str, object]] = []
-    for index, variant in enumerate(SAMPLE_HOUSING_VARIANTS[:max(0, min(10, int(limit or 10)))]):
+    requested_count = max(0, int(limit or SAMPLE_HOUSING_MAX_RESULTS))
+    for index, variant in enumerate(SAMPLE_HOUSING_VARIANTS[:min(SAMPLE_HOUSING_MAX_RESULTS, requested_count)]):
         title, default_category, base_rent, bath, lease, accommodates, roommate_count, amenities = variant
         sample_category = category or default_category
         rent_value = min(base_rent, selected_budget) if selected_budget else base_rent
