@@ -1020,7 +1020,7 @@ function websiteCardDetails(value: string) {
   }
 }
 
-function SwipeToReply({ children, onReply }: { children: React.ReactNode; onReply: () => void }) {
+function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; mine: boolean; onReply: () => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
@@ -1033,13 +1033,13 @@ function SwipeToReply({ children, onReply }: { children: React.ReactNode; onRepl
     onPanResponderRelease: (_event, gesture) => {
       const shouldReply = gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62);
       if (shouldReply) onReplyRef.current();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 20, stiffness: 280, mass: 0.65 }).start();
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
-    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 280, mass: 0.65 }).start()
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 20, stiffness: 280, mass: 0.65 }).start()
   }), [translateX]);
-  return <View style={styles.swipeReplyWrap}>
+  return <View style={[styles.swipeReplyWrap, mine ? styles.swipeReplyWrapMine : styles.swipeReplyWrapTheirs]}>
     <View pointerEvents="none" style={styles.swipeReplyAction} accessibilityElementsHidden>
       <Text style={styles.swipeReplyActionIcon}>↩</Text>
       <Text style={styles.swipeReplyActionText}>Reply</Text>
@@ -7226,12 +7226,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
 
   const threadEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
-      const screenWidth = Dimensions.get("window").width;
-      // Reserve the outer screen edge for navigation. A reply gesture begins
-      // on a message away from the edge, so the two actions never compete.
+    onMoveShouldSetPanResponder: (_event, gesture) => {
+      // Message bubbles receive their own responder first and use a right
+      // swipe for reply. A right swipe started in the wallpaper/background
+      // therefore belongs to the thread and navigates back.
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
-      return horizontalSwipe && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
+      return horizontalSwipe && gesture.dx > 0;
     },
     onPanResponderMove: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
@@ -7239,8 +7239,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = Math.abs(gesture.dx) > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
-        && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
+      const horizontalSwipe = gesture.dx > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
       const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 300, mass: 0.7 }).start();
       if (!horizontalSwipe) {
         returnToThread();
@@ -7690,13 +7689,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               && isEmojiOnlyMessage(visibleMessageText);
             return (
             <View key={message.id} style={styles.threadMessageCell}>
-            <SwipeToReply onReply={() => beginReply(message)}><View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
+            <View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && isGroupConversation(activeConversation) && messageRunEnds ? (
                 <TouchableOpacity style={styles.smallAvatar} disabled={!message.senderPhotoUrl} onPress={() => setProfilePhotoPreview({ uri: message.senderPhotoUrl || "", label: message.senderName || "Profile photo" })} accessibilityRole={message.senderPhotoUrl ? "button" : undefined} accessibilityLabel={message.senderPhotoUrl ? `Open ${message.senderName || "sender"} profile photo` : undefined}>
                   <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
                 </TouchableOpacity>
               ) : !message.mine && isGroupConversation(activeConversation) ? <View style={styles.smallAvatarSpacer} /> : null}
-              <TouchableOpacity
+              <SwipeToReply mine={message.mine} onReply={() => beginReply(message)}><TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
                 onLongPress={() => handleMessageLongPress(message)}
@@ -7843,8 +7842,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   {message.mine && messageReceipt(message.status) ? <Text style={[styles.receiptMark, message.status === "seen" && styles.receiptSeen, message.status === "failed" && styles.receiptFailed]}>{messageReceipt(message.status)}</Text> : null}
                 </View> : null}
                 {(message.reactions || []).length ? <View style={styles.messageReactions}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
-              </TouchableOpacity>
-            </View></SwipeToReply>
+              </TouchableOpacity></SwipeToReply>
+            </View>
             </View>
             );
             }}
@@ -8871,7 +8870,9 @@ const styles = StyleSheet.create({
   threadMessageRowMine: { justifyContent: "flex-end" },
   threadMessageRunEnd: { marginBottom: 7 },
   highlightedMessageRow: { borderRadius: 16, backgroundColor: "rgba(214,169,95,0.24)" },
-  swipeReplyWrap: { position: "relative", overflow: "visible" },
+  swipeReplyWrap: { position: "relative", overflow: "visible", maxWidth: "100%" },
+  swipeReplyWrapMine: { alignSelf: "flex-end" },
+  swipeReplyWrapTheirs: { alignSelf: "flex-start" },
   swipeReplyBody: { overflow: "visible" },
   swipeReplyAction: { position: "absolute", left: 12, top: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderRadius: 18, backgroundColor: "rgba(33, 102, 79, 0.92)" },
   swipeReplyActionIcon: { color: "#fff", fontSize: 17, fontWeight: "800" },
