@@ -19885,15 +19885,6 @@ def mobile_housing_posts(
 SAMPLE_HOUSING_IMAGES = (
     "/static/demo-housing/roommates_2026-01-08-02-11-55-766_10975734.jpeg",
     "/static/demo-housing/roommates_2026-01-08-02-44-53-241_10975734.jpeg",
-    "/static/demo-housing/roommates_2026-03-15-09-04-58-780_32.jpg",
-    "/static/demo-housing/roommates_2026-03-15-10-22-00-802_21.jpg",
-    "/static/demo-housing/roommates_2026-07-13-08-50-03-319_68.jpg",
-    "/static/demo-housing/roommates_2026-07-13-08-50-03-975_97.jpg",
-    "/static/demo-housing/roommates_2026-07-28-01-18-03-350_11882278.jpeg",
-    "/static/demo-housing/roommates_2026-07-28-01-19-04-006_11882278.jpeg",
-    "/static/demo-housing/roommates_2026-07-28-03-40-47-063_11882898.jpeg",
-    "/static/demo-housing/roommates_2026-07-28-03-47-47-328_11882898.jpeg",
-    "/static/demo-housing/roommates_2026-07-28-09-51-07-796_11883094.jpeg",
 )
 
 
