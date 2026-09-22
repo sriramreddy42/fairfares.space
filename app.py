@@ -19951,6 +19951,74 @@ def mobile_housing_area_stats(city: str = "", area: str = "", limit: int = 6) ->
     ]
 
 
+def mobile_housing_location_options(query: str, area: str = "", limit: int = 18) -> dict[str, object]:
+    """Return housing search locations from active FairFares property listings."""
+    query = clean_text_value(query, 120)
+    area = clean_text_value(area, 140)
+    city_term = query.split(",", 1)[0].strip()
+    area_term = area.split(",", 1)[0].strip()
+    clauses = [
+        "visibility_status = 'ACTIVE'",
+        "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
+        "COALESCE(source_label, '') != 'SAMPLE_DATA'",
+        "post_mode = 'HAVE_PLACE'",
+    ]
+    values: list[object] = []
+    if city_term:
+        clauses.append("lower(city) LIKE lower(?)")
+        values.append(f"%{city_term}%")
+    try:
+        with db() as con:
+            rows = con.execute(
+                f"""
+                SELECT city, primary_neighborhood, area_or_apartment, city_area_zip, lat, lng
+                FROM accommodation_posts
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """,
+                values,
+            ).fetchall()
+    except sqlite3.Error:
+        rows = []
+
+    cities: list[str] = []
+    suggested: list[str] = []
+    seen_cities: set[str] = set()
+    seen_areas: set[str] = set()
+    points: list[tuple[float, float]] = []
+    for row in rows:
+        city = clean_text_value(row_value(row, "city"), 120)
+        if city and city.casefold() not in seen_cities:
+            seen_cities.add(city.casefold())
+            cities.append(city)
+        for field in ("primary_neighborhood", "area_or_apartment", "city_area_zip"):
+            name = clean_text_value(row_value(row, field), 140)
+            if not name or name.casefold() == city.casefold():
+                continue
+            if area_term and area_term.casefold() not in name.casefold():
+                continue
+            if name.casefold() not in seen_areas:
+                seen_areas.add(name.casefold())
+                suggested.append(name)
+        lat = float_from_value(row_value(row, "lat"))
+        lng = float_from_value(row_value(row, "lng"))
+        if lat and lng:
+            points.append((lat, lng))
+    return {
+        "ok": True,
+        "metro": "",
+        "selectedLocation": area or query,
+        "cities": cities[:max(1, min(limit, 18))],
+        "suggested": suggested[:max(1, min(limit, 18))],
+        "zips": [],
+        "lat": round(sum(point[0] for point in points) / len(points), 6) if points else 0,
+        "lng": round(sum(point[1] for point in points) / len(points), 6) if points else 0,
+        "googlePlacesEnabled": False,
+        "source": "active-property-listings",
+    }
+
+
 SAMPLE_HOUSING_IMAGES = (
     "/static/demo-housing/roommates_2026-01-08-02-11-55-766_10975734.jpeg",
     "/static/demo-housing/roommates_2026-01-08-02-44-53-241_10975734.jpeg",
@@ -38944,10 +39012,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not query:
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
-        # Housing location search is intentionally backend-only. Google Places
-        # remains available for ride/map features, but it must not populate the
-        # housing picker or manufacture housing neighborhoods.
-        self.send_json(accommodation_location_options(query, area, backend_only=True))
+        # The housing picker is driven by active FairFares property listings.
+        # It neither calls nor surfaces Google Places data.
+        self.send_json(mobile_housing_location_options(query, area))
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
