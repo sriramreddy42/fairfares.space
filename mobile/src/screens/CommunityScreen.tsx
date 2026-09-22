@@ -9,11 +9,12 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getCommunityUserProfile, joinChatCommunity,
+  getRentalBookings, getRideActivity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser } from "../types";
+import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser, RentalServiceBooking, RidePost } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -34,6 +35,7 @@ type Props = {
   onOpenHousing: (postId?: string) => void;
   onOpenRides: () => void;
   onOpenRentalCars: () => void;
+  onOpenRentalBooking: (bookingId: string) => void;
   onOpenGas: () => void;
   gasPriceRefreshKey?: number;
   onOpenCommunity: (communityId: string) => void;
@@ -87,6 +89,17 @@ type CommunityFeedRow =
   | { key: string; kind: "testimonial" }
   | { key: string; kind: "rental" }
   | { key: string; kind: "empty" };
+
+type CommunityActionNotice = {
+  id: string;
+  icon: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  actionLabel: string;
+  action: "ride" | "rental";
+  bookingId?: string;
+};
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
 const communityGroupSnapshots = new Map<string, Community[]>();
@@ -242,7 +255,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenRentalBooking, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const safeAreaInsets = useSafeAreaInsets();
   // React Native's Android page-sheet Modal can report a zero top inset even
@@ -269,6 +282,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [selectedGroup, setSelectedGroup] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
+  const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(null);
   const pullOffset = useRef(new Animated.Value(0)).current;
   const heroEntrance = useRef(new Animated.Value(0)).current;
   const gasIconScale = useRef(new Animated.Value(1)).current;
@@ -315,6 +329,70 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const featuredReview = communityReviews[communityReviewIndex % communityReviews.length] || communityReviewFallback;
   const acrossCountryName = /,\s*india\b|\bindia\b/i.test(city) ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
+
+  useEffect(() => {
+    let cancelled = false;
+    setActionNotice(null);
+    if (!user?.id) return () => { cancelled = true; };
+
+    void Promise.allSettled([getRideActivity(), getRentalBookings()]).then(([rideResult, rentalResult]) => {
+      if (cancelled) return;
+      const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
+      const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
+      const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
+        || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "HOLD_PAID")
+        || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus !== "AUTHORIZED")
+        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED");
+
+      if (actionableBooking) {
+        const extensionDue = actionableBooking.extensionPaymentStatus === "PENDING" && Number(actionableBooking.extensionPaymentDue || 0) > 0;
+        const balanceDue = actionableBooking.paymentStatus === "HOLD_PAID";
+        const depositDue = actionableBooking.paymentStatus === "PAID" && actionableBooking.depositStatus !== "AUTHORIZED";
+        const amount = extensionDue
+          ? actionableBooking.extensionPaymentDueLabel || "approved amount"
+          : balanceDue
+            ? actionableBooking.dueAtPickupLabel || "remaining balance"
+            : `$${Number(actionableBooking.depositAmount || 250).toFixed(2)}`;
+        setActionNotice({
+          id: `rental:${actionableBooking.id}:${actionableBooking.paymentStatus}:${actionableBooking.depositStatus || ""}:${actionableBooking.extensionPaymentStatus || ""}`,
+          icon: extensionDue ? "↗" : balanceDue ? "💳" : depositDue ? "🔒" : "⏱",
+          eyebrow: extensionDue ? "Approved rental extension" : balanceDue ? "Rental balance due" : depositDue ? "Refundable deposit" : "Rental in progress",
+          title: extensionDue ? `Pay ${amount} to complete your extension` : balanceDue ? `Pay remaining ${amount}` : depositDue ? `Authorize refundable ${amount} deposit` : "Need more time with your rental?",
+          body: extensionDue ? "Your new return window is reserved. Complete secure payment to confirm it." : balanceDue ? "Your 10% hold secured the booking. Pay the balance before pickup." : depositDue ? "Your rental is paid in full. The deposit is a card authorization, not an extra rental charge." : "Extend the return time before the current return deadline. We will check availability first.",
+          actionLabel: extensionDue ? "Pay extension" : balanceDue ? "Pay balance" : depositDue ? "Authorize deposit" : "Extend rental",
+          action: "rental",
+          bookingId: actionableBooking.id,
+        });
+        return;
+      }
+
+      const ride = rides.find((item) => {
+        const status = String(item.dispatchStatus || item.status || "").toUpperCase();
+        return item.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
+      }) || rides.find((item) => ["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"].includes(String(item.dispatchStatus || item.status || "").toUpperCase()));
+      if (!ride) return;
+      const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
+      const incomingRequest = ride.activityRole === "DRIVER_NOTIFICATION";
+      const rideTitle = incomingRequest ? "A rider is waiting for your response" : status === "ACCEPTED" ? "Your ride was accepted" : status === "EN_ROUTE" ? "Your driver is on the way" : status === "ARRIVED" ? "Your driver has arrived" : "Your ride is in progress";
+      setActionNotice({
+        id: `ride:${ride.id}:${status}:${incomingRequest ? "incoming" : "trip"}`,
+        icon: incomingRequest ? "🙋" : "🚗",
+        eyebrow: incomingRequest ? "Carpool request" : "Ride update",
+        title: rideTitle,
+        body: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
+        actionLabel: incomingRequest ? "Review request" : "View ride",
+        action: "ride",
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!actionNotice) return undefined;
+    const timer = setTimeout(() => setActionNotice((current) => current?.id === actionNotice.id ? null : current), 5000);
+    return () => clearTimeout(timer);
+  }, [actionNotice?.id]);
 
   useEffect(() => {
     if (communityReviews.length <= 1) return undefined;
@@ -1159,6 +1237,23 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <TouchableOpacity style={[styles.composerPrompt, isLight && styles.composerPromptLight]} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Write a community post"><Text style={[styles.composerPromptText, isLight && styles.textSecondaryLight]}>Write something…</Text></TouchableOpacity>
         <TouchableOpacity style={styles.composerAsk} onPress={openComposer} accessibilityRole="button" accessibilityLabel="Ask community"><Text style={styles.composerAskText}>＋ Ask</Text></TouchableOpacity>
       </View>
+      {actionNotice ? <View style={[styles.actionNotice, isLight && styles.actionNoticeLight]} accessibilityRole="alert">
+        <Text style={styles.actionNoticeIcon}>{actionNotice.icon}</Text>
+        <View style={styles.actionNoticeCopy}>
+          <Text style={styles.actionNoticeEyebrow}>{actionNotice.eyebrow}</Text>
+          <Text style={[styles.actionNoticeTitle, isLight && styles.textPrimaryLight]} numberOfLines={1}>{actionNotice.title}</Text>
+          <Text style={[styles.actionNoticeBody, isLight && styles.textSecondaryLight]} numberOfLines={2}>{actionNotice.body}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.actionNoticeButton}
+          onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "") : onOpenRides()}
+          accessibilityRole="button"
+          accessibilityLabel={actionNotice.actionLabel}
+        >
+          <Text style={styles.actionNoticeButtonText}>{actionNotice.actionLabel}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionNoticeClose} onPress={() => setActionNotice(null)} accessibilityRole="button" accessibilityLabel="Dismiss update"><Text style={styles.actionNoticeCloseText}>×</Text></TouchableOpacity>
+      </View> : null}
       <TouchableOpacity style={[styles.gasPreviewCard, isLight && styles.gasPreviewCardLight]} onPress={onOpenGas} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel={lowestGasPrice !== null ? `Last found cheapest regular gas was ${lowestGasPrice.toFixed(2)} dollars. Open nearby gas prices to refresh` : "Starting gas price example is 3.54 dollars. Open nearby gas prices to refresh"}>
         <View style={styles.gasPreviewIcon}>
           <Animated.View pointerEvents="none" style={[styles.gasPreviewGlyphLayer, { transform: [{ scale: gasIconScale }, { rotate: gasIconShake.interpolate({ inputRange: [-1, 1], outputRange: ["-9deg", "9deg"] }) }] }]}>
@@ -1282,6 +1377,7 @@ const styles = StyleSheet.create({
   inlineCommunities: { marginVertical: 10, paddingVertical: 16, gap: 9, borderRadius: 19, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: .8 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, minHeight: 31, borderRadius: 999, backgroundColor: theme.colors.panel2 }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 20, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16 }, inlineCommunityRail: { paddingHorizontal: 16, gap: 10 }, inlineCommunityCard: { width: 140, minHeight: 170, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, alignItems: "center" }, inlineCommunityPhoto: { width: 54, height: 54, borderRadius: 27, marginBottom: 7, backgroundColor: theme.colors.panel }, inlineCommunityPhotoImage: { borderRadius: 27 }, inlineCommunityPhotoGlyph: { fontSize: 25 }, inlineCommunityName: { color: theme.colors.text, fontSize: 12, lineHeight: 14, fontWeight: "900", minHeight: 28, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 9, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: theme.colors.muted, fontSize: 9, fontWeight: "700", marginTop: 2, marginBottom: 7 }, inlineJoinButton: { width: "100%", minHeight: 31, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 11 }, inlineJoinedButton: { borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, inlineJoinText: { color: "#06291e", fontSize: 11, fontWeight: "900" }, inlineJoinedText: { color: theme.colors.text },
   hero: { minHeight: 136, gap: 11, padding: 16, paddingTop: 23, backgroundColor: "#071e1b", borderWidth: 1, borderColor: "#17604e", borderRadius: 28, overflow: "hidden" }, heroTop: { width: "100%", flexDirection: "row", alignItems: "center", gap: 12 }, heroMark: { width: 92, height: 70, justifyContent: "center" }, askBadge: { width: 82, height: 55, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#ef3e42", transform: [{ rotate: "-5deg" }], shadowColor: "#000", shadowOpacity: .25, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } }, askBadgeText: { color: "#fff", fontSize: 29, fontStyle: "italic", fontWeight: "900" }, chatBubbles: { position: "absolute", right: 0, top: -5 }, chatBubbleBlue: { color: "#e8fff7", backgroundColor: "#16a878", borderRadius: 14, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 9 }, chatBubbleGold: { alignSelf: "flex-end", marginTop: -1, color: "#fff7d1", backgroundColor: "#f0a800", borderRadius: 9, overflow: "hidden", paddingHorizontal: 5, fontSize: 7 }, heroCopy: { flex: 1 }, communityTag: { alignSelf: "flex-start", minWidth: 150, height: 43, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 13, backgroundColor: "#fff5cf", borderWidth: 2, borderColor: "#e9aa20", borderRadius: 10, transform: [{ rotate: "-2deg" }], shadowColor: "#000", shadowOpacity: .22, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }, communityTagTail: { position: "absolute", left: -5, bottom: -4, width: 12, height: 12, backgroundColor: "#fff5cf", borderLeftWidth: 2, borderBottomWidth: 2, borderColor: "#e9aa20", transform: [{ rotate: "-20deg" }] }, communityTagDot: { position: "absolute", right: 6, color: "#e9aa20", fontSize: 7 }, heroCommunity: { color: "#082b62", fontSize: 24, lineHeight: 30, fontFamily: Platform.select({ ios: "Bradley Hand", android: "cursive", default: "serif" }), fontWeight: "700", letterSpacing: -0.4 }, eyebrow: { ...theme.typography.eyebrow, color: "#72d9ae" }, title: { color: "#fff", fontSize: 31, lineHeight: 36, fontWeight: "800" }, subtitle: { width: "100%", color: "#f2faf7", fontSize: 14, lineHeight: 20, marginTop: 2, paddingHorizontal: 4 }, askButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center" }, askButtonText: { color: "#06291e", fontWeight: "800", fontSize: 14 },
   heroPosterFrame: { width: "100%", height: 78, alignItems: "center", justifyContent: "center" }, heroPoster: { width: "58%", height: 68 },
+  actionNotice: { minHeight: 84, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 20, borderWidth: 1, borderColor: "rgba(23,183,130,.38)", backgroundColor: "#e8fff5", padding: 11, shadowColor: "#0d4c39", shadowOpacity: Platform.OS === "android" ? 0 : .10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 2 }, actionNoticeLight: { backgroundColor: "#e8fff5" }, actionNoticeIcon: { width: 34, height: 34, borderRadius: 17, overflow: "hidden", textAlign: "center", textAlignVertical: "center", backgroundColor: "#c9f8df", color: "#07553c", fontSize: 17, lineHeight: 34 }, actionNoticeCopy: { flex: 1, minWidth: 0, paddingRight: 2 }, actionNoticeEyebrow: { color: "#087052", fontSize: 9, fontWeight: "900", letterSpacing: .5, textTransform: "uppercase" }, actionNoticeTitle: { color: "#082b21", fontSize: 13, lineHeight: 17, fontWeight: "900", marginTop: 1 }, actionNoticeBody: { color: "#477267", fontSize: 10, lineHeight: 13, fontWeight: "700", marginTop: 1 }, actionNoticeButton: { alignSelf: "center", borderRadius: 999, backgroundColor: "#14b87a", paddingHorizontal: 10, paddingVertical: 8, maxWidth: 96 }, actionNoticeButtonText: { color: "#052c20", fontSize: 10, fontWeight: "900", textAlign: "center" }, actionNoticeClose: { position: "absolute", top: 5, right: 7, width: 18, height: 18, alignItems: "center", justifyContent: "center" }, actionNoticeCloseText: { color: "#4b766a", fontSize: 18, lineHeight: 18, fontWeight: "500" },
   topicGrid: { flexDirection: "row", justifyContent: "space-between", gap: 6, paddingTop: 8 }, topicCard: { minHeight: 88, borderRadius: 16, padding: 7, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,.45)" }, topicSelected: { borderColor: theme.colors.brand, transform: [{ scale: 0.98 }] }, topicImage: { width: 38, height: 38, marginBottom: 2 }, topicTitle: { color: "#11181b", fontWeight: "900", fontSize: 12 }, topicSubtitle: { color: "#627078", fontSize: 9, marginTop: 2, textAlign: "center" }, tipCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 13, borderRadius: 22, paddingHorizontal: 17, backgroundColor: "#0d4038", borderWidth: 1, borderColor: "#25685b" }, tipIcon: { fontSize: 25 }, tipTitle: { color: "#fff", fontWeight: "900", fontSize: 16 }, tipBody: { color: "#a9cfc5", fontSize: 12, lineHeight: 18, marginTop: 3 }, tipArrow: { color: "#fff", fontSize: 38, fontWeight: "300" },
   needGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 }, needOption: { width: "48%", minHeight: 76, flexDirection: "row", alignItems: "center", gap: 9, padding: 12, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, needIcon: { fontSize: 22 }, needText: { flex: 1, color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
   searchRow: { flexDirection: "row", gap: 8 }, searchInput: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, backgroundColor: theme.colors.panel, color: theme.colors.text, paddingHorizontal: 14 }, searchButton: { minHeight: 48, justifyContent: "center", paddingHorizontal: 16, borderRadius: 15, backgroundColor: theme.colors.brand }, searchButtonText: { color: "#06291e", fontWeight: "800" },

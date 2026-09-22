@@ -2810,6 +2810,11 @@ function FairFaresApp() {
           setRentalFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
+        onOpenRentalBooking={(bookingId) => {
+          setRentalEditBookingId(bookingId);
+          setSelectedService("cars");
+          setActiveTab("services");
+        }}
         onOpenGas={() => setActiveTab("gas")}
         gasPriceRefreshKey={gasPriceRefreshKey}
         onOpenCommunity={(communityId) => {
