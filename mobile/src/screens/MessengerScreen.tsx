@@ -1024,26 +1024,26 @@ function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; 
   const translateX = useRef(new Animated.Value(0)).current;
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
-  const displayedTranslateX = translateX.interpolate({ inputRange: [-1, 0, 70], outputRange: [0, 0, 58], extrapolate: "clamp" });
+  const displayedTranslateX = translateX.interpolate({ inputRange: [0, 64], outputRange: [0, 26], extrapolate: "clamp" });
+  const replyIconOpacity = translateX.interpolate({ inputRange: [0, 7, 36], outputRange: [0, 0.4, 1], extrapolate: "clamp" });
+  const replyIconScale = translateX.interpolate({ inputRange: [0, 28, 58], outputRange: [0.68, 0.92, 1], extrapolate: "clamp" });
   const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) =>
     gesture.dx > (Platform.OS === "web" ? 14 : 12) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.7);
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: shouldClaimReplySwipe,
-    onPanResponderMove: Animated.event([null, { dx: translateX }], { useNativeDriver: false }),
+    onPanResponderGrant: () => translateX.stopAnimation(),
+    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(0, Math.min(64, gesture.dx))),
     onPanResponderRelease: (_event, gesture) => {
-      const shouldReply = gesture.dx >= 54 || (gesture.dx >= 30 && gesture.vx > 0.62);
+      const shouldReply = gesture.dx >= 48 || (gesture.dx >= 28 && gesture.vx > 0.62);
       if (shouldReply) onReplyRef.current();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 20, stiffness: 280, mass: 0.65 }).start();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 22, stiffness: 340, mass: 0.55 }).start();
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
-    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 20, stiffness: 280, mass: 0.65 }).start()
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 22, stiffness: 340, mass: 0.55 }).start()
   }), [translateX]);
   return <View style={[styles.swipeReplyWrap, mine ? styles.swipeReplyWrapMine : styles.swipeReplyWrapTheirs]}>
-    <View pointerEvents="none" style={styles.swipeReplyAction} accessibilityElementsHidden>
-      <Text style={styles.swipeReplyActionIcon}>↩</Text>
-      <Text style={styles.swipeReplyActionText}>Reply</Text>
-    </View>
+    <Animated.View pointerEvents="none" style={[styles.swipeReplyAction, { opacity: replyIconOpacity, transform: [{ scale: replyIconScale }] }]} accessibilityElementsHidden><Text style={styles.swipeReplyActionIcon}>↩</Text></Animated.View>
     <Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX: displayedTranslateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View>
   </View>;
 }
@@ -8874,9 +8874,8 @@ const styles = StyleSheet.create({
   swipeReplyWrapMine: { alignSelf: "flex-end" },
   swipeReplyWrapTheirs: { alignSelf: "flex-start" },
   swipeReplyBody: { overflow: "visible" },
-  swipeReplyAction: { position: "absolute", left: 12, top: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, borderRadius: 18, backgroundColor: "rgba(33, 102, 79, 0.92)" },
-  swipeReplyActionIcon: { color: "#fff", fontSize: 17, fontWeight: "800" },
-  swipeReplyActionText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  swipeReplyAction: { position: "absolute", left: -43, top: "50%", width: 34, height: 34, marginTop: -17, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(33, 102, 79, 0.94)" },
+  swipeReplyActionIcon: { color: "#fff", fontSize: 19, lineHeight: 22, fontWeight: "800" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
