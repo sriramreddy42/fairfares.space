@@ -16,7 +16,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, lookupAccommodationLocation, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -1745,20 +1745,13 @@ function FairFaresApp() {
     const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      const areaHasRegion = /,\s*[A-Za-z]{2}(?:\s*,|\s*$)/.test(nextArea);
-      const lookupQuery = nextArea
-        ? (areaHasRegion ? nextArea : `${nextArea}, ${city}`)
-        : city;
-      const [lookup, options] = await Promise.all([
-        lookupAccommodationLocation(lookupQuery),
-        getAccommodationLocationOptions(city, nextArea)
-      ]);
+      const options = await getAccommodationLocationOptions(city, nextArea);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
-      // Preserve the locality chosen in the current city. A geocoder's broader
-      // canonical label must not silently replace it with a same-named place.
+      // Preserve the locality chosen in the current city; backend location
+      // records only provide the search center and do not replace the choice.
       const resolvedArea = nextArea;
-      const resolvedCity = lookup && !nextArea ? normalizeCityInput(lookup.selectedLocation || city) : city;
-      const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
+      const resolvedCity = !nextArea ? normalizeCityInput(options?.selectedLocation || city) : city;
+      const nextCoordinates = { lat: options?.lat ?? null, lng: options?.lng ?? null };
       setArea(resolvedArea);
       setCity(resolvedCity);
       setChitthiSuggestionCity(resolvedCity);
@@ -1776,7 +1769,7 @@ function FairFaresApp() {
                 ...current.location,
                 city: resolvedCity,
                 selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
-                suggested: lookup?.suggestedLocation || current.location.suggested,
+                suggested: options?.selectedLocation || current.location.suggested,
                 suggestedAreas: options?.suggested?.filter(Boolean).slice(0, 12) || current.location.suggestedAreas
               },
               housing: posts
@@ -1803,21 +1796,18 @@ function FairFaresApp() {
       // a newly entered city in another state.
       const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
       const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-      const [lookup, options] = await Promise.all([
-        lookupAccommodationLocation(cleanArea || cleanCity),
-        getAccommodationLocationOptions(cleanCity, cleanArea)
-      ]);
+      const options = await getAccommodationLocationOptions(cleanCity, cleanArea);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
-      // Keep the place the user typed or selected. A broad geocoder fallback (for
-      // example, Dayton) must not replace a specific query such as Wilmington Pike.
+      // Keep the place the user typed or selected; backend records do not
+      // replace a specific search with a broader location.
       const resolvedArea = cleanArea;
       const hasExplicitRegion = /^[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?$/i.test(cleanCity);
       const selectedSuggestion = selectedCitySuggestionRef.current.trim().toLowerCase();
       const preserveSelectedCity = hasExplicitRegion || selectedSuggestion === cleanCity.trim().toLowerCase();
       const resolvedCity = cleanArea || preserveSelectedCity
         ? cleanCity
-        : normalizeCityInput(lookup?.selectedLocation || cleanCity);
-      const nextCoordinates = { lat: lookup?.lat ?? null, lng: lookup?.lng ?? null };
+        : normalizeCityInput(options?.selectedLocation || cleanCity);
+      const nextCoordinates = { lat: options?.lat ?? null, lng: options?.lng ?? null };
       setCity(resolvedCity);
       setArea(resolvedArea);
       setChitthiSuggestionCity(resolvedCity);
@@ -1839,7 +1829,7 @@ function FairFaresApp() {
                 ...current.location,
                 city: resolvedCity,
                 selected: resolvedArea ? `${resolvedCity} · ${resolvedArea}` : resolvedCity,
-                suggested: lookup?.suggestedLocation || current.location.suggested,
+                suggested: options?.selectedLocation || current.location.suggested,
                 suggestedAreas: options?.suggested?.filter(Boolean).slice(0, 12) || current.location.suggestedAreas
               },
               housing: posts

@@ -1290,5 +1290,26 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertFalse(app.ride_known_popular_cities("New York", "Hyderabad, Telangana, India"))
 
 
+    def test_housing_area_stats_use_only_active_live_property_listings(self):
+        self.insert_filter_post("STATS-CAPITOL-1", city="Denver, CO", rent_min=1200, rent_max=1400)
+        self.insert_filter_post("STATS-CAPITOL-2", city="Denver, CO", rent_min=1600, rent_max=0)
+        self.insert_filter_post("STATS-NEED", mode="NEED_PLACE", city="Denver, CO", rent_min=50)
+        self.insert_filter_post("STATS-HIDDEN", city="Denver, CO", rent_min=9999, status="INACTIVE")
+        with app.db() as con:
+            con.execute("UPDATE accommodation_posts SET primary_neighborhood = 'Capitol Hill' WHERE public_id LIKE 'STATS-%'")
+
+        stats = app.mobile_housing_area_stats("Denver, CO")
+        self.assertEqual(stats, [{"name": "Capitol Hill", "averageRent": 1450, "listingCount": 2, "currencySymbol": "$"}])
+
+    def test_backend_only_housing_locations_do_not_call_google(self):
+        with patch.object(app, "google_accommodation_place_suggestions", side_effect=AssertionError("unexpected Google lookup")), patch.object(
+            app, "refresh_accommodation_location_cache", side_effect=AssertionError("unexpected Google refresh")
+        ), patch.object(app, "accommodation_city_suggestions", wraps=app.accommodation_city_suggestions) as cities:
+            options = app.accommodation_location_options("Denver, CO", backend_only=True)
+        self.assertFalse(options["googlePlacesEnabled"])
+        self.assertTrue(options["selectedLocation"])
+        self.assertFalse(cities.call_args.kwargs["include_google"])
+
+
 if __name__ == "__main__":
     unittest.main()

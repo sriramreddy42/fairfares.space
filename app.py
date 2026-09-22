@@ -16802,8 +16802,8 @@ def keep_mobile_accommodation_suggestion(label: str) -> bool:
     )
 
 
-def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
-    """Return verified worldwide city labels from Places and the location cache."""
+def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google: bool = True) -> list[str]:
+    """Return city labels from the location cache, optionally enriching with Places."""
     query = normalize_accommodation_place_label(query)
     if len(query) < 2:
         return []
@@ -16812,7 +16812,7 @@ def accommodation_city_suggestions(query: str, limit: int = 8) -> list[str]:
     seen: set[str] = set()
 
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    if api_key:
+    if include_google and api_key:
         params = urllib.parse.urlencode({"input": query, "types": "(cities)", "key": api_key})
         try:
             payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{params}")
@@ -19882,6 +19882,75 @@ def mobile_housing_posts(
     return [*matched_posts, *sample_posts]
 
 
+def mobile_housing_area_stats(city: str = "", area: str = "", limit: int = 6) -> list[dict[str, object]]:
+    """Calculate neighborhood rents from active FairFares listings only.
+
+    Demo cards, seeded sample records, and location-provider suggestions must
+    never contribute a price to the housing discovery rail.
+    """
+    city = clean_text_value(city, 120)
+    area = clean_text_value(area, 140)
+    location_term = (area or city).split(",", 1)[0].strip()
+    clauses = [
+        "visibility_status = 'ACTIVE'",
+        "(expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))",
+        "COALESCE(source_label, '') != 'SAMPLE_DATA'",
+        "post_mode = 'HAVE_PLACE'",
+        "(rent_min > 0 OR rent_max > 0)",
+    ]
+    values: list[object] = []
+    if location_term:
+        pattern = f"%{location_term}%"
+        clauses.append("(" + " OR ".join(
+            f"lower({field}) LIKE lower(?)"
+            for field in ("city", "primary_neighborhood", "area_or_apartment", "city_area_zip")
+        ) + ")")
+        values.extend([pattern] * 4)
+    try:
+        with db() as con:
+            rows = con.execute(
+                f"""
+                SELECT city, primary_neighborhood, area_or_apartment, city_area_zip,
+                       rent_min, rent_max, country
+                FROM accommodation_posts
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at DESC
+                LIMIT 500
+                """,
+                values,
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+    groups: dict[str, dict[str, object]] = {}
+    for row in rows:
+        name = next((
+            clean_text_value(row_value(row, field), 120)
+            for field in ("primary_neighborhood", "area_or_apartment", "city_area_zip", "city")
+            if clean_text_value(row_value(row, field), 120)
+        ), "")
+        low = float_from_value(row_value(row, "rent_min"))
+        high = float_from_value(row_value(row, "rent_max"))
+        rent = (low + high) / 2 if low and high else low or high
+        if not name or rent <= 0:
+            continue
+        key = name.casefold()
+        group = groups.setdefault(key, {"name": name, "total": 0.0, "count": 0, "country": row_value(row, "country")})
+        group["total"] = float(group["total"]) + rent
+        group["count"] = int(group["count"]) + 1
+    ranked = sorted(groups.values(), key=lambda item: (-int(item["count"]), str(item["name"]).casefold()))[:max(1, min(limit, 12))]
+    return [
+        {
+            "name": str(item["name"]),
+            "averageRent": round(float(item["total"]) / int(item["count"])),
+            "listingCount": int(item["count"]),
+            "currencySymbol": accommodation_currency(str(item.get("country") or city))[1],
+        }
+        for item in ranked
+        if int(item["count"]) > 0
+    ]
+
+
 SAMPLE_HOUSING_IMAGES = (
     "/static/demo-housing/roommates_2026-01-08-02-11-55-766_10975734.jpeg",
     "/static/demo-housing/roommates_2026-01-08-02-44-53-241_10975734.jpeg",
@@ -20058,16 +20127,18 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
     }
 
 
-def accommodation_location_options(query: str, area: str = "", limit: int = 18) -> dict[str, object]:
+def accommodation_location_options(query: str, area: str = "", limit: int = 18, *, backend_only: bool = False) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
     area = normalize_accommodation_place_label(area)
     google_enabled = bool(
         os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     )
-    autocomplete_suggestions = google_accommodation_place_suggestions(query, area, limit=limit) if google_enabled else []
-    google_refreshed_metro = refresh_accommodation_location_cache(query, force=True) if google_enabled else ""
-    metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(query) or refresh_accommodation_location_cache(query)
+    autocomplete_suggestions = google_accommodation_place_suggestions(query, area, limit=limit) if google_enabled and not backend_only else []
+    google_refreshed_metro = refresh_accommodation_location_cache(query, force=True) if google_enabled and not backend_only else ""
+    metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(query)
+    if not metro_name and not backend_only:
+        metro_name = refresh_accommodation_location_cache(query)
     fallback_from_group = False
     if not metro_name:
         metro_name = accommodation_metro_name_from_place(query) if query else "Denver Metro Area"
@@ -20152,10 +20223,12 @@ def accommodation_location_options(query: str, area: str = "", limit: int = 18) 
         "ok": True,
         "metro": metro_name,
         "selectedLocation": dedupe_repeated_location_label(str(point.get("label") or query or metro_name)),
-        "cities": accommodation_city_suggestions(query),
+        "cities": accommodation_city_suggestions(query, include_google=not backend_only),
         "suggested": suggested[:limit],
         "zips": zips[:12],
-        "googlePlacesEnabled": google_enabled,
+        "lat": float(point.get("lat") or 0),
+        "lng": float(point.get("lng") or 0),
+        "googlePlacesEnabled": google_enabled and not backend_only,
         "source": "google" if google_refreshed_metro else "static" if fallback_from_group else str(point.get("source") or "cache"),
     }
 
@@ -25893,6 +25966,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/housing":
             self.api_mobile_housing(parsed)
+            return
+        if parsed.path == "/api/mobile/housing/area-stats":
+            self.api_mobile_housing_area_stats(parsed)
             return
         if parsed.path == "/api/mobile/housing/activity":
             self.api_mobile_housing_activity()
@@ -38868,7 +38944,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not query:
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
-        self.send_json(accommodation_location_options(query, area))
+        # Housing location search is intentionally backend-only. Google Places
+        # remains available for ride/map features, but it must not populate the
+        # housing picker or manufacture housing neighborhoods.
+        self.send_json(accommodation_location_options(query, area, backend_only=True))
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
@@ -39212,6 +39291,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             },
             headers={"X-FairFares-Cache": cache_status},
         )
+
+    def api_mobile_housing_area_stats(self, parsed: urllib.parse.ParseResult) -> None:
+        params = urllib.parse.parse_qs(parsed.query)
+        city = (params.get("city", [""])[0] or "").strip()
+        area = (params.get("area", [""])[0] or "").strip()
+        self.send_json({"ok": True, "areas": mobile_housing_area_stats(city, area)})
 
     def api_mobile_housing_activity(self) -> None:
         user = self.current_user()

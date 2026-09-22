@@ -883,7 +883,16 @@ export type AccommodationLocationOptions = {
   cities: string[];
   suggested: string[];
   zips: string[];
+  lat?: number;
+  lng?: number;
   source: string;
+};
+
+export type HousingAreaStat = {
+  name: string;
+  averageRent: number;
+  listingCount: number;
+  currencySymbol: string;
 };
 
 export async function lookupAccommodationLocation(query: string) {
@@ -906,6 +915,17 @@ export async function getAccommodationLocationOptions(city: string, area = "") {
     return await request<AccommodationLocationOptions>(`/api/mobile/location-options?${params.toString()}`);
   } catch {
     return null;
+  }
+}
+
+export async function getHousingAreaStats(city: string, area = "") {
+  const params = new URLSearchParams({ city: city.trim() });
+  if (area.trim()) params.set("area", area.trim());
+  try {
+    const payload = await request<{ ok: boolean; areas: HousingAreaStat[] }>(`/api/mobile/housing/area-stats?${params.toString()}`);
+    return payload.areas || [];
+  } catch {
+    return [];
   }
 }
 

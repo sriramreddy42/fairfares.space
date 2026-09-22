@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCars, getHousingAreaStats, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, HousingAreaStat, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -728,7 +728,21 @@ export function HousingScreen({
   const [searchIsScrolled, setSearchIsScrolled] = useState(false);
   const [welcomeY, setWelcomeY] = useState(0);
   const [listingResultsY, setListingResultsY] = useState(0);
+  const [housingAreaStats, setHousingAreaStats] = useState<HousingAreaStat[]>([]);
   const topOverscrollBackground = mode === "cheapCars" ? theme.colors.bg : "#dff3ff";
+
+  useEffect(() => {
+    let cancelled = false;
+    const city = data?.location.city || discoveryLocation;
+    if (!city) {
+      setHousingAreaStats([]);
+      return () => { cancelled = true; };
+    }
+    void getHousingAreaStats(city).then((areas) => {
+      if (!cancelled) setHousingAreaStats(areas);
+    });
+    return () => { cancelled = true; };
+  }, [data?.location.city, discoveryLocation]);
 
   const liveRideOwnerRequest = useMemo(
     () => rideActivityRows.find((ride) => ride.activityRole === "DRIVER_NOTIFICATION" && ["EN_ROUTE", "ARRIVED"].includes((ride.dispatchStatus || "").toUpperCase())) || null,
@@ -933,63 +947,17 @@ export function HousingScreen({
       ownListing={Boolean(data?.user?.id && Number(post.posterUserId) === Number(data.user.id))}
     />
   );
-  const localities = useMemo(() => {
-    const city = data?.location.city || discoveryLocation || "";
-    const groups = new Map<string, { name: string; total: number; count: number; offered: number; needed: number; preset: boolean }>();
-    const suggestedAreas = (data?.location.suggestedAreas || [])
-      .map((value) => cleanLocalityName(value, city) || value.trim())
-      .filter(Boolean);
-    const baseLocalities = suggestedAreas.length ? suggestedAreas : localityPresetsForCity(city);
-    baseLocalities.forEach((name) => {
-      groups.set(normalizeLocalityKey(name), { name, total: 0, count: 0, offered: 0, needed: 0, preset: true });
-    });
-    locationScopedPosts.filter((post) => !post.sample).forEach((post) => {
-      const name = cleanLocalityName(post.area || "", city) || cleanLocalityName(post.location || "", city);
-      if (!name) return;
-      const key = normalizeLocalityKey(name);
-      const current = groups.get(key) || { name, total: 0, count: 0, offered: 0, needed: 0, preset: false };
-      if (post.mode === "HAVE_PLACE" && post.rentValue > 0) {
-        current.total += post.rentValue;
-        current.count += 1;
-      }
-      if (post.mode === "HAVE_PLACE") current.offered += 1;
-      if (post.mode === "NEED_PLACE") current.needed += 1;
-      current.preset = current.preset && current.offered + current.needed === 0;
-      groups.set(key, current);
-    });
-    return Array.from(groups.values())
-      .sort((left, right) => (right.offered + right.needed) - (left.offered + left.needed) || Number(left.preset) - Number(right.preset) || left.name.localeCompare(right.name))
-      .slice(0, 12)
-      .map((value) => ({
-        name: value.name,
-        offered: value.offered,
-        needed: value.needed,
-        rent: value.count ? `${housingCurrencySymbol}${Math.round(value.total / value.count)}` : value.preset ? "Explore" : "Open",
-        preset: value.preset
-      }));
-  }, [data?.location.city, data?.location.suggestedAreas, housingCurrencySymbol, locationScopedPosts]);
   const neighborhoodBars = useMemo(() => {
-    const fallbackNames = localityPresetsForCity(data?.location.city || discoveryLocation || "").slice(0, 6);
-    const source = (localities.length ? localities : fallbackNames.map((name) => ({
-      name,
-      offered: 0,
-      needed: 0,
-      rent: "Explore",
-      preset: true
-    }))).slice(0, 6);
-    return source.map((locality, index) => {
-      const rentNumber = Number(String(locality.rent || "").replace(/[^0-9.]/g, ""));
-      const explicitRent = rentNumber >= 700 ? String(locality.rent) : "";
-      const fallbackRent = `${housingCurrencySymbol}${[1950, 1820, 2350, 2100, 1650, 1550][index % 6].toLocaleString()}`;
+    return housingAreaStats.slice(0, 6).map((locality, index) => {
       return {
         ...locality,
-        rentLabel: explicitRent || fallbackRent,
+        rentLabel: `${locality.currencySymbol || housingCurrencySymbol}${locality.averageRent.toLocaleString()}`,
         height: [66, 52, 78, 62, 46, 40][index % 6],
         color: ["#249cff", "#38c98f", "#ff9639", "#8b5cf6", "#f45b9a", "#47d4d4"][index % 6],
         image: appAssets.housingNeighborhoodCity
       };
     });
-  }, [data?.location.city, discoveryLocation, housingCurrencySymbol, localities]);
+  }, [housingAreaStats, housingCurrencySymbol]);
   const neighborhoodCityName = (data?.location.city || discoveryLocation || "Denver").split(",")[0]?.trim() || "Denver";
   const rentalRows = rentalSearched ? rentalCars : [];
   const lowestRentalDailyPrice = useMemo(() => {

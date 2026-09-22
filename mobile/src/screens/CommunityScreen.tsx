@@ -1252,7 +1252,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         [{ nativeEvent: { contentOffset: { y: pullOffset } } }],
         {
           useNativeDriver: true,
-          listener: (event) => handleFeedScroll(event.nativeEvent.contentOffset.y),
+          listener: (event: { nativeEvent: { contentOffset: { y: number } } }) => handleFeedScroll(event.nativeEvent.contentOffset.y),
         }
       )}
       refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}
