@@ -257,6 +257,30 @@ class ChatRealtimeTest(unittest.TestCase):
         with app.db() as con:
             self.assertTrue(con.execute("SELECT read_at FROM chat_message_receipts WHERE message_id = ? AND recipient_user_id = ?", (message["id"], self.recipient_id)).fetchone()["read_at"])
 
+    def test_message_owner_can_delete_old_media_after_edit_window(self):
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            message = app.save_chat_message(con, self.conversation_id, sender, "encrypted attachment", "old-media")
+            message_id = int(message["id"])
+            con.execute(
+                "UPDATE chat_messages SET message_type = 'ENCRYPTED_ATTACHMENT', attachment_url = 'r2://private/old-video', created_at = datetime('now', '-30 minutes') WHERE id = ?",
+                (message_id,),
+            )
+            stored = con.execute("SELECT * FROM chat_messages WHERE id = ?", (message_id,)).fetchone()
+            payload = app.chat_message_payload(stored, self.sender_id)
+        self.assertFalse(payload["canEdit"])
+        self.assertTrue(payload["canDelete"])
+
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: sender
+        handler.read_form = lambda: {"conversation_id": "CHAT-REALTIME", "message_id": str(message_id)}
+        responses = []
+        handler.send_json = lambda payload, status=200: responses.append((payload, status))
+        handler.api_delete_chat_message()
+        self.assertEqual(responses[-1][1], 200)
+        with app.db() as con:
+            self.assertTrue(con.execute("SELECT deleted_at FROM chat_messages WHERE id = ?", (message_id,)).fetchone()["deleted_at"])
+
     def test_installed_native_receipts_remain_compatible_until_upgrade(self):
         with app.db() as con:
             sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()

@@ -21530,6 +21530,20 @@ def chat_message_is_editable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]
     return True, ""
 
 
+def chat_message_is_deletable(row: sqlite3.Row, user_id: int) -> tuple[bool, str]:
+    """Deletion is a separate permission from the short edit window.
+
+    An attachment commonly finishes uploading after the edit window decision
+    was made on a client, and owners must still be able to remove their own
+    sent media from the conversation.
+    """
+    if int(row_value(row, "sender_id") or 0) != user_id:
+        return False, "You can only delete your own messages."
+    if row_value(row, "deleted_at"):
+        return False, "This message was already deleted."
+    return True, ""
+
+
 def add_chat_participant(con: sqlite3.Connection, conversation_id: int, user_id: int, *, restrict_group_history: bool = False) -> None:
     """Add a participant with an immutable server-side group-history boundary."""
     visible_from_message_id = 0
@@ -22239,6 +22253,7 @@ def chat_message_payload(
     read_at = row_value(row, "read_at")
     delivered_at = row_value(row, "delivered_at")
     can_edit, _ = chat_message_is_editable(row, current_user_id)
+    can_delete, _ = chat_message_is_deletable(row, current_user_id)
     stored_attachment_url = row_value(row, "attachment_url")
     attachment_url = f"/api/chat/attachments/{message_id}" if stored_attachment_url else ""
     status = ""
@@ -22313,6 +22328,7 @@ def chat_message_payload(
         "editedAt": row_value(row, "edited_at"),
         "deletedAt": row_value(row, "deleted_at"),
         "canEdit": can_edit,
+        "canDelete": can_delete,
         "status": status,
     }
 
@@ -29930,7 +29946,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not message:
                 self.send_json({"ok": False, "message": "Message not found."}, 404)
                 return
-            allowed, error = chat_message_is_editable(message, current_user_id)
+            allowed, error = chat_message_is_deletable(message, current_user_id)
             if not allowed:
                 self.send_json({"ok": False, "message": error}, 403)
                 return

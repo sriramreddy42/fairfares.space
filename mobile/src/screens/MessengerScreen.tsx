@@ -25,6 +25,7 @@ import {
   absoluteAssetUrl,
   authenticatedAssetSource,
   addChatGroupMember,
+  markChatRead,
   blockChatUser,
   createChatCommunity,
   createChatGroupInvite,
@@ -1222,9 +1223,9 @@ function isEmojiOnlyMessage(text: string) {
 function presenceLabel(conversation: ChatConversation | null) {
   if (!conversation) return "New conversation";
   if (isGroupConversation(conversation)) return "Group chat";
-  if (conversation.otherOnline) return "Active now";
+  if (conversation.otherOnline) return "Online";
   const lastSeen = relativeTime(conversation.otherLastSeenAt || "");
-  return lastSeen ? `Active ${lastSeen} ago` : "Offline";
+  return lastSeen ? `Last seen ${lastSeen} ago` : "Offline";
 }
 
 function listingPosterName(post: HousingPost | null) {
@@ -2115,6 +2116,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const messagesConversationIdRef = useRef("");
   const outboxFlushRunning = useRef(false);
   const multipartResumeStateRef = useRef({ userId: 0, running: false, lastAttemptAt: 0 });
+  const lastReadAcknowledgementRef = useRef<Record<string, number>>({});
   const attachmentCryptoAbortRef = useRef<AbortController | null>(null);
   // Background picker work is allowed to finish, but it must never mutate a
   // newer composer selection after the user removes or replaces the old one.
@@ -3315,7 +3317,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               const withoutServerDuplicate = current.filter((message) => message.id !== response.message.id || message.localClientMessageId === item.clientMessageId);
               const hasLocal = withoutServerDuplicate.some((message) => message.localClientMessageId === item.clientMessageId);
               const decoded = decodePrivateReply(clearText);
-              const sentMessage = { ...response.message, text: decoded.text, canEdit: Boolean(response.message.canEdit && !decoded.context), canDelete: Boolean(response.message.canEdit), metadata: { ...response.message.metadata, encrypted: true, privateReply: decoded.context || undefined } };
+              const sentMessage = { ...response.message, text: decoded.text, canEdit: Boolean(response.message.canEdit && !decoded.context), canDelete: Boolean(response.message.canDelete), metadata: { ...response.message.metadata, encrypted: true, privateReply: decoded.context || undefined } };
               return hasLocal
                 ? withoutServerDuplicate.map((message) => message.localClientMessageId === item.clientMessageId ? sentMessage : message)
                 : [...withoutServerDuplicate, sentMessage];
@@ -3416,23 +3418,23 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               type: attachmentKind,
               text: attachmentInfo.caption || "",
               canEdit: false,
-              canDelete: Boolean(message.mine && message.canEdit),
+              canDelete: Boolean(message.canDelete),
               metadata: { ...message.metadata, encrypted: true, forwarded: Boolean(attachmentInfo.forwarded), kind: attachmentKind, fileName: attachmentInfo.fileName, mimeType: attachmentInfo.mimeType, encryptedKeyPayload: clearText, encryptedRecipientDeviceId, caption: attachmentInfo.caption, thumbnailDataUrl: attachmentInfo.thumbnailBase64 ? `data:image/jpeg;base64,${attachmentInfo.thumbnailBase64}` : undefined, imageWidth: attachmentInfo.imageWidth, imageHeight: attachmentInfo.imageHeight, mediaGroupId: attachmentInfo.mediaGroupId, mediaGroupIndex: attachmentInfo.mediaGroupIndex, mediaGroupCount: attachmentInfo.mediaGroupCount }
             };
           }
           if (clearText.startsWith("FFFORWARD:")) {
             const forwarded = JSON.parse(clearText.slice(10)) as { text?: string };
-            return { ...message, text: String(forwarded.text || ""), canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true, forwarded: true } };
+            return { ...message, text: String(forwarded.text || ""), canEdit: false, canDelete: Boolean(message.canDelete), metadata: { ...message.metadata, encrypted: true, forwarded: true } };
           }
           if (clearText.startsWith("FFRICH:")) {
             const rich = JSON.parse(clearText.slice(7)) as { type: string; metadata: ChatMessage["metadata"] };
-            return { ...message, type: rich.type, text: "", canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...rich.metadata, encrypted: true } };
+            return { ...message, type: rich.type, text: "", canEdit: false, canDelete: Boolean(message.canDelete), metadata: { ...rich.metadata, encrypted: true } };
           }
           if (/^FF[A-Z]+:/.test(clearText) && !clearText.startsWith("FFPRIVATE:")) {
-            return { ...message, text: "Secure message", canEdit: false, canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true } };
+            return { ...message, text: "Secure message", canEdit: false, canDelete: Boolean(message.canDelete), metadata: { ...message.metadata, encrypted: true } };
           }
           const privateReply = decodePrivateReply(clearText);
-          return { ...message, text: privateReply.text, canEdit: Boolean(message.mine && message.canEdit && !privateReply.context), canDelete: Boolean(message.mine && message.canEdit), metadata: { ...message.metadata, encrypted: true, privateReply: privateReply.context || undefined } };
+          return { ...message, text: privateReply.text, canEdit: Boolean(message.mine && message.canEdit && !privateReply.context), canDelete: Boolean(message.canDelete), metadata: { ...message.metadata, encrypted: true, privateReply: privateReply.context || undefined } };
         } catch {
           // A corrupt, expired, or old-device envelope must affect only that
           // message. Previously it rejected Promise.all and exposed encrypted
@@ -3858,6 +3860,39 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setTypingPeople([]);
     };
   }, [signedIn, activeConversationId, hydratedConversationId, activeConversation?.communityId]);
+
+  useEffect(() => {
+    if (!signedIn || !activeConversationId || isGroupConversation(activeConversation)) return;
+    let cancelled = false;
+    const refreshPresence = async () => {
+      try {
+        const latest = await decryptConversationPreviews(await getChatConversations());
+        if (cancelled) return;
+        const conversation = latest.find((item) => item.id === activeConversationId);
+        if (!conversation) return;
+        setActiveConversation((current) => current?.id === conversation.id ? { ...current, otherOnline: conversation.otherOnline, otherLastSeenAt: conversation.otherLastSeenAt } : current);
+        setConversations((current) => mergeChatConversations(current, latest));
+      } catch {
+        // Presence is supplemental; the next scheduled refresh can retry.
+      }
+    };
+    void refreshPresence();
+    const timer = setInterval(() => void refreshPresence(), 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [signedIn, activeConversationId, activeConversation?.communityId]);
+
+  useEffect(() => {
+    if (!activeConversationId || hydratedConversationId !== activeConversationId) return;
+    const newestIncomingId = messages.reduce((latest, message) => !message.mine && message.id > latest ? message.id : latest, 0);
+    if (!newestIncomingId || newestIncomingId <= (lastReadAcknowledgementRef.current[activeConversationId] || 0)) return;
+    // Explicit receipts keep status accurate without treating a history fetch
+    // as a read. Once the open thread renders an incoming message, acknowledge
+    // it as read so the sender receives the second green tick.
+    lastReadAcknowledgementRef.current[activeConversationId] = newestIncomingId;
+    void markChatRead(activeConversationId, String(newestIncomingId)).catch(() => {
+      delete lastReadAcknowledgementRef.current[activeConversationId];
+    });
+  }, [activeConversationId, hydratedConversationId, messages]);
 
   useEffect(() => () => {
     if (typingTimer.current) clearTimeout(typingTimer.current);
@@ -5112,7 +5147,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             ...response.message,
             text: cleanMessage,
             canEdit: Boolean(response.message.canEdit && !privateReplySnapshot),
-            canDelete: Boolean(response.message.canEdit),
+            canDelete: Boolean(response.message.canDelete),
             metadata: { ...response.message.metadata, encrypted: true, privateReply: privateReplySnapshot || undefined }
           };
           setMessages((current) => {
@@ -6126,7 +6161,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     const envelopes = encryptForDevices(`FFRICH:${JSON.stringify({ type, metadata })}`, identity, keyPayload.keys, richPreview);
     const clientMessageId = optimistic?.clientMessageId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, silent);
-    const message = { ...response.message, type, text: "", canEdit: false, canDelete: Boolean(response.message.canEdit), metadata: { ...metadata, encrypted: true } } as ChatMessage;
+    const message = { ...response.message, type, text: "", canEdit: false, canDelete: Boolean(response.message.canDelete), metadata: { ...metadata, encrypted: true } } as ChatMessage;
     setMessages((current) => {
       if (!optimistic) return mergeThreadHistoryMessages(current, [message]);
       const withoutServerDuplicate = current.filter((item) => item.id !== response.message.id || item.localClientMessageId === clientMessageId);
@@ -7727,11 +7762,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                         ) : null}
                       </Pressable>
                       {mediaUploading ? (
-                        <View style={styles.videoUploadCancelOverlay} pointerEvents="none">
+                        <View style={styles.videoUploadCancelOverlay} pointerEvents={mediaUploadingBatch ? "none" : "auto"}>
                           {Platform.OS === "web" ? <View pointerEvents="none" style={styles.videoDownloadBlurFallback} /> : <BlurView pointerEvents="none" intensity={24} tint="dark" style={styles.videoDownloadBlurFallback} />}
-                          <View style={styles.videoUploadCancelButton}>
+                          <TouchableOpacity
+                            disabled={mediaUploadingBatch}
+                            style={styles.videoUploadCancelButton}
+                            onPress={(event) => { event.stopPropagation(); cancelPendingMediaUpload(message.id); }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Cancel video upload"
+                          >
                             {mediaUploadingBatch ? <MediaUploadProgress messageId={message.id} /> : <MediaUploadCancelProgress messageId={message.id} />}
-                          </View>
+                          </TouchableOpacity>
                         </View>
                       ) : null}
                       <View style={styles.photoTimeOverlay}><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View>
@@ -9245,7 +9286,7 @@ const styles = StyleSheet.create({
   websitePreviewDetail: { color: "#667085", fontSize: 11.5, lineHeight: 16, marginTop: 4 },
   myWebsitePreviewText: { color: "#16334a" },
   myWebsitePreviewDetail: { color: "#526474" },
-  photoMediaWrap: { position: "relative", borderRadius: 18, overflow: "hidden" },
+  photoMediaWrap: { position: "relative", borderRadius: 18, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.38)", backgroundColor: "#14231e" },
   photoMediaWrapWithSender: { borderTopLeftRadius: 0, borderTopRightRadius: 0 },
   messageImage: { width: CHAT_MEDIA_WIDTH, height: CHAT_MEDIA_FALLBACK_HEIGHT, borderRadius: 0, backgroundColor: theme.colors.panel2 },
   chatImagePending: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
@@ -9295,7 +9336,7 @@ const styles = StyleSheet.create({
   myBubbleMeta: { color: "#CDE0D5" },
   theirBubbleMeta: { color: "#776E5B" },
   receiptMark: { color: "#66756a", fontSize: 12, lineHeight: 14, fontWeight: "700", letterSpacing: -2 },
-  receiptSeen: { color: "#1689d8" },
+  receiptSeen: { color: "#20b36b" },
   receiptFailed: { color: "#dc2626", letterSpacing: 0 },
   messageReactions: { position: "absolute", right: -5, bottom: -9, flexDirection: "row", alignItems: "center", gap: 0, zIndex: 8, elevation: 8 },
   messageReactionsMine: { right: -5 },
