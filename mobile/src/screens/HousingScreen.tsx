@@ -4150,8 +4150,8 @@ export function HousingScreen({
                   {renderHousingIntentIcon(item.icon, item.accent)}
                 </View>
                 <View style={styles.housingIntentCopy}>
-                  <Text style={styles.housingIntentTitle} numberOfLines={2}>{item.title}</Text>
-                  <Text style={styles.housingIntentSubtitle} numberOfLines={3}>{item.subtitle}</Text>
+                  <Text style={styles.housingIntentTitle} numberOfLines={1}>{item.title}</Text>
+                  <Text style={styles.housingIntentSubtitle} numberOfLines={1}>{item.subtitle}</Text>
                 </View>
                 <View style={styles.housingIntentArrow}><Text style={styles.housingIntentArrowText}>›</Text></View>
               </TouchableOpacity>
@@ -4817,11 +4817,11 @@ const styles = StyleSheet.create({
   housingIntentViewAllText: { color: "#07153f", fontSize: 13, fontWeight: "800" },
   housingIntentViewAllArrow: { color: "#07153f", fontSize: 24, lineHeight: 25, fontWeight: "600", marginTop: -2 },
   housingIntentGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
-  housingIntentCard: { width: "48.3%", minHeight: 100, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 10, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
+  housingIntentCard: { width: "48.3%", height: 90, borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 8, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
   housingIntentCardActive: { transform: [{ scale: 0.985 }] },
   housingIntentPreview: { position: "absolute", right: -18, top: 0, bottom: 0, width: "62%", opacity: 0.42 },
   housingIntentWash: { ...StyleSheet.absoluteFillObject, opacity: 0.86 },
-  housingIntentIconBubble: { width: 50, height: 50, borderRadius: 25, alignItems: "center", justifyContent: "center", marginBottom: 8, zIndex: 1 },
+  housingIntentIconBubble: { position: "absolute", left: 8, top: 7, width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", transform: [{ scale: 0.72 }], zIndex: 1 },
   intentHouseIcon: { width: 37, height: 36, alignItems: "center", justifyContent: "flex-end" },
   intentHouseRoof: { position: "absolute", top: 1, width: 0, height: 0, borderLeftWidth: 15, borderRightWidth: 15, borderBottomWidth: 14, borderLeftColor: "transparent", borderRightColor: "transparent" },
   intentHouseBody: { width: 23, height: 17, borderTopLeftRadius: 3, borderTopRightRadius: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, alignItems: "center", justifyContent: "flex-end" },
@@ -4842,11 +4842,11 @@ const styles = StyleSheet.create({
   intentCarSolidWheel: { position: "absolute", bottom: 0, width: 6, height: 6, borderRadius: 3, backgroundColor: "#07153f" },
   intentCarSolidWheelLeft: { left: 7 },
   intentCarSolidWheelRight: { right: 7 },
-  housingIntentCopy: { flex: 1, minWidth: 0, maxWidth: "74%", paddingRight: 4, zIndex: 1 },
-  housingIntentTitle: { color: "#07153f", fontSize: 16, lineHeight: 19, fontWeight: "900", letterSpacing: -0.25 },
-  housingIntentSubtitle: { color: "#4c5871", fontSize: 12, lineHeight: 15, marginTop: 2, fontWeight: "700" },
-  housingIntentArrow: { position: "absolute", right: 10, bottom: 11, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
-  housingIntentArrowText: { color: "#07153f", fontSize: 28, lineHeight: 29, fontWeight: "700", marginTop: -3 },
+  housingIntentCopy: { position: "absolute", left: 8, right: 40, bottom: 7, zIndex: 1 },
+  housingIntentTitle: { color: "#07153f", fontSize: 13, lineHeight: 16, fontWeight: "900", letterSpacing: -0.2 },
+  housingIntentSubtitle: { color: "#4c5871", fontSize: 10, lineHeight: 12, marginTop: 1, fontWeight: "700" },
+  housingIntentArrow: { position: "absolute", right: 8, bottom: 9, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
+  housingIntentArrowText: { color: "#07153f", fontSize: 23, lineHeight: 24, fontWeight: "700", marginTop: -3 },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
   housingCardRow: { gap: 12, paddingLeft: 10, paddingRight: 20, paddingTop: 4, paddingBottom: 22, alignItems: "flex-start" },
