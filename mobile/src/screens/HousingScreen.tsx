@@ -4817,7 +4817,7 @@ const styles = StyleSheet.create({
   housingIntentViewAllText: { color: "#07153f", fontSize: 13, fontWeight: "800" },
   housingIntentViewAllArrow: { color: "#07153f", fontSize: 24, lineHeight: 25, fontWeight: "600", marginTop: -2 },
   housingIntentGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
-  housingIntentCard: { width: "48.3%", minHeight: 122, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 10, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
+  housingIntentCard: { width: "48.3%", minHeight: 114, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 10, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
   housingIntentCardActive: { transform: [{ scale: 0.985 }] },
   housingIntentPreview: { position: "absolute", right: -18, top: 0, bottom: 0, width: "62%", opacity: 0.42 },
   housingIntentWash: { ...StyleSheet.absoluteFillObject, opacity: 0.86 },
