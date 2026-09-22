@@ -284,6 +284,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
   const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(null);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
+  const actionNoticeVisible = useRef(false);
+  const lastFeedScrollOffset = useRef(0);
   const pullOffset = useRef(new Animated.Value(0)).current;
   const heroEntrance = useRef(new Animated.Value(0)).current;
   const gasIconScale = useRef(new Animated.Value(1)).current;
@@ -389,7 +391,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     return () => { cancelled = true; };
   }, [user?.id]);
 
+  const setActionNoticeVisibility = useCallback((visible: boolean) => {
+    if (actionNoticeVisible.current === visible) return;
+    actionNoticeVisible.current = visible;
+    Animated.timing(actionNoticeMotion, { toValue: visible ? 1 : 0, duration: visible ? 220 : 180, useNativeDriver: false }).start();
+  }, [actionNoticeMotion]);
+
   const dismissActionNotice = useCallback((noticeId: string) => {
+    actionNoticeVisible.current = false;
     Animated.timing(actionNoticeMotion, { toValue: 0, duration: 280, useNativeDriver: false }).start(({ finished }) => {
       if (finished) setActionNotice((current) => current?.id === noticeId ? null : current);
     });
@@ -397,15 +406,25 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   useEffect(() => {
     if (!actionNotice) {
+      actionNoticeVisible.current = false;
       actionNoticeMotion.setValue(0);
       return undefined;
     }
     actionNoticeMotion.stopAnimation();
     actionNoticeMotion.setValue(0);
-    Animated.spring(actionNoticeMotion, { toValue: 1, damping: 18, stiffness: 220, mass: 0.7, useNativeDriver: false }).start();
-    const timer = setTimeout(() => dismissActionNotice(actionNotice.id), 5000);
-    return () => clearTimeout(timer);
-  }, [actionNotice?.id, actionNoticeMotion, dismissActionNotice]);
+    actionNoticeVisible.current = false;
+    setActionNoticeVisibility(true);
+    return undefined;
+  }, [actionNotice?.id, actionNoticeMotion, setActionNoticeVisibility]);
+
+  const handleFeedScroll = useCallback((offset: number) => {
+    const currentOffset = Math.max(0, offset);
+    const delta = currentOffset - lastFeedScrollOffset.current;
+    if (Math.abs(delta) >= 8) {
+      setActionNoticeVisibility(delta < 0 || currentOffset <= 0);
+      lastFeedScrollOffset.current = currentOffset;
+    }
+  }, [setActionNoticeVisibility]);
 
   useEffect(() => {
     if (communityReviews.length <= 1) return undefined;
@@ -1229,7 +1248,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
       alwaysBounceVertical
       scrollEventThrottle={16}
-      onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: pullOffset } } }], { useNativeDriver: true })}
+      onScroll={Animated.event(
+        [{ nativeEvent: { contentOffset: { y: pullOffset } } }],
+        {
+          useNativeDriver: true,
+          listener: (event) => handleFeedScroll(event.nativeEvent.contentOffset.y),
+        }
+      )}
       refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}
       ListHeaderComponent={<>
       <Animated.View
