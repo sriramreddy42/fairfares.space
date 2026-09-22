@@ -22962,6 +22962,10 @@ def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
         # scheduler immediately makes another pass for rows queued afterwards.
         _PUSH_OUTBOX_WAKE_EVENT.set()
         return summary
+    # Consume only the wake signal that caused this pass. If a ride acceptance
+    # is queued while this worker is delivering another batch, its new signal
+    # remains set and triggers an immediate follow-up pass below.
+    _PUSH_OUTBOX_WAKE_EVENT.clear()
     try:
         with db() as con:
             con.execute("DELETE FROM mobile_push_outbox WHERE status = 'DELIVERED' AND datetime(delivered_at) < datetime('now', '-30 days')")
@@ -23081,7 +23085,12 @@ def process_mobile_push_outbox(limit: int = 100) -> dict[str, int]:
                 summary["retried"] += 1
         return summary
     finally:
+        drain_again = _PUSH_OUTBOX_WAKE_EVENT.is_set()
+        if drain_again:
+            _PUSH_OUTBOX_WAKE_EVENT.clear()
         _PUSH_OUTBOX_WORKER_LOCK.release()
+        if drain_again:
+            threading.Thread(target=process_mobile_push_outbox, args=(), daemon=True, name="fairfares-mobile-push-followup").start()
 
 
 def check_expo_push_receipts(limit: int = 300) -> dict[str, int]:
