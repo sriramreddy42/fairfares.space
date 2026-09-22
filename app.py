@@ -7775,6 +7775,8 @@ def init_db() -> None:
         ensure_column(con, "bookings", "return_location", "return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "cancellation_reason", "cancellation_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "modification_request_json", "modification_request_json TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "extension_payment_due_amount", "extension_payment_due_amount REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "bookings", "extension_payment_status", "extension_payment_status TEXT NOT NULL DEFAULT 'NONE'")
         ensure_column(con, "bookings", "subtotal_price", "subtotal_price REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "discount_code", "discount_code TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "discount_amount", "discount_amount REAL NOT NULL DEFAULT 0")
@@ -19391,6 +19393,9 @@ def mobile_rental_service_booking_payload(
             "totalLabel": format_money(breakdown.get("total")),
             "dueNowLabel": format_money(breakdown.get("booking_hold")),
             "dueAtPickupLabel": format_money(breakdown.get("due_at_pickup")),
+            "extensionPaymentDue": float(row_value(row, "extension_payment_due_amount") or 0),
+            "extensionPaymentDueLabel": format_money(row_value(row, "extension_payment_due_amount")),
+            "extensionPaymentStatus": row_value(row, "extension_payment_status") or "NONE",
             "invoiceNumber": row_value(latest_transaction, "invoice_number") if latest_transaction else "",
             "invoiceUrl": row_value(latest_transaction, "invoice_pdf_url") if latest_transaction else "",
             "manageUrl": manage_url,
@@ -31792,19 +31797,29 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     success_message = "Stripe is still confirming the authorization. The pickup page updates automatically after confirmation."
             elif session.get("payment_status") == "paid" and booking_id:
                 amount_total = float(session.get("amount_total") or 0) / 100
-                payment_option = "full" if payment_option == "full" else "hold"
-                if payment_option == "full":
-                    success_title = "Full payment received"
-                    success_message = "Your booking is paid in full. Your pickup balance is $0.00."
-                confirm_booking_hold_payment(
-                    booking_id,
-                    amount_total,
-                    "Stripe Checkout",
-                    str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
-                    str(session.get("payment_intent") or session.get("id") or ""),
-                    self.public_origin(),
-                    payment_option,
-                )
+                if payment_option == "extension":
+                    ok, _message = confirm_rental_extension_payment(
+                        booking_id, amount_total, "Stripe Checkout",
+                        str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
+                        str(session.get("payment_intent") or session.get("id") or ""), self.public_origin(),
+                    )
+                    if ok:
+                        success_title = "Rental extension paid"
+                        success_message = "Your approved extension is paid and your updated return date is reserved."
+                else:
+                    payment_option = "full" if payment_option == "full" else "hold"
+                    if payment_option == "full":
+                        success_title = "Full payment received"
+                        success_message = "Your booking is paid in full. Your pickup balance is $0.00."
+                    confirm_booking_hold_payment(
+                        booking_id,
+                        amount_total,
+                        "Stripe Checkout",
+                        str(session.get("customer_email") or row_value(user, "email") or "Stripe customer"),
+                        str(session.get("payment_intent") or session.get("id") or ""),
+                        self.public_origin(),
+                        payment_option,
+                    )
         self.activation_message_page(
             success_title,
             success_message,
@@ -31850,16 +31865,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 verify_and_record_security_deposit(str(data_object.get("payment_intent") or ""), booking_id)
             elif booking_id and data_object.get("payment_status") == "paid":
                 amount_total = float(data_object.get("amount_total") or 0) / 100
-                payment_option = "full" if payment_option == "full" else "hold"
-                confirm_booking_hold_payment(
-                    booking_id,
-                    amount_total,
-                    "Stripe Checkout",
-                    str(data_object.get("customer_email") or "Stripe customer"),
-                    str(data_object.get("payment_intent") or data_object.get("id") or ""),
-                    self.public_origin(),
-                    payment_option,
-                )
+                if payment_option == "extension":
+                    confirm_rental_extension_payment(
+                        booking_id, amount_total, "Stripe Checkout",
+                        str(data_object.get("customer_email") or "Stripe customer"),
+                        str(data_object.get("payment_intent") or data_object.get("id") or ""), self.public_origin(),
+                    )
+                else:
+                    payment_option = "full" if payment_option == "full" else "hold"
+                    confirm_booking_hold_payment(
+                        booking_id,
+                        amount_total,
+                        "Stripe Checkout",
+                        str(data_object.get("customer_email") or "Stripe customer"),
+                        str(data_object.get("payment_intent") or data_object.get("id") or ""),
+                        self.public_origin(),
+                        payment_option,
+                    )
         if event_type == "payment_intent.succeeded":
             confirm_pickup_balance_payment_intent(data_object, self.public_origin())
             record_security_deposit_final_status(data_object, event_type)
@@ -35653,6 +35675,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if not requested_car_id:
                 self.send_error(409, "The requested vehicle is missing. Ask the customer to submit the change again.")
                 return
+            if str(proposal.get("originalStatus") or "") == "PICKED_UP":
+                # CONFIRMED is the admin action submitted by the form. The rental
+                # itself remains in progress after its extension is approved.
+                booking_status = "PICKED_UP"
         if booking_status == "PICKED_UP" and not booking_releasable_at_pickup(previous_booking):
             self.send_error(
                 409,
@@ -35698,6 +35724,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         estimated_market_total = ?, fairfares_savings_amount = ?,
                         additional_driver_requested = ?, additional_driver_name = ?,
                         additional_driver_age = ?, additional_driver_fee_amount = ?,
+                        extension_payment_due_amount = ?, extension_payment_status = ?,
                         booking_status = ?, payment_status = ?, status = ?,
                         cancellation_reason = '', modification_request_json = ''
                     WHERE id = ?
@@ -35717,6 +35744,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         str(proposal.get("additionalDriverName") or "")[:120],
                         str(proposal.get("additionalDriverAge") or "")[:20],
                         float_from_value(proposal.get("additionalDriverFeeAmount")),
+                        max(0.0, float_from_value(proposal.get("extensionAmount"))),
+                        "PENDING" if max(0.0, float_from_value(proposal.get("extensionAmount"))) > 0 else "NONE",
                         booking_status, payment_status, booking_status, form.get("booking_id"),
                     ),
                 )
@@ -40091,6 +40120,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except ValueError as exc:
             self.send_json({"ok": False, "error": str(exc)}, 400)
             return
+        is_in_progress_extension = row_value(booking, "booking_status") == "PICKED_UP"
+        if is_in_progress_extension:
+            current_pickup = parse_booking_datetime(row_value(booking, "pickup_date"), row_value(booking, "pickup_time"))
+            current_return = parse_booking_datetime(row_value(booking, "dropoff_date"), row_value(booking, "dropoff_time"))
+            if (
+                not current_pickup
+                or not current_return
+                or requested_start != current_pickup
+                or requested_end <= current_return
+                or requested_car_id != int(row_value(booking, "car_id") or 0)
+                or new_pickup_location != row_value(booking, "pickup_location")
+                or new_return_location != row_value(booking, "dropoff_location")
+            ):
+                self.send_json(
+                    {"ok": False, "error": "An in-progress rental can only extend its return date and time. Keep the same vehicle and pickup details."},
+                    400,
+                )
+                return
         selected_car = None
         if requested_car_id:
             with db() as con:
@@ -40114,6 +40161,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         driver_age = str(payload.get("additionalDriverAge") or payload.get("additional_driver_age") or "").strip()[:20]
         additional_driver_fee = additional_driver_fee_for_days(next_days, additional_driver_requested)
         breakdown = rental_price_breakdown(daily_price, next_days, discount_amount, additional_driver_fee)
+        extension_amount = round(max(0.0, float(breakdown["total"]) - float(row_value(booking, "total_price") or 0)), 2) if is_in_progress_extension else 0.0
         changes = []
         if requested_car_id != int(row_value(booking, "car_id") or 0):
             changes.append(f"Vehicle changed to {row_value(selected_car, 'name')}")
@@ -40168,6 +40216,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "additionalDriverName": driver_name,
                 "additionalDriverAge": driver_age,
                 "additionalDriverFeeAmount": additional_driver_fee,
+                "originalStatus": row_value(booking, "booking_status"),
+                "extensionAmount": extension_amount,
                 "note": change_note,
             }
             con.execute(
@@ -40322,7 +40372,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         expire_stale_booking_holds()
         payload = self.read_json_body()
-        payment_option = "full" if str(payload.get("paymentOption") or payload.get("payment_option") or "").lower() == "full" else "hold"
+        requested_payment_option = str(payload.get("paymentOption") or payload.get("payment_option") or "").lower()
+        payment_option = requested_payment_option if requested_payment_option in {"hold", "full", "extension"} else "hold"
         user_id = int(row_value(user, "id") or 0)
         booking = (
             get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
@@ -40334,14 +40385,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking["booking_status"] == "EXPIRED_HOLD":
             self.send_json({"ok": False, "error": "Payment window closed. Restart checkout or remove this vehicle."}, 409)
             return
-        if booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "PAID":
+        is_extension_payment = payment_option == "extension"
+        if is_extension_payment and (
+            row_value(booking, "booking_status") != "PICKED_UP"
+            or row_value(booking, "extension_payment_status") != "PENDING"
+            or float(row_value(booking, "extension_payment_due_amount") or 0) <= 0
+        ):
+            self.send_json({"ok": False, "error": "There is no approved extension payment due for this rental."}, 400)
+            return
+        if not is_extension_payment and (booking["booking_status"] not in {"PENDING_HOLD", "CONFIRMED"} or booking["payment_status"] == "PAID"):
             self.send_json({"ok": False, "error": "This booking does not need a payment right now."}, 400)
             return
-        if booking["payment_status"] == "HOLD_PAID" and payment_option != "full":
+        if not is_extension_payment and booking["payment_status"] == "HOLD_PAID" and payment_option != "full":
             self.send_json({"ok": False, "error": "The 10% hold is already paid. Pay the remaining balance for hassle-free pickup."}, 400)
             return
         breakdown = booking_price_breakdown(booking)
         checkout_amount = (
+            round(float(row_value(booking, "extension_payment_due_amount") or 0), 2)
+            if is_extension_payment
+            else
             round(float(breakdown["due_at_pickup"]), 2)
             if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
             else full_payment_total(breakdown["total"])
@@ -40351,6 +40413,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         amount_cents = max(50, int(round(checkout_amount * 100)))
         origin = self.public_origin().rstrip("/")
         product_name = (
+            "FairFares approved rental extension"
+            if is_extension_payment
+            else
             "FairFares remaining pickup balance"
             if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
             else "FairFares full booking payment"
@@ -40358,6 +40423,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else "FairFares 10% booking hold"
         )
         product_description = (
+            f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - approved return-date extension"
+            if is_extension_payment
+            else
             f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - remaining balance for hassle-free pickup"
             if payment_option == "full" and booking["payment_status"] == "HOLD_PAID"
             else f"{row_value(booking, 'car_name')} - {row_value(booking, 'booking_id')} - full payment includes $10 pickup discount"

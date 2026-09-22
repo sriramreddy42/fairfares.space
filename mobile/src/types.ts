@@ -535,6 +535,9 @@ export type RentalServiceBooking = RentalBooking & {
   totalLabel: string;
   dueNowLabel: string;
   dueAtPickupLabel: string;
+  extensionPaymentDue?: number;
+  extensionPaymentDueLabel?: string;
+  extensionPaymentStatus?: string;
   invoiceNumber: string;
   invoiceUrl: string;
   manageUrl: string;

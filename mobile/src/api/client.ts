@@ -977,7 +977,7 @@ export async function bookRentalCar(carId: number, details?: Partial<RentalSearc
 }
 
 export async function startRentalCheckout(
-  paymentOption: "hold" | "full" = "hold",
+  paymentOption: "hold" | "full" | "extension" = "hold",
   bookingId = "",
   returnUrls?: { successUrl?: string; cancelUrl?: string }
 ) {

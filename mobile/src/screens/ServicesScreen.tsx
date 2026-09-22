@@ -336,20 +336,22 @@ export function ServicesScreen({
     }
   }
 
-  async function openRentalPayment(kind: "balance" | "deposit") {
+  async function openRentalPayment(kind: "balance" | "deposit" | "extension") {
     if (!selectedBooking) return;
     setBusy(true);
     try {
       const result = kind === "balance"
         ? await startRentalCheckout("full", selectedBooking.id)
-        : await startRentalSecurityDeposit(selectedBooking.id);
+        : kind === "extension"
+          ? await startRentalCheckout("extension", selectedBooking.id)
+          : await startRentalSecurityDeposit(selectedBooking.id);
       if (!result.url || !(await Linking.canOpenURL(result.url))) {
         throw new Error("Stripe checkout could not be opened on this device.");
       }
       await Linking.openURL(result.url);
     } catch (paymentError) {
       Alert.alert(
-        kind === "balance" ? "Payment could not be opened" : "Deposit could not be opened",
+        kind === "deposit" ? "Deposit could not be opened" : "Payment could not be opened",
         paymentError instanceof Error ? paymentError.message : "Try again."
       );
     } finally {
@@ -358,11 +360,13 @@ export function ServicesScreen({
   }
 
   const bookingIsPast = Boolean(selectedBooking && ["CANCELLED", "RETURNED", "EXPIRED_HOLD"].includes(selectedBooking.status));
-  const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED"].includes(selectedBooking.status));
+  const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED", "PICKED_UP"].includes(selectedBooking.status));
   const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
+  const inProgressRental = selectedBooking?.status === "PICKED_UP";
+  const extensionPaymentDue = Boolean(inProgressRental && selectedBooking?.extensionPaymentStatus === "PENDING" && Number(selectedBooking?.extensionPaymentDue || 0) > 0);
   const actions: ServiceAction[] = [
     {
-      label: "Modify Reservation",
+      label: inProgressRental ? "Extend Rental" : "Modify Reservation",
       icon: appAssets.serviceModify,
       onPress: () => openPanel("modify")
     },
@@ -383,7 +387,7 @@ export function ServicesScreen({
       onPress: () => openPanel("details")
     }
   ].filter((action) => !bookingIsPast || ["Download Invoice", "View Details"].includes(action.label))
-    .filter((action) => bookingCanChange || !["Modify Reservation", "Cancel Reservation"].includes(action.label));
+    .filter((action) => bookingCanChange || !["Modify Reservation", "Extend Rental", "Cancel Reservation"].includes(action.label));
 
   const selectedDocumentSet = selectedBooking?.documents?.find((item) => item.id === selectedDocumentSetId)
     || selectedBooking?.documents?.[0]
@@ -531,6 +535,21 @@ export function ServicesScreen({
                 )}
               </View>
             ) : null}
+            {selectedBooking && extensionPaymentDue ? (
+              <View style={styles.paymentCard}>
+                <View style={styles.paymentHeader}>
+                  <View style={styles.paymentHeaderCopy}>
+                    <Text style={styles.paymentEyebrow}>Approved rental extension</Text>
+                    <Text style={styles.paymentTitle}>Payment required to complete extension</Text>
+                  </View>
+                  <Text style={styles.paymentAmount}>{selectedBooking.extensionPaymentDueLabel}</Text>
+                </View>
+                <Text style={styles.paymentCopy}>Your updated return window is reserved. Pay the approved extension amount to complete the change.</Text>
+                <TouchableOpacity style={styles.paymentButton} onPress={() => void openRentalPayment("extension")} disabled={busy}>
+                  <Text style={styles.paymentButtonText}>{busy ? "Opening Stripe..." : `Pay extension ${selectedBooking.extensionPaymentDueLabel}`}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -547,18 +566,19 @@ export function ServicesScreen({
             <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
               {selectedBooking && panelMode === "modify" ? (
                 <>
-                  <Text style={styles.policyCopy}>Make changes to fit your plans. Date, location, vehicle, and additional-driver changes are sent to FairFares for review using the same booking flow as web.</Text>
+                  <Text style={styles.policyCopy}>{inProgressRental ? "Extend your return time before the current return deadline. Your vehicle and pickup details stay fixed; FairFares checks the added window before approval." : "Make changes to fit your plans. Date, location, vehicle, and additional-driver changes are sent to FairFares for review using the same booking flow as web."}</Text>
                   <View style={styles.detailSection}>
-                    <Text style={styles.sectionTitle}>Change dates</Text>
-                    <View style={styles.twoColumn}>
+                    <Text style={styles.sectionTitle}>{inProgressRental ? "Extend return" : "Change dates"}</Text>
+                    {!inProgressRental ? <View style={styles.twoColumn}>
                       <DateTimeField darkSurface style={{ flex: 1 }} label="Pickup date" value={pickupDate} mode="date" minimumDate={todayLocalIso()} onChange={setPickupDate} />
                       <DateTimeField darkSurface style={{ flex: 1 }} label="Pickup time" value={pickupTime} mode="time" onChange={setPickupTime} />
-                    </View>
+                    </View> : null}
                     <View style={styles.twoColumn}>
                       <DateTimeField darkSurface style={{ flex: 1 }} label="Return date" value={returnDate} mode="date" minimumDate={pickupDate || todayLocalIso()} onChange={setReturnDate} />
                       <DateTimeField darkSurface style={{ flex: 1 }} label="Return time" value={returnTime} mode="time" onChange={setReturnTime} />
                     </View>
                   </View>
+                  {!inProgressRental ? <>
                   <View style={styles.detailSection}>
                     <Text style={styles.sectionTitle}>Change pickup location</Text>
                     <InputField label="Pickup location" value={pickupLocation} onChangeText={setPickupLocation} />
@@ -613,7 +633,11 @@ export function ServicesScreen({
                     <AmountPill label="Selected vehicle" value={selectedUpgrade?.name || selectedBooking.carName} />
                     <AmountPill label="Estimated price" value={estimatedPrice} />
                   </View>
-                  <Text style={styles.detailsLine}>Submitting a modification does not immediately charge or refund your card. FairFares reviews availability and any price difference before confirming the change.</Text>
+                  </> : <View style={styles.modifySummary}>
+                    <AmountPill label="Vehicle" value={selectedBooking.carName} />
+                    <AmountPill label="Current total" value={selectedBooking.totalLabel} />
+                  </View>}
+                  <Text style={styles.detailsLine}>{inProgressRental ? "FairFares will reserve the added return window after approval, then show any extension amount for secure Stripe payment." : "Submitting a modification does not immediately charge or refund your card. FairFares reviews availability and any price difference before confirming the change."}</Text>
                   <InputField label="Notes for FairFares" value={modifyNote} onChangeText={setModifyNote} multiline placeholder="Tell us what changed." />
                   <View style={styles.inlineActions}>
                     <SecondaryButton label="Reset changes" onPress={() => {
@@ -630,7 +654,7 @@ export function ServicesScreen({
                       setModifyNote("");
                     }} />
                   </View>
-                  <PrimaryButton label={busy ? "Saving..." : "Submit modification request"} onPress={submitModification} disabled={busy} />
+                  <PrimaryButton label={busy ? "Saving..." : inProgressRental ? "Request rental extension" : "Submit modification request"} onPress={submitModification} disabled={busy} />
                 </>
               ) : null}
 

@@ -1021,6 +1021,32 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(approved["pickup_location"], "Approval test pickup")
         self.assertEqual(approved["modification_request_json"], "")
 
+    def test_approved_in_progress_extension_keeps_pickup_state_until_paid(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'PICKED_UP', status = 'PICKED_UP', payment_status = 'PAID',
+                    extension_payment_due_amount = 42.50, extension_payment_status = 'PENDING'
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+        ok, reference = app.confirm_rental_extension_payment(
+            booking["id"], 42.50, payment_reference="pi_extension_paid"
+        )
+        self.assertTrue(ok)
+        self.assertEqual(reference, "pi_extension_paid")
+        with app.db() as con:
+            refreshed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            transaction = con.execute("SELECT * FROM transactions WHERE invoice_number = 'pi_extension_paid'").fetchone()
+        self.assertEqual(refreshed["booking_status"], "PICKED_UP")
+        self.assertEqual(refreshed["extension_payment_status"], "PAID")
+        self.assertEqual(float(refreshed["extension_payment_due_amount"]), 0.0)
+        self.assertEqual(transaction["transaction_status"], "EXTENSION_PAID")
+
     def test_checkout_confirmation_verifies_stripe_before_recording_deposit(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
