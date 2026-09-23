@@ -7251,20 +7251,26 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const threadEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => {
-      // Message bubbles receive their own responder first and use a right
-      // swipe for reply. A right swipe started in the wallpaper/background
-      // therefore belongs to the thread and navigates back.
+      // Preserve message-level right swipes for reply. The screen-level back
+      // gesture starts only at the leading edge, like native chat navigation.
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
-      return horizontalSwipe && gesture.dx > 0;
+      return horizontalSwipe && gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0;
     },
+    onPanResponderGrant: () => threadEdgeTranslateX.stopAnimation(),
     onPanResponderMove: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      threadEdgeTranslateX.setValue(Math.max(-screenWidth * 0.72, Math.min(screenWidth * 0.72, gesture.dx)));
+      // Keep the page directly under the finger, with a small amount of
+      // resistance beyond the usual completion distance.
+      const directDistance = screenWidth * 0.78;
+      const distance = Math.max(0, gesture.dx);
+      const translated = distance <= directDistance ? distance : directDistance + (distance - directDistance) * 0.28;
+      threadEdgeTranslateX.setValue(Math.min(screenWidth, translated));
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const horizontalSwipe = gesture.dx > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
-      const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 300, mass: 0.7 }).start();
+      const edgeSwipe = gesture.x0 <= CHAT_EDGE_BACK_ZONE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
+      const horizontalSwipe = edgeSwipe && (gesture.dx > Math.max(CHAT_EDGE_BACK_DISTANCE * 2, screenWidth * 0.22) || (gesture.dx > 18 && gesture.vx > 0.72));
+      const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 360, mass: 0.62, velocity: gesture.vx }).start();
       if (!horizontalSwipe) {
         returnToThread();
         return;
@@ -7348,12 +7354,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         returnToThread();
         return;
       }
-      Animated.timing(threadEdgeTranslateX, { toValue: gesture.dx > 0 ? screenWidth : -screenWidth, duration: 180, useNativeDriver: true }).start(({ finished }) => {
+      Animated.timing(threadEdgeTranslateX, { toValue: screenWidth, duration: 165, useNativeDriver: true }).start(({ finished }) => {
         threadEdgeTranslateX.setValue(0);
         if (finished) closeThread();
       });
     },
-    onPanResponderTerminate: () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 300, mass: 0.7 }).start(),
+    onPanResponderTerminate: () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 360, mass: 0.62 }).start(),
     onPanResponderTerminationRequest: () => true
   }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, threadEdgeTranslateX, wallpaperPanelOpen]);
 
