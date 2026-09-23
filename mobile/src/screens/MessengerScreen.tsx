@@ -1740,21 +1740,31 @@ function PrivateReplyCard({ context, mine }: { context: PrivateReplyContext; min
 
 function ChitthiVideoPlayer({ uri }: { uri: string }) {
   const [playbackError, setPlaybackError] = useState("");
-  const player = useVideoPlayer({ uri, contentType: "progressive" }, (instance) => {
-    instance.loop = false;
-    instance.play();
-  });
+  const [isReady, setIsReady] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const player = useVideoPlayer({ uri, contentType: "progressive" }, (instance) => { instance.loop = false; });
   useEffect(() => {
     const subscription = player.addListener("statusChange", ({ status, error }) => {
       if (status === "error") setPlaybackError(error?.message || "This video's codec is not supported on this device.");
-      else if (status === "readyToPlay") setPlaybackError("");
+      else if (status === "readyToPlay") {
+        setPlaybackError("");
+        setIsReady(true);
+        player.play();
+      }
     });
-    return () => subscription.remove();
+    const playingSubscription = player.addListener("playingChange", ({ isPlaying: nextIsPlaying }) => setIsPlaying(nextIsPlaying));
+    return () => { subscription.remove(); playingSubscription.remove(); };
   }, [player]);
   if (playbackError) {
     return <View style={[styles.attachmentPreviewVideo, styles.videoPlaybackError]}><Text style={styles.videoPlaybackErrorText}>Video cannot be played</Text><Text style={styles.videoPlaybackErrorDetail}>{playbackError}</Text></View>;
   }
-  return <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" fullscreenOptions={{ enable: true }} />;
+  return <View style={styles.videoPlaybackSurface}>
+    <VideoView player={player} style={styles.attachmentPreviewVideo} nativeControls contentFit="contain" fullscreenOptions={{ enable: true }} />
+    {!isPlaying ? <TouchableOpacity style={styles.videoPlaybackPlayButton} onPress={() => player.play()} accessibilityRole="button" accessibilityLabel={isReady ? "Play video" : "Video loading"}>
+      <Text style={styles.videoPlaybackPlayIcon}>▶</Text>
+      <Text style={styles.videoPlaybackPlayText}>{isReady ? "Play video" : "Loading video"}</Text>
+    </TouchableOpacity> : null}
+  </View>;
 }
 
 function CircularDownloadProgress({ progress }: { progress: number }) {
@@ -2388,7 +2398,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     });
     visibleMessages.forEach((message) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-      if (!mediaGroupId || !["IMAGE", "VIDEO"].includes(message.type)) return;
+      // A group identifier alone is not enough to change the bubble shape.
+      // Older/retried attachment records can retain one, while a single photo
+      // or video must always remain a normal, single media card.
+      const declaredGroupCount = Number(message.metadata?.mediaGroupCount || 0);
+      if (!mediaGroupId || declaredGroupCount < 2 || !["IMAGE", "VIDEO"].includes(message.type)) return;
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
       const group = mediaGroups.get(mediaGroupKey) || [];
       group.push(message);
@@ -2412,7 +2426,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     visibleMessages.forEach((message, index) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
-      const mediaGroup = mediaGroupId && ["IMAGE", "VIDEO"].includes(message.type) ? mediaGroups.get(mediaGroupKey) || [] : [];
+      const declaredGroupCount = Number(message.metadata?.mediaGroupCount || 0);
+      const mediaGroup = mediaGroupId && declaredGroupCount > 1 && ["IMAGE", "VIDEO"].includes(message.type)
+        ? mediaGroups.get(mediaGroupKey) || []
+        : [];
       const mediaGroupKeyToRender = mediaGroup.length > 1 ? mediaGroupKey : "";
       const mediaGroupAlreadyRendered = Boolean(mediaGroupKeyToRender && renderedMediaGroupIds.has(mediaGroupKeyToRender));
       if (mediaGroupKeyToRender && !mediaGroupAlreadyRendered) renderedMediaGroupIds.add(mediaGroupKeyToRender);
@@ -7399,6 +7416,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onPanResponderTerminationRequest: () => true
   }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, threadEdgeTranslateX, wallpaperPanelOpen]);
 
+  useEffect(() => {
+    // A cancelled edge gesture must never leave the conversation translated.
+    // Reset when a thread is entered, replaced, or closed as well as on the
+    // responder's release/terminate paths below.
+    threadEdgeTranslateX.stopAnimation();
+    threadEdgeTranslateX.setValue(0);
+  }, [activeConversationId, inThread, threadEdgeTranslateX]);
+
   const messageInfoEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
@@ -7418,6 +7443,22 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   if (inThread) {
     return (
       <ChatPhotoViewerContext.Provider value={currentUserId}>
+      <View style={styles.threadTransitionRoot}>
+      <View pointerEvents="none" style={styles.threadBackPreview} accessibilityElementsHidden>
+        <View style={styles.threadBackPreviewHeader}>
+          <Image source={appAssets.chittiMascot} style={styles.threadBackPreviewMascot} resizeMode="contain" />
+          <Text style={styles.threadBackPreviewTitle}>Chitthi</Text>
+        </View>
+        <View style={styles.threadBackPreviewList}>
+          {personConversations.slice(0, 5).map((conversation) => <View key={conversation.id} style={styles.threadBackPreviewRow}>
+            <InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject || "F"} imageStyle={styles.threadBackPreviewAvatar} textStyle={styles.threadBackPreviewAvatarText} />
+            <View style={styles.threadBackPreviewCopy}>
+              <Text style={styles.threadBackPreviewName} numberOfLines={1}>{conversation.otherName || conversation.subject || "Chitthi"}</Text>
+              <Text style={styles.threadBackPreviewMessage} numberOfLines={1}>{safeConversationPreview(conversation) || "Start a conversation"}</Text>
+            </View>
+          </View>)}
+        </View>
+      </View>
       <Animated.View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }, { transform: [{ translateX: threadEdgeTranslateX }] }]} {...threadEdgeBackResponder.panHandlers}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
@@ -7787,7 +7828,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 ) : null}
                 {message.metadata?.forwarded ? <View style={styles.forwardedLabel}><Text style={[styles.forwardedLabelText, message.mine && styles.myForwardedLabelText]}>↪ Forwarded</Text></View> : null}
                 {message.metadata?.privateReply ? <PrivateReplyCard context={message.metadata.privateReply} mine={message.mine} /> : null}
-                {message.replyToMessageId ? <TouchableOpacity activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
+                {message.replyToMessageId ? <TouchableOpacity style={styles.quotedReplyTapTarget} activeOpacity={0.72} delayLongPress={350} onPress={(event) => { event.stopPropagation(); jumpToRepliedMessage(Number(message.replyToMessageId)); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityLabel="Go to replied message"><QuotedReply target={replyTarget} mine={message.mine} /></TouchableOpacity> : null}
                 {message.contextTitle ? (
                   <TouchableOpacity disabled={message.contextType !== "COMMUNITY" || !message.contextId || !onOpenCommunityPost} onPress={(event) => { event.stopPropagation(); if (message.contextId) onOpenCommunityPost?.(message.contextId); }} accessibilityRole={message.contextType === "COMMUNITY" && message.contextId ? "button" : undefined} accessibilityLabel={message.contextType === "COMMUNITY" ? `Open Ask Community post: ${message.contextTitle}` : undefined} style={[styles.messageContext, message.mine ? styles.myMessageContext : styles.theirMessageContext]}>
                     <Text style={[styles.messageContextType, message.mine ? styles.myMessageContextType : styles.theirMessageContextType]}>
@@ -7805,7 +7846,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </TouchableOpacity>
                 ) : null}
                 {message.attachmentUrl || (message.type === "IMAGE" && Boolean(message.metadata?.thumbnailDataUrl || message.metadata?.decryptedDataUrl)) ? (
-                  (message.type === "IMAGE" || mediaGroup.length > 1) ? <View style={[styles.photoMediaWrap, mediaGroup.length > 1 && styles.photoMediaStackWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? (() => { const stackPreview = mediaGroup[0] || message; const stackSelected = selectedMessageIds.includes(messageSelectionKey(message)); const stackHasVideo = stackPreview.type === "VIDEO"; const photoCount = mediaGroup.filter((item) => item.type === "IMAGE").length; const videoCount = mediaGroup.length - photoCount; const stackCountLabel = [photoCount ? `${photoCount} photo${photoCount === 1 ? "" : "s"}` : "", videoCount ? `▶ ${videoCount} video${videoCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "); return <Pressable style={styles.messageMediaStack} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openPhotoGroup(mediaGroup, stackPreview.id); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={`Open ${stackCountLabel}`}><View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackBack]} />{mediaGroup.length > 2 ? <View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackMiddle]} /> : null}<View style={styles.messageMediaStackFront}>{stackHasVideo ? <><ChatVideoThumbnail embeddedUri={stackPreview.metadata?.thumbnailDataUrl} localUri={localVideoThumbnailUris[stackPreview.id]} /><View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View></> : <ChatMessagePhoto message={stackPreview} resolvePreview={resolveEncryptedPhotoPreview} compact />}<View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(stackPreview.createdAt)}</Text>{stackPreview.mine && messageReceipt(stackPreview.status) ? <Text style={[styles.photoReceipt, stackPreview.status === "seen" && styles.receiptSeen]}>{messageReceipt(stackPreview.status)}</Text> : null}</View>{stackSelected ? <View style={styles.messageMediaStackSelected} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}</View><View style={styles.messageMediaStackCount} pointerEvents="none"><Text style={styles.messageMediaStackCountText}>▦ {stackCountLabel}</Text></View></Pressable>; })() : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  (message.type === "IMAGE" || mediaGroup.length > 1) ? <View style={[styles.photoMediaWrap, mediaGroup.length > 1 && styles.photoMediaStackWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? (() => { const stackPreview = mediaGroup[0] || message; const stackSelected = selectedMessageIds.includes(messageSelectionKey(message)); const stackHasVideo = stackPreview.type === "VIDEO"; const photoCount = mediaGroup.filter((item) => item.type === "IMAGE").length; const videoCount = mediaGroup.length - photoCount; const stackCountLabel = [photoCount ? `${photoCount} photo${photoCount === 1 ? "" : "s"}` : "", videoCount ? `▶ ${videoCount} video${videoCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "); return <Pressable style={styles.messageMediaStack} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openPhotoGroup(mediaGroup); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={`Open ${stackCountLabel}`}><View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackBack]} />{mediaGroup.length > 2 ? <View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackMiddle]} /> : null}<View style={styles.messageMediaStackFront}>{stackHasVideo ? <><ChatVideoThumbnail embeddedUri={stackPreview.metadata?.thumbnailDataUrl} localUri={localVideoThumbnailUris[stackPreview.id]} /><View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View></> : <ChatMessagePhoto message={stackPreview} resolvePreview={resolveEncryptedPhotoPreview} compact />}<View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(stackPreview.createdAt)}</Text>{stackPreview.mine && messageReceipt(stackPreview.status) ? <Text style={[styles.photoReceipt, stackPreview.status === "seen" && styles.receiptSeen]}>{messageReceipt(stackPreview.status)}</Text> : null}</View>{stackSelected ? <View style={styles.messageMediaStackSelected} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}</View><View style={styles.messageMediaStackCount} pointerEvents="none"><Text style={styles.messageMediaStackCountText}>▦ {stackCountLabel}</Text></View></Pressable>; })() : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>
                       <Pressable
                         style={styles.videoMessageCard}
@@ -8367,6 +8408,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </View>
         </Modal>
       </Animated.View>
+      </View>
       </ChatPhotoViewerContext.Provider>
     );
   }
@@ -8760,6 +8802,18 @@ const styles = StyleSheet.create({
   chittiBackdropLight: { opacity: 0.06 },
   chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
+  threadTransitionRoot: { flex: 1, backgroundColor: "#f3f4f6", position: "relative", overflow: "hidden" },
+  threadBackPreview: { ...StyleSheet.absoluteFillObject, backgroundColor: "#f3f4f6", paddingTop: Platform.OS === "ios" ? 48 : 18 },
+  threadBackPreviewHeader: { minHeight: 62, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.09)" },
+  threadBackPreviewMascot: { width: 31, height: 38 },
+  threadBackPreviewTitle: { color: "#10211c", fontSize: 22, fontWeight: "900" },
+  threadBackPreviewList: { paddingHorizontal: 12, paddingTop: 8, gap: 3 },
+  threadBackPreviewRow: { minHeight: 67, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.07)" },
+  threadBackPreviewAvatar: { width: 42, height: 42, borderRadius: 21 },
+  threadBackPreviewAvatarText: { color: "#165f46", fontSize: 12, fontWeight: "900" },
+  threadBackPreviewCopy: { flex: 1, minWidth: 0, gap: 3 },
+  threadBackPreviewName: { color: "#17211e", fontSize: 14, fontWeight: "800" },
+  threadBackPreviewMessage: { color: "#69766f", fontSize: 11, fontWeight: "600" },
   threadScreen: { flex: 1, backgroundColor: "#D9E5DD", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 0 },
   threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
@@ -9096,7 +9150,11 @@ const styles = StyleSheet.create({
   mediaViewerName: { maxWidth: 210, color: "#fff", fontSize: 16, lineHeight: 21, fontWeight: "800", marginTop: 5 },
   mediaViewerDate: { color: "rgba(255,255,255,0.54)", fontSize: 10, fontWeight: "700", marginTop: 1 },
   mediaViewerStage: { flex: 1, minHeight: 260, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
+  videoPlaybackSurface: { width: "100%", height: "100%", maxHeight: 680, backgroundColor: "#000", alignItems: "center", justifyContent: "center" },
   attachmentPreviewVideo: { width: "100%", height: "100%", maxHeight: 680, backgroundColor: "#000" },
+  videoPlaybackPlayButton: { position: "absolute", minWidth: 118, minHeight: 52, paddingHorizontal: 16, borderRadius: 26, backgroundColor: "rgba(8,22,17,0.82)", borderWidth: 1, borderColor: "rgba(255,255,255,0.46)", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 7 },
+  videoPlaybackPlayIcon: { color: "#fff", fontSize: 19, lineHeight: 22, marginLeft: 2 },
+  videoPlaybackPlayText: { color: "#fff", fontSize: 13, fontWeight: "900" },
   videoPlaybackError: { alignItems: "center", justifyContent: "center", padding: 28, gap: 10 },
   videoPlaybackErrorText: { color: "#fff", fontSize: 18, fontWeight: "700" },
   videoPlaybackErrorDetail: { color: "#bbb", fontSize: 13, lineHeight: 19, textAlign: "center" },
@@ -9323,7 +9381,8 @@ const styles = StyleSheet.create({
   messageContextSubtitle: { fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: "700" },
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
-  quotedReply: { borderLeftWidth: 3, borderRadius: 9, paddingLeft: 9, paddingRight: 5, paddingVertical: 5, marginBottom: 7, minWidth: 190, minHeight: 50, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" },
+  quotedReplyTapTarget: { alignSelf: "stretch" },
+  quotedReply: { alignSelf: "stretch", borderLeftWidth: 3, borderRadius: 9, paddingLeft: 9, paddingRight: 8, paddingVertical: 6, marginBottom: 7, minWidth: 190, minHeight: 50, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" },
   myQuotedReply: { borderLeftColor: "#F4D99E", backgroundColor: "rgba(255,255,255,0.14)" },
   theirQuotedReply: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
   quotedReplyName: { color: "#D6A95F", fontSize: 12, fontWeight: "900", marginBottom: 2 },

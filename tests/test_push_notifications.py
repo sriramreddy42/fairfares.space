@@ -1055,6 +1055,8 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(mock_send.call_args.args[0], [self.user_id])
         self.assertEqual(mock_send.call_args.args[3]["type"], "RENTAL_BOOKING")
         self.assertEqual(mock_send.call_args.args[3]["bookingId"], "FF-200")
+        self.assertEqual(mock_send.call_args.args[3]["depositStatus"], "NOT_AUTHORIZED")
+        self.assertEqual(mock_send.call_args.args[3]["extensionPaymentStatus"], "NONE")
 
     def test_pickup_reminder_pushes_once_with_email_automation_reservation(self):
         booking = {

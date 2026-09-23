@@ -490,6 +490,33 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         )
         return con.execute("SELECT * FROM ride_posts WHERE public_id = ?", (public_id,)).fetchone()
 
+    @patch.object(app, "google_route_totals", return_value=None)
+    def test_driver_activity_hides_pending_match_when_offer_is_no_longer_active(self, _mock_routes):
+        token = "inactive-offer-driver-token"
+        with app.db() as con:
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, self.driver_id))
+            offer = self.insert_ride(
+                con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO"
+            )
+            request = self.insert_ride(
+                con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO"
+            )
+            app.create_ride_dispatch_notifications(con, request, self.rider_id)
+            con.execute("UPDATE ride_posts SET status = 'INACTIVE' WHERE id = ?", (offer["id"],))
+
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            status, activity = self.request_json(server, "GET", "/api/mobile/rides/activity", token)
+            self.assertEqual(status, 200, activity)
+            stale = [ride for ride in activity["rides"] if ride["id"] == request["public_id"] and ride.get("activityRole") == "DRIVER_NOTIFICATION"]
+            self.assertEqual(stale, [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     @patch.object(app, "ride_point", side_effect=fake_ride_point)
     def test_nearby_same_direction_carpool_offer_matches_with_detour(self, _mock_point):
         with app.db() as con:

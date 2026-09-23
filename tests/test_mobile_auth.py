@@ -1832,6 +1832,46 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_notification_self_test_covers_rental_and_support_channels(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Notification Owner", "notification-owner@example.com", app.hash_password("Password123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('notification-owner-token', ?)", (user_id,))
+            con.execute(
+                "INSERT INTO mobile_push_tokens (user_id, token, platform, device_label, enabled) VALUES (?, ?, ?, ?, 1)",
+                (user_id, "ExpoPushToken[notification-test-android]", "android", "Android test device"),
+            )
+        server, thread = self.start_server()
+        try:
+            for category, notification_type in (("rentals", "RENTAL_BOOKING"), ("support", "SUPPORT_REPLY")):
+                with self.subTest(category=category):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{server.server_port}/api/mobile/notification-test",
+                        data=json.dumps({"category": category}).encode("utf-8"),
+                        method="POST",
+                        headers={"Content-Type": "application/json", "Authorization": "Bearer notification-owner-token"},
+                    )
+                    with mock.patch.object(app, "process_mobile_push_outbox"):
+                        with urllib.request.urlopen(request, timeout=5) as response:
+                            self.assertEqual(response.status, 202)
+                            payload = json.loads(response.read().decode("utf-8"))
+                    self.assertEqual(payload["category"], category)
+                    with app.db() as con:
+                        queued = con.execute(
+                            "SELECT data_json FROM mobile_push_outbox WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                            (user_id,),
+                        ).fetchone()
+                    notification = json.loads(queued["data_json"])
+                    self.assertEqual(notification["type"], notification_type)
+                    self.assertEqual(notification["testCategory"], category)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()

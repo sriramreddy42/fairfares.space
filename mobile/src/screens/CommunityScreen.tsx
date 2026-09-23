@@ -33,7 +33,7 @@ type Props = {
   onRequireLogin: () => void;
   onRequireSignup: () => void;
   onOpenHousing: (postId?: string) => void;
-  onOpenRides: (target?: "ride" | "requests") => void;
+  onOpenRides: (target?: "ride" | "requests", rideId?: string) => void;
   onOpenRentalCars: () => void;
   onOpenRentalBooking: (bookingId: string, action?: "balance" | "deposit" | "extension" | "manage") => void;
   onOpenGas: () => void;
@@ -98,13 +98,13 @@ type CommunityActionNotice = {
   body: string;
   actionLabel: string;
   action: "ride" | "ride-request" | "rental";
+  rideId?: string;
   bookingId?: string;
   rentalAction?: "balance" | "deposit" | "extension" | "manage";
 };
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
 const communityGroupSnapshots = new Map<string, Community[]>();
-const communityActionNoticeSnapshots = new Map<number, CommunityActionNotice | null>();
 const communityReviewFallback: BootstrapPayload["testimonials"][number] = {
   id: -10,
   name: "Sriram Reddy Bandari",
@@ -284,19 +284,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [selectedGroup, setSelectedGroup] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
-  const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(() => communityActionNoticeSnapshots.get(Number(user?.id || 0)) || null);
+  const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(null);
   const [actionNoticeRefreshKey, setActionNoticeRefreshKey] = useState(0);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
   const actionNoticeVisible = useRef(false);
-
-  useEffect(() => {
-    setActionNotice(communityActionNoticeSnapshots.get(Number(user?.id || 0)) || null);
-  }, [user?.id]);
-
-  useEffect(() => {
-    const userId = Number(user?.id || 0);
-    if (userId) communityActionNoticeSnapshots.set(userId, actionNotice);
-  }, [actionNotice, user?.id]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -390,10 +381,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         return;
       }
 
-      const ride = rides.find((item) => {
+      const pendingDriverRequest = rides.find((item) => {
         const status = String(item.dispatchStatus || item.status || "").toUpperCase();
         return item.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
-      }) || rides.find((item) => ["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"].includes(String(item.dispatchStatus || item.status || "").toUpperCase()));
+      });
+      const ride = pendingDriverRequest || rides.find((item) => ["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"].includes(String(item.dispatchStatus || item.status || "").toUpperCase()));
       if (!ride) {
         // Keep the cached notice while the screen remounts, but remove it
         // once both live sources confirm there is no longer an action.
@@ -401,16 +393,32 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         return;
       }
       const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
-      const incomingRequest = ride.activityRole === "DRIVER_NOTIFICATION";
-      const rideTitle = incomingRequest ? "A rider is waiting for your response" : status === "ACCEPTED" ? "Your ride was accepted" : status === "EN_ROUTE" ? "Your driver is on the way" : status === "ARRIVED" ? "Your driver has arrived" : "Your ride is in progress";
+      const incomingRequest = ride.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
+      const driverTrip = ride.activityRole === "DRIVER_NOTIFICATION";
+      const rideTitle = incomingRequest
+        ? "A rider is waiting for your response"
+        : driverTrip && status === "ACCEPTED"
+          ? "Your rider is confirmed"
+          : driverTrip && status === "EN_ROUTE"
+            ? "Continue to rider pickup"
+            : driverTrip && status === "ARRIVED"
+              ? "Your rider is at pickup"
+              : status === "ACCEPTED"
+                ? "Your ride was accepted"
+                : status === "EN_ROUTE"
+                  ? "Your driver is on the way"
+                  : status === "ARRIVED"
+                    ? "Your driver has arrived"
+                    : "Your ride is in progress";
       setActionNotice({
         id: `ride:${ride.id}:${status}:${incomingRequest ? "incoming" : "trip"}`,
         icon: incomingRequest ? "🙋" : "🚗",
-        eyebrow: incomingRequest ? "Carpool request" : "Ride update",
+        eyebrow: incomingRequest ? "Carpool request" : driverTrip ? "Carpool trip" : "Ride update",
         title: rideTitle,
         body: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
-        actionLabel: incomingRequest ? "Review request" : "Review ride",
+        actionLabel: incomingRequest ? "Review request" : driverTrip ? "Manage ride" : "Review ride",
         action: incomingRequest ? "ride-request" : "ride",
+        rideId: ride.id,
       });
     });
 
@@ -1321,10 +1329,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     />
     {actionNotice ? <View pointerEvents="box-none" style={[styles.actionNoticeOverlay, { bottom: layout.navClearance + 8 }]}>
       <Animated.View style={[styles.actionNotice, isLight && styles.actionNoticeLight, {
-        height: actionNoticeMotion.interpolate({ inputRange: [0, 1], outputRange: [0, 92] }),
+        height: actionNoticeMotion.interpolate({ inputRange: [0, 1], outputRange: [0, 102] }),
         opacity: actionNoticeMotion,
         transform: [{ translateY: actionNoticeMotion.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }, { scale: actionNoticeMotion.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] }) }],
       }]} accessibilityRole="alert">
+        <View pointerEvents="none" style={styles.actionNoticeAccent} />
         <View style={styles.actionNoticeIcon}><Text style={styles.actionNoticeIconText}>{actionNotice.icon}</Text></View>
         <View style={styles.actionNoticeCopy}>
           <Text style={styles.actionNoticeEyebrow}>{actionNotice.eyebrow}</Text>
@@ -1334,7 +1343,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <View style={styles.actionNoticeActions}>
           <TouchableOpacity
             style={styles.actionNoticeButton}
-            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "", actionNotice.rentalAction) : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride")}
+            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "", actionNotice.rentalAction) : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride", actionNotice.rideId)}
             accessibilityRole="button"
             accessibilityLabel={actionNotice.actionLabel}
           >
@@ -1451,7 +1460,7 @@ const styles = StyleSheet.create({
   inlineCommunities: { marginVertical: 10, paddingVertical: 16, gap: 9, borderRadius: 19, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: .8 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, minHeight: 31, borderRadius: 999, backgroundColor: theme.colors.panel2 }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 20, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16 }, inlineCommunityRail: { paddingHorizontal: 16, gap: 10 }, inlineCommunityCard: { width: 140, minHeight: 170, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, alignItems: "center" }, inlineCommunityPhoto: { width: 54, height: 54, borderRadius: 27, marginBottom: 7, backgroundColor: theme.colors.panel }, inlineCommunityPhotoImage: { borderRadius: 27 }, inlineCommunityPhotoGlyph: { fontSize: 25 }, inlineCommunityName: { color: theme.colors.text, fontSize: 12, lineHeight: 14, fontWeight: "900", minHeight: 28, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 9, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: theme.colors.muted, fontSize: 9, fontWeight: "700", marginTop: 2, marginBottom: 7 }, inlineJoinButton: { width: "100%", minHeight: 31, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 11 }, inlineJoinedButton: { borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, inlineJoinText: { color: "#06291e", fontSize: 11, fontWeight: "900" }, inlineJoinedText: { color: theme.colors.text },
   hero: { minHeight: 136, gap: 11, padding: 16, paddingTop: 23, backgroundColor: "#071e1b", borderWidth: 1, borderColor: "#17604e", borderRadius: 28, overflow: "hidden" }, heroTop: { width: "100%", flexDirection: "row", alignItems: "center", gap: 12 }, heroMark: { width: 92, height: 70, justifyContent: "center" }, askBadge: { width: 82, height: 55, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "#ef3e42", transform: [{ rotate: "-5deg" }], shadowColor: "#000", shadowOpacity: .25, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } }, askBadgeText: { color: "#fff", fontSize: 29, fontStyle: "italic", fontWeight: "900" }, chatBubbles: { position: "absolute", right: 0, top: -5 }, chatBubbleBlue: { color: "#e8fff7", backgroundColor: "#16a878", borderRadius: 14, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 3, fontSize: 9 }, chatBubbleGold: { alignSelf: "flex-end", marginTop: -1, color: "#fff7d1", backgroundColor: "#f0a800", borderRadius: 9, overflow: "hidden", paddingHorizontal: 5, fontSize: 7 }, heroCopy: { flex: 1 }, communityTag: { alignSelf: "flex-start", minWidth: 150, height: 43, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 13, backgroundColor: "#fff5cf", borderWidth: 2, borderColor: "#e9aa20", borderRadius: 10, transform: [{ rotate: "-2deg" }], shadowColor: "#000", shadowOpacity: .22, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } }, communityTagTail: { position: "absolute", left: -5, bottom: -4, width: 12, height: 12, backgroundColor: "#fff5cf", borderLeftWidth: 2, borderBottomWidth: 2, borderColor: "#e9aa20", transform: [{ rotate: "-20deg" }] }, communityTagDot: { position: "absolute", right: 6, color: "#e9aa20", fontSize: 7 }, heroCommunity: { color: "#082b62", fontSize: 24, lineHeight: 30, fontFamily: Platform.select({ ios: "Bradley Hand", android: "cursive", default: "serif" }), fontWeight: "700", letterSpacing: -0.4 }, eyebrow: { ...theme.typography.eyebrow, color: "#72d9ae" }, title: { color: "#fff", fontSize: 31, lineHeight: 36, fontWeight: "800" }, subtitle: { width: "100%", color: "#f2faf7", fontSize: 14, lineHeight: 20, marginTop: 2, paddingHorizontal: 4 }, askButton: { backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 14, minHeight: 38, justifyContent: "center" }, askButtonText: { color: "#06291e", fontWeight: "800", fontSize: 14 },
   heroPosterFrame: { width: "100%", height: 78, alignItems: "center", justifyContent: "center" }, heroPoster: { width: "58%", height: 68 },
-  actionNoticeOverlay: { position: "absolute", left: 14, right: 14, zIndex: 20 }, actionNotice: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 23, borderWidth: 1, borderColor: "rgba(15,112,79,.16)", backgroundColor: "#ffffff", padding: 12, paddingRight: 10, overflow: "hidden", shadowColor: "#183d33", shadowOpacity: Platform.OS === "android" ? 0 : .10, shadowRadius: 16, shadowOffset: { width: 0, height: 7 }, elevation: 3 }, actionNoticeLight: { backgroundColor: "#ffffff" }, actionNoticeIcon: { width: 39, height: 39, borderRadius: 19.5, alignItems: "center", justifyContent: "center", backgroundColor: "#d9fae9" }, actionNoticeIconText: { color: "#087052", fontSize: 18, lineHeight: 21, fontWeight: "800" }, actionNoticeCopy: { flex: 1, minWidth: 0, paddingVertical: 2 }, actionNoticeEyebrow: { color: "#087052", fontSize: 9, lineHeight: 11, fontWeight: "900", letterSpacing: .7, textTransform: "uppercase" }, actionNoticeTitle: { color: "#10211c", fontSize: 14, lineHeight: 18, fontWeight: "900", marginTop: 2 }, actionNoticeBody: { color: "#63736d", fontSize: 11, lineHeight: 15, fontWeight: "600", marginTop: 1 }, actionNoticeActions: { alignSelf: "stretch", justifyContent: "center", paddingTop: 8 }, actionNoticeButton: { minWidth: 74, minHeight: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: "#16bd82", paddingHorizontal: 9 }, actionNoticeButtonText: { color: "#052c20", fontSize: 10, lineHeight: 12, fontWeight: "900", textAlign: "center" }, actionNoticeClose: { position: "absolute", top: -2, right: -2, width: 21, height: 21, alignItems: "center", justifyContent: "center" }, actionNoticeCloseText: { color: "#789188", fontSize: 18, lineHeight: 19, fontWeight: "400" },
+  actionNoticeOverlay: { position: "absolute", left: 14, right: 14, zIndex: 20 }, actionNotice: { flexDirection: "row", alignItems: "center", gap: 11, borderRadius: 23, borderWidth: 1.5, borderColor: "#9edcc6", backgroundColor: "#ffffff", padding: 13, paddingLeft: 17, paddingRight: 10, overflow: "hidden", shadowColor: "#0a3528", shadowOpacity: .18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 8 }, actionNoticeLight: { backgroundColor: "#ffffff" }, actionNoticeAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5, backgroundColor: "#14b87a" }, actionNoticeIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#d9fae9", borderWidth: 1, borderColor: "#b6efd7" }, actionNoticeIconText: { color: "#087052", fontSize: 19, lineHeight: 22, fontWeight: "800" }, actionNoticeCopy: { flex: 1, minWidth: 0, paddingVertical: 2 }, actionNoticeEyebrow: { color: "#087052", fontSize: 9, lineHeight: 11, fontWeight: "900", letterSpacing: 1, textTransform: "uppercase" }, actionNoticeTitle: { color: "#10211c", fontSize: 15, lineHeight: 19, fontWeight: "900", marginTop: 2 }, actionNoticeBody: { color: "#526861", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 2 }, actionNoticeActions: { alignSelf: "stretch", justifyContent: "center", paddingTop: 8 }, actionNoticeButton: { minWidth: 78, minHeight: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: "#16bd82", paddingHorizontal: 10, shadowColor: "#0a6b4b", shadowOpacity: .18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2 }, actionNoticeButtonText: { color: "#052c20", fontSize: 10, lineHeight: 12, fontWeight: "900", textAlign: "center" }, actionNoticeClose: { position: "absolute", top: -3, right: -3, width: 23, height: 23, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "#eff7f3" }, actionNoticeCloseText: { color: "#46665a", fontSize: 19, lineHeight: 20, fontWeight: "500" },
   topicGrid: { flexDirection: "row", justifyContent: "space-between", gap: 6, paddingTop: 8 }, topicCard: { minHeight: 88, borderRadius: 16, padding: 7, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,.45)" }, topicSelected: { borderColor: theme.colors.brand, transform: [{ scale: 0.98 }] }, topicImage: { width: 38, height: 38, marginBottom: 2 }, topicTitle: { color: "#11181b", fontWeight: "900", fontSize: 12 }, topicSubtitle: { color: "#627078", fontSize: 9, marginTop: 2, textAlign: "center" }, tipCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 13, borderRadius: 22, paddingHorizontal: 17, backgroundColor: "#0d4038", borderWidth: 1, borderColor: "#25685b" }, tipIcon: { fontSize: 25 }, tipTitle: { color: "#fff", fontWeight: "900", fontSize: 16 }, tipBody: { color: "#a9cfc5", fontSize: 12, lineHeight: 18, marginTop: 3 }, tipArrow: { color: "#fff", fontSize: 38, fontWeight: "300" },
   needGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 }, needOption: { width: "48%", minHeight: 76, flexDirection: "row", alignItems: "center", gap: 9, padding: 12, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, needIcon: { fontSize: 22 }, needText: { flex: 1, color: theme.colors.soft, fontWeight: "800", fontSize: 13 },
   searchRow: { flexDirection: "row", gap: 8 }, searchInput: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, backgroundColor: theme.colors.panel, color: theme.colors.text, paddingHorizontal: 14 }, searchButton: { minHeight: 48, justifyContent: "center", paddingHorizontal: 16, borderRadius: 15, backgroundColor: theme.colors.brand }, searchButtonText: { color: "#06291e", fontWeight: "800" },

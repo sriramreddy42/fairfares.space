@@ -23561,6 +23561,8 @@ def send_rental_booking_push(
             "bookingId": booking_public_id,
             "status": str(row_value(booking, "booking_status") or ""),
             "paymentStatus": str(row_value(booking, "payment_status") or ""),
+            "depositStatus": str(row_value(booking, "security_deposit_status") or "NOT_AUTHORIZED"),
+            "extensionPaymentStatus": str(row_value(booking, "extension_payment_status") or "NONE"),
             "target": "rentals",
         },
     )
@@ -38428,7 +38430,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(row_value(user, "id") or 0)
         payload = self.read_json_body()
         category = clean_text_value(payload.get("category"), 20).lower() or "general"
-        if category not in {"general", "chitthi", "carpool", "housing", "marketing"}:
+        if category not in {"general", "chitthi", "carpool", "housing", "rentals", "support", "marketing"}:
             self.send_json({"ok": False, "message": "Choose a supported notification category."}, 400)
             return
         diagnostic_id = f"push-test-{uuid.uuid4().hex}"
@@ -38458,6 +38460,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "FairFares housing test",
                 "Your housing match notifications are working.",
                 {"type": "HOUSING_MATCH", "listingId": diagnostic_id, "target": "housing"},
+            ),
+            "rentals": (
+                "FairFares rental test",
+                "Your rental booking notifications are working.",
+                {"type": "RENTAL_BOOKING", "bookingId": diagnostic_id, "event": "TEST", "target": "manage"},
+            ),
+            "support": (
+                "FairFares support test",
+                "Your support reply notifications are working.",
+                {"type": "SUPPORT_REPLY", "supportId": diagnostic_id, "target": "account"},
             ),
             "marketing": (
                 "FairFares marketing test",
@@ -39482,7 +39494,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        driver_posts.origin_lng AS matched_route_origin_lng,
                        driver_posts.destination_lat AS matched_route_destination_lat,
                        driver_posts.destination_lng AS matched_route_destination_lng,
-                       driver_posts.contribution_per_seat AS matched_contribution_per_seat
+                       driver_posts.contribution_per_seat AS matched_contribution_per_seat,
+                       driver_posts.status AS matched_driver_status
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
                 JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
@@ -39510,7 +39523,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         JOIN users ON users.id = notifications.driver_user_id
                         JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
                         WHERE notifications.request_ride_post_id = ?
-                          AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
+                          AND notifications.status IN ('ACCEPTED', 'DECLINED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
                         ORDER BY datetime(notifications.responded_at) DESC
                         LIMIT 1
                         """,
@@ -39539,12 +39552,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             )
                         payload["ownerUserId"] = driver_user_id
                         payload["ownerName"] = row_value(accepted, "driver_name") or "Driver"
-                        payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
-                        own_rating = con.execute(
-                            "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
-                            (int(row_value(accepted, "id") or 0), user_id),
-                        ).fetchone()
-                        payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
+                        if str(payload["dispatchStatus"]).upper() in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
+                            payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
+                            own_rating = con.execute(
+                                "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
+                                (int(row_value(accepted, "id") or 0), user_id),
+                            ).fetchone()
+                            payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
                 public_id = str(payload.get("id") or "")
                 if public_id:
                     seen.add(public_id)
@@ -39552,12 +39566,25 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for row in incoming_rows:
                 payload = mobile_ride_payload(row)
                 public_id = str(payload.get("id") or "")
+                dispatch_status = str(row_value(row, "dispatch_status") or "PENDING").upper()
+                # A pending request is actionable only while both sides of the
+                # original match are still active. Keep accepted/en-route rides
+                # available for their trip controls, but never resurrect a
+                # stale offer or an expired rider request as a new request.
+                if dispatch_status == "PENDING" and (
+                    ride_post_expired(row)
+                    or ride_effective_status(row) != "ACTIVE"
+                    or str(row_value(row, "matched_driver_status") or "").upper() != "ACTIVE"
+                ):
+                    continue
+                if dispatch_status not in {"PENDING", "ACCEPTED", "EN_ROUTE", "ARRIVED"}:
+                    continue
                 if public_id in seen:
                     continue
                 if public_id:
                     seen.add(public_id)
                 payload["activityRole"] = "DRIVER_NOTIFICATION"
-                payload["dispatchStatus"] = row_value(row, "dispatch_status") or "PENDING"
+                payload["dispatchStatus"] = dispatch_status
                 payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
                 payload["pickupDistanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)
                 payload["distanceMiles"] = float(row_value(row, "dispatch_distance_miles") or 0)

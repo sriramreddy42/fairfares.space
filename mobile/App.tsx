@@ -411,6 +411,7 @@ function FairFaresApp() {
   const [pendingListingAfterLogin, setPendingListingAfterLogin] = useState(false);
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerEditId, setRideOwnerEditId] = useState("");
+  const [rideOwnerFocusId, setRideOwnerFocusId] = useState("");
   const [rentalEditBookingId, setRentalEditBookingId] = useState("");
   const [rentalEditBookingAction, setRentalEditBookingAction] = useState<"balance" | "deposit" | "extension" | "manage">("manage");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
@@ -782,12 +783,10 @@ function FairFaresApp() {
           ]
         );
       };
-      // Simulators can exercise local APNs payloads and the Notification
-      // Service Extension, but cannot obtain a real Expo/APNs device token.
-      if (!Device.isDevice) {
-        showPresentationSettingsPrompt();
-        return true;
-      }
+      // Expo supports push testing on Android emulators with Google Play
+      // services and on current iOS simulators. Attempt registration on each
+      // platform; the existing catch below keeps unsupported environments
+      // from affecting the rest of the app.
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
@@ -879,18 +878,27 @@ function FairFaresApp() {
 
   useEffect(() => {
     let cancelled = false;
+    // The first screen must not be held behind a location lookup or a slow
+    // upstream request. Both are useful refinements, but neither is required
+    // to render the member's saved/default city and usable app shell.
+    const startupEscapeHatch = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8_000);
     async function restoreSessionAndCheckout() {
-      await hydrateAuthToken();
+      await hydrateAuthToken().catch(() => "");
       if (cancelled) return;
-      const deviceCity = await resolveInitialDeviceCity();
-      if (cancelled) return;
-      const initialCity = deviceCity || city;
-      if (deviceCity) {
+      // Start bootstrap immediately with the persisted/default city. Location
+      // resolves independently and can refresh results afterward when it
+      // supplies a more precise city.
+      const initialCity = city;
+      void resolveInitialDeviceCity().then((deviceCity) => {
+        if (cancelled || !deviceCity || deviceCity.trim().toLowerCase() === initialCity.trim().toLowerCase()) return;
         setCity(deviceCity);
         setSearchCity(deviceCity);
         setDiscoveryLocation(deviceCity);
         setChitthiSuggestionCity(deviceCity);
-      }
+        void load(false, deviceCity);
+      });
       await load(true, initialCity);
       if (Platform.OS === "web" || cancelled) return;
       const saved = await SecureStore.getItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => null);
@@ -910,6 +918,7 @@ function FairFaresApp() {
     void restoreSessionAndCheckout();
     return () => {
       cancelled = true;
+      clearTimeout(startupEscapeHatch);
     };
   }, []);
 
@@ -1168,9 +1177,14 @@ function FairFaresApp() {
         }).catch(() => Alert.alert("Ride unavailable", "Could not open this ride. Please try again."));
       }
     } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
+      const rideId = String(response?.notification.request.content.data?.rideId || "");
       setPendingPost(null);
       setPendingRide(null);
-      setRideOwnerOpenTarget(type === "CARPOOL_REQUEST" ? "requests" : "workspace");
+      setRideOwnerFocusId(rideId);
+      // Drivers receive a CARPOOL_REQUEST; riders receive CARPOOL_STATUS.
+      // Both open the same focused activity surface, where the row role
+      // determines whether response controls or rider trip details appear.
+      setRideOwnerOpenTarget("requests");
       setRideOwnerReturnTab("activity");
       setSelectedNeed("ride_offer");
       setActiveTab("housing");
@@ -1181,8 +1195,22 @@ function FairFaresApp() {
       setActiveTab("housing");
       setHousingWelcomeFocusKey((current) => current + 1);
     } else if (type === "RENTAL_BOOKING") {
+      const bookingId = String(response?.notification.request.content.data?.bookingId || "");
+      const event = String(response?.notification.request.content.data?.event || "").toUpperCase();
+      const paymentStatus = String(response?.notification.request.content.data?.paymentStatus || "").toUpperCase();
+      const depositStatus = String(response?.notification.request.content.data?.depositStatus || "").toUpperCase();
+      const extensionPaymentStatus = String(response?.notification.request.content.data?.extensionPaymentStatus || "").toUpperCase();
+      const rentalAction = extensionPaymentStatus === "PENDING" || (event.includes("EXTENSION") && !event.endsWith("_PAID"))
+        ? "extension"
+        : paymentStatus === "HOLD_PAID"
+          ? "balance"
+          : paymentStatus === "PAID" && depositStatus !== "AUTHORIZED" && !event.includes("DEPOSIT_RELEASED")
+            ? "deposit"
+            : "manage";
       setPendingPost(null);
       setPendingRide(null);
+      setRentalEditBookingId(bookingId);
+      setRentalEditBookingAction(rentalAction);
       setSelectedService("cars");
       setActiveTab("services");
     } else if (type === "FAIRFARES_PROMO") {
@@ -1198,6 +1226,20 @@ function FairFaresApp() {
         setActiveTab("home");
         setHousingWelcomeFocusKey((current) => current + 1);
       }
+    } else if (type === "USER_RATING") {
+      // Ratings are part of a member's conversation history.  Opening
+      // Chitthi keeps the destination useful even when the originating trip
+      // has since expired.
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("messenger");
+    } else if (type === "NOTIFICATION_TEST" || type.startsWith("SUPPORT_")) {
+      // Support replies and the self-test have no deeper object screen.  The
+      // Account screen is the stable destination for both notification
+      // settings and support history.
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("profile");
     }
   }
 
@@ -2788,10 +2830,11 @@ function FairFaresApp() {
           setHousingWelcomeFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
-        onOpenRides={(target = "ride") => {
+        onOpenRides={(target = "ride", rideId = "") => {
           setRentalFocusKey(0);
           setRideOwnerOpenTarget(target === "requests" ? "requests" : "workspace");
           setRideOwnerEditId("");
+          setRideOwnerFocusId(rideId);
           // Carpool is opened from Ask. Its modal back action must restore the
           // same Ask context instead of leaving the member on the marketplace.
           setRideOwnerReturnTab("community");
@@ -2997,6 +3040,7 @@ function FairFaresApp() {
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
+        rideOwnerFocusId={rideOwnerFocusId}
         linkedHousingPost={linkedHousingPost}
         linkedCarpoolRide={linkedCarpoolRide}
         onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
@@ -3011,6 +3055,7 @@ function FairFaresApp() {
           setRideOwnerOpenTarget("workspace");
           setRideOwnerOpenToken(0);
           setRideOwnerEditId("");
+          setRideOwnerFocusId("");
           setRideOwnerReturnTab(null);
         }}
       />
@@ -3059,6 +3104,7 @@ function FairFaresApp() {
         rideOwnerOpenToken={rideOwnerOpenToken}
         rideOwnerOpenTarget={rideOwnerOpenTarget}
         rideOwnerEditId={rideOwnerEditId}
+        rideOwnerFocusId={rideOwnerFocusId}
         linkedHousingPost={linkedHousingPost}
         linkedCarpoolRide={linkedCarpoolRide}
         onLinkedHousingPostOpened={() => setLinkedHousingPost(null)}
@@ -3073,6 +3119,7 @@ function FairFaresApp() {
           setRideOwnerOpenTarget("workspace");
           setRideOwnerOpenToken(0);
           setRideOwnerEditId("");
+          setRideOwnerFocusId("");
           setRideOwnerReturnTab(null);
         }}
       />
