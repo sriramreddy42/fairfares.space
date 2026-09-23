@@ -8070,6 +8070,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>
               <View style={styles.groupSinglePhotoNavigation}>
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === 0} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, current - 1))} accessibilityLabel="Previous photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === 0 && styles.groupSinglePhotoArrowDisabled]}>‹</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.groupSinglePhotoShare} onPress={() => void downloadAttachment(attachmentPreviewGroup[selectedGroupPhotoIndex])} accessibilityLabel="Share or save this photo"><Text style={styles.groupSinglePhotoShareIcon}>↗</Text><Text style={styles.groupSinglePhotoShareText}>Share or save</Text></TouchableOpacity>
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.min(attachmentPreviewGroup.length - 1, current + 1))} accessibilityLabel="Next photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1 && styles.groupSinglePhotoArrowDisabled]}>›</Text></TouchableOpacity>
               </View>
             </> : <ScrollView style={styles.groupPreviewScroll} contentContainerStyle={styles.groupPreviewContent} showsVerticalScrollIndicator={false}>
@@ -9012,6 +9013,9 @@ const styles = StyleSheet.create({
   groupSinglePhotoNavigation: { minHeight: 48, flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 22 },
   groupSinglePhotoArrow: { color: "#fff", fontSize: 38, lineHeight: 43, fontWeight: "300" },
   groupSinglePhotoArrowDisabled: { opacity: 0.25 },
+  groupSinglePhotoShare: { minHeight: 38, borderRadius: 19, paddingHorizontal: 13, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", flexDirection: "row", alignItems: "center", gap: 6 },
+  groupSinglePhotoShareIcon: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  groupSinglePhotoShareText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   zoomableChatPhoto: { flex: 1, width: "100%", overflow: "hidden", alignItems: "center", justifyContent: "center" },
   zoomableChatPhotoImage: { width: "100%", height: "100%" },
   attachmentPreviewSave: { minHeight: 50, borderRadius: 25, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 12 },
