@@ -12,7 +12,7 @@ import { sha256 } from "@noble/hashes/sha256";
 import { utf8ToBytes } from "@noble/hashes/utils";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Dimensions, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
+import Reanimated, { cancelAnimation, Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserAvatar } from "../components/UserAvatar";
@@ -1021,30 +1021,37 @@ function websiteCardDetails(value: string) {
 }
 
 function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; mine: boolean; onReply: () => void }) {
-  const translateX = useRef(new Animated.Value(0)).current;
+  const translateX = useSharedValue(0);
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
-  const displayedTranslateX = translateX.interpolate({ inputRange: [0, 64], outputRange: [0, 26], extrapolate: "clamp" });
-  const replyIconOpacity = translateX.interpolate({ inputRange: [0, 7, 36], outputRange: [0, 0.4, 1], extrapolate: "clamp" });
-  const replyIconScale = translateX.interpolate({ inputRange: [0, 28, 58], outputRange: [0.68, 0.92, 1], extrapolate: "clamp" });
+  const replyBodyStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: interpolate(translateX.value, [0, 72], [0, 31], Extrapolation.CLAMP) }],
+  }));
+  const replyActionStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, 6, 34], [0, 0.42, 1], Extrapolation.CLAMP),
+    transform: [{ scale: interpolate(translateX.value, [0, 28, 58], [0.68, 0.94, 1], Extrapolation.CLAMP) }],
+  }));
+  const resetReplySwipe = () => {
+    translateX.value = withSpring(0, { damping: 22, stiffness: 360, mass: 0.5 });
+  };
   const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) =>
-    gesture.dx > (Platform.OS === "web" ? 14 : 12) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.8 : 1.7);
+    gesture.dx > (Platform.OS === "web" ? 11 : 7) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.45 : 1.2);
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: shouldClaimReplySwipe,
-    onPanResponderGrant: () => translateX.stopAnimation(),
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(0, Math.min(64, gesture.dx))),
+    onPanResponderGrant: () => cancelAnimation(translateX),
+    onPanResponderMove: (_event, gesture) => { translateX.value = Math.max(0, Math.min(72, gesture.dx)); },
     onPanResponderRelease: (_event, gesture) => {
-      const shouldReply = gesture.dx >= 48 || (gesture.dx >= 28 && gesture.vx > 0.62);
+      const shouldReply = gesture.dx >= 44 || (gesture.dx >= 24 && gesture.vx > 0.5);
       if (shouldReply) onReplyRef.current();
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 22, stiffness: 340, mass: 0.55 }).start();
+      resetReplySwipe();
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true,
-    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: false, damping: 22, stiffness: 340, mass: 0.55 }).start()
+    onPanResponderTerminate: resetReplySwipe
   }), [translateX]);
   return <View style={[styles.swipeReplyWrap, mine ? styles.swipeReplyWrapMine : styles.swipeReplyWrapTheirs]}>
-    <Animated.View pointerEvents="none" style={[styles.swipeReplyAction, { opacity: replyIconOpacity, transform: [{ scale: replyIconScale }] }]} accessibilityElementsHidden><Text style={styles.swipeReplyActionIcon}>↩</Text></Animated.View>
-    <Animated.View style={[styles.swipeReplyBody, { transform: [{ translateX: displayedTranslateX }] }]} {...panResponder.panHandlers}>{children}</Animated.View>
+    <Reanimated.View pointerEvents="none" style={[styles.swipeReplyAction, replyActionStyle]} accessibilityElementsHidden><Text style={styles.swipeReplyActionIcon}>↩</Text></Reanimated.View>
+    <Reanimated.View style={[styles.swipeReplyBody, replyBodyStyle]} {...panResponder.panHandlers}>{children}</Reanimated.View>
   </View>;
 }
 
