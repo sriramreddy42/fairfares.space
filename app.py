@@ -234,12 +234,16 @@ _POPULAR_CITY_CACHE_LOCK = threading.Lock()
 _POPULAR_CITY_KEY_LOCKS: dict[str, threading.Lock] = {}
 _RIDE_LIVE_ROUTE_CACHE: dict[int, tuple[float, float, float, dict[str, object]]] = {}
 _RIDE_LIVE_ROUTE_CACHE_LOCK = threading.Lock()
+_RIDE_REVERSE_GEOCODE_CACHE: OrderedDict[tuple[int, int], tuple[float, str]] = OrderedDict()
+_RIDE_REVERSE_GEOCODE_CACHE_LOCK = threading.Lock()
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
 MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 30)
 MOBILE_SEARCH_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_SEARCH_CACHE_MAX_ENTRIES", 5_000)
 POPULAR_CITY_CACHE_SECONDS = positive_int_env("FAIRFARES_POPULAR_CITY_CACHE_SECONDS", 6 * 60 * 60)
 RIDE_LIVE_ROUTE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_LIVE_ROUTE_CACHE_SECONDS", 45)
+RIDE_REVERSE_GEOCODE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_REVERSE_GEOCODE_CACHE_SECONDS", 24 * 60 * 60)
+RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES", 10_000)
 SESSION_CLEANUP_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_CLEANUP_SECONDS", 10 * 60)
 ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
@@ -17921,6 +17925,16 @@ def ride_submission_point(label: str, city: str, latitude: float, longitude: flo
 
 
 def google_reverse_location_label(lat: float, lng: float) -> str:
+    # The current-location label is cosmetic; coordinates remain exact in the
+    # ride request. A roughly 11 m cell preserves the displayed address while
+    # preventing every visit to Carpool from producing another Geocoding call.
+    cache_key = (round(float(lat) * 10_000), round(float(lng) * 10_000))
+    now = time.monotonic()
+    with _RIDE_REVERSE_GEOCODE_CACHE_LOCK:
+        cached = _RIDE_REVERSE_GEOCODE_CACHE.get(cache_key)
+        if cached and cached[0] > now:
+            _RIDE_REVERSE_GEOCODE_CACHE.move_to_end(cache_key)
+            return cached[1]
     maps_key = (
         os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
@@ -17948,7 +17962,13 @@ def google_reverse_location_label(lat: float, lng: float) -> str:
             continue
         formatted = normalize_accommodation_place_label(str(result.get("formatted_address") or ""))
         if formatted:
-            return dedupe_repeated_location_label(formatted)
+            label = dedupe_repeated_location_label(formatted)
+            with _RIDE_REVERSE_GEOCODE_CACHE_LOCK:
+                _RIDE_REVERSE_GEOCODE_CACHE[cache_key] = (now + RIDE_REVERSE_GEOCODE_CACHE_SECONDS, label)
+                _RIDE_REVERSE_GEOCODE_CACHE.move_to_end(cache_key)
+                while len(_RIDE_REVERSE_GEOCODE_CACHE) > RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES:
+                    _RIDE_REVERSE_GEOCODE_CACHE.popitem(last=False)
+            return label
     return ""
 
 
@@ -18995,18 +19015,16 @@ def create_ride_dispatch_notifications(
         """,
         driver_values,
     ).fetchall()
-    # First shortlist using local geometry. The former radius loop recomputed
-    # two Google Directions routes for every driver in every bucket. Exact
-    # road routing still decides notifications, but each viable driver is now
-    # routed once at most.
+    # First shortlist using the same conservative local corridor rule used by
+    # public search. The former radius loop recomputed two Google Directions
+    # routes for every driver in every bucket. Exact road routing still decides
+    # notifications, but remote or clearly incompatible routes must not create
+    # billable requests. The long-distance corridor exception keeps viable
+    # interstate rides when straight-line geometry is imperfect.
     shortlist: list[sqlite3.Row] = []
     for driver in driver_rows:
         estimated = ride_route_match_metrics(driver, request_origin_point, request_destination_point, allow_google=False)
-        # Direction compatibility is independent of road routing, so it is a
-        # safe early rejection. Keep all same-direction routes for exact
-        # verification; a straight-line estimate must never hide a valid road
-        # route that bends around terrain.
-        if bool(estimated.get("directionCompatible")):
+        if ride_route_match_is_valid(driver, estimated):
             shortlist.append(driver)
 
     verified_by_radius: dict[int, list[tuple[sqlite3.Row, dict[str, object]]]] = {}
