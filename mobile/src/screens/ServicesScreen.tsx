@@ -176,7 +176,9 @@ export function ServicesScreen({
     if (!editBookingId || !bookings.some((booking) => booking.id === editBookingId)) return;
     setSelectedBookingId(editBookingId);
     setView("rental");
-    setPanelMode(editBookingAction === "extension" ? "modify" : null);
+    // Payment actions land on the selected booking's payment card. Opening
+    // the modification form here hid the approved-extension checkout button.
+    setPanelMode(null);
     onEditBookingOpened?.();
   }, [bookings, editBookingAction, editBookingId]);
 
