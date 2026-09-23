@@ -1034,8 +1034,13 @@ function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; 
   const resetReplySwipe = () => {
     translateX.value = withSpring(0, { damping: 22, stiffness: 360, mass: 0.5 });
   };
-  const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) =>
-    gesture.dx > (Platform.OS === "web" ? 11 : 7) && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.45 : 1.2);
+  const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number; x0: number }) => {
+    // The leading edge belongs to the thread navigation gesture. Without this
+    // guard an incoming bubble can claim that gesture before its parent does.
+    if (gesture.x0 <= CHAT_EDGE_BACK_ZONE) return false;
+    return gesture.dx > (Platform.OS === "web" ? 11 : 7)
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.45 : 1.2);
+  };
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: shouldClaimReplySwipe,
     onPanResponderGrant: () => cancelAnimation(translateX),
