@@ -18496,6 +18496,7 @@ def ride_score(
     pickup_date: str = "",
     pickup_time: str = "",
     allow_google: bool = True,
+    route_deviation_miles: float | None = None,
 ) -> int:
     score = 55
     origin_lat = float(row_value(row, "origin_lat") or 0)
@@ -18512,7 +18513,9 @@ def ride_score(
     if dest_lat and dest_lng and query_dest_lat and query_dest_lng:
         drop_distance = distance_miles_between(query_dest_lat, query_dest_lng, dest_lat, dest_lng)
         score += max(0, 15 - int(drop_distance * 2))
-    route_deviation = ride_route_detour_miles(row, origin_point, destination_point, allow_google=allow_google)
+    route_deviation = route_deviation_miles
+    if route_deviation is None:
+        route_deviation = ride_route_detour_miles(row, origin_point, destination_point, allow_google=allow_google)
     if route_deviation is not None:
         score += max(0, 20 - int(route_deviation))
     if pickup_date and pickup_date == row_value(row, "pickup_date"):
@@ -18727,7 +18730,13 @@ def mobile_ride_payload(
         "routeDeviationMinutes": route_metrics.get("routeDeviationMinutes"),
         "routeDeviationSource": route_metrics.get("routeDeviationSource"),
         "directionCompatible": bool(route_metrics.get("directionCompatible")),
-        "matchScore": ride_score(row, origin_point, destination_point, allow_google=allow_google_routes),
+        "matchScore": ride_score(
+            row,
+            origin_point,
+            destination_point,
+            allow_google=allow_google_routes,
+            route_deviation_miles=route_metrics.get("routeDeviationMiles"),
+        ),
         "createdAt": row_value(row, "created_at"),
     }
     if include_private_vehicle:
