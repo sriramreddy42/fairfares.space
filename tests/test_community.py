@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -111,6 +112,23 @@ class CommunityFeatureTest(unittest.TestCase):
         status, rejected = self.create_post(token="")
         self.assertEqual(status, 401)
         self.assertIn("Login", rejected["error"])
+
+    def test_feed_does_not_wait_for_housing_projection_maintenance(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_projection():
+            started.set()
+            release.wait(timeout=2)
+
+        with mock.patch.object(app, "ensure_housing_community_projection_current", side_effect=slow_projection):
+            started_at = time.monotonic()
+            status, _feed = self.request("GET", "/api/mobile/community")
+            elapsed = time.monotonic() - started_at
+            self.assertEqual(status, 200)
+            self.assertLess(elapsed, 0.5)
+            self.assertTrue(started.wait(timeout=1))
+            release.set()
 
     def test_post_photos_are_limited_ordered_and_editable(self):
         png = "data:image/png;base64," + base64.b64encode(

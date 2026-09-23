@@ -44,8 +44,11 @@ function normalizeExplicitApiUrl(value: string | undefined) {
   return clean;
 }
 
-const CONFIGURED_APP_API_URL = String(Constants.expoConfig?.extra?.apiUrl || "");
-const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL || CONFIGURED_APP_API_URL);
+const CONFIGURED_APP_API_URL = normalizeExplicitApiUrl(String(Constants.expoConfig?.extra?.apiUrl || ""));
+// app.json always provides the production URL. Only an environment override
+// is an explicit development endpoint; treating production as one inflated
+// every GET to four 30-second attempts.
+const EXPLICIT_API_URL = normalizeExplicitApiUrl(process.env.EXPO_PUBLIC_FAIRFARES_API_URL);
 const WEB_LOCAL_API_URL = Platform.OS === "web" ? browserLocalApiUrl() : "";
 const PRODUCTION_API_URL = "https://www.fairfare.space";
 // A development client can occasionally start without the Expo manifest
@@ -53,7 +56,7 @@ const PRODUCTION_API_URL = "https://www.fairfare.space";
 // bundle). Falling back to localhost in that state makes production account
 // login fail even though the device is online. Local API development remains
 // available by setting EXPO_PUBLIC_FAIRFARES_API_URL explicitly.
-const DEFAULT_API_URL = EXPLICIT_API_URL || WEB_LOCAL_API_URL || PRODUCTION_API_URL;
+const DEFAULT_API_URL = EXPLICIT_API_URL || CONFIGURED_APP_API_URL || WEB_LOCAL_API_URL || PRODUCTION_API_URL;
 
 export const API_URL =
   DEFAULT_API_URL;
@@ -74,7 +77,7 @@ const API_CANDIDATES = uniqueUrls(
     ? [EXPLICIT_API_URL]
     : Platform.OS === "web"
       ? [WEB_LOCAL_API_URL, PRODUCTION_API_URL]
-      : [PRODUCTION_API_URL]
+      : [CONFIGURED_APP_API_URL || PRODUCTION_API_URL]
 );
 
 const AUTH_TOKEN_STORAGE_KEY = "fairfares.mobile.authToken";
@@ -106,6 +109,25 @@ let communityGuestToken = browserStorage()?.getItem(COMMUNITY_GUEST_TOKEN_KEY) |
 let authTokenGeneration = authToken ? 1 : 0;
 const encryptedUploadSessionControllers = new Set<AbortController>();
 let activeApiBase = API_URL;
+const activityReadCache = new Map<string, { expiresAt: number; value?: unknown; inFlight?: Promise<unknown> }>();
+const ACTIVITY_READ_CACHE_MS = 8_000;
+
+function cachedActivityRead<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const existing = activityReadCache.get(key);
+  if (existing?.inFlight) return existing.inFlight as Promise<T>;
+  if (existing && existing.expiresAt > Date.now()) return Promise.resolve(existing.value as T);
+  const inFlight = load()
+    .then((value) => {
+      activityReadCache.set(key, { value, expiresAt: Date.now() + ACTIVITY_READ_CACHE_MS });
+      return value;
+    })
+    .catch((error) => {
+      activityReadCache.delete(key);
+      throw error;
+    });
+  activityReadCache.set(key, { expiresAt: 0, inFlight });
+  return inFlight;
+}
 
 function diagnosticReference() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -145,6 +167,7 @@ export async function setAuthToken(token: string) {
   if (authToken !== token) {
     authTokenGeneration += 1;
     encryptedUploadSessionControllers.forEach((controller) => controller.abort());
+    activityReadCache.clear();
   }
   authToken = token;
   const storage = browserStorage();
@@ -704,8 +727,10 @@ export async function getRideListing(rideId: string) {
 }
 
 export async function getRideActivity() {
-  const payload = await request<{ ok: boolean; rides: RidePost[] }>("/api/mobile/rides/activity");
-  return payload.rides || [];
+  return cachedActivityRead("rides", async () => {
+    const payload = await request<{ ok: boolean; rides: RidePost[] }>("/api/mobile/rides/activity");
+    return payload.rides || [];
+  });
 }
 
 export type RidePlaceSuggestion = {
@@ -1123,8 +1148,10 @@ export async function startRentalSecurityDeposit(bookingId: string) {
 }
 
 export async function getHousingActivity() {
-  const payload = await request<{ ok: boolean; posts: HousingActivityPost[] }>("/api/mobile/housing/activity");
-  return payload.posts || [];
+  return cachedActivityRead("housing", async () => {
+    const payload = await request<{ ok: boolean; posts: HousingActivityPost[] }>("/api/mobile/housing/activity");
+    return payload.posts || [];
+  });
 }
 
 export type CommunityFeedFilters = {
@@ -1298,9 +1325,11 @@ export async function acceptCommunityAnswer(postId: string, answerId: string) {
 }
 
 export async function getRentalBookings() {
-  const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
-  const visiblePaymentStatuses = new Set(["HOLD_PAID", "PAID", "REFUND_REVIEW", "REFUNDED"]);
-  return (payload.bookings || []).filter((booking) => visiblePaymentStatuses.has(String(booking.paymentStatus || "").toUpperCase()));
+  return cachedActivityRead("rentals", async () => {
+    const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
+    const visiblePaymentStatuses = new Set(["HOLD_PAID", "PAID", "REFUND_REVIEW", "REFUNDED"]);
+    return (payload.bookings || []).filter((booking) => visiblePaymentStatuses.has(String(booking.paymentStatus || "").toUpperCase()));
+  });
 }
 
 export async function requestRentalCancellation(

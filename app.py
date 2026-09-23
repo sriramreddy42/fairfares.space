@@ -5790,7 +5790,7 @@ def booking_identity_filters_for_user(user: sqlite3.Row | None) -> tuple[str, li
 
 
 def get_mobile_rental_bookings_for_user(user: sqlite3.Row) -> list[sqlite3.Row]:
-    expire_stale_booking_holds()
+    schedule_stale_booking_hold_expiry()
     where_sql, params = booking_identity_filters_for_user(user)
     with db() as con:
         rows = con.execute(
@@ -5829,7 +5829,7 @@ def get_mobile_rental_booking_by_identifier(user: sqlite3.Row, booking_identifie
 
 
 def get_mobile_current_rental_booking(user: sqlite3.Row) -> sqlite3.Row | None:
-    expire_stale_booking_holds()
+    schedule_stale_booking_hold_expiry()
     where_sql, params = booking_identity_filters_for_user(user)
     with db() as con:
         return con.execute(
@@ -9435,6 +9435,35 @@ def expire_stale_booking_holds() -> None:
             con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ? AND UPPER(TRIM(status)) = 'HOLD'", (car_id,))
 
 
+_BOOKING_HOLD_EXPIRY_SCHEDULE_LOCK = threading.Lock()
+_BOOKING_HOLD_EXPIRY_SCHEDULED = False
+_BOOKING_HOLD_EXPIRY_LAST_SCHEDULED = 0.0
+BOOKING_HOLD_EXPIRY_READ_INTERVAL_SECONDS = 30.0
+
+
+def schedule_stale_booking_hold_expiry() -> None:
+    """Do periodic hold cleanup without turning a booking-list GET into a write."""
+    global _BOOKING_HOLD_EXPIRY_SCHEDULED, _BOOKING_HOLD_EXPIRY_LAST_SCHEDULED
+    now = time.monotonic()
+    with _BOOKING_HOLD_EXPIRY_SCHEDULE_LOCK:
+        if _BOOKING_HOLD_EXPIRY_SCHEDULED or now - _BOOKING_HOLD_EXPIRY_LAST_SCHEDULED < BOOKING_HOLD_EXPIRY_READ_INTERVAL_SECONDS:
+            return
+        _BOOKING_HOLD_EXPIRY_SCHEDULED = True
+        _BOOKING_HOLD_EXPIRY_LAST_SCHEDULED = now
+
+    def run() -> None:
+        global _BOOKING_HOLD_EXPIRY_SCHEDULED
+        try:
+            expire_stale_booking_holds()
+        except sqlite3.Error:
+            pass
+        finally:
+            with _BOOKING_HOLD_EXPIRY_SCHEDULE_LOCK:
+                _BOOKING_HOLD_EXPIRY_SCHEDULED = False
+
+    threading.Thread(target=run, name="booking-hold-expiry", daemon=True).start()
+
+
 def booking_price_breakdown(row: sqlite3.Row | dict[str, object] | None) -> dict[str, object]:
     if not row:
         return rental_price_breakdown(0, 1, 0)
@@ -12764,7 +12793,10 @@ def repair_active_housing_city_labels(*, force: bool = False) -> int:
 
 def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
-    repair_active_housing_city_labels(force=True)
+    # This projection also runs from a coalesced background job. Do not force
+    # a full listing repair here: it made a normal Ask read a long-running
+    # SQLite writer whenever a projection was pending.
+    repair_active_housing_city_labels(force=False)
     with db() as con:
         # Only touch missing or changed projections. Rewriting every active
         # listing (and all of its images) made an ordinary Ask read hold the
@@ -12843,6 +12875,8 @@ def sync_housing_into_community() -> None:
 
 
 _COMMUNITY_HOUSING_SYNC_LOCK = threading.Lock()
+_COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK = threading.Lock()
+_COMMUNITY_HOUSING_SYNC_SCHEDULED = False
 
 
 def housing_community_projection_needs_sync() -> bool:
@@ -12878,6 +12912,29 @@ def ensure_housing_community_projection_current() -> None:
         # Another request may have completed the work while this one waited.
         if housing_community_projection_needs_sync():
             sync_housing_into_community()
+
+
+def schedule_housing_community_projection_sync() -> None:
+    """Refresh derived housing cards without making an Ask feed read wait."""
+    global _COMMUNITY_HOUSING_SYNC_SCHEDULED
+    with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
+        if _COMMUNITY_HOUSING_SYNC_SCHEDULED:
+            return
+        _COMMUNITY_HOUSING_SYNC_SCHEDULED = True
+
+    def run() -> None:
+        global _COMMUNITY_HOUSING_SYNC_SCHEDULED
+        try:
+            ensure_housing_community_projection_current()
+        except sqlite3.Error:
+            # Derived data retries with the next feed load; the current feed
+            # should remain immediately available.
+            pass
+        finally:
+            with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
+                _COMMUNITY_HOUSING_SYNC_SCHEDULED = False
+
+    threading.Thread(target=run, name="housing-community-sync", daemon=True).start()
 
 
 COMMUNITY_US_STATE_NAMES = {
@@ -39489,7 +39546,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = (params.get("city", [""])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
-        self.send_json({"ok": True, "areas": mobile_housing_area_stats(city, area)})
+        # Area cards are aggregate listing data. Coalesce identical cold reads
+        # so opening Housing on several mounted views does not repeat the same
+        # SQLite scan before the app-side cache has hydrated.
+        areas, cache_status = cached_mobile_search(
+            ("housing", "area-stats", city.casefold(), area.casefold()),
+            lambda: mobile_housing_area_stats(city, area),
+        )
+        self.send_json({"ok": True, "areas": areas}, headers={"X-FairFares-Cache": cache_status})
 
     def api_mobile_housing_activity(self) -> None:
         user = self.current_user()
@@ -41271,14 +41335,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
-        try:
-            ensure_housing_community_projection_current()
-        except sqlite3.OperationalError as exc:
-            # Projection rows are derived. If another writer is briefly busy,
-            # serve the last complete Ask feed instead of failing the read.
-            message = str(exc).lower()
-            if "locked" not in message and "busy" not in message:
-                raise
+        # Keep derived housing projections current without blocking this feed
+        # response or the other mobile reads that start with it.
+        schedule_housing_community_projection_sync()
         user = self.current_user()
         guest = None if user else self.current_community_guest()
         viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
@@ -42409,6 +42468,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (post_id,),
             ).fetchone()
         invalidate_mobile_search_cache("housing")
+        # Start the derived Ask card update as soon as the listing transaction
+        # is committed, rather than making the next Ask feed request perform it.
+        schedule_housing_community_projection_sync()
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
 
     def serve_upload(self, path: str) -> None:
