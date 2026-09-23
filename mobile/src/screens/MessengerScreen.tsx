@@ -7734,7 +7734,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, mediaGroup.length > 1 && styles.stackedMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds && !emojiOnlyMessage && !isMediaMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
@@ -9247,6 +9247,7 @@ const styles = StyleSheet.create({
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
   borderlessMediaBubble: { borderWidth: 0, shadowOpacity: 0, elevation: 0 },
+  stackedMediaBubble: { backgroundColor: "transparent", borderColor: "transparent", shadowOpacity: 0, elevation: 0 },
   replyForwardMediaBubble: { borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.36)" },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   selectedCollageCell: { borderWidth: 2, borderColor: "#4f7cff" },
