@@ -362,12 +362,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "HOLD_PAID")
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus !== "AUTHORIZED")
-        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED");
+        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED")
+        || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED");
 
       if (actionableBooking) {
         const extensionDue = actionableBooking.extensionPaymentStatus === "PENDING" && Number(actionableBooking.extensionPaymentDue || 0) > 0;
         const balanceDue = actionableBooking.paymentStatus === "HOLD_PAID";
         const depositDue = actionableBooking.paymentStatus === "PAID" && actionableBooking.depositStatus !== "AUTHORIZED";
+        const rentalInProgress = actionableBooking.status === "PICKED_UP";
         const amount = extensionDue
           ? actionableBooking.extensionPaymentDueLabel || "approved amount"
           : balanceDue
@@ -375,11 +377,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
             : `$${Number(actionableBooking.depositAmount || 250).toFixed(2)}`;
         setActionNotice({
           id: `rental:${actionableBooking.id}:${actionableBooking.paymentStatus}:${actionableBooking.depositStatus || ""}:${actionableBooking.extensionPaymentStatus || ""}`,
-          icon: extensionDue ? "↗" : balanceDue ? "💳" : depositDue ? "🔒" : "⏱",
-          eyebrow: extensionDue ? "Approved rental extension" : balanceDue ? "Rental balance due" : depositDue ? "Refundable deposit" : "Rental in progress",
-          title: extensionDue ? `Pay ${amount} to complete your extension` : balanceDue ? `Pay remaining ${amount}` : depositDue ? `Authorize refundable ${amount} deposit` : "Need more time with your rental?",
-          body: extensionDue ? "Your new return window is reserved. Complete secure payment to confirm it." : balanceDue ? "Your 10% hold secured the booking. Pay the balance before pickup." : depositDue ? "Your rental is paid in full. The deposit is a card authorization, not an extra rental charge." : "Extend the return time before the current return deadline. We will check availability first.",
-          actionLabel: extensionDue ? "Pay extension" : balanceDue ? "Pay balance" : depositDue ? "Authorize deposit" : "Extend rental",
+          icon: extensionDue ? "↗" : balanceDue ? "💳" : depositDue ? "🔒" : rentalInProgress ? "⏱" : "📄",
+          eyebrow: extensionDue ? "Approved rental extension" : balanceDue ? "Complete rental payment" : depositDue ? "Refundable security deposit" : rentalInProgress ? "Rental in progress" : "Rental confirmed",
+          title: extensionDue ? `Pay ${amount} to complete your extension` : balanceDue ? `Pay full remaining amount: ${amount}` : depositDue ? `Authorize refundable ${amount} security deposit` : rentalInProgress ? "Need more time with your rental?" : "Your rental documents are ready",
+          body: extensionDue ? "Your new return window is reserved. Complete secure payment to confirm it." : balanceDue ? "Your 10% hold secured the booking. Complete the full payment before pickup." : depositDue ? "Your rental is paid in full. The deposit is a card authorization, not an extra rental charge." : rentalInProgress ? "Extend the return time before the current return deadline. We will check availability first." : "Open your booking to view documents, pickup details, and manage this rental.",
+          actionLabel: extensionDue ? "Pay extension" : balanceDue ? "Pay full amount" : depositDue ? "Authorize deposit" : rentalInProgress ? "Extend rental" : "Manage rental",
           action: "rental",
           bookingId: actionableBooking.id,
         });
@@ -405,7 +407,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         eyebrow: incomingRequest ? "Carpool request" : "Ride update",
         title: rideTitle,
         body: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
-        actionLabel: incomingRequest ? "Review request" : "View ride",
+        actionLabel: incomingRequest ? "Review request" : "Review ride",
         action: "ride",
       });
     });
