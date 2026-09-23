@@ -1485,6 +1485,21 @@ export async function updateMobileNotificationPreferences(preferences: Partial<M
   });
 }
 
+export async function sendMobileNotificationTest(category = "general", platform = Platform.OS) {
+  return request<{
+    ok: boolean;
+    diagnosticId: string;
+    queuedDevices: number;
+    registeredDevices: number;
+    devices: Array<{ platform: string; label: string; lastSeenAt?: string }>;
+    message?: string;
+  }>("/api/mobile/notification-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, platform })
+  });
+}
+
 export async function getChatCommunities(city = "") {
   const query = city.trim() ? `?city=${encodeURIComponent(city.trim())}` : "";
   const payload = await request<{ ok: boolean; communities: Community[] }>(`/api/chat/communities${query}`);

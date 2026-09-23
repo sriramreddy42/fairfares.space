@@ -38571,8 +38571,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(row_value(user, "id") or 0)
         payload = self.read_json_body()
         category = clean_text_value(payload.get("category"), 20).lower() or "general"
+        target_platform = clean_text_value(payload.get("platform"), 20).lower()
         if category not in {"general", "chitthi", "carpool", "housing", "rentals", "support", "marketing"}:
             self.send_json({"ok": False, "message": "Choose a supported notification category."}, 400)
+            return
+        if target_platform not in {"", "ios", "android"}:
+            self.send_json({"ok": False, "message": "Choose a supported device platform."}, 400)
             return
         diagnostic_id = f"push-test-{uuid.uuid4().hex}"
         notification_copy = {
@@ -38633,7 +38637,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                    ORDER BY datetime(last_seen_at) DESC, id DESC""",
                 (user_id,),
             ).fetchall()
-        devices = registered_devices
+        devices = [
+            device for device in registered_devices
+            if not target_platform or clean_text_value(row_value(device, "platform"), 30).lower() == target_platform
+        ]
         if category != "general":
             # A category check should reach the current installation on each
             # platform once. Historical Expo tokens may remain valid briefly

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { ActivityIndicator, Alert, AppState, Image, ImageSourcePropType, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, sendMobileNotificationTest, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
@@ -98,6 +98,7 @@ export function ProfileScreen({
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [notificationPreferencesError, setNotificationPreferencesError] = useState(false);
   const [notificationPreferenceSaving, setNotificationPreferenceSaving] = useState<keyof MobileNotificationPreferences | null>(null);
+  const [notificationTestSending, setNotificationTestSending] = useState(false);
   const [systemAlertsEnabled, setSystemAlertsEnabled] = useState<boolean | null>(null);
   const [accountActivityLoading, setAccountActivityLoading] = useState(Boolean(user));
   const [historyOpeningId, setHistoryOpeningId] = useState("");
@@ -440,6 +441,23 @@ export function ProfileScreen({
     }
   }
 
+  async function sendNotificationTest() {
+    if (!user?.id || notificationTestSending) return;
+    setNotificationTestSending(true);
+    try {
+      const result = await sendMobileNotificationTest("general", Platform.OS);
+      if (!result.queuedDevices) {
+        Alert.alert("No device registered", result.message || "Open the installed app again and allow phone notifications, then retry.");
+        return;
+      }
+      Alert.alert("Test alert queued", `Check this ${Platform.OS === "android" ? "Android" : "iPhone"} device's notification shade now.`);
+    } catch (error) {
+      Alert.alert("Test could not be sent", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setNotificationTestSending(false);
+    }
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -616,6 +634,17 @@ export function ProfileScreen({
                   />
                 </View>
               ))}
+              {Platform.OS !== "web" ? (
+                <TouchableOpacity
+                  style={styles.notificationTestButton}
+                  onPress={() => void sendNotificationTest()}
+                  disabled={notificationTestSending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send a test notification to this device"
+                >
+                  {notificationTestSending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.notificationTestButtonText}>Send test alert</Text>}
+                </TouchableOpacity>
+              ) : null}
               {notificationPreferencesError ? <Text style={styles.cardCopy}>Could not load notification preferences. Close and reopen Account to try again.</Text> : null}
             </ScrollView>
           </View>
@@ -808,6 +837,8 @@ const styles = StyleSheet.create({
   // sheet a real viewport while retaining a scrollable list for smaller phones.
   notificationSheet: { height: "78%", width: "100%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 10 },
   notificationContent: { paddingBottom: 16 },
+  notificationTestButton: { marginTop: 18, minHeight: 46, borderRadius: theme.radius.pill, backgroundColor: theme.colors.brand, alignItems: "center", justifyContent: "center" },
+  notificationTestButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "800" },
   supportScroll: { flex: 1 },
   supportContent: { gap: 11, paddingBottom: 28 },
   historySheet: { height: "88%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 14 },
