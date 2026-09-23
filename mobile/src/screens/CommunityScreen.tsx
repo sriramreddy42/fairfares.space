@@ -653,7 +653,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     // discard the valid result when the next GPS fix drifts. Housing and Ask
     // city selections never write this device-scoped cache.
     setLowestGasPrice(null);
-    void readGasCache("regular").then((result) => {
+    // The home card is a last-reported teaser. Keep it stable for an hour;
+    // opening Cheap Gas still uses the stricter ten-minute freshness window.
+    void readGasCache("regular", undefined, 5, 60 * 60 * 1000).then((result) => {
       if (cancelled) return;
       const prices = (result?.stations || [])
         .map((station) => Number(station.price))
@@ -682,7 +684,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           .slice(0, 8);
         setCityOptions(options);
       }).finally(() => { if (!cancelled) setCityOptionsLoading(false); });
-    }, 300);
+    }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [cityDraft, cityPickerOpen]);
 

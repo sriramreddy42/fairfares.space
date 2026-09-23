@@ -231,11 +231,14 @@ _MOBILE_SEARCH_KEY_LOCKS: dict[tuple[object, ...], threading.Lock] = {}
 _POPULAR_CITY_CACHE: dict[str, tuple[float, list[dict[str, object]]]] = {}
 _POPULAR_CITY_CACHE_LOCK = threading.Lock()
 _POPULAR_CITY_KEY_LOCKS: dict[str, threading.Lock] = {}
+_RIDE_LIVE_ROUTE_CACHE: dict[int, tuple[float, float, float, dict[str, object]]] = {}
+_RIDE_LIVE_ROUTE_CACHE_LOCK = threading.Lock()
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
 MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 30)
 MOBILE_SEARCH_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_SEARCH_CACHE_MAX_ENTRIES", 5_000)
 POPULAR_CITY_CACHE_SECONDS = positive_int_env("FAIRFARES_POPULAR_CITY_CACHE_SECONDS", 6 * 60 * 60)
+RIDE_LIVE_ROUTE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_LIVE_ROUTE_CACHE_SECONDS", 45)
 SESSION_CLEANUP_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_CLEANUP_SECONDS", 10 * 60)
 ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
@@ -11013,7 +11016,11 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
         if mood in mood_buckets:
             continue
         mood_buckets[mood] = []
-        for template in EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"]):
+        templates = EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"])
+        # One ranked Text Search normally provides several usable stops. The
+        # alternate wording is only a recovery path when the first search has
+        # no usable result, rather than a duplicate paid discovery request.
+        for template_index, template in enumerate(templates):
             params = {
                 "query": f"{template.format(city=title_city)} {preference_suffix}".strip(),
                 "key": api_key,
@@ -11042,6 +11049,8 @@ def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, ci
                     break
             if len(mood_buckets[mood]) >= 4:
                 break
+            if mood_buckets[mood] or template_index == len(templates) - 1:
+                break
     stops: list[dict[str, object]] = []
     for round_index in range(4):
         for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
@@ -11063,11 +11072,18 @@ def explorer_maps_loader() -> str:
     return (
         '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=true;'
         'window.FAIRFARES_MAP_LOAD_FAILED=false;'
-        'window.gm_authFailure=function(){window.FAIRFARES_MAP_LOAD_FAILED=true;'
-        'window.dispatchEvent(new Event("fairfares-map-error"));};</script>'
-        f'<script async src="https://maps.googleapis.com/maps/api/js?key={escaped_key}&amp;loading=async&amp;v=weekly" '
-        'referrerpolicy="origin" onerror="window.FAIRFARES_MAP_LOAD_FAILED=true;window.dispatchEvent(new Event(\'fairfares-map-error\'));">'
-        '</script>'
+        'window.loadFairFaresMaps=window.loadFairFaresMaps||function(){'
+        'if(window.google&&window.google.maps)return Promise.resolve();'
+        'if(window.FAIRFARES_MAP_LOAD_PROMISE)return window.FAIRFARES_MAP_LOAD_PROMISE;'
+        'window.FAIRFARES_MAP_LOAD_PROMISE=new Promise(function(resolve,reject){'
+        'var settled=false;var finish=function(error){if(settled)return;settled=true;'
+        'if(error){window.FAIRFARES_MAP_LOAD_FAILED=true;window.dispatchEvent(new Event("fairfares-map-error"));reject(error);}else{resolve();}};'
+        'window.gm_authFailure=function(){finish(new Error("Google Maps authorization failed"));};'
+        'var script=document.createElement("script");script.async=true;script.referrerPolicy="origin";'
+        f'script.src="https://maps.googleapis.com/maps/api/js?key={escaped_key}&loading=async&v=weekly";'
+        'script.onload=function(){window.setTimeout(function(){finish(window.google&&window.google.maps?null:new Error("Google Maps did not initialize"));},0);};'
+        'script.onerror=function(){finish(new Error("Google Maps failed to load"));};document.head.appendChild(script);'
+        '});return window.FAIRFARES_MAP_LOAD_PROMISE;};</script>'
     )
 
 
@@ -16692,7 +16708,7 @@ def log_google_places_issue(operation: str, status: str, error_message: str = ""
     print(f"Google Places {safe_operation}: status={safe_status} category={category}", flush=True)
 
 
-def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False) -> list[dict[str, str]]:
+def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False, session_token: str = "") -> list[dict[str, str]]:
     # Ride entry can start with a completely new route, before a city has
     # been chosen. A Maps key that is permitted for Places must work here too;
     # requiring a separate Places-only variable made autocomplete silently
@@ -16707,15 +16723,17 @@ def google_accommodation_place_predictions(city: str, area: str = "", limit: int
     # proximity bias for neighborhood-style queries; appending the pickup city
     # here turned destinations such as "Cincinnati" into "Cincinnati Denver, CO".
     input_text = area or city
-    geocode = google_accommodation_geocode(city)
     params: dict[str, str] = {
         "input": input_text,
         "key": api_key,
     }
-    geometry = geocode.get("geometry") if isinstance(geocode, dict) else {}
-    location = geometry.get("location") if isinstance(geometry, dict) else {}
-    if use_city_bias and isinstance(location, dict) and location.get("lat") and location.get("lng"):
-        params["location"] = f"{location.get('lat')},{location.get('lng')}"
+    if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session_token):
+        params["sessiontoken"] = session_token
+    city_point = accommodation_location_point(city, allow_refresh=False) if use_city_bias and city else {}
+    city_lat = float(city_point.get("lat") or 0)
+    city_lng = float(city_point.get("lng") or 0)
+    if use_city_bias and city_lat and city_lng:
+        params["location"] = f"{city_lat},{city_lng}"
         params["radius"] = "96560"
     try:
         payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}")
@@ -16757,13 +16775,16 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
     return [prediction["label"] for prediction in google_accommodation_place_predictions(city, area, limit, use_city_bias=use_city_bias)]
 
 
-def google_ride_place_details(place_id: str) -> dict[str, object]:
+def google_ride_place_details(place_id: str, session_token: str = "") -> dict[str, object]:
     """Fetch the selected prediction's geometry, never a similarly named city."""
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     place_id = str(place_id or "").strip()
     if not api_key or not re.fullmatch(r"[A-Za-z0-9_-]{8,256}", place_id):
         return {}
-    params = urllib.parse.urlencode({"place_id": place_id, "fields": "geometry,name,formatted_address", "key": api_key})
+    detail_params = {"place_id": place_id, "fields": "geometry,name,formatted_address", "key": api_key}
+    if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session_token):
+        detail_params["sessiontoken"] = session_token
+    params = urllib.parse.urlencode(detail_params)
     try:
         payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{params}")
     except urllib.error.HTTPError as exc:
@@ -16863,7 +16884,7 @@ def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google
     return suggestions
 
 
-def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> str:
+def refresh_accommodation_location_cache(query: str, *, force: bool = False, include_nearby_areas: bool = True) -> str:
     query = normalize_accommodation_place_label(query)
     if not query:
         return ""
@@ -16936,7 +16957,10 @@ def refresh_accommodation_location_cache(query: str, *, force: bool = False) -> 
                 source="GOOGLE_GEOCODE",
                 raw=geocode,
             )
-            for place in google_accommodation_nearby_areas(city or query, lat, lng):
+            # Broad nearby Text Searches are useful only for an explicit city
+            # bootstrap. They must never run as a side effect of interactive
+            # input or a routine listing search.
+            for place in (google_accommodation_nearby_areas(city or query, lat, lng) if include_nearby_areas else []):
                 place_name = normalize_accommodation_place_label(str(place.get("name") or ""))
                 place_geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
                 place_location = place_geometry.get("location") if isinstance(place_geometry.get("location"), dict) else {}
@@ -17212,6 +17236,56 @@ def google_route_totals(points: list[dict[str, float]]) -> tuple[float, int] | N
     if meters <= 0:
         return None
     return (meters / 1609.344, int(math.ceil(seconds / 60.0)) if seconds else 0)
+
+
+def live_ride_route_summary(
+    dispatch_id: int,
+    driver_latitude: float,
+    driver_longitude: float,
+    rider_latitude: float,
+    rider_longitude: float,
+) -> dict[str, object]:
+    """Keep the live map responsive without routing identical positions repeatedly."""
+    now = time.monotonic()
+    with _RIDE_LIVE_ROUTE_CACHE_LOCK:
+        cached = _RIDE_LIVE_ROUTE_CACHE.get(dispatch_id)
+        if cached and cached[0] > now:
+            # The marker itself still uses the latest driver coordinate every
+            # poll. Keeping the road ETA for one short interval avoids a paid
+            # route request every 20 seconds while limiting ETA staleness to
+            # 45 seconds even for a moving driver.
+            return dict(cached[3])
+
+    routed = google_route_totals([
+        {"lat": driver_latitude, "lng": driver_longitude},
+        {"lat": rider_latitude, "lng": rider_longitude},
+    ])
+    if routed:
+        trip: dict[str, object] = {
+            "distanceMiles": round(routed[0], 1),
+            "etaMinutes": max(1, int(routed[1] or 0)) if routed[1] else None,
+            "source": "ROUTED",
+        }
+    else:
+        # A direct-distance value is useful as a location signal, but never
+        # manufacture a driving ETA when the routing provider is unavailable.
+        trip = {
+            "distanceMiles": round(distance_miles_between(driver_latitude, driver_longitude, rider_latitude, rider_longitude), 1),
+            "etaMinutes": None,
+            "source": "STRAIGHT_LINE",
+        }
+    with _RIDE_LIVE_ROUTE_CACHE_LOCK:
+        _RIDE_LIVE_ROUTE_CACHE[dispatch_id] = (
+            now + RIDE_LIVE_ROUTE_CACHE_SECONDS,
+            driver_latitude,
+            driver_longitude,
+            dict(trip),
+        )
+        if len(_RIDE_LIVE_ROUTE_CACHE) > 1_000:
+            expired = [key for key, item in _RIDE_LIVE_ROUTE_CACHE.items() if item[0] <= now]
+            for key in expired:
+                _RIDE_LIVE_ROUTE_CACHE.pop(key, None)
+    return trip
 
 
 def accommodation_location_point(query: str, search_metro: str = "", allow_refresh: bool = True) -> dict[str, object]:
@@ -17890,73 +17964,33 @@ def ride_place_icon_source(label: str) -> str:
 
 
 def google_ride_popular_places(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
-    """Return real popular destinations for any Google-supported city."""
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    city = normalize_accommodation_place_label(city)
-    if not api_key or not city:
-        return []
-    params = {
-        "query": f"popular destinations in {city}",
-        "key": api_key,
-    }
-    if lat and lng:
-        params.update({"location": f"{lat},{lng}", "radius": "50000"})
-    try:
-        payload = google_api_get(
-            f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
-        )
-    except Exception:
-        return []
-    if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
-        return []
-    places: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for place in payload.get("results") or []:
-        if not isinstance(place, dict):
-            continue
-        name = normalize_accommodation_place_label(str(place.get("name") or ""))
-        address = normalize_accommodation_place_label(str(place.get("formatted_address") or ""))
-        label = dedupe_repeated_location_label(", ".join(value for value in (name, address) if value))
-        if not label or label.lower() in seen:
-            continue
-        geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
-        location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
-        seen.add(label.lower())
-        places.append({
-            "label": label,
-            "lat": float(location.get("lat") or 0),
-            "lng": float(location.get("lng") or 0),
-        })
-        if len(places) >= max(1, min(int(limit or 8), 12)):
-            break
-    return places
+    """Compatibility entry point for the static, FairFares-backed rail."""
+    # This used to issue a broad "popular destinations" Text Search whenever
+    # the rail opened. The mobile rail is now intentionally a stable set of
+    # active FairFares cities plus country fallbacks, so it has no Maps cost.
+    return google_ride_popular_cities(city, lat, lng, limit)
 
 
 def google_ride_popular_cities(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
-    """Return a cached current-location city rail with stale fallback."""
+    """Return a city rail from active listings, then bundled country choices."""
     city = normalize_accommodation_place_label(city)
     result_limit = max(1, min(int(limit or 8), 8))
     if not city:
         return []
-    cache_key = city.casefold()
-    now = time.monotonic()
-    with _POPULAR_CITY_CACHE_LOCK:
-        cached = _POPULAR_CITY_CACHE.get(cache_key)
-        if cached and cached[0] > now:
-            return cached[1][:result_limit]
-        key_lock = _POPULAR_CITY_KEY_LOCKS.setdefault(cache_key, threading.Lock())
-    with key_lock:
-        with _POPULAR_CITY_CACHE_LOCK:
-            cached = _POPULAR_CITY_CACHE.get(cache_key)
-            if cached and cached[0] > time.monotonic():
-                return cached[1][:result_limit]
-            stale = cached[1] if cached else []
-        fresh = _google_ride_popular_cities_uncached(city, lat, lng, limit=8)
-        if not fresh:
-            return stale[:result_limit]
-        with _POPULAR_CITY_CACHE_LOCK:
-            _POPULAR_CITY_CACHE[cache_key] = (time.monotonic() + POPULAR_CITY_CACHE_SECONDS, fresh)
-        return fresh[:result_limit]
+    country_code = inferred_location_country(city)
+    cities = list(ride_listing_popular_cities(country_code, result_limit))
+    # The city rail is a discovery affordance, not a place search. All of its
+    # coordinates can come from FairFares listings or bundled fallbacks, so
+    # do not fetch, store, or repeatedly refresh Google Place content here.
+    seen = {str(place.get("label") or "").casefold() for place in cities}
+    for place in ride_country_city_fallbacks(country_code, result_limit):
+        label = str(place.get("label") or "").casefold()
+        if label and label not in seen:
+            cities.append(place)
+            seen.add(label)
+        if len(cities) >= result_limit:
+            break
+    return cities[:result_limit]
 
 
 INDIA_RIDE_POPULAR_CITY_FALLBACKS = (
@@ -17978,49 +18012,6 @@ US_RIDE_POPULAR_CITY_FALLBACKS = (
 )
 
 
-def google_city_photo_reference(city_name: str, country_scope: str) -> str:
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    city_name = normalize_accommodation_place_label(city_name)
-    country_scope = normalize_accommodation_place_label(country_scope)
-    if not api_key or not city_name:
-        return ""
-    params = {"query": f"{city_name} city, {country_scope or 'India'}", "key": api_key}
-    try:
-        payload = google_api_get(
-            f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}",
-            timeout=3,
-        )
-    except Exception:
-        return ""
-    places = payload.get("results") if payload.get("status") == "OK" else []
-    city_types = {"locality", "postal_town"}
-    place = next(
-        (
-            item for item in (places or [])
-            if isinstance(item, dict)
-            and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
-            and normalize_accommodation_place_label(str(item.get("name") or "")).lower() == city_name.lower()
-        ),
-        None,
-    ) or next(
-        (
-            item for item in (places or [])
-            if isinstance(item, dict)
-            and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
-        ),
-        None,
-    )
-    if not isinstance(place, dict):
-        return ""
-    photos = place.get("photos") if isinstance(place.get("photos"), list) else []
-    first_photo = photos[0] if photos and isinstance(photos[0], dict) else {}
-    return str(first_photo.get("photo_reference") or "").strip()
-
-
-def google_city_photo_url(city_name: str, country_scope: str) -> str:
-    return explorer_photo_url(google_city_photo_reference(city_name, country_scope))
-
-
 def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]:
     places: list[dict[str, object]] = []
     for name, secondary, lat, lng in INDIA_RIDE_POPULAR_CITY_FALLBACKS[:max(1, min(int(limit or 8), 8))]:
@@ -18030,7 +18021,7 @@ def india_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]
                 "label": label,
                 "lat": lat,
                 "lng": lng,
-                "imageUrl": google_city_photo_url(name, "India") or explorer_city_photo_url(name, "India"),
+                "imageUrl": "",
             }
         )
     return places
@@ -18043,7 +18034,55 @@ def us_ride_popular_city_fallbacks(limit: int = 8) -> list[dict[str, object]]:
             "label": f"{name}, {secondary}",
             "lat": lat,
             "lng": lng,
-            "imageUrl": explorer_city_photo_url(name, "USA"),
+            "imageUrl": "",
+        })
+    return places
+
+
+def ride_country_city_fallbacks(country_code: str, limit: int = 8) -> list[dict[str, object]]:
+    if country_code == "IN":
+        return india_ride_popular_city_fallbacks(limit)
+    if country_code == "US":
+        return us_ride_popular_city_fallbacks(limit)
+    return []
+
+
+def ride_listing_popular_cities(country_code: str, limit: int = 8) -> list[dict[str, object]]:
+    """Use active housing cities as a no-network city rail source."""
+    if not re.fullmatch(r"[A-Z]{2}", country_code or ""):
+        return []
+    result_limit = max(1, min(int(limit or 8), 8))
+    country_name = {"US": "USA", "IN": "India"}.get(country_code, country_code)
+    try:
+        with db() as con:
+            rows = con.execute(
+                """
+                SELECT TRIM(city) AS city, AVG(lat) AS lat, AVG(lng) AS lng, COUNT(*) AS listing_count
+                FROM accommodation_posts
+                WHERE visibility_status = 'ACTIVE'
+                  AND UPPER(TRIM(country)) = ?
+                  AND TRIM(city) <> ''
+                  AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+                  AND NOT (lat = 0 AND lng = 0)
+                GROUP BY LOWER(TRIM(city))
+                ORDER BY listing_count DESC, MAX(created_at) DESC
+                LIMIT ?
+                """,
+                (country_code, result_limit),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    places: list[dict[str, object]] = []
+    for row in rows:
+        city_name = normalize_accommodation_place_label(str(row["city"] or ""))
+        if not city_name:
+            continue
+        label = city_name if inferred_location_country(city_name) else f"{city_name}, {country_name}"
+        places.append({
+            "label": label,
+            "lat": float(row["lat"] or 0),
+            "lng": float(row["lng"] or 0),
+            "imageUrl": "",
         })
     return places
 
@@ -18065,154 +18104,14 @@ def ride_known_popular_cities(query: str, city: str, limit: int = 8, *, exact: b
                 "label": label,
                 "lat": lat,
                 "lng": lng,
-                "imageUrl": explorer_city_photo_url(name, "USA" if country == "US" else "India"),
+                "imageUrl": "",
             })
         if len(matches) >= max(1, min(int(limit or 8), 8)):
             break
     return matches
 
 
-def _google_ride_popular_cities_uncached(city: str, lat: float = 0, lng: float = 0, limit: int = 8) -> list[dict[str, object]]:
-    """Return country-scoped cities with city photos—never attractions or neighborhoods."""
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    city = normalize_accommodation_place_label(city)
-    if not api_key or not city:
-        return []
-    origin_geocode = google_accommodation_geocode(city)
-    origin_components = origin_geocode.get("address_components") if isinstance(origin_geocode, dict) else []
-    origin_country = ""
-    origin_country_code = ""
-    for component in origin_components or []:
-        if not isinstance(component, dict) or "country" not in (component.get("types") or []):
-            continue
-        origin_country = normalize_accommodation_place_label(str(component.get("long_name") or ""))
-        origin_country_code = str(component.get("short_name") or "").strip().upper()
-        break
-    country_scope = origin_country or origin_country_code
-    cities: list[dict[str, object]] = []
-    seen: set[str] = set()
-    city_root = city.split(",", 1)[0].strip().lower()
-    city_types = {"locality", "postal_town"}
-    # Listing activity is a secondary signal after population ranking.
-    activity_candidates: list[str] = []
-    try:
-        with db() as con:
-            rows = con.execute(
-                """
-                SELECT city, COUNT(*) AS listing_count
-                FROM accommodation_posts
-                WHERE UPPER(country) = ? AND TRIM(city) <> '' AND visibility_status = 'ACTIVE'
-                GROUP BY LOWER(TRIM(city))
-                ORDER BY listing_count DESC, MAX(created_at) DESC
-                LIMIT 12
-                """,
-                (origin_country_code,),
-            ).fetchall()
-        activity_candidates.extend(normalize_accommodation_place_label(str(row["city"] or "")).split(",", 1)[0] for row in rows)
-    except sqlite3.Error:
-        pass
-
-    # CountriesNow exposes population-ranked cities for countries worldwide.
-    # It supplies ranking only; Google below still validates locality type,
-    # country membership, coordinates, and the displayed photo.
-    population_candidates: list[str] = []
-    population_url = "https://countriesnow.space/api/v0.1/countries/population/cities/filter/q?" + urllib.parse.urlencode({
-        "country": country_scope,
-        "limit": 16,
-        "order": "dsc",
-        "orderBy": "populationCounts",
-    })
-    try:
-        population_payload = google_api_get(population_url, timeout=3)
-    except Exception:
-        population_payload = {}
-    if population_payload.get("error") is False:
-        for row in population_payload.get("data") or []:
-            if not isinstance(row, dict):
-                continue
-            candidate = re.sub(r"\s*\([^)]*\)\s*$", "", str(row.get("city") or "")).strip()
-            if candidate.isupper():
-                candidate = candidate.title()
-            candidate = normalize_accommodation_place_label(candidate)
-            if candidate and candidate.lower() not in {value.lower() for value in population_candidates}:
-                population_candidates.append(candidate)
-    candidates = population_candidates + activity_candidates
-    candidates.append(city.split(",", 1)[0].strip())
-    candidates = list(dict.fromkeys(candidate for candidate in candidates if candidate))
-
-    candidate_deadline = time.monotonic() + 8
-    for candidate in candidates[:12]:
-        if time.monotonic() >= candidate_deadline:
-            break
-        params = {"query": f"{candidate} city, {country_scope or city}", "key": api_key}
-        try:
-            payload = google_api_get(
-                f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}",
-                timeout=max(1, min(3, int(candidate_deadline - time.monotonic()) or 1)),
-            )
-        except Exception:
-            continue
-        places = payload.get("results") if payload.get("status") == "OK" else []
-        exact_place = next(
-            (
-                item for item in (places or [])
-                if isinstance(item, dict)
-                and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
-                and normalize_accommodation_place_label(str(item.get("name") or "")).lower() == candidate.lower()
-            ),
-            None,
-        )
-        place = exact_place
-        if not place and candidate in population_candidates:
-            place = next(
-                (
-                    item for item in (places or [])
-                    if isinstance(item, dict)
-                    and {str(value) for value in (item.get("types") or [])}.intersection(city_types)
-                ),
-                None,
-            )
-        if not place:
-            continue
-        name = normalize_accommodation_place_label(str(place.get("name") or ""))
-        address = normalize_accommodation_place_label(str(place.get("formatted_address") or ""))
-        normalized_address = re.sub(r"[^a-z0-9]+", " ", address.lower()).strip()
-        normalized_country = re.sub(r"[^a-z0-9]+", " ", origin_country.lower()).strip()
-        address_tokens = {part.strip().upper() for part in address.split(",") if part.strip()}
-        country_token_aliases = {
-            origin_country_code,
-            *({"USA", "UNITED STATES"} if origin_country_code == "US" else set()),
-            *({"UK", "UNITED KINGDOM"} if origin_country_code == "GB" else set()),
-            *({"UAE", "UNITED ARAB EMIRATES"} if origin_country_code == "AE" else set()),
-        } - {""}
-        if country_scope and not (
-            (normalized_country and re.search(rf"(?:^| ){re.escape(normalized_country)}(?: |$)", normalized_address))
-            or bool(country_token_aliases.intersection(address_tokens))
-        ):
-            continue
-        if not name or name.lower() in seen:
-            continue
-        address_parts = [part.strip() for part in address.split(",") if part.strip()]
-        suffix = ", ".join(address_parts[-2:]) if len(address_parts) >= 2 else address
-        label = dedupe_repeated_location_label(", ".join(value for value in (name, suffix) if value))
-        geometry = place.get("geometry") if isinstance(place.get("geometry"), dict) else {}
-        location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
-        photos = place.get("photos") if isinstance(place.get("photos"), list) else []
-        first_photo = photos[0] if photos and isinstance(photos[0], dict) else {}
-        photo_reference = str(first_photo.get("photo_reference") or "").strip()
-        seen.add(name.lower())
-        cities.append({
-            "label": label or name,
-            "lat": float(location.get("lat") or 0),
-            "lng": float(location.get("lng") or 0),
-            "imageUrl": explorer_photo_url(photo_reference),
-        })
-        if len(cities) >= max(1, min(int(limit or 8), 8)):
-            break
-    return cities
-
-
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False, place_id: str = "") -> list[dict[str, object]]:
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False, place_id: str = "", session_token: str = "") -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
@@ -18228,7 +18127,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     if resolve_exact and query:
         point: dict[str, object] = {}
         if place_id:
-            point = google_ride_place_details(place_id)
+            point = google_ride_place_details(place_id, session_token)
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and (known_cities := ride_known_popular_cities(query, city, limit=1, exact=True)):
             point = known_cities[0]
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and ride_query_should_geocode_directly(query, city):
@@ -18298,8 +18197,45 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         labels.append((clean, source))
 
     google_query = query
-    if google_query:
-        for prediction in google_accommodation_place_predictions(city, google_query, limit=limit * 2, use_city_bias=use_city_bias, include_all_types=True):
+    if google_query and len(google_query) < 3:
+        # Match the mobile threshold at the API boundary so direct callers
+        # cannot spend Places quota on an input too short to identify a place.
+        for place in ride_known_popular_cities(query, city, limit=limit):
+            label = str(place.get("label") or "")
+            add_label(label, "country-fallback")
+            if label:
+                popular_points[label.lower()] = place
+    elif google_query:
+        # A bare category has no destination of its own. Scope it in the text
+        # sent to Places so an unavailable city geocode cannot make Google's
+        # server/IP location supply an unrelated airport or station.
+        generic_place_query = bool(re.fullmatch(
+            r"(?:airports?|stations?|train stations?|bus stations?|malls?|hotels?|universit(?:y|ies)|colleges)",
+            google_query,
+            flags=re.IGNORECASE,
+        ))
+        scoped_query = f"{google_query} near {city}" if use_city_bias and city and generic_place_query else google_query
+        predictions = google_accommodation_place_predictions(
+            city, scoped_query, limit=limit * 2,
+            use_city_bias=use_city_bias and scoped_query == google_query,
+            include_all_types=True,
+            session_token=session_token,
+        )
+        # Legacy autocomplete can return ZERO_RESULTS with a location/radius
+        # even for an explicitly named destination. Retry without that bias;
+        # do not do this for bare categories, which would return unrelated POIs.
+        if not predictions and use_city_bias and scoped_query == google_query:
+            predictions = google_accommodation_place_predictions(
+                city, google_query, limit=limit * 2, use_city_bias=False, include_all_types=True, session_token=session_token
+            )
+        if use_city_bias and city and predictions:
+            city_name = city.split(",", 1)[0].strip()
+            if city_name:
+                predictions = sorted(
+                    predictions,
+                    key=lambda item: 0 if re.search(rf"\b{re.escape(city_name)}\b", str(item.get("label") or ""), re.I) else 1,
+                )
+        for prediction in predictions:
             label = prediction["label"]
             add_label(label, "google")
             if prediction.get("placeId"):
@@ -18319,7 +18255,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             limit=limit,
         ):
             label = str(place.get("label") or "")
-            add_label(label, "google-popular")
+            add_label(label, "static-popular")
             if label:
                 popular_points[label.lower()] = place
         if cities_only and not labels and selected_country == "IN":
@@ -18776,7 +18712,6 @@ def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, obj
             "missing": [
                 "Vehicle make/model",
                 "License plate and state",
-                "Insurance provider",
                 "Service types",
             ],
         }
@@ -18787,8 +18722,6 @@ def mobile_ride_driver_profile_payload(row: sqlite3.Row | None) -> dict[str, obj
         missing.append("Vehicle make/model")
     if not row_value(row, "license_plate") or not row_value(row, "license_state"):
         missing.append("License plate and state")
-    if not row_value(row, "insurance_provider"):
-        missing.append("Insurance provider")
     if not service_types:
         missing.append("Service types")
     review_status = row_value(row, "review_status") or "PENDING_REVIEW"
@@ -18998,53 +18931,67 @@ def create_ride_dispatch_notifications(
         """,
         driver_values,
     ).fetchall()
-    buckets: list[dict[str, object]] = []
+    # First shortlist using local geometry. The former radius loop recomputed
+    # two Google Directions routes for every driver in every bucket. Exact
+    # road routing still decides notifications, but each viable driver is now
+    # routed once at most.
+    shortlist: list[sqlite3.Row] = []
+    for driver in driver_rows:
+        estimated = ride_route_match_metrics(driver, request_origin_point, request_destination_point, allow_google=False)
+        # Direction compatibility is independent of road routing, so it is a
+        # safe early rejection. Keep all same-direction routes for exact
+        # verification; a straight-line estimate must never hide a valid road
+        # route that bends around terrain.
+        if bool(estimated.get("directionCompatible")):
+            shortlist.append(driver)
+
+    verified_by_radius: dict[int, list[tuple[sqlite3.Row, dict[str, object]]]] = {}
+    for driver in shortlist:
+        metrics = ride_route_match_metrics(driver, request_origin_point, request_destination_point, allow_google=True)
+        for radius in (10, 20, 30, 50):
+            if ride_route_match_is_valid(driver, metrics, maximum_miles=float(radius)):
+                verified_by_radius.setdefault(radius, []).append((driver, metrics))
+                break
+
+    nearest_radius = next((radius for radius in (10, 20, 30, 50) if verified_by_radius.get(radius)), 0)
     notified_count = 0
-    nearest_radius = 0
     notified_driver_user_ids: list[int] = []
     driver_detours: dict[int, dict[str, object]] = {}
-    for radius in (10, 20, 30, 50):
-        bucket_count = 0
-        for driver in driver_rows:
-            metrics = ride_route_match_metrics(driver, request_origin_point, request_destination_point)
-            pickup_distance = float(metrics.get("pickupDistanceMiles") or 0)
-            route_deviation_raw = metrics.get("routeDeviationMiles")
-            route_deviation = float(route_deviation_raw) if route_deviation_raw is not None else 9999.0
-            if not ride_route_match_is_valid(driver, metrics, maximum_miles=float(radius)):
-                continue
-            dropoff_distance = float(metrics.get("dropoffDistanceMiles") or 0)
-            route_deviation_minutes = int(metrics.get("routeDeviationMinutes") or 0)
-            cursor = con.execute(
-                """
-                INSERT OR IGNORE INTO ride_dispatch_notifications
-                (request_ride_post_id, driver_ride_post_id, driver_user_id, radius_miles, distance_miles, dropoff_distance_miles, route_deviation_miles, route_deviation_minutes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(row_value(request_row, "id") or 0),
-                    int(row_value(driver, "id") or 0),
-                    int(row_value(driver, "user_id") or 0),
-                    radius,
-                    round(pickup_distance, 2),
-                    round(dropoff_distance, 2),
-                    round(route_deviation, 2),
-                    route_deviation_minutes,
-                ),
-            )
-            if cursor.rowcount:
-                bucket_count += 1
-                driver_user_id = int(row_value(driver, "user_id") or 0)
-                notified_driver_user_ids.append(driver_user_id)
-                driver_detours[driver_user_id] = {
-                    "minutes": route_deviation_minutes,
-                    "miles": round(route_deviation, 1),
-                }
-        if bucket_count and not nearest_radius:
-            nearest_radius = radius
-        notified_count += bucket_count
-        buckets.append({"radiusMiles": radius, "notifiedCount": bucket_count})
-        if bucket_count:
-            break
+    for driver, metrics in verified_by_radius.get(nearest_radius, []):
+        pickup_distance = float(metrics.get("pickupDistanceMiles") or 0)
+        dropoff_distance = float(metrics.get("dropoffDistanceMiles") or 0)
+        route_deviation = float(metrics.get("routeDeviationMiles") or 0)
+        route_deviation_minutes = int(metrics.get("routeDeviationMinutes") or 0)
+        cursor = con.execute(
+            """
+            INSERT OR IGNORE INTO ride_dispatch_notifications
+            (request_ride_post_id, driver_ride_post_id, driver_user_id, radius_miles, distance_miles, dropoff_distance_miles, route_deviation_miles, route_deviation_minutes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(row_value(request_row, "id") or 0),
+                int(row_value(driver, "id") or 0),
+                int(row_value(driver, "user_id") or 0),
+                nearest_radius,
+                round(pickup_distance, 2),
+                round(dropoff_distance, 2),
+                round(route_deviation, 2),
+                route_deviation_minutes,
+            ),
+        )
+        if cursor.rowcount:
+            notified_count += 1
+            driver_user_id = int(row_value(driver, "user_id") or 0)
+            notified_driver_user_ids.append(driver_user_id)
+            driver_detours[driver_user_id] = {
+                "minutes": route_deviation_minutes,
+                "miles": round(route_deviation, 1),
+            }
+    buckets = [
+        {"radiusMiles": radius, "notifiedCount": notified_count if radius == nearest_radius else 0}
+        for radius in (10, 20, 30, 50)
+        if not nearest_radius or radius <= nearest_radius
+    ]
     return {
         "notifiedCount": notified_count,
         "nearestRadius": nearest_radius,
@@ -19224,14 +19171,16 @@ def apply_ride_dispatch_action(user_id: int, ride_public_id: str, action: str) -
                 clean_text_value(row_value(request_row, "destination_label") or row_value(request_row, "destination"), 90),
             ) if value
         )
-        driver_profile = con.execute(
-            "SELECT license_plate, license_state FROM ride_driver_profiles WHERE user_id = ? LIMIT 1",
-            (user_id,),
+        # Vehicle details belong to the actual listed ride. Drivers no longer
+        # need a separate profile, and they may use a different car per trip.
+        driver_ride = con.execute(
+            "SELECT license_plate, license_state FROM ride_posts WHERE id = ? AND user_id = ? LIMIT 1",
+            (int(row_value(notification, "driver_ride_post_id") or 0), user_id),
         ).fetchone()
         vehicle_number = " ".join(
             value for value in (
-                clean_text_value(row_value(driver_profile, "license_state"), 12) if driver_profile else "",
-                clean_text_value(row_value(driver_profile, "license_plate"), 24) if driver_profile else "",
+                clean_text_value(row_value(driver_ride, "license_state"), 12) if driver_ride else "",
+                clean_text_value(row_value(driver_ride, "license_plate"), 24) if driver_ride else "",
             ) if value
         )
         driver_lat = float(row_value(updated, "dispatch_driver_lat") or 0) if updated else 0.0
@@ -20126,10 +20075,13 @@ def mobile_sample_housing_posts(
 
 def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str, str]:
     if search_area:
-        refreshed = cached_accommodation_metro_for_place(search_area) or refresh_accommodation_location_cache(search_area)
+        refreshed = cached_accommodation_metro_for_place(search_area) or refresh_accommodation_location_cache(
+            search_area,
+            include_nearby_areas=False,
+        )
         search_metro = search_metro or refreshed
     elif search_metro and search_metro not in {row[0] for row in accommodation_metro_filter_options()}:
-        search_metro = refresh_accommodation_location_cache(search_metro) or search_metro
+        search_metro = refresh_accommodation_location_cache(search_metro, include_nearby_areas=False) or search_metro
     metro_name = search_metro or ("" if search_area else "Denver Metro Area")
     try:
         with db() as con:
@@ -20195,18 +20147,36 @@ def accommodation_metro_context(search_metro: str, search_area: str) -> dict[str
     }
 
 
-def accommodation_location_options(query: str, area: str = "", limit: int = 18, *, backend_only: bool = False) -> dict[str, object]:
+def accommodation_location_options(
+    query: str,
+    area: str = "",
+    limit: int = 18,
+    *,
+    backend_only: bool = False,
+    enrich: bool = False,
+) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
     area = normalize_accommodation_place_label(area)
     google_enabled = bool(
         os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     )
-    autocomplete_suggestions = google_accommodation_place_suggestions(query, area, limit=limit) if google_enabled and not backend_only else []
-    google_refreshed_metro = refresh_accommodation_location_cache(query, force=True) if google_enabled and not backend_only else ""
-    metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(query)
-    if not metro_name and not backend_only:
-        metro_name = refresh_accommodation_location_cache(query)
+    # Typing must be cheap: the local catalogue is immediate, while Places is
+    # used only for a meaningful area query. A committed search performs one
+    # geocode to establish its exact center, without the former three broad
+    # nearby Text Searches.
+    autocomplete_suggestions = (
+        google_accommodation_place_suggestions(query, area, limit=limit, use_city_bias=enrich)
+        if google_enabled and not backend_only and not enrich and len(area) >= 3
+        else []
+    )
+    enrichment_query = area or query
+    google_refreshed_metro = (
+        refresh_accommodation_location_cache(enrichment_query, force=True, include_nearby_areas=False)
+        if google_enabled and not backend_only and enrich
+        else ""
+    )
+    metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(enrichment_query)
     fallback_from_group = False
     if not metro_name:
         metro_name = accommodation_metro_name_from_place(query) if query else "Denver Metro Area"
@@ -20286,12 +20256,18 @@ def accommodation_location_options(query: str, area: str = "", limit: int = 18, 
             if value and keep_mobile_accommodation_suggestion(value) and value not in merged:
                 merged.append(value)
         suggested = merged
-    point = accommodation_location_point(query or metro_name, metro_name, allow_refresh=False)
+    point = accommodation_location_point(enrichment_query or metro_name, metro_name, allow_refresh=False)
     return {
         "ok": True,
         "metro": metro_name,
         "selectedLocation": dedupe_repeated_location_label(str(point.get("label") or query or metro_name)),
-        "cities": accommodation_city_suggestions(query, include_google=not backend_only),
+        "cities": accommodation_city_suggestions(
+            query,
+            # Once an area is being typed, the caller already has its city.
+            # The mobile UI suppresses a replacement city list in that state,
+            # so a second Places autocomplete request has no user value.
+            include_google=not backend_only and not enrich and not area and len(query) >= 3,
+        ),
         "suggested": suggested[:limit],
         "zips": zips[:12],
         "lat": float(point.get("lat") or 0),
@@ -30458,26 +30434,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
 
     def api_explorer_city_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
-        params = urllib.parse.parse_qs(parsed.query)
-        city = normalize_accommodation_place_label((params.get("city") or [""])[0])
-        country = normalize_accommodation_place_label((params.get("country") or [""])[0])
-        if not city or len(city) > 120 or len(country) > 80:
-            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
-            return
-        if not re.fullmatch(r"[\w\s.,'&()-]+", city, flags=re.UNICODE) or (
-            country and not re.fullmatch(r"[\w\s.,'&()-]+", country, flags=re.UNICODE)
-        ):
-            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
-            return
-        photo_reference = google_city_photo_reference(city, country or city)
-        if not photo_reference:
-            self.send_json({"ok": False, "message": "City photo is not available."}, 404)
-            return
-        photo_query = urllib.parse.urlencode({"ref": photo_reference})
-        self.api_explorer_place_photo(
-            urllib.parse.ParseResult(parsed.scheme, parsed.netloc, "/api/explorer/place-photo", "", photo_query, ""),
-            head_only=head_only,
-        )
+        # City cards now use FairFares listing data and bundled artwork. Keep
+        # this retired legacy endpoint network-free so an old app build cannot
+        # trigger a Text Search merely to decorate a fallback city card.
+        self.send_json({"ok": False, "message": "City photos are no longer provided."}, 404)
 
     def api_explorer_config_status(self) -> None:
         self.send_json({"ok": True, "explorer": explorer_config_status()})
@@ -39009,19 +38969,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         query = (params.get("city", params.get("q", [""]))[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
+        enrich = str((params.get("enrich", ["0"])[0] or "0")).strip().lower() in {"1", "true", "yes"}
         if not query:
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
         # Place autocomplete helps members enter a real city, neighborhood, or
         # landmark. The later housing results and rent graphs are still drawn
         # only from active FairFares property listings.
-        self.send_json(accommodation_location_options(query, area, limit=18))
+        self.send_json(accommodation_location_options(query, area, limit=18, enrich=enrich))
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
         city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         query = clean_text_value((params.get("q", params.get("query", [""]))[0] or ""), 180)
         place_id = clean_text_value((params.get("placeId", [""])[0] or ""), 256)
+        session_token = clean_text_value((params.get("sessionToken", [""])[0] or ""), 64)
         try:
             limit = int(params.get("limit", ["10"])[0] or 10)
         except ValueError:
@@ -39034,7 +38996,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact, place_id=place_id if resolve_exact else ""),
+                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact, place_id=place_id if resolve_exact else "", session_token=session_token),
                 "placesEnabled": bool(
                     os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
@@ -39190,7 +39152,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type if content_type.startswith("image/") else "image/png")
             self.send_header("Content-Length", str(len(image)))
-            self.send_header("Cache-Control", "private, no-store")
+            # The map URL already includes a coarse location and station set.
+            # Reusing this private image for the same ten-minute fuel result
+            # avoids paying for an identical Static Maps render on reopen.
+            self.send_header("Cache-Control", "private, max-age=600")
             self.end_headers()
             self.wfile.write(image)
         except Exception as exc:
@@ -39539,12 +39504,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     accepted = con.execute(
                         """
                         SELECT notifications.*, notifications.id AS dispatch_notification_id, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
-                               driver_profiles.license_plate AS driver_license_plate,
-                               driver_profiles.license_state AS driver_license_state
+                               driver_posts.license_plate AS driver_license_plate,
+                               driver_posts.license_state AS driver_license_state
                         FROM ride_dispatch_notifications notifications
                         JOIN users ON users.id = notifications.driver_user_id
                         JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
-                        LEFT JOIN ride_driver_profiles driver_profiles ON driver_profiles.user_id = notifications.driver_user_id
                         WHERE notifications.request_ride_post_id = ?
                           AND notifications.status IN ('ACCEPTED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
                         ORDER BY datetime(notifications.responded_at) DESC
@@ -39924,14 +39888,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         rider_longitude = float(row_value(dispatch, "rider_origin_lng") or 0)
         trip: dict[str, object] | None = None
         if valid_ride_coordinate_pair(rider_latitude, rider_longitude):
-            routed = google_route_totals([
-                {"lat": float(latitude), "lng": float(longitude)},
-                {"lat": rider_latitude, "lng": rider_longitude},
-            ])
-            if routed:
-                trip = {"distanceMiles": round(routed[0], 1), "etaMinutes": max(1, int(routed[1] or 0)) if routed[1] else None, "source": "ROUTED"}
-            else:
-                trip = {"distanceMiles": round(distance_miles_between(float(latitude), float(longitude), rider_latitude, rider_longitude), 1), "etaMinutes": None, "source": "STRAIGHT_LINE"}
+            trip = live_ride_route_summary(
+                int(row_value(dispatch, "id") or 0),
+                float(latitude),
+                float(longitude),
+                rider_latitude,
+                rider_longitude,
+            )
         self.send_json({
             "ok": True,
             "available": True,
@@ -40815,18 +40778,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "Pickup date must not be in the past."}, 400)
                 return
         if ride_type == "CARPOOL_OFFER":
-            profile = get_ride_driver_profile(int(row_value(user, "id") or 0))
-            if not profile.get("readyForOffers"):
-                missing = ", ".join(str(item) for item in profile.get("missing", [])[:3])
-                self.send_json(
-                    {
-                        "ok": False,
-                        "error": f"Complete your driver profile before listing seats{': ' + missing if missing else ''}.",
-                        "profile": profile,
-                    },
-                    400,
-                )
-                return
             if not vehicle_make_model:
                 self.send_json({"ok": False, "error": "Vehicle make/model is required for this ride listing."}, 400)
                 return

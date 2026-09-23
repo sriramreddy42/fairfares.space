@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GasFuelType, GasPriceResponse } from "../types";
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+const MAX_CACHE_AGE_MS = 10 * 60 * 1000;
 
 type GasCache = {
   version: number;
@@ -24,12 +25,19 @@ function cacheKey(fuel: GasFuelType) {
   return `fairfares.gas.last-opened.v${CACHE_VERSION}.${fuel}`;
 }
 
-export async function readGasCache(fuel: GasFuelType, near?: Coordinates, maxDistanceMiles = 5): Promise<GasPriceResponse | null> {
+export async function readGasCache(
+  fuel: GasFuelType,
+  near?: Coordinates,
+  maxDistanceMiles = 5,
+  maxAgeMs = MAX_CACHE_AGE_MS,
+): Promise<GasPriceResponse | null> {
   try {
     const raw = await AsyncStorage.getItem(cacheKey(fuel));
     if (!raw) return null;
     const cached = JSON.parse(raw) as GasCache;
     if (cached.version !== CACHE_VERSION || !cached.response?.ok) return null;
+    const savedAt = Date.parse(cached.savedAt || "");
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > maxAgeMs) return null;
     if (near && (!cached.response.center || coordinateDistanceMiles(cached.response.center, near) > maxDistanceMiles)) return null;
     return cached.response;
   } catch {

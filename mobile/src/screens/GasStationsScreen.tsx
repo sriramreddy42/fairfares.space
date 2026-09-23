@@ -137,6 +137,10 @@ export function GasStationsScreen({ onBack }: Props) {
         setStations(cached.stations || []);
         setShowingCached(true);
         restoredCache = true;
+        // Nearby fuel results are already location-validated and recent.
+        // Reopening this screen must not issue another Places request until
+        // the user explicitly refreshes or the ten-minute cache expires.
+        return;
       } else if (!refresh) {
         // Keep the loading surface empty rather than presenting cards from a
         // stale city while the current-location request is in flight.
@@ -167,7 +171,10 @@ export function GasStationsScreen({ onBack }: Props) {
   useEffect(() => { void load(false, fuel); }, [fuel]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { requestGeneration.current += 1; }, []);
 
-  const mapUrl = useMemo(() => position ? nearbyGasMapUrl(position.latitude, position.longitude, stations) : "", [position, stations]);
+  const mapUrl = useMemo(
+    () => position && !loading ? nearbyGasMapUrl(position.latitude, position.longitude, stations) : "",
+    [loading, position, stations],
+  );
   // Determine the highlight locally instead of trusting provider/cache order.
   // This keeps the badge correct if a future response arrives unsorted.
   const lowestId = stations.reduce<{ id: string; price: number } | null>((lowest, station) => {

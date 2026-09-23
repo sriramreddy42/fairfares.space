@@ -1096,6 +1096,7 @@
           if (payload.mapsEnabled && !window.FAIRFARES_MAP_LOAD_FAILED && attempt < 20) {
             mapCanvas.classList.remove("is-fallback");
             mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Connecting housing pins and distance circles.</span>";
+            if (attempt === 0) window.loadFairFaresMaps?.().catch(() => undefined);
             window.setTimeout(() => renderHousingMap(attempt + 1), 350);
             return;
           }
@@ -1233,7 +1234,27 @@
           closeMapDetailModal();
         }
       });
-      renderHousingMap();
+      // Maps JS is billed when it loads. Keep the useful listing preview in
+      // place and request Maps only as this section approaches the viewport.
+      const startHousingMapWhenVisible = () => {
+        if (!mapSection || !("IntersectionObserver" in window)) {
+          renderHousingMap();
+          return;
+        }
+        const observer = new IntersectionObserver((entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          observer.disconnect();
+          renderHousingMap();
+        }, { rootMargin: "240px 0px" });
+        observer.observe(mapSection);
+      };
+      const initialMapPayload = document.getElementById("housingMapPayload");
+      try {
+        renderMapFallbackList(JSON.parse(initialMapPayload?.textContent || "{}"), "Map preview");
+      } catch (error) {
+        renderMapFallbackList({ posts: [] }, "Map preview");
+      }
+      startHousingMapWhenVisible();
       if (!form) return;
       const modal = document.querySelector("[data-housing-modal]");
       const postPanel = document.querySelector(".housing-post-panel");

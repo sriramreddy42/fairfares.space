@@ -3116,6 +3116,7 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
     const mapsEnabled = window.FAIRFARES_EXPLORER_MAPS_ENABLED === true;
     if (mapsEnabled && attempt < 20) {
       mapCanvas.innerHTML = "<b>Loading Google Map</b><span>Explorer is connecting your route pins.</span>";
+      if (attempt === 0) window.loadFairFaresMaps?.().catch(() => undefined);
       window.setTimeout(() => renderExplorerGoogleMap(quest, attempt + 1), 350);
       return;
     }
@@ -3164,8 +3165,7 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
       location: { lat: point.lat, lng: point.lng },
       stopover: true,
     }));
-    const service = new google.maps.DirectionsService();
-    explorerDirectionsRenderer = new google.maps.DirectionsRenderer({
+    const renderer = new google.maps.DirectionsRenderer({
       map,
       suppressMarkers: true,
       preserveViewport: true,
@@ -3175,15 +3175,13 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
         strokeWeight: 5,
       },
     });
-    service.route({
-      origin: { lat: origin.lat, lng: origin.lng },
-      destination: { lat: destination.lat, lng: destination.lng },
-      waypoints,
-      optimizeWaypoints: false,
-      travelMode: google.maps.TravelMode.DRIVING,
-    }, (result, status) => {
+    explorerDirectionsRenderer = renderer;
+    const applyDirections = (result, status) => {
+      // A prior route can return after the member changes stops. Never draw
+      // that result onto the newer map instance.
+      if (explorerDirectionsRenderer !== renderer) return;
       if (status === "OK" && result?.routes?.[0]?.legs?.length) {
-        explorerDirectionsRenderer.setDirections(result);
+        renderer.setDirections(result);
         const legs = result.routes[0].legs.map((leg, index) => ({
           from: routePoints[index]?.label || leg.start_address || `Stop ${index}`,
           to: routePoints[index + 1]?.label || leg.end_address || `Stop ${index + 1}`,
@@ -3203,7 +3201,15 @@ function renderExplorerGoogleMap(quest, attempt = 0) {
         });
         renderExplorerRouteDetails(routePoints, buildFallbackRouteLegs(routePoints));
       }
-    });
+    };
+    const service = new google.maps.DirectionsService();
+    service.route({
+      origin: { lat: origin.lat, lng: origin.lng },
+      destination: { lat: destination.lat, lng: destination.lng },
+      waypoints,
+      optimizeWaypoints: false,
+      travelMode: google.maps.TravelMode.DRIVING,
+    }, (result, status) => applyDirections(result, status));
   } else if (routePoints.length > 1) {
     new google.maps.Polyline({
       map,

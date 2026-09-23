@@ -1436,7 +1436,7 @@ function FairFaresApp() {
           setSearchSuggestionMetro("");
         })
         .finally(() => { if (!cancelled) setSearchSuggestionsLoading(false); });
-    }, 300);
+    }, 400);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -1750,7 +1750,7 @@ function FairFaresApp() {
     const requestGeneration = ++housingRequestGenerationRef.current;
     setLoading(true);
     try {
-      const options = await getAccommodationLocationOptions(city, nextArea);
+      const options = await getAccommodationLocationOptions(city, nextArea, true);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       // Preserve the locality chosen in the current city; backend location
       // records only provide the search center and do not replace the choice.
@@ -1801,7 +1801,7 @@ function FairFaresApp() {
       // a newly entered city in another state.
       const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
       const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
-      const options = await getAccommodationLocationOptions(cleanCity, cleanArea);
+      const options = await getAccommodationLocationOptions(cleanCity, cleanArea, true);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       // Keep the place the user typed or selected; backend records do not
       // replace a specific search with a broader location.

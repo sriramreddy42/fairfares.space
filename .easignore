@@ -3,7 +3,11 @@
 .env.local
 .env.*.local
 node_modules/
-.git/
+# Written without a trailing slash on purpose: EAS CLI only drops the .git
+# directory from the uploaded archive when its ignore check matches ".git".
+# With ".git/" the check fails and a ~75 MB shallow-clone packfile is uploaded
+# with every build.
+.git
 
 # Mobile generated outputs and local release archives
 mobile/node_modules/

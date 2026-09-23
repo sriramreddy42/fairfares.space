@@ -596,33 +596,13 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(requested_urls)
         self.assertTrue(all("country%3Aus" not in url and "country:us" not in url for url in requested_urls))
 
-    def test_carpool_popular_places_follow_selected_country(self):
-        google_payload = {
-            "status": "OK",
-            "results": [
-                {
-                    "name": "Kempegowda International Airport",
-                    "formatted_address": "Bengaluru, Karnataka, India",
-                    "geometry": {"location": {"lat": 13.1986, "lng": 77.7066}},
-                },
-                {
-                    "name": "Bengaluru City Railway Station",
-                    "formatted_address": "Bengaluru, Karnataka, India",
-                    "geometry": {"location": {"lat": 12.9788, "lng": 77.5727}},
-                },
-            ],
-        }
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_api_get", return_value=google_payload
-        ) as google_call:
+    def test_carpool_popular_places_follow_selected_country_without_google(self):
+        with patch.object(app, "google_api_get", side_effect=AssertionError("Google must not be called")):
             places = app.google_ride_popular_places("Bengaluru, Karnataka, India", 12.9716, 77.5946)
 
-        self.assertEqual(len(places), 2)
+        self.assertEqual(len(places), 8)
         self.assertTrue(all("India" in str(place["label"]) for place in places))
-        self.assertEqual(places[0]["lat"], 13.1986)
-        requested_url = google_call.call_args.args[0]
-        self.assertIn("Bengaluru", requested_url)
-        self.assertNotIn("country%3Aus", requested_url)
+        self.assertEqual(places[0]["lat"], 12.9716)
 
     @patch.object(
         app,
@@ -1289,7 +1269,6 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(typed_new_york[0]["label"], "New York, NY, USA")
         self.assertFalse(app.ride_known_popular_cities("New York", "Hyderabad, Telangana, India"))
 
-
     def test_housing_area_stats_use_only_active_live_property_listings(self):
         self.insert_filter_post("STATS-CAPITOL-1", city="Denver, CO", rent_min=1200, rent_max=1400)
         self.insert_filter_post("STATS-CAPITOL-2", city="Denver, CO", rent_min=1600, rent_max=0)
@@ -1310,7 +1289,6 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(options["selectedLocation"])
         self.assertFalse(cities.call_args.kwargs["include_google"])
 
-
     def test_mobile_housing_location_autocomplete_uses_google_places(self):
         self.insert_post("LOCATION-LIVE", "Live room", "Denver, CO", "Capitol Hill", 39.7392, -104.9903)
         self.insert_filter_post("LOCATION-NEED", mode="NEED_PLACE", city="Denver, CO", rent_min=900)
@@ -1323,6 +1301,24 @@ class HousingLocationSearchTest(unittest.TestCase):
             options = app.accommodation_location_options("Denver, CO")
         self.assertTrue(options["googlePlacesEnabled"])
         self.assertIn("RiNo, Denver, CO", options["suggested"])
+
+    def test_mobile_housing_typing_does_not_refresh_nearby_places(self):
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "google_accommodation_place_suggestions", return_value=["RiNo, Denver, CO"]
+        ) as suggestions, patch.object(
+            app, "refresh_accommodation_location_cache", side_effect=AssertionError("typing must not refresh locations")
+        ):
+            options = app.accommodation_location_options("Denver, CO", "RiNo")
+        self.assertIn("RiNo, Denver, CO", options["suggested"])
+        suggestions.assert_called_once()
+
+    def test_mobile_housing_committed_search_skips_nearby_text_searches(self):
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "refresh_accommodation_location_cache", return_value="Denver Metro Area"
+        ) as refresh:
+            app.accommodation_location_options("Denver, CO", "RiNo", enrich=True)
+        self.assertEqual(refresh.call_count, 1)
+        self.assertFalse(refresh.call_args.kwargs["include_nearby_areas"])
 
 
 if __name__ == "__main__":

@@ -56,7 +56,8 @@ class SecurityHardeningTest(unittest.TestCase):
         self.assertIn("loading=async", loader)
         self.assertIn("gm_authFailure", loader)
         self.assertIn("fairfares-map-error", loader)
-        self.assertIn("referrerpolicy=\"origin\"", loader)
+        self.assertIn('referrerPolicy="origin"', loader)
+        self.assertIn("loadFairFaresMaps", loader)
 
     def start_server(self):
         server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)

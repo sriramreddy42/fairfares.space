@@ -143,11 +143,89 @@ class RideCarpoolMatchingTest(unittest.TestCase):
                     self.assertEqual(len(resolved), 1)
                     self.assertEqual((resolved[0]["label"], resolved[0]["lat"], resolved[0]["lng"]), (label, lat, lng))
 
+    @patch.object(app, "send_mobile_push_for_users")
+    def test_first_time_driver_can_list_without_profile_or_insurance(self, _mock_push):
+        token = "first-time-driver-token"
+        with app.db() as con:
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, self.driver_id))
+        self.assertFalse(app.get_ride_driver_profile(self.driver_id)["exists"])
+        self.assertNotIn("Insurance provider", app.get_ride_driver_profile(self.driver_id)["missing"])
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = {
+                "rideType": "CARPOOL_OFFER", "city": "Denver, CO",
+                "origin": "Denver, CO", "originLat": 39.7392, "originLng": -104.9903,
+                "destination": "Boulder, CO", "destinationLat": 40.0150, "destinationLng": -105.2705,
+                "pickupDate": "2099-08-02", "pickupTime": "8:00 AM",
+            }
+            status, missing_car = self.request_json(server, "POST", "/api/mobile/rides", token, base)
+            self.assertEqual(status, 400, missing_car)
+            self.assertIn("Vehicle make/model", missing_car["error"])
+            status, posted = self.request_json(server, "POST", "/api/mobile/rides", token, {
+                **base, "vehicleMakeModel": "Toyota Camry", "licensePlate": "TEST123", "licenseState": "CO",
+            })
+            self.assertEqual(status, 201, posted)
+            self.assertEqual(posted["ride"]["role"], "DRIVER")
+            self.assertFalse(app.get_ride_driver_profile(self.driver_id)["exists"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     @patch.object(app, "google_accommodation_place_predictions", return_value=[])
     def test_no_denver_only_airport_suggestion_when_google_is_unavailable(self, _mock_places):
         with patch.object(app, "ride_point", side_effect=fake_ride_point):
             suggestions = app.ride_place_suggestions("Denver, CO", "airport")
         self.assertFalse(any("denver international airport" in item["label"].lower() for item in suggestions))
+
+    def test_generic_airport_search_is_scoped_to_requested_city(self):
+        city = "Hyderabad, Telangana, India"
+        airport = "Rajiv Gandhi International Airport (HYD), Hyderabad, Telangana, India"
+        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
+            app, "google_accommodation_place_predictions",
+            return_value=[{"label": airport, "placeId": "ChIJHyderabadAirport01"}],
+        ) as predictions:
+            results = app.ride_place_suggestions(city, "airport")
+        self.assertEqual(results[0]["label"], airport)
+        self.assertEqual(predictions.call_count, 1)
+        self.assertEqual(predictions.call_args.args[:2], (city, f"airport near {city}"))
+        self.assertFalse(predictions.call_args.kwargs["use_city_bias"])
+
+    def test_generic_airport_search_does_not_retry_unscoped_results(self):
+        city = "Hyderabad, Telangana, India"
+        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
+            app, "google_accommodation_place_predictions", return_value=[]
+        ) as predictions:
+            results = app.ride_place_suggestions(city, "airport")
+        self.assertEqual(results, [])
+        self.assertEqual(predictions.call_count, 1)
+
+    def test_biased_named_place_retries_globally_without_changing_text(self):
+        city = "Denver, CO, USA"
+        airport = "Denver International Airport (DEN), Denver, CO"
+        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
+            app, "google_accommodation_place_predictions",
+            side_effect=[[], [{"label": airport, "placeId": "ChIJDenverAirport01"}]],
+        ) as predictions:
+            results = app.ride_place_suggestions(city, "Denver International Airport")
+        self.assertEqual(results[0]["label"], airport)
+        self.assertEqual([call.kwargs["use_city_bias"] for call in predictions.call_args_list], [True, False])
+        self.assertTrue(all(call.args[1] == "Denver International Airport" for call in predictions.call_args_list))
+
+    def test_biased_ambiguous_place_prioritizes_current_city(self):
+        city = "San Francisco, CA, USA"
+        places = [
+            {"label": "Union Square, Manhattan, New York, NY", "placeId": "ChIJNewYorkUnion01"},
+            {"label": "Union Square, San Francisco, CA", "placeId": "ChIJSanFrancisco01"},
+        ]
+        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
+            app, "google_accommodation_place_predictions", return_value=places
+        ):
+            results = app.ride_place_suggestions(city, "Union Square")
+        self.assertEqual(results[0]["label"], "Union Square, San Francisco, CA")
+        self.assertEqual(len(results), 2)
 
     def test_selected_place_keeps_its_name_and_coordinates_for_any_poi(self):
         examples = (
@@ -1104,19 +1182,10 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         with app.db() as con:
             second_driver_id = self.insert_user(con, "Driver Two", "driver-two@example.com")
             self.insert_ride(con, self.driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
-            accepted_driver_offer = self.insert_ride(con, second_driver_id, "CARPOOL_OFFER", "300 East 17th Ave, Denver, CO", "Colorado Springs, CO")
-            con.execute(
-                """
-                INSERT INTO ride_driver_profiles
-                (user_id, vehicle_make_model, vehicle_year, vehicle_color, license_plate, license_state,
-                 insurance_provider, insurance_policy_last4, service_types, availability_days,
-                 availability_start_time, availability_end_time, seat_count, luggage_space,
-                 max_detour_minutes, max_pickup_distance_miles, review_status)
-                VALUES (?, 'Toyota Camry', '2024', 'Blue', 'LOAD02', 'CO',
-                        'State Farm', '4002', 'CARPOOL_OFFER', 'Mon,Tue,Wed,Thu,Fri',
-                        '7:00 AM', '7:00 PM', 4, '1 small bag', 25, 15, 'APPROVED')
-                """,
-                (second_driver_id,),
+            accepted_driver_offer = self.insert_ride(
+                con, second_driver_id, "CARPOOL_OFFER",
+                "300 East 17th Ave, Denver, CO", "Colorado Springs, CO",
+                license_plate="LOAD02", license_state="CO",
             )
             request = self.insert_ride(con, self.rider_id, "CARPOOL_REQUEST", "Littleton, CO", "Colorado Springs, CO")
             with patch.object(app, "google_route_totals", return_value=None):
@@ -1292,6 +1361,8 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertIn("trip", visible)
             self.assertIsNotNone(visible["trip"])
             self.assertGreater(float(visible["trip"]["distanceMiles"]), 0)
+            # A route provider may be unavailable; the API may expose a
+            # direct distance in that case but must not fabricate an ETA.
             if visible["trip"]["source"] == "STRAIGHT_LINE":
                 self.assertIsNone(visible["trip"]["etaMinutes"])
             else:
@@ -1403,19 +1474,18 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertEqual(requested["dispatch"]["notifiedCount"], 0)
             mock_push.assert_not_called()
 
-            with patch.object(app, "get_ride_driver_profile", return_value={"readyForOffers": True}):
-                status, offered = self.request_json(server, "POST", "/api/mobile/rides", driver_token, {
-                    "rideType": "CARPOOL_OFFER", "city": "Denver, CO",
-                    "origin": "300 East 17th Ave, Denver, CO",
-                    "originLat": POINTS["300 East 17th Ave, Denver, CO"]["lat"],
-                    "originLng": POINTS["300 East 17th Ave, Denver, CO"]["lng"],
-                    "destination": "Colorado Springs, CO",
-                    "destinationLat": POINTS["Colorado Springs, CO"]["lat"],
-                    "destinationLng": POINTS["Colorado Springs, CO"]["lng"],
-                    "pickupDate": "2099-08-02", "pickupTime": "8:00 AM",
-                    "maxDetourMinutes": 100, "maxPickupDistanceMiles": 50,
-                    "vehicleMakeModel": "Test Car", "licensePlate": "TEST123", "licenseState": "CO",
-                })
+            status, offered = self.request_json(server, "POST", "/api/mobile/rides", driver_token, {
+                "rideType": "CARPOOL_OFFER", "city": "Denver, CO",
+                "origin": "300 East 17th Ave, Denver, CO",
+                "originLat": POINTS["300 East 17th Ave, Denver, CO"]["lat"],
+                "originLng": POINTS["300 East 17th Ave, Denver, CO"]["lng"],
+                "destination": "Colorado Springs, CO",
+                "destinationLat": POINTS["Colorado Springs, CO"]["lat"],
+                "destinationLng": POINTS["Colorado Springs, CO"]["lng"],
+                "pickupDate": "2099-08-02", "pickupTime": "8:00 AM",
+                "maxDetourMinutes": 100, "maxPickupDistanceMiles": 50,
+                "vehicleMakeModel": "Test Car", "licensePlate": "TEST123", "licenseState": "CO",
+            })
             self.assertEqual(status, 201, offered)
             self.assertEqual(offered["dispatch"]["matchedRequestCount"], 1)
             mock_push.assert_called_once()
@@ -1435,6 +1505,11 @@ class RideCarpoolMatchingTest(unittest.TestCase):
     def test_missing_carpool_city_does_not_fall_back_to_denver(self, _mock_places):
         suggestions = app.ride_place_suggestions("", "unin", limit=10)
         self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))
+
+    def test_short_ride_location_query_never_calls_google_places(self):
+        with patch.object(app, "google_accommodation_place_predictions", side_effect=AssertionError("short input must stay local")):
+            suggestions = app.ride_place_suggestions("Denver, CO", "De")
+        self.assertTrue(all("denver" in str(item.get("label") or "").lower() for item in suggestions))
 
     @patch.object(app, "google_accommodation_geocode")
     def test_ride_exact_resolve_prefers_typed_address_over_stale_city_bias(self, mock_geocode):
