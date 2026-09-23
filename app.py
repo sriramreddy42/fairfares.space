@@ -34,6 +34,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from html.parser import HTMLParser
 from pathlib import Path
 from string import Template
+from typing import Iterable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -13089,6 +13090,46 @@ def user_rating_summary(user_id: int) -> dict[str, object]:
     }
 
 
+def user_rating_summaries(con: sqlite3.Connection, user_ids: Iterable[int]) -> dict[int, dict[str, object]]:
+    """Load rating badges for a collection of people in two aggregate queries."""
+    ids = sorted({int(user_id) for user_id in user_ids if int(user_id or 0) > 0})
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    summaries = {user_id: {"average": 0, "count": 0, "label": "New member"} for user_id in ids}
+    try:
+        member_rows = con.execute(
+            f"""
+            SELECT reviewed_user_id AS user_id, SUM(score) AS score_total, COUNT(*) AS rating_count
+            FROM user_ratings
+            WHERE status = 'PUBLISHED' AND reviewed_user_id IN ({placeholders})
+            GROUP BY reviewed_user_id
+            """,
+            ids,
+        ).fetchall()
+        ride_rows = con.execute(
+            f"""
+            SELECT rated_user_id AS user_id, SUM(score) AS score_total, COUNT(*) AS rating_count
+            FROM ride_ratings
+            WHERE rated_user_id IN ({placeholders})
+            GROUP BY rated_user_id
+            """,
+            ids,
+        ).fetchall()
+    except sqlite3.Error:
+        return summaries
+    totals: dict[int, tuple[float, int]] = {}
+    for row in [*member_rows, *ride_rows]:
+        user_id = int(row_value(row, "user_id") or 0)
+        score, count = totals.get(user_id, (0.0, 0))
+        totals[user_id] = (score + float(row_value(row, "score_total") or 0), count + int(row_value(row, "rating_count") or 0))
+    for user_id, (score, count) in totals.items():
+        if count > 0:
+            average = round(score / count, 1)
+            summaries[user_id] = {"average": average, "count": count, "label": f"{average:.1f} ({count})"}
+    return summaries
+
+
 def can_rate_chat_member(conversation_public_id: str, reviewer_user_id: int, reviewed_user_id: int) -> bool:
     conversation_public_id = clean_text_value(conversation_public_id, 80)
     reviewer_user_id = int(reviewer_user_id or 0)
@@ -18617,6 +18658,7 @@ def mobile_ride_payload(
     destination_point: dict[str, object] | None = None,
     allow_google_routes: bool = True,
     include_private_vehicle: bool = False,
+    owner_rating_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
     origin_point = origin_point or {}
     destination_point = destination_point or {}
@@ -18646,7 +18688,7 @@ def mobile_ride_payload(
         "ownerUserId": owner_user_id,
         "ownerName": owner_name,
         "ownerPhotoUrl": avatar_delivery_path(owner_photo, owner_user_id),
-        "ownerRatingSummary": user_rating_summary(owner_user_id),
+        "ownerRatingSummary": owner_rating_summary if owner_rating_summary is not None else user_rating_summary(owner_user_id),
         "title": row_value(row, "title"),
         "origin": row_value(row, "origin_label"),
         "originLat": float(row_value(row, "origin_lat") or 0) or None,
@@ -18836,10 +18878,23 @@ def mobile_ride_posts(
     values.extend([candidate_limit, candidate_offset])
     with db() as con:
         rows = con.execute(sql, values).fetchall()
+        owner_ratings = user_rating_summaries(
+            con,
+            [int(row_value(row, "user_id") or 0) for row in rows],
+        )
     # Search results must not fan out into sequential Google Directions calls.
     # Fast coordinate estimates shortlist candidates; dispatch performs the
     # detailed route validation when a rider actually requests a match.
-    payloads = [mobile_ride_payload(row, origin_point, destination_point, allow_google_routes=False) for row in rows]
+    payloads = [
+        mobile_ride_payload(
+            row,
+            origin_point,
+            destination_point,
+            allow_google_routes=False,
+            owner_rating_summary=owner_ratings.get(int(row_value(row, "user_id") or 0)),
+        )
+        for row in rows
+    ]
     if origin or destination:
         if route_search:
             route_filtered = []
@@ -39520,20 +39575,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             own_rows = con.execute(
                 """
-                SELECT ride_posts.*,
-                       (
-                           SELECT COUNT(*)
-                           FROM ride_dispatch_notifications
-                           WHERE ride_dispatch_notifications.request_ride_post_id = ride_posts.id
-                       ) AS dispatch_notified_count,
-                       (
-                           SELECT MIN(radius_miles)
-                           FROM ride_dispatch_notifications
-                           WHERE ride_dispatch_notifications.request_ride_post_id = ride_posts.id
-                       ) AS dispatch_nearest_radius
+                SELECT ride_posts.*, users.name AS owner_name, users.profile_photo_url AS owner_photo,
+                       COUNT(notifications.id) AS dispatch_notified_count,
+                       MIN(notifications.radius_miles) AS dispatch_nearest_radius
                 FROM ride_posts
-                WHERE user_id = ?
-                ORDER BY datetime(created_at) DESC
+                JOIN users ON users.id = ride_posts.user_id
+                LEFT JOIN ride_dispatch_notifications notifications
+                    ON notifications.request_ride_post_id = ride_posts.id
+                WHERE ride_posts.user_id = ?
+                GROUP BY ride_posts.id
+                ORDER BY datetime(ride_posts.created_at) DESC
                 LIMIT 80
                 """,
                 (user_id,),
@@ -39559,10 +39610,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        driver_posts.destination_lat AS matched_route_destination_lat,
                        driver_posts.destination_lng AS matched_route_destination_lng,
                        driver_posts.contribution_per_seat AS matched_contribution_per_seat,
-                       driver_posts.status AS matched_driver_status
+                       driver_posts.status AS matched_driver_status,
+                       rider_users.name AS owner_name,
+                       rider_users.profile_photo_url AS owner_photo
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
                 JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
+                JOIN users rider_users ON rider_users.id = requests.user_id
                 WHERE notifications.driver_user_id = ?
                 ORDER BY datetime(notifications.notified_at) DESC
                 LIMIT 80
@@ -39570,29 +39624,66 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (user_id,),
             ).fetchall()
 
+            owner_ratings = user_rating_summaries(
+                con,
+                [int(row_value(row, "user_id") or 0) for row in [*own_rows, *incoming_rows]],
+            )
+            rider_request_ids = [int(row_value(row, "id") or 0) for row in own_rows if row_value(row, "rider_role") == "RIDER"]
+            accepted_by_request: dict[int, sqlite3.Row] = {}
+            if rider_request_ids:
+                request_placeholders = ",".join("?" for _ in rider_request_ids)
+                accepted_rows = con.execute(
+                    f"""
+                    SELECT notifications.*, notifications.id AS dispatch_notification_id,
+                           users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
+                           driver_posts.license_plate AS driver_license_plate,
+                           driver_posts.license_state AS driver_license_state
+                    FROM ride_dispatch_notifications notifications
+                    JOIN users ON users.id = notifications.driver_user_id
+                    JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
+                    WHERE notifications.request_ride_post_id IN ({request_placeholders})
+                      AND notifications.status IN ('ACCEPTED', 'DECLINED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
+                    ORDER BY datetime(notifications.responded_at) DESC
+                    """,
+                    rider_request_ids,
+                ).fetchall()
+                for accepted in accepted_rows:
+                    accepted_by_request.setdefault(int(row_value(accepted, "request_ride_post_id") or 0), accepted)
+                owner_ratings.update(user_rating_summaries(
+                    con,
+                    [int(row_value(row, "driver_user_id") or 0) for row in accepted_by_request.values()],
+                ))
+
+            rating_notification_ids = [
+                int(row_value(row, "dispatch_notification_id") or 0)
+                for row in [*accepted_by_request.values(), *incoming_rows]
+                if int(row_value(row, "dispatch_notification_id") or 0) > 0
+            ]
+            ratings_by_notification: dict[int, int] = {}
+            if rating_notification_ids:
+                rating_placeholders = ",".join("?" for _ in rating_notification_ids)
+                rating_rows = con.execute(
+                    f"SELECT dispatch_notification_id, score FROM ride_ratings WHERE rater_user_id = ? AND dispatch_notification_id IN ({rating_placeholders})",
+                    [user_id, *rating_notification_ids],
+                ).fetchall()
+                ratings_by_notification = {
+                    int(row_value(row, "dispatch_notification_id") or 0): int(row_value(row, "score") or 0)
+                    for row in rating_rows
+                }
+
             rides: list[dict[str, object]] = []
             seen: set[str] = set()
             for row in own_rows:
-                payload = mobile_ride_payload(row, include_private_vehicle=True)
+                payload = mobile_ride_payload(
+                    row,
+                    include_private_vehicle=True,
+                    owner_rating_summary=owner_ratings.get(int(row_value(row, "user_id") or 0)),
+                )
                 payload["activityRole"] = "MINE"
                 payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
                 payload["dispatchNearestRadius"] = int(row_value(row, "dispatch_nearest_radius") or 0)
                 if row_value(row, "rider_role") == "RIDER":
-                    accepted = con.execute(
-                        """
-                        SELECT notifications.*, notifications.id AS dispatch_notification_id, users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
-                               driver_posts.license_plate AS driver_license_plate,
-                               driver_posts.license_state AS driver_license_state
-                        FROM ride_dispatch_notifications notifications
-                        JOIN users ON users.id = notifications.driver_user_id
-                        JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
-                        WHERE notifications.request_ride_post_id = ?
-                          AND notifications.status IN ('ACCEPTED', 'DECLINED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
-                        ORDER BY datetime(notifications.responded_at) DESC
-                        LIMIT 1
-                        """,
-                        (int(row_value(row, "id") or 0),),
-                    ).fetchone()
+                    accepted = accepted_by_request.get(int(row_value(row, "id") or 0))
                     if accepted:
                         driver_user_id = int(row_value(accepted, "driver_user_id") or 0)
                         payload["dispatchStatus"] = row_value(accepted, "status") or "ACCEPTED"
@@ -39616,19 +39707,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             )
                         payload["ownerUserId"] = driver_user_id
                         payload["ownerName"] = row_value(accepted, "driver_name") or "Driver"
+                        payload["ownerRatingSummary"] = owner_ratings.get(driver_user_id, {"average": 0, "count": 0, "label": "New member"})
                         if str(payload["dispatchStatus"]).upper() in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
                             payload["pickupPin"] = ride_pickup_pin(str(payload.get("id") or ""), driver_user_id)
-                            own_rating = con.execute(
-                                "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
-                                (int(row_value(accepted, "id") or 0), user_id),
-                            ).fetchone()
-                            payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
+                            payload["myRating"] = ratings_by_notification.get(int(row_value(accepted, "dispatch_notification_id") or 0), 0)
                 public_id = str(payload.get("id") or "")
                 if public_id:
                     seen.add(public_id)
                 rides.append(payload)
             for row in incoming_rows:
-                payload = mobile_ride_payload(row)
+                payload = mobile_ride_payload(
+                    row,
+                    owner_rating_summary=owner_ratings.get(int(row_value(row, "user_id") or 0)),
+                )
                 public_id = str(payload.get("id") or "")
                 dispatch_status = str(row_value(row, "dispatch_status") or "PENDING").upper()
                 # A pending request is actionable only while both sides of the
@@ -39668,11 +39759,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["matchedContributionPerSeat"] = float(row_value(row, "matched_contribution_per_seat") or 0)
                 if str(payload["dispatchStatus"]) in {"ACCEPTED", "EN_ROUTE", "ARRIVED", "COMPLETED"}:
                     payload["pickupPin"] = ride_pickup_pin(public_id, user_id)
-                own_rating = con.execute(
-                    "SELECT score FROM ride_ratings WHERE dispatch_notification_id = ? AND rater_user_id = ? LIMIT 1",
-                    (int(row_value(row, "dispatch_notification_id") or 0), user_id),
-                ).fetchone()
-                payload["myRating"] = int(row_value(own_rating, "score") or 0) if own_rating else 0
+                payload["myRating"] = ratings_by_notification.get(int(row_value(row, "dispatch_notification_id") or 0), 0)
                 rides.append(payload)
         rides.sort(key=lambda item: str(item.get("createdAt") or item.get("dispatchNotifiedAt") or ""), reverse=True)
         self.send_json({"ok": True, "rides": rides[:100]})
