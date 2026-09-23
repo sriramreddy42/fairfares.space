@@ -7449,15 +7449,20 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       <View pointerEvents="none" style={styles.threadBackPreview} accessibilityElementsHidden>
         <View style={styles.threadBackPreviewHeader}>
           <Image source={appAssets.chittiMascot} style={styles.threadBackPreviewMascot} resizeMode="contain" />
-          <Text style={styles.threadBackPreviewTitle}>Chitthi</Text>
+          <Image source={appAssets.chittiLettersGold} style={styles.threadBackPreviewBrand} resizeMode="contain" />
+          <View style={styles.threadBackPreviewHeaderActions}><Text style={styles.threadBackPreviewDots}>•••</Text><Text style={styles.threadBackPreviewCompose}>✐</Text></View>
         </View>
+        <View style={styles.threadBackPreviewSearch}><Text style={styles.threadBackPreviewSearchText}>Search people, groups, or messages</Text></View>
+        <View style={styles.threadBackPreviewTabs}>{(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => <View key={item} style={[styles.threadBackPreviewTab, item === tab && styles.threadBackPreviewTabActive]}><Text style={[styles.threadBackPreviewTabText, item === tab && styles.threadBackPreviewTabTextActive]}>{item}</Text></View>)}</View>
         <View style={styles.threadBackPreviewList}>
-          {personConversations.slice(0, 5).map((conversation) => <View key={conversation.id} style={styles.threadBackPreviewRow}>
+          {personConversations.slice(0, 9).map((conversation) => <View key={conversation.id} style={styles.threadBackPreviewRow}>
             <InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject || "F"} imageStyle={styles.threadBackPreviewAvatar} textStyle={styles.threadBackPreviewAvatarText} />
             <View style={styles.threadBackPreviewCopy}>
-              <Text style={styles.threadBackPreviewName} numberOfLines={1}>{conversation.otherName || conversation.subject || "Chitthi"}</Text>
+              <View style={styles.threadBackPreviewNameLine}><Text style={styles.threadBackPreviewName} numberOfLines={1}>{conversation.otherName || conversation.subject || "Chitthi"}</Text>{conversation.otherRatingSummary?.count ? <Text style={styles.threadBackPreviewRating}>⭐ {conversation.otherRatingSummary.label}</Text> : null}</View>
               <Text style={styles.threadBackPreviewMessage} numberOfLines={1}>{safeConversationPreview(conversation) || "Start a conversation"}</Text>
+              <Text style={styles.threadBackPreviewKind} numberOfLines={1}>{conversation.rideRoute ? `Direct letters · ${conversation.rideRoute}` : "Direct letters"}</Text>
             </View>
+            <Text style={styles.threadBackPreviewTime}>{relativeTime(conversation.lastMessageAt || "") || "Now"}</Text>
           </View>)}
         </View>
       </View>
@@ -8806,16 +8811,30 @@ const styles = StyleSheet.create({
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
   threadTransitionRoot: { flex: 1, backgroundColor: "#f3f4f6", position: "relative", overflow: "hidden" },
   threadBackPreview: { ...StyleSheet.absoluteFillObject, backgroundColor: "#f3f4f6", paddingTop: Platform.OS === "ios" ? 48 : 18 },
-  threadBackPreviewHeader: { minHeight: 62, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.09)" },
-  threadBackPreviewMascot: { width: 31, height: 38 },
-  threadBackPreviewTitle: { color: "#10211c", fontSize: 22, fontWeight: "900" },
-  threadBackPreviewList: { paddingHorizontal: 12, paddingTop: 8, gap: 3 },
-  threadBackPreviewRow: { minHeight: 67, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.07)" },
-  threadBackPreviewAvatar: { width: 42, height: 42, borderRadius: 21 },
-  threadBackPreviewAvatarText: { color: "#165f46", fontSize: 12, fontWeight: "900" },
-  threadBackPreviewCopy: { flex: 1, minWidth: 0, gap: 3 },
-  threadBackPreviewName: { color: "#17211e", fontSize: 14, fontWeight: "800" },
-  threadBackPreviewMessage: { color: "#69766f", fontSize: 11, fontWeight: "600" },
+  threadBackPreviewHeader: { minHeight: 72, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.07)" },
+  threadBackPreviewMascot: { width: 36, height: 46 },
+  threadBackPreviewBrand: { flex: 1, height: 52, marginLeft: 24, marginRight: 14 },
+  threadBackPreviewHeaderActions: { flexDirection: "row", alignItems: "center", gap: 14 },
+  threadBackPreviewDots: { color: "#176a50", fontSize: 18, letterSpacing: 1 },
+  threadBackPreviewCompose: { color: "#467b69", fontSize: 22, fontWeight: "700" },
+  threadBackPreviewSearch: { height: 58, marginHorizontal: 15, marginTop: 13, marginBottom: 10, borderRadius: 29, backgroundColor: "#fff", justifyContent: "center", paddingHorizontal: 20, shadowColor: "#10211c", shadowOpacity: 0.07, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  threadBackPreviewSearchText: { color: "#7b817e", fontSize: 16, fontWeight: "600" },
+  threadBackPreviewTabs: { height: 47, paddingHorizontal: 9, gap: 7, flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.46)" },
+  threadBackPreviewTab: { flex: 1, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.94)", justifyContent: "center", alignItems: "center" },
+  threadBackPreviewTabActive: { backgroundColor: "#dcf4e9" },
+  threadBackPreviewTabText: { color: "#858a87", fontSize: 10, fontWeight: "800" },
+  threadBackPreviewTabTextActive: { color: "#176a50" },
+  threadBackPreviewList: { paddingTop: 4 },
+  threadBackPreviewRow: { minHeight: 72, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.07)", backgroundColor: "rgba(255,255,255,0.42)" },
+  threadBackPreviewAvatar: { width: 50, height: 50, borderRadius: 25 },
+  threadBackPreviewAvatarText: { color: "#165f46", fontSize: 14, fontWeight: "900" },
+  threadBackPreviewCopy: { flex: 1, minWidth: 0, gap: 2 },
+  threadBackPreviewNameLine: { flexDirection: "row", alignItems: "center", gap: 6 },
+  threadBackPreviewName: { flexShrink: 1, color: "#17211e", fontSize: 16, fontWeight: "900" },
+  threadBackPreviewRating: { color: "#aa7721", fontSize: 9, fontWeight: "900", backgroundColor: "#fff2ca", borderRadius: 9, paddingHorizontal: 5, paddingVertical: 2 },
+  threadBackPreviewMessage: { color: "#707975", fontSize: 13, fontWeight: "500" },
+  threadBackPreviewKind: { color: "#92a09a", fontSize: 10, fontWeight: "700" },
+  threadBackPreviewTime: { alignSelf: "flex-start", marginTop: 14, color: "#86908b", fontSize: 11, fontWeight: "700" },
   threadScreen: { flex: 1, backgroundColor: "#D9E5DD", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
   threadScreenAndroid: { paddingBottom: 0 },
   threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
