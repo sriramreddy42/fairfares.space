@@ -999,6 +999,17 @@ function isFairFaresInviteUrl(value: string) {
   }
 }
 
+function isFairFaresShareUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "fairfare.space" && host !== "www.fairfare.space" && host !== "fairfares.onrender.com") return false;
+    return ["/accommodations/open", "/carpool/open", "/community/open"].includes(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function websiteCardDetails(value: string) {
   try {
     const parsed = new URL(value);
@@ -1060,7 +1071,7 @@ function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; 
   </View>;
 }
 
-function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: string; mine: boolean; onOpen: () => void; onFaviconResolved?: (url: string, available: boolean) => void }) {
+function WebsitePreviewCard({ url, mine, edgeToEdge = false, onOpen, onFaviconResolved }: { url: string; mine: boolean; edgeToEdge?: boolean; onOpen: () => void; onFaviconResolved?: (url: string, available: boolean) => void }) {
   const details = websiteCardDetails(url);
   const [preview, setPreview] = useState<ChatLinkPreview | null>(null);
   const [previewImageFailed, setPreviewImageFailed] = useState(false);
@@ -1149,7 +1160,7 @@ function WebsitePreviewCard({ url, mine, onOpen, onFaviconResolved }: { url: str
   if (!isFairFaresInvitation && !preview?.faviconUrl) return null;
   return (
     <TouchableOpacity
-      style={[styles.websitePreviewCard, mine ? styles.myWebsitePreviewCard : styles.theirWebsitePreviewCard]}
+      style={[styles.websitePreviewCard, edgeToEdge && styles.websitePreviewCardEdgeToEdge, mine ? styles.myWebsitePreviewCard : styles.theirWebsitePreviewCard]}
       onPress={onOpen}
       accessibilityRole="link"
       accessibilityLabel={`Open ${cardTitle}`}
@@ -7805,7 +7816,13 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             const mediaUploadingBatch = mediaUploading && mediaUploadBatchCount > 1;
             const mediaDownloading = downloadingMediaMessageIds.includes(message.id);
             const showGroupSender = !message.mine && isGroupConversation(activeConversation);
+            const isFairFaresShare = Boolean(discoveredUrl && isFairFaresShareUrl(discoveredUrl));
+            // Android's native share sheet can include a listing title and
+            // summary above the URL. The preview already presents that same
+            // authoritative content, so render the link once as one card
+            // instead of repeating its title/body in the chat bubble.
             const visibleMessageText = safeVisibleMessageText(message.text || "");
+            const renderedMessageText = isFairFaresShare ? discoveredUrl : visibleMessageText;
             const emojiOnlyMessage = !isMediaMessage
               && !message.contextTitle
               && !message.replyToMessageId
@@ -7836,7 +7853,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, mediaGroup.length > 1 && styles.stackedMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, isFairFaresShare && styles.fairFaresShareBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, mediaGroup.length > 1 && styles.stackedMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds && !emojiOnlyMessage && !isMediaMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
@@ -7942,14 +7959,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     </View>
                   </View>
                 ) : null}
-                {visibleMessageText && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
+                {renderedMessageText && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
                   ? <AnimatedEmojiOnlyMessage>{visibleMessageText}</AnimatedEmojiOnlyMessage>
-                  : <DiscoveredMessageText message={visibleMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
+                  : <DiscoveredMessageText message={renderedMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
                 ) : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
                     url={discoveredUrl}
                     mine={message.mine}
+                    edgeToEdge={isFairFaresShare}
                     onFaviconResolved={resolveLinkPreviewFavicon}
                     onOpen={() => {
                       if (/community_id=|\/(?:chitthi|fchat)\/group/i.test(discoveredUrl)) {
@@ -9375,6 +9393,7 @@ const styles = StyleSheet.create({
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
   bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 9, paddingRight: 9, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  fairFaresShareBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "88%", padding: 0, overflow: "hidden", borderRadius: 14 },
   emojiOnlyBubble: { minWidth: 0, paddingHorizontal: 2, paddingTop: 0, paddingBottom: 0, borderWidth: 0, shadowOpacity: 0, elevation: 0 },
   photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
@@ -9435,6 +9454,7 @@ const styles = StyleSheet.create({
   myDiscoveredLink: { color: "#DDEFE6" },
   theirDiscoveredLink: { color: "#176A55" },
   websitePreviewCard: { width: CHAT_MEDIA_WIDTH, height: 276, marginTop: 7, marginBottom: 3, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
+  websitePreviewCardEdgeToEdge: { width: "100%", marginTop: 0, marginBottom: 0, borderWidth: 0, borderRadius: 0 },
   myWebsitePreviewCard: { backgroundColor: "rgba(243,233,211,0.96)", borderColor: "rgba(73,87,74,0.22)" },
   theirWebsitePreviewCard: { backgroundColor: "#E7DBC1", borderColor: "#D1C19E" },
   websitePreviewImageSlot: { width: "100%", height: 154, overflow: "hidden", backgroundColor: "#D7D8D4" },
