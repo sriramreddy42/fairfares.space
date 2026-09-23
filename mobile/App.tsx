@@ -2828,7 +2828,10 @@ function FairFaresApp() {
           }
           setSelectedNeed("need_place");
           setHousingWelcomeFocusKey((value) => value + 1);
-          setActiveTab("housing");
+          // The Ask Housing topic is a navigation shortcut, not a completed
+          // housing search. Open the same discovery home as the Housing tab;
+          // listing results appear only after the member searches.
+          setActiveTab("home");
         }}
         onOpenRides={(target = "ride", rideId = "") => {
           setRentalFocusKey(0);
