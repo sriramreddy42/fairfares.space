@@ -1421,7 +1421,9 @@ function AdaptiveChatImage({ uri, source, compact = false, onError, imageWidth =
     <Image
       source={source || { uri: imageUri }}
       style={styles.chatImageFill}
-      resizeMode={compact ? "cover" : "contain"}
+      // Chat cards use the same edge-to-edge crop as a multi-file stack.
+      // The full-screen viewer retains the complete original image for zooming.
+      resizeMode="cover"
       onLoad={() => setLoaded(true)}
       onError={onError}
     />
