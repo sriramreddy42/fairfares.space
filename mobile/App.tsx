@@ -412,6 +412,7 @@ function FairFaresApp() {
   const [rideOwnerOpenToken, setRideOwnerOpenToken] = useState(0);
   const [rideOwnerEditId, setRideOwnerEditId] = useState("");
   const [rentalEditBookingId, setRentalEditBookingId] = useState("");
+  const [rentalEditBookingAction, setRentalEditBookingAction] = useState<"balance" | "deposit" | "extension" | "manage">("manage");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
   const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
   appReadyForContentLinksRef.current = !loading && Boolean(data);
@@ -2804,8 +2805,9 @@ function FairFaresApp() {
           setRentalFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
-        onOpenRentalBooking={(bookingId) => {
+        onOpenRentalBooking={(bookingId, action = "manage") => {
           setRentalEditBookingId(bookingId);
+          setRentalEditBookingAction(action);
           setSelectedService("cars");
           setActiveTab("services");
         }}
@@ -2945,7 +2947,8 @@ function FairFaresApp() {
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         editBookingId={rentalEditBookingId}
-        onEditBookingOpened={() => setRentalEditBookingId("")}
+        editBookingAction={rentalEditBookingAction}
+        onEditBookingOpened={() => { setRentalEditBookingId(""); setRentalEditBookingAction("manage"); }}
       />
     ) : activeTab === "housing" || activeTab === "home" ? (
       <HousingScreen

@@ -48,6 +48,7 @@ type Props = {
   onRequireLogin: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   editBookingId?: string;
+  editBookingAction?: "balance" | "deposit" | "extension" | "manage";
   onEditBookingOpened?: () => void;
 };
 
@@ -97,6 +98,7 @@ export function ServicesScreen({
   onOpenProfile,
   onSelect,
   editBookingId = "",
+  editBookingAction = "manage",
   onEditBookingOpened,
 }: Props) {
   const layout = useResponsiveLayout();
@@ -173,9 +175,9 @@ export function ServicesScreen({
     if (!editBookingId || !bookings.some((booking) => booking.id === editBookingId)) return;
     setSelectedBookingId(editBookingId);
     setView("rental");
-    setPanelMode("modify");
+    setPanelMode(editBookingAction === "extension" ? "modify" : null);
     onEditBookingOpened?.();
-  }, [bookings, editBookingId]);
+  }, [bookings, editBookingAction, editBookingId]);
 
   const selectedBooking = useMemo(
     () => bookings.find((booking) => booking.id === selectedBookingId) || bookings[0] || null,

@@ -35,7 +35,7 @@ type Props = {
   onOpenHousing: (postId?: string) => void;
   onOpenRides: (target?: "ride" | "requests") => void;
   onOpenRentalCars: () => void;
-  onOpenRentalBooking: (bookingId: string) => void;
+  onOpenRentalBooking: (bookingId: string, action?: "balance" | "deposit" | "extension" | "manage") => void;
   onOpenGas: () => void;
   gasPriceRefreshKey?: number;
   onOpenCommunity: (communityId: string) => void;
@@ -99,6 +99,7 @@ type CommunityActionNotice = {
   actionLabel: string;
   action: "ride" | "ride-request" | "rental";
   bookingId?: string;
+  rentalAction?: "balance" | "deposit" | "extension" | "manage";
 };
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
@@ -384,6 +385,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           actionLabel: extensionDue ? "Pay extension" : balanceDue ? "Pay full amount" : depositDue ? "Authorize deposit" : rentalInProgress ? "Extend rental" : "Manage rental",
           action: "rental",
           bookingId: actionableBooking.id,
+          rentalAction: extensionDue ? "extension" : balanceDue ? "balance" : depositDue ? "deposit" : rentalInProgress ? "extension" : "manage",
         });
         return;
       }
@@ -1330,7 +1332,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <View style={styles.actionNoticeActions}>
           <TouchableOpacity
             style={styles.actionNoticeButton}
-            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "") : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride")}
+            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "", actionNotice.rentalAction) : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride")}
             accessibilityRole="button"
             accessibilityLabel={actionNotice.actionLabel}
           >
