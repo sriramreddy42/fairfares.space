@@ -187,6 +187,10 @@ const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const ChatPhotoViewerContext = createContext(0);
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
 const CHAT_MEDIA_WIDTH = Math.max(248, Math.min(320, Math.round(Dimensions.get("window").width * 0.78)));
+// A reply needs one stable column for both the quoted message and its answer.
+// Letting either piece determine its own intrinsic width caused the quote to
+// paint beyond a short answer bubble on some iOS and Android layouts.
+const CHAT_REPLY_WIDTH = Math.max(248, Math.min(300, Math.round(Dimensions.get("window").width * 0.78)));
 const CHAT_MEDIA_MIN_HEIGHT = 160;
 const CHAT_MEDIA_MAX_HEIGHT = 430;
 const CHAT_MEDIA_FALLBACK_HEIGHT = Math.round(CHAT_MEDIA_WIDTH * 1.05);
@@ -7853,7 +7857,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                     jumpToRepliedMessage(Number(message.replyToMessageId));
                   }
                 }}
-                style={[styles.bubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, isFairFaresShare && styles.fairFaresShareBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, mediaGroup.length > 1 && styles.stackedMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
+                style={[styles.bubble, Boolean(message.replyToMessageId || message.metadata?.privateReply) && styles.replyBubble, emojiOnlyMessage && styles.emojiOnlyBubble, isMediaMessage && styles.photoBubble, isFairFaresShare && styles.fairFaresShareBubble, message.mine ? styles.myBubble : styles.theirBubble, emojiOnlyMessage && (message.mine ? styles.myEmojiOnlyBubble : styles.theirEmojiOnlyBubble), isMediaMessage && (message.mine ? styles.myPhotoBubble : styles.theirPhotoBubble), isMediaMessage && styles.borderlessMediaBubble, mediaGroup.length > 1 && styles.stackedMediaBubble, isMediaMessage && Boolean(message.replyToMessageId || message.metadata?.forwarded) && styles.replyForwardMediaBubble, selectedMessageIds.includes(messageSelectionKey(message)) && styles.selectedMessageBubble]}
               >
                 {selectedMessageIds.includes(messageSelectionKey(message)) ? <View style={styles.messageSelectionCheck}><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}
                 {messageRunEnds && !emojiOnlyMessage && !isMediaMessage ? <View style={[styles.bubbleTail, message.mine ? styles.myBubbleTail : styles.theirBubbleTail]} /> : null}
@@ -9392,7 +9396,8 @@ const styles = StyleSheet.create({
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
-  bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 9, paddingRight: 9, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 10, paddingRight: 13, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  replyBubble: { width: CHAT_REPLY_WIDTH, maxWidth: "88%", minWidth: 0 },
   fairFaresShareBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "88%", padding: 0, overflow: "hidden", borderRadius: 14 },
   emojiOnlyBubble: { minWidth: 0, paddingHorizontal: 2, paddingTop: 0, paddingBottom: 0, borderWidth: 0, shadowOpacity: 0, elevation: 0 },
   photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
@@ -9433,16 +9438,16 @@ const styles = StyleSheet.create({
   messageContextSubtitle: { fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: "700" },
   myMessageContextSubtitle: { color: "#596273" },
   theirMessageContextSubtitle: { color: "#596273" },
-  quotedReplyTapTarget: { alignSelf: "stretch" },
-  quotedReply: { alignSelf: "stretch", borderLeftWidth: 3, borderRadius: 9, paddingLeft: 9, paddingRight: 8, paddingVertical: 6, marginBottom: 7, minWidth: 190, minHeight: 50, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" },
+  quotedReplyTapTarget: { alignSelf: "stretch", width: "100%", maxWidth: "100%" },
+  quotedReply: { width: "100%", maxWidth: "100%", minWidth: 0, alignSelf: "stretch", borderLeftWidth: 3, borderRadius: 9, paddingLeft: 9, paddingRight: 8, paddingVertical: 6, marginBottom: 7, minHeight: 50, flexDirection: "row", alignItems: "center", gap: 8, overflow: "hidden" },
   myQuotedReply: { borderLeftColor: "#F4D99E", backgroundColor: "rgba(255,255,255,0.14)" },
   theirQuotedReply: { borderLeftColor: "#2B8061", backgroundColor: "rgba(35,97,73,0.10)" },
   quotedReplyName: { color: "#D6A95F", fontSize: 12, fontWeight: "900", marginBottom: 2 },
   quotedReplyText: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
   myQuotedReplyText: { color: "#FFF8E9" },
   theirQuotedReplyText: { color: "#24483C" },
-  quotedReplyCopy: { flex: 1, minWidth: 0 },
-  bubbleText: { minWidth: 0, flexShrink: 1, fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
+  quotedReplyCopy: { flex: 1, minWidth: 0, maxWidth: "100%" },
+  bubbleText: { minWidth: 0, maxWidth: "100%", fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
   emojiOnlyText: { fontSize: 40, lineHeight: 48, includeFontPadding: false },
   messageMention: { fontWeight: "900", textDecorationLine: "underline" },
   myMessageMention: { color: "#FFE6A6", backgroundColor: "rgba(255,230,166,0.16)" },
