@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
-  AccessibilityInfo, ActivityIndicator, Alert, Animated, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
+  AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
   StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View,
 } from "react-native";
 import {
@@ -284,6 +284,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [refreshing, setRefreshing] = useState(false);
   const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
   const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(() => communityActionNoticeSnapshots.get(Number(user?.id || 0)) || null);
+  const [actionNoticeRefreshKey, setActionNoticeRefreshKey] = useState(0);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
   const actionNoticeVisible = useRef(false);
 
@@ -295,6 +296,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const userId = Number(user?.id || 0);
     if (userId) communityActionNoticeSnapshots.set(userId, actionNotice);
   }, [actionNotice, user?.id]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setActionNoticeRefreshKey((current) => current + 1);
+    });
+    return () => subscription.remove();
+  }, []);
   const lastFeedScrollOffset = useRef(0);
   const pullOffset = useRef(new Animated.Value(0)).current;
   const heroEntrance = useRef(new Animated.Value(0)).current;
@@ -403,7 +411,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     });
 
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, [actionNoticeRefreshKey, user?.id]);
 
   const setActionNoticeVisibility = useCallback((visible: boolean) => {
     if (actionNoticeVisible.current === visible) return;
@@ -1269,7 +1277,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           listener: (event: { nativeEvent: { contentOffset: { y: number } } }) => handleFeedScroll(event.nativeEvent.contentOffset.y),
         }
       )}
-      refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); void load(true); }} />}
+      refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.colors.brand} onRefresh={() => { setRefreshing(true); setActionNoticeRefreshKey((current) => current + 1); void load(true); }} />}
       ListHeaderComponent={<>
       <Animated.View
         style={[styles.heroPosterFrame, {
