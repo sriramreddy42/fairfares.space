@@ -2792,7 +2792,9 @@ function FairFaresApp() {
           setRentalFocusKey(0);
           setRideOwnerOpenTarget(target === "requests" ? "requests" : "workspace");
           setRideOwnerEditId("");
-          setRideOwnerReturnTab(null);
+          // Carpool is opened from Ask. Its modal back action must restore the
+          // same Ask context instead of leaving the member on the marketplace.
+          setRideOwnerReturnTab("community");
           setSelectedNeed(target === "requests" ? "ride_offer" : "ride_need");
           if (target === "requests") setRideOwnerOpenToken((value) => value + 1);
           else setCarpoolFocusKey((value) => value + 1);
