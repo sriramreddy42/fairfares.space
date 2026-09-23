@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import * as WebBrowser from "expo-web-browser";
 import {
   Alert,
   Image,
@@ -347,10 +348,12 @@ export function ServicesScreen({
         : kind === "extension"
           ? await startRentalCheckout("extension", selectedBooking.id)
           : await startRentalSecurityDeposit(selectedBooking.id);
-      if (!result.url || !(await Linking.canOpenURL(result.url))) {
-        throw new Error("Stripe checkout could not be opened on this device.");
+      if (!result.url) throw new Error("Stripe checkout could not be opened on this device.");
+      const checkout = await WebBrowser.openAuthSessionAsync(result.url, "fairfares://payment");
+      if (checkout.type === "success" && checkout.url?.includes("payment/success")) {
+        Alert.alert("Payment completed", "Stripe confirmed your payment. Your booking is updated in FairFares.");
+        await loadBookings();
       }
-      await Linking.openURL(result.url);
     } catch (paymentError) {
       Alert.alert(
         kind === "deposit" ? "Deposit could not be opened" : "Payment could not be opened",
