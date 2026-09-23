@@ -62,6 +62,7 @@ type Props = {
   onManageHousingListing?: (post: HousingPost) => void;
   onLinkedCarpoolRideOpened?: () => void;
   discoveryLocation?: string;
+  showSearchResults?: boolean;
 };
 
 type CurrentRideLocation = {
@@ -630,7 +631,8 @@ export function HousingScreen({
   onManageHousingListing,
   onLinkedCarpoolRideOpened,
   discoveryLocation = "",
-  hasExactLocationSearch = false
+  hasExactLocationSearch = false,
+  showSearchResults = true
 }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
@@ -4228,6 +4230,7 @@ export function HousingScreen({
         </KeyboardAvoidingView>
       </Modal>
 
+      {showSearchResults ? <>
       {neighborhoodBars.length ? (
         <View style={styles.neighborhoodPanel}>
           <View style={styles.neighborhoodHeader}>
@@ -4344,6 +4347,16 @@ export function HousingScreen({
           </View>
         )}
       </ScrollView>
+      </> : (
+        <TouchableOpacity style={styles.housingSearchPrompt} onPress={onOpenSearch} activeOpacity={0.84} accessibilityRole="button" accessibilityLabel="Search housing listings">
+          <Text style={styles.housingSearchPromptIcon}>⌕</Text>
+          <View style={styles.housingSearchPromptCopy}>
+            <Text style={styles.housingSearchPromptTitle}>Find a place that fits</Text>
+            <Text style={styles.housingSearchPromptText}>Search a city, neighborhood, building, campus, or landmark to see available listings.</Text>
+          </View>
+          <Text style={styles.housingSearchPromptAction}>Search</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.rentalSectionHeader}>
         <View style={styles.rentalSectionCopy}>
@@ -4872,6 +4885,12 @@ const styles = StyleSheet.create({
   housingIntentSubtitle: { color: "#4c5871", fontSize: 10, lineHeight: 12, marginTop: 1, fontWeight: "700" },
   housingIntentArrow: { position: "absolute", right: 8, bottom: 9, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
   housingIntentArrowText: { color: "#07153f", fontSize: 23, lineHeight: 24, fontWeight: "700", marginTop: -3 },
+  housingSearchPrompt: { marginTop: 16, borderRadius: 18, borderWidth: 1, borderColor: "rgba(17,82,60,0.16)", backgroundColor: "#edf8f2", padding: 16, flexDirection: "row", alignItems: "center", gap: 12 },
+  housingSearchPromptIcon: { width: 40, height: 40, borderRadius: 20, overflow: "hidden", textAlign: "center", textAlignVertical: "center", color: "#087552", backgroundColor: "#c9f2de", fontSize: 25, fontWeight: "900" },
+  housingSearchPromptCopy: { flex: 1, minWidth: 0 },
+  housingSearchPromptTitle: { color: "#092d23", fontSize: 15, fontWeight: "900" },
+  housingSearchPromptText: { color: "#4c675e", fontSize: 12, lineHeight: 17, marginTop: 2, fontWeight: "600" },
+  housingSearchPromptAction: { color: "#087552", fontSize: 13, fontWeight: "900" },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
   housingCardRow: { gap: 12, paddingLeft: 10, paddingRight: 20, paddingTop: 4, paddingBottom: 22, alignItems: "flex-start" },

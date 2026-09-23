@@ -2981,6 +2981,7 @@ function FairFaresApp() {
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
         discoveryLocation={discoveryLocation}
+        showSearchResults={activeTab === "housing"}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
@@ -3042,6 +3043,7 @@ function FairFaresApp() {
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
         discoveryLocation={discoveryLocation}
+        showSearchResults={activeTab === "housing"}
         onCategorySelect={selectCategory}
         onGenderSelect={selectGender}
         onBudgetSelect={selectBudget}
