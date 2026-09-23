@@ -6953,9 +6953,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }
 
   function forwardMediaFromPreview() {
-    const source = visibleMessages.find((item) => item.id === attachmentPreview?.messageId);
+    forwardMediaMessage(attachmentPreview?.messageId || 0);
+  }
+
+  function forwardMediaMessage(messageId: number) {
+    const source = visibleMessages.find((item) => item.id === messageId);
     if (!source) return;
     setAttachmentPreview(null);
+    setAttachmentPreviewGroup([]);
+    setSelectedGroupPhotoIndex(null);
     setProfilePhotoPreview(null);
     setSelectedMessageIds([messageSelectionKey(source)]);
     setTimeout(() => {
@@ -7952,13 +7958,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         <Modal visible={Boolean(attachmentPreview)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAttachmentPreview(null)}>
           <View style={styles.mediaViewerBackdrop}>
             <View style={styles.mediaViewerHeader}>
-              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Back to conversation"><Text style={styles.mediaViewerBackText}>‹</Text></TouchableOpacity>
-              <View style={styles.mediaViewerPerson}>
-                <View style={styles.mediaViewerAvatar}><InitialsAvatar photoUrl={conversationAvatarUrl(activeConversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={activeConversation?.otherName || "F"} imageStyle={styles.mediaViewerAvatarImage} textStyle={styles.mediaViewerAvatarText} /></View>
-                <Text style={styles.mediaViewerName} numberOfLines={1}>{activeConversation?.otherName || "Chitthi"}</Text>
+              <View style={styles.mediaViewerHeaderSpacer} />
+              <View style={styles.mediaViewerTitleWrap}>
+                <Text style={styles.mediaViewerTitle}>{attachmentPreview?.type === "VIDEO" ? "Video" : "Photo"}</Text>
                 <Text style={styles.mediaViewerDate}>{attachmentPreview ? chatDayLabel(attachmentPreview.createdAt) : ""}</Text>
               </View>
-              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => void savePreviewAttachment()} accessibilityLabel="Share or save media"><Text style={styles.mediaViewerMenuText}>•••</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.mediaViewerRoundButton} onPress={() => setAttachmentPreview(null)} accessibilityLabel="Close media viewer"><Text style={styles.mediaViewerCloseText}>×</Text></TouchableOpacity>
             </View>
             <View style={styles.mediaViewerStage}>
               {attachmentPreview?.type === "VIDEO" ? <ChitthiVideoPlayer uri={attachmentPreview.uri} /> : attachmentPreview ? <ZoomableChatPhoto key={attachmentPreview.messageId} uri={attachmentPreview.uri} /> : null}
@@ -7968,8 +7973,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 {visibleMessages.filter((item) => (item.type === "IMAGE" || item.type === "VIDEO") && Boolean(item.attachmentUrl) && !item.metadata?.mediaExpired).slice(-20).map((item) => <TouchableOpacity key={item.id} style={[styles.mediaViewerThumbnail, attachmentPreview?.messageId === item.id && styles.mediaViewerThumbnailActive]} onPress={() => void openAttachment(item)} accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} from ${chatClock(item.createdAt)}`}>{item.type === "IMAGE" ? <ChatMessagePhoto message={item} resolvePreview={resolveEncryptedPhotoPreview} compact /> : <View style={styles.mediaViewerVideoThumb}><Text style={styles.mediaViewerVideoThumbText}>▶</Text></View>}</TouchableOpacity>)}
               </ScrollView>
               <View style={styles.mediaViewerActions}>
-                <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()}><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Share or save</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.mediaViewerAction} onPress={forwardMediaFromPreview}><Text style={styles.mediaViewerActionGlyph}>→</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.mediaViewerAction} onPress={() => void savePreviewAttachment()} accessibilityRole="button" accessibilityLabel="Share or save media"><Text style={styles.mediaViewerActionGlyph}>⇧</Text><Text style={styles.mediaViewerActionText}>Share / save</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.mediaViewerAction} onPress={forwardMediaFromPreview} accessibilityRole="button" accessibilityLabel="Forward media"><Text style={styles.mediaViewerActionGlyph}>↗</Text><Text style={styles.mediaViewerActionText}>Forward</Text></TouchableOpacity>
               </View>
             </View>
           </View>
@@ -8070,7 +8075,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               </View>
               <View style={styles.groupSinglePhotoNavigation}>
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === 0} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, current - 1))} accessibilityLabel="Previous photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === 0 && styles.groupSinglePhotoArrowDisabled]}>‹</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.groupSinglePhotoShare} onPress={() => void downloadAttachment(attachmentPreviewGroup[selectedGroupPhotoIndex])} accessibilityLabel="Share or save this photo"><Text style={styles.groupSinglePhotoShareIcon}>↗</Text><Text style={styles.groupSinglePhotoShareText}>Share or save</Text></TouchableOpacity>
+                <View style={styles.groupSinglePhotoActions}>
+                  <TouchableOpacity style={styles.groupSinglePhotoAction} onPress={() => void downloadAttachment(attachmentPreviewGroup[selectedGroupPhotoIndex])} accessibilityRole="button" accessibilityLabel="Share or save this photo"><Text style={styles.groupSinglePhotoActionIcon}>⇧</Text><Text style={styles.groupSinglePhotoActionText}>Share / save</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.groupSinglePhotoAction} onPress={() => forwardMediaMessage(attachmentPreviewGroup[selectedGroupPhotoIndex].messageId)} accessibilityRole="button" accessibilityLabel="Forward this photo"><Text style={styles.groupSinglePhotoActionIcon}>↗</Text><Text style={styles.groupSinglePhotoActionText}>Forward</Text></TouchableOpacity>
+                </View>
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.min(attachmentPreviewGroup.length - 1, current + 1))} accessibilityLabel="Next photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1 && styles.groupSinglePhotoArrowDisabled]}>›</Text></TouchableOpacity>
               </View>
             </> : <ScrollView style={styles.groupPreviewScroll} contentContainerStyle={styles.groupPreviewContent} showsVerticalScrollIndicator={false}>
@@ -9010,12 +9018,13 @@ const styles = StyleSheet.create({
   groupPreviewPhotoWrap: { width: "100%", minHeight: 480, borderRadius: 8, overflow: "hidden", position: "relative", backgroundColor: "#080808" },
   groupPreviewPhoto: { width: "100%", height: 560 },
   groupSinglePhotoStage: { flex: 1, minHeight: 220, overflow: "hidden" },
-  groupSinglePhotoNavigation: { minHeight: 48, flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 22 },
+  groupSinglePhotoNavigation: { minHeight: 58, flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 10, gap: 6 },
   groupSinglePhotoArrow: { color: "#fff", fontSize: 38, lineHeight: 43, fontWeight: "300" },
   groupSinglePhotoArrowDisabled: { opacity: 0.25 },
-  groupSinglePhotoShare: { minHeight: 38, borderRadius: 19, paddingHorizontal: 13, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", flexDirection: "row", alignItems: "center", gap: 6 },
-  groupSinglePhotoShareIcon: { color: "#fff", fontSize: 18, fontWeight: "800" },
-  groupSinglePhotoShareText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  groupSinglePhotoActions: { flex: 1, flexDirection: "row", justifyContent: "center", gap: 8 },
+  groupSinglePhotoAction: { minHeight: 40, borderRadius: 20, paddingHorizontal: 11, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
+  groupSinglePhotoActionIcon: { color: "#fff", fontSize: 17, fontWeight: "800" },
+  groupSinglePhotoActionText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   zoomableChatPhoto: { flex: 1, width: "100%", overflow: "hidden", alignItems: "center", justifyContent: "center" },
   zoomableChatPhotoImage: { width: "100%", height: "100%" },
   attachmentPreviewSave: { minHeight: 50, borderRadius: 25, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 12 },
@@ -9027,10 +9036,14 @@ const styles = StyleSheet.create({
   profilePhotoViewerHeaderSpacer: { width: 48, height: 48 },
   profilePhotoViewerStage: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, paddingBottom: Platform.OS === "ios" ? 34 : 20 },
   profilePhotoViewerImage: { width: "100%", height: "100%" },
-  mediaViewerHeader: { minHeight: 92, paddingHorizontal: 14, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", zIndex: 2 },
+  mediaViewerHeader: { minHeight: 72, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", zIndex: 2 },
   mediaViewerRoundButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(35,35,38,0.92)", borderWidth: 1, borderColor: "rgba(255,255,255,0.13)", alignItems: "center", justifyContent: "center" },
   mediaViewerBackText: { color: "#fff", fontSize: 39, lineHeight: 41, fontWeight: "300", marginTop: -4 },
+  mediaViewerCloseText: { color: "#fff", fontSize: 37, lineHeight: 40, fontWeight: "300", marginTop: -3 },
   mediaViewerMenuText: { color: "#fff", fontSize: 16, letterSpacing: 2, fontWeight: "900" },
+  mediaViewerHeaderSpacer: { width: 48, height: 48 },
+  mediaViewerTitleWrap: { flex: 1, minWidth: 0, alignItems: "center", paddingHorizontal: 10 },
+  mediaViewerTitle: { color: "#fff", fontSize: 22, lineHeight: 27, fontWeight: "800" },
   mediaViewerPerson: { flex: 1, minWidth: 0, alignItems: "center", paddingHorizontal: 8, marginTop: -5 },
   mediaViewerAvatar: { width: 58, height: 58, borderRadius: 29, overflow: "hidden", backgroundColor: "#283145", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
   mediaViewerAvatarImage: { width: "100%", height: "100%" },
