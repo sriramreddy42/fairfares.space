@@ -1220,6 +1220,42 @@ function isEmojiOnlyMessage(text: string) {
   return compact.replace(emojiSyntax, "").trim().length === 0;
 }
 
+function AnimatedEmojiOnlyMessage({ children }: { children: string }) {
+  const scale = useRef(new Animated.Value(0.82)).current;
+  const tilt = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.sequence([
+      Animated.parallel([
+        Animated.spring(scale, { toValue: 1.14, damping: 8, stiffness: 220, mass: 0.55, useNativeDriver: true }),
+        Animated.timing(tilt, { toValue: 1, duration: 150, useNativeDriver: true }),
+      ]),
+      Animated.spring(scale, { toValue: 1, damping: 9, stiffness: 180, mass: 0.6, useNativeDriver: true }),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(tilt, { toValue: -1, duration: 180, useNativeDriver: true }),
+          Animated.timing(tilt, { toValue: 1, duration: 180, useNativeDriver: true }),
+          Animated.timing(tilt, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]),
+        { iterations: 4 }
+      ),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [scale, tilt]);
+
+  return (
+    <Animated.Text
+      style={[
+        styles.emojiOnlyText,
+        { transform: [{ scale }, { rotate: tilt.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-5deg", "0deg", "5deg"] }) }] },
+      ]}
+    >
+      {children}
+    </Animated.Text>
+  );
+}
+
 function presenceLabel(conversation: ChatConversation | null) {
   if (!conversation) return "New conversation";
   if (isGroupConversation(conversation)) return "Group chat";
@@ -7847,7 +7883,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </View>
                 ) : null}
                 {visibleMessageText && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
-                  ? <Text style={styles.emojiOnlyText}>{visibleMessageText}</Text>
+                  ? <AnimatedEmojiOnlyMessage>{visibleMessageText}</AnimatedEmojiOnlyMessage>
                   : <DiscoveredMessageText message={visibleMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
                 ) : null}
                 {discoveredUrl ? (
@@ -9296,7 +9332,7 @@ const styles = StyleSheet.create({
   theirQuotedReplyText: { color: "#24483C" },
   quotedReplyCopy: { flex: 1, minWidth: 0 },
   bubbleText: { fontSize: 15.5, lineHeight: 20, fontWeight: "400" },
-  emojiOnlyText: { fontSize: 34, lineHeight: 42, includeFontPadding: false },
+  emojiOnlyText: { fontSize: 40, lineHeight: 48, includeFontPadding: false },
   messageMention: { fontWeight: "900", textDecorationLine: "underline" },
   myMessageMention: { color: "#FFE6A6", backgroundColor: "rgba(255,230,166,0.16)" },
   theirMessageMention: { color: "#087552", backgroundColor: "rgba(8,117,82,0.10)" },
