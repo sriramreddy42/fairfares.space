@@ -4231,38 +4231,6 @@ export function HousingScreen({
       </Modal>
 
       {showSearchResults ? <>
-      {neighborhoodBars.length ? (
-        <View style={styles.neighborhoodPanel}>
-          <View style={styles.neighborhoodHeader}>
-            <View style={styles.neighborhoodHeaderCopy}>
-              <Text style={styles.neighborhoodTitle}>Average rents in {neighborhoodCityName} neighborhoods</Text>
-              <Text style={styles.neighborhoodMeta}>Typical monthly rent · Updated Sep 2026</Text>
-            </View>
-            <TouchableOpacity style={styles.neighborhoodViewAll} onPress={onOpenSearch} accessibilityRole="button" accessibilityLabel="View all neighborhoods">
-              <Text style={styles.neighborhoodViewAllText}>View all</Text>
-              <Text style={styles.neighborhoodViewAllArrow}>›</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.neighborhoodGraphRow}>
-            {neighborhoodBars.map((locality, index) => (
-              <TouchableOpacity key={`${locality.name}-${index}`} style={styles.neighborhoodGraphItem} onPress={() => onAreaSelect(locality.name)} activeOpacity={0.86}>
-                <Text style={[styles.neighborhoodRent, { color: locality.color }]}>{locality.rentLabel}</Text>
-                <View style={styles.neighborhoodBarWrap}>
-                  <View style={[styles.neighborhoodBar, { height: locality.height, backgroundColor: locality.color }]}>
-                    <Image source={locality.image} style={styles.neighborhoodBarImage} resizeMode="cover" />
-                  </View>
-                </View>
-                <Text style={styles.neighborhoodName} numberOfLines={2}>{cleanLocalityName(locality.name, neighborhoodCityName) || locality.name}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.neighborhoodFindCard} onPress={onOpenSearch} activeOpacity={0.86}>
-              <Text style={styles.neighborhoodFindText}>Find your neighborhood</Text>
-              <Text style={styles.neighborhoodFindIcon}>⌕</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      ) : null}
-
       <View style={styles.listingSectionHeader} onLayout={(event) => {
         const nextY = event.nativeEvent.layout.y;
         setListingResultsY((current) => Math.abs(current - nextY) > 1 ? nextY : current);
@@ -4347,12 +4315,43 @@ export function HousingScreen({
           </View>
         )}
       </ScrollView>
+      {neighborhoodBars.length ? (
+        <View style={styles.neighborhoodPanel}>
+          <View style={styles.neighborhoodHeader}>
+            <View style={styles.neighborhoodHeaderCopy}>
+              <Text style={styles.neighborhoodTitle}>Average rents in {neighborhoodCityName} neighborhoods</Text>
+              <Text style={styles.neighborhoodMeta}>Typical monthly rent · Updated Sep 2026</Text>
+            </View>
+            <TouchableOpacity style={styles.neighborhoodViewAll} onPress={onOpenSearch} accessibilityRole="button" accessibilityLabel="View all neighborhoods">
+              <Text style={styles.neighborhoodViewAllText}>View all</Text>
+              <Text style={styles.neighborhoodViewAllArrow}>›</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.neighborhoodGraphRow}>
+            {neighborhoodBars.map((locality, index) => (
+              <TouchableOpacity key={`${locality.name}-${index}`} style={styles.neighborhoodGraphItem} onPress={() => onAreaSelect(locality.name)} activeOpacity={0.86}>
+                <Text style={[styles.neighborhoodRent, { color: locality.color }]}>{locality.rentLabel}</Text>
+                <View style={styles.neighborhoodBarWrap}>
+                  <View style={[styles.neighborhoodBar, { height: locality.height, backgroundColor: locality.color }]}>
+                    <Image source={locality.image} style={styles.neighborhoodBarImage} resizeMode="cover" />
+                  </View>
+                </View>
+                <Text style={styles.neighborhoodName} numberOfLines={2}>{cleanLocalityName(locality.name, neighborhoodCityName) || locality.name}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.neighborhoodFindCard} onPress={onOpenSearch} activeOpacity={0.86}>
+              <Text style={styles.neighborhoodFindText}>Find your neighborhood</Text>
+              <Text style={styles.neighborhoodFindIcon}>⌕</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      ) : null}
       </> : null}
 
       <View style={styles.rentalSectionHeader}>
         <View style={styles.rentalSectionCopy}>
           <Text style={styles.rentalSectionEyebrow}>FairFares car rentals</Text>
-          <Text style={styles.rentalSectionTitle}>Book confidently. Pay less.</Text>
+          <Text style={styles.rentalSectionTitle}>Cheap car rentals</Text>
         </View>
         <TouchableOpacity style={styles.rentalSectionAction} onPress={() => setMode("cheapCars")} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="View rental cars">
           <Text style={styles.rentalSectionActionText}>View cars</Text>
