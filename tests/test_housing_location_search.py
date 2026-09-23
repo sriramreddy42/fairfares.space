@@ -1311,17 +1311,18 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertFalse(cities.call_args.kwargs["include_google"])
 
 
-    def test_mobile_housing_locations_are_limited_to_active_property_listings(self):
+    def test_mobile_housing_location_autocomplete_uses_google_places(self):
         self.insert_post("LOCATION-LIVE", "Live room", "Denver, CO", "Capitol Hill", 39.7392, -104.9903)
         self.insert_filter_post("LOCATION-NEED", mode="NEED_PLACE", city="Denver, CO", rent_min=900)
         with app.db() as con:
             con.execute("UPDATE accommodation_posts SET primary_neighborhood = 'LoDo' WHERE public_id = 'LOCATION-LIVE'")
 
-        options = app.mobile_housing_location_options("Denver")
-        self.assertEqual(options["source"], "active-property-listings")
-        self.assertEqual(options["cities"], ["Denver, CO"])
-        self.assertIn("LoDo", options["suggested"])
-        self.assertFalse(options["googlePlacesEnabled"])
+        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
+            app, "google_accommodation_place_suggestions", return_value=["RiNo, Denver, CO"]
+        ), patch.object(app, "refresh_accommodation_location_cache", return_value="Denver Metro Area"):
+            options = app.accommodation_location_options("Denver, CO")
+        self.assertTrue(options["googlePlacesEnabled"])
+        self.assertIn("RiNo, Denver, CO", options["suggested"])
 
 
 if __name__ == "__main__":

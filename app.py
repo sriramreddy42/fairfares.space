@@ -39012,9 +39012,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not query:
             self.send_json({"ok": False, "error": "Enter a city to load nearby areas."}, 400)
             return
-        # The housing picker is driven by active FairFares property listings.
-        # It neither calls nor surfaces Google Places data.
-        self.send_json(mobile_housing_location_options(query, area))
+        # Place autocomplete helps members enter a real city, neighborhood, or
+        # landmark. The later housing results and rent graphs are still drawn
+        # only from active FairFares property listings.
+        self.send_json(accommodation_location_options(query, area, limit=18))
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
