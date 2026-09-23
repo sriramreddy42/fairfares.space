@@ -2231,7 +2231,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const pendingPreviewListRef = useRef<FlatList<PendingChatAttachment> | null>(null);
   const [pendingPhotoPreviewOpen, setPendingPhotoPreviewOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<{ uri: string; name: string; mimeType: string; messageId: number; type: "IMAGE" | "VIDEO"; createdAt: string } | null>(null);
-  const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string; messageId: number }>>([]);
+  const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string; messageId: number; type: "IMAGE" | "VIDEO" }>>([]);
   const [selectedGroupPhotoIndex, setSelectedGroupPhotoIndex] = useState<number | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
@@ -2352,7 +2352,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     });
     visibleMessages.forEach((message) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
-      if (!mediaGroupId || message.type !== "IMAGE") return;
+      if (!mediaGroupId || !["IMAGE", "VIDEO"].includes(message.type)) return;
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
       const group = mediaGroups.get(mediaGroupKey) || [];
       group.push(message);
@@ -2372,14 +2372,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       mediaGroups.set(key, [...byBatchIndex.values()].sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
     });
     const rows: ThreadMessageItem[] = [];
-    const renderedImageGroupIds = new Set<string>();
+    const renderedMediaGroupIds = new Set<string>();
     visibleMessages.forEach((message, index) => {
       const mediaGroupId = String(message.metadata?.mediaGroupId || "");
       const mediaGroupKey = `${message.senderId}:${mediaGroupId}`;
-      const mediaGroup = mediaGroupId && message.type === "IMAGE" ? mediaGroups.get(mediaGroupKey) || [] : [];
-      const imageGroupKey = message.type === "IMAGE" && mediaGroup.length > 1 ? mediaGroupKey : "";
-      const imageGroupAlreadyRendered = Boolean(imageGroupKey && renderedImageGroupIds.has(imageGroupKey));
-      if (imageGroupKey && !imageGroupAlreadyRendered) renderedImageGroupIds.add(imageGroupKey);
+      const mediaGroup = mediaGroupId && ["IMAGE", "VIDEO"].includes(message.type) ? mediaGroups.get(mediaGroupKey) || [] : [];
+      const mediaGroupKeyToRender = mediaGroup.length > 1 ? mediaGroupKey : "";
+      const mediaGroupAlreadyRendered = Boolean(mediaGroupKeyToRender && renderedMediaGroupIds.has(mediaGroupKeyToRender));
+      if (mediaGroupKeyToRender && !mediaGroupAlreadyRendered) renderedMediaGroupIds.add(mediaGroupKeyToRender);
       const showDateDivider = index === 0 || chatDayKey(visibleMessages[index - 1].createdAt) !== chatDayKey(message.createdAt);
       if (showDateDivider) {
         rows.push({
@@ -2400,7 +2400,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         key: `${activeConversationId || "thread"}-message-${message.id}`,
         message,
         index,
-        skipForMediaGroup: imageGroupAlreadyRendered,
+        skipForMediaGroup: mediaGroupAlreadyRendered,
         mediaGroup,
         discoveredUrl: message.text ? firstDiscoveredUrl(message.text) : "",
         isMediaMessage: ["IMAGE", "VIDEO"].includes(message.type) && Boolean(message.attachmentUrl),
@@ -6712,7 +6712,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           throw new Error("This photo key is unavailable on this device.");
         }
         const item = await materializeAttachment(message);
-        return item ? { ...item, createdAt: message.createdAt, messageId: message.id } : null;
+        return item ? { ...item, createdAt: message.createdAt, messageId: message.id, type: message.type === "VIDEO" ? "VIDEO" as const : "IMAGE" as const } : null;
       }));
       const available = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
       if (!available.length) {
@@ -7763,7 +7763,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   </TouchableOpacity>
                 ) : null}
                 {message.attachmentUrl || (message.type === "IMAGE" && Boolean(message.metadata?.thumbnailDataUrl || message.metadata?.decryptedDataUrl)) ? (
-                  message.type === "IMAGE" ? <View style={[styles.photoMediaWrap, mediaGroup.length > 1 && styles.photoMediaStackWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? (() => { const stackPreview = mediaGroup[0] || message; const stackSelected = selectedMessageIds.includes(messageSelectionKey(message)); return <Pressable style={styles.messageMediaStack} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openPhotoGroup(mediaGroup, stackPreview.id); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={`Open ${mediaGroup.length} photos`}><View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackBack]} />{mediaGroup.length > 2 ? <View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackMiddle]} /> : null}<View style={styles.messageMediaStackFront}><ChatMessagePhoto message={stackPreview} resolvePreview={resolveEncryptedPhotoPreview} compact /><View style={styles.messageMediaStackCount} pointerEvents="none"><Text style={styles.messageMediaStackCountText}>▦ {mediaGroup.length} photos</Text></View><View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(stackPreview.createdAt)}</Text>{stackPreview.mine && messageReceipt(stackPreview.status) ? <Text style={[styles.photoReceipt, stackPreview.status === "seen" && styles.receiptSeen]}>{messageReceipt(stackPreview.status)}</Text> : null}</View>{stackSelected ? <View style={styles.messageMediaStackSelected} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}</View></Pressable>; })() : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
+                  (message.type === "IMAGE" || mediaGroup.length > 1) ? <View style={[styles.photoMediaWrap, mediaGroup.length > 1 && styles.photoMediaStackWrap, showGroupSender && styles.photoMediaWrapWithSender]}>{mediaGroup.length > 1 ? (() => { const stackPreview = mediaGroup[0] || message; const stackSelected = selectedMessageIds.includes(messageSelectionKey(message)); const stackHasVideo = stackPreview.type === "VIDEO"; return <Pressable style={styles.messageMediaStack} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openPhotoGroup(mediaGroup, stackPreview.id); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={`Open ${mediaGroup.length} media items`}><View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackBack]} />{mediaGroup.length > 2 ? <View pointerEvents="none" style={[styles.messageMediaStackLayer, styles.messageMediaStackMiddle]} /> : null}<View style={styles.messageMediaStackFront}>{stackHasVideo ? <><ChatVideoThumbnail embeddedUri={stackPreview.metadata?.thumbnailDataUrl} localUri={localVideoThumbnailUris[stackPreview.id]} /><View style={styles.videoMessagePlay}><Text style={styles.videoMessagePlayText}>▶</Text></View></> : <ChatMessagePhoto message={stackPreview} resolvePreview={resolveEncryptedPhotoPreview} compact />}<View style={styles.messageMediaStackCount} pointerEvents="none"><Text style={styles.messageMediaStackCountText}>▦ {mediaGroup.length} {mediaGroup.some((item) => item.type === "VIDEO") ? "items" : "photos"}</Text></View><View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(stackPreview.createdAt)}</Text>{stackPreview.mine && messageReceipt(stackPreview.status) ? <Text style={[styles.photoReceipt, stackPreview.status === "seen" && styles.receiptSeen]}>{messageReceipt(stackPreview.status)}</Text> : null}</View>{stackSelected ? <View style={styles.messageMediaStackSelected} pointerEvents="none"><Text style={styles.messageSelectionCheckText}>✓</Text></View> : null}</View></Pressable>; })() : <Pressable disabled={Boolean(message.metadata?.uploading)} delayLongPress={300} onPress={(event) => { event.stopPropagation(); selectedMessageIds.length ? toggleMessageSelection(message) : void openAttachment(message); }} onLongPress={(event) => { event.stopPropagation(); handleMessageLongPress(message); }} accessibilityRole="button" accessibilityLabel={message.metadata?.uploading ? "Photo uploading" : "Preview photo"}><ChatMessagePhoto message={message} resolvePreview={resolveEncryptedPhotoPreview} /></Pressable>}{mediaGroup.length <= 1 ? <View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(message.createdAt)}</Text>{message.mine && messageReceipt(message.status) ? <Text style={[styles.photoReceipt, message.status === "seen" && styles.receiptSeen]}>{messageReceipt(message.status)}</Text> : null}</View> : null}</View> : message.type === "VIDEO" ? (
                     <View style={[styles.photoMediaWrap, showGroupSender && styles.photoMediaWrapWithSender]}>
                       <Pressable
                         style={styles.videoMessageCard}
@@ -8067,11 +8067,11 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             </View>
             {selectedGroupPhotoIndex !== null && attachmentPreviewGroup[selectedGroupPhotoIndex] ? <>
               <View style={styles.groupSinglePhotoStage}>
-                <ZoomableChatPhoto
+                {attachmentPreviewGroup[selectedGroupPhotoIndex].type === "VIDEO" ? <ChitthiVideoPlayer uri={attachmentPreviewGroup[selectedGroupPhotoIndex].uri} /> : <ZoomableChatPhoto
                   key={attachmentPreviewGroup[selectedGroupPhotoIndex].messageId}
                   uri={attachmentPreviewGroup[selectedGroupPhotoIndex].uri}
                   onSwipe={(direction) => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, Math.min(attachmentPreviewGroup.length - 1, current + (direction === "next" ? 1 : -1))))}
-                />
+                />}
               </View>
               <View style={styles.groupSinglePhotoNavigation}>
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === 0} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.max(0, current - 1))} accessibilityLabel="Previous photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === 0 && styles.groupSinglePhotoArrowDisabled]}>‹</Text></TouchableOpacity>
@@ -8082,7 +8082,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                 <TouchableOpacity disabled={selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1} onPress={() => setSelectedGroupPhotoIndex((current) => current === null ? null : Math.min(attachmentPreviewGroup.length - 1, current + 1))} accessibilityLabel="Next photo"><Text style={[styles.groupSinglePhotoArrow, selectedGroupPhotoIndex === attachmentPreviewGroup.length - 1 && styles.groupSinglePhotoArrowDisabled]}>›</Text></TouchableOpacity>
               </View>
             </> : <ScrollView style={styles.groupPreviewScroll} contentContainerStyle={styles.groupPreviewContent} showsVerticalScrollIndicator={false}>
-              {attachmentPreviewGroup.map((item, index) => <TouchableOpacity key={`${item.messageId}-${index}`} style={styles.groupPreviewPhotoWrap} activeOpacity={0.9} onPress={() => setSelectedGroupPhotoIndex(index)} accessibilityRole="button" accessibilityLabel={`Open photo ${index + 1} of ${attachmentPreviewGroup.length}`}><Image source={{ uri: item.uri }} style={styles.groupPreviewPhoto} resizeMode="contain" /><View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(item.createdAt)}</Text></View></TouchableOpacity>)}
+              {attachmentPreviewGroup.map((item, index) => <TouchableOpacity key={`${item.messageId}-${index}`} style={styles.groupPreviewPhotoWrap} activeOpacity={0.9} onPress={() => setSelectedGroupPhotoIndex(index)} accessibilityRole="button" accessibilityLabel={`Open ${item.type === "VIDEO" ? "video" : "photo"} ${index + 1} of ${attachmentPreviewGroup.length}`}>{item.type === "VIDEO" ? <View style={styles.groupPreviewVideo}><Text style={styles.groupPreviewVideoPlay}>▶</Text><Text style={styles.groupPreviewVideoText}>Video</Text></View> : <Image source={{ uri: item.uri }} style={styles.groupPreviewPhoto} resizeMode="contain" />}<View style={styles.photoTimeOverlay} pointerEvents="none"><Text style={styles.photoTimeText}>{chatClock(item.createdAt)}</Text></View></TouchableOpacity>)}
             </ScrollView>}
           </View>
         </Modal>
@@ -9017,6 +9017,9 @@ const styles = StyleSheet.create({
   groupPreviewContent: { gap: 10, paddingBottom: 24 },
   groupPreviewPhotoWrap: { width: "100%", minHeight: 480, borderRadius: 8, overflow: "hidden", position: "relative", backgroundColor: "#080808" },
   groupPreviewPhoto: { width: "100%", height: 560 },
+  groupPreviewVideo: { width: "100%", height: 560, backgroundColor: "#15221e", alignItems: "center", justifyContent: "center" },
+  groupPreviewVideoPlay: { color: "#fff", fontSize: 56, lineHeight: 60, marginLeft: 5 },
+  groupPreviewVideoText: { color: "rgba(255,255,255,0.8)", fontSize: 14, fontWeight: "800", marginTop: 10 },
   groupSinglePhotoStage: { flex: 1, minHeight: 220, overflow: "hidden" },
   groupSinglePhotoNavigation: { minHeight: 58, flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 10, gap: 6 },
   groupSinglePhotoArrow: { color: "#fff", fontSize: 38, lineHeight: 43, fontWeight: "300" },
@@ -9334,13 +9337,13 @@ const styles = StyleSheet.create({
   collageMoreText: { color: "#fff", fontSize: 24, fontWeight: "700" },
   collageTimeOverlay: { position: "absolute", right: 6, bottom: 6, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.58)", paddingHorizontal: 6, paddingVertical: 2, zIndex: 2 },
   collageTimeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  messageMediaStack: { width: CHAT_MEDIA_WIDTH - 18, height: Math.round(CHAT_MEDIA_WIDTH * 0.82), position: "relative", marginTop: 9, marginBottom: 2 },
+  messageMediaStack: { width: Math.round(CHAT_MEDIA_WIDTH * 0.78), height: Math.round(CHAT_MEDIA_WIDTH * 1.1), position: "relative", marginTop: 35, marginBottom: 8 },
   messageMediaStackLayer: { ...StyleSheet.absoluteFillObject, borderRadius: 18, backgroundColor: "#c8d4ce", borderWidth: 1, borderColor: "rgba(255,255,255,0.62)" },
-  messageMediaStackBack: { transform: [{ translateX: 18 }, { translateY: -9 }], opacity: 0.42 },
-  messageMediaStackMiddle: { transform: [{ translateX: 9 }, { translateY: -4 }], opacity: 0.7 },
+  messageMediaStackBack: { transform: [{ translateX: 27 }, { translateY: -13 }], opacity: 0.42 },
+  messageMediaStackMiddle: { transform: [{ translateX: 14 }, { translateY: -7 }], opacity: 0.7 },
   messageMediaStackFront: { ...StyleSheet.absoluteFillObject, borderRadius: 18, overflow: "hidden", backgroundColor: "#14231e", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.46)" },
-  messageMediaStackCount: { position: "absolute", top: 10, right: 10, borderRadius: 13, backgroundColor: "rgba(6,18,14,0.78)", paddingHorizontal: 9, paddingVertical: 5 },
-  messageMediaStackCountText: { color: "#FFFFFF", fontSize: 12, lineHeight: 14, fontWeight: "800" },
+  messageMediaStackCount: { position: "absolute", top: -31, right: -64, borderRadius: 13, backgroundColor: "rgba(6,18,14,0.88)", paddingHorizontal: 9, paddingVertical: 5 },
+  messageMediaStackCountText: { color: "#19A7FF", fontSize: 12, lineHeight: 14, fontWeight: "900" },
   messageMediaStackSelected: { position: "absolute", top: 8, left: 8, width: 23, height: 23, borderRadius: 12, backgroundColor: "#356df3", borderWidth: 2, borderColor: "#fff", alignItems: "center", justifyContent: "center", zIndex: 8 },
   messageImageLoading: { height: CHAT_MEDIA_FALLBACK_HEIGHT, alignItems: "center", justifyContent: "center" },
   messageImageLoadingText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
