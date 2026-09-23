@@ -717,6 +717,8 @@ export type HousingActivityPost = {
   categoryLabel: string;
   location: string;
   rent: string;
+  unreadInquiryCount?: number;
+  latestInquiryUserId?: number;
 };
 
 export type GasFuelType = "regular" | "midgrade" | "premium" | "diesel" | "e85";

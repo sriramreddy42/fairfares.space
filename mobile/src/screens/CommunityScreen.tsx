@@ -9,12 +9,12 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getCommunityUserProfile, joinChatCommunity,
-  getRentalBookings, getRideActivity,
+  getHousingActivity, getRentalBookings, getRideActivity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser, RentalServiceBooking, RidePost } from "../types";
+import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -97,9 +97,11 @@ type CommunityActionNotice = {
   title: string;
   body: string;
   actionLabel: string;
-  action: "ride" | "ride-request" | "rental";
+  action: "housing" | "ride" | "ride-request" | "rental";
   rideId?: string;
   bookingId?: string;
+  housingPostId?: string;
+  housingInquiryUserId?: number;
   rentalAction?: "balance" | "deposit" | "extension" | "manage";
 };
 
@@ -347,10 +349,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     let cancelled = false;
     if (!user?.id) return () => { cancelled = true; };
 
-    void Promise.allSettled([getRideActivity(), getRentalBookings()]).then(([rideResult, rentalResult]) => {
+    void Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]).then(([rideResult, rentalResult, housingResult]) => {
       if (cancelled) return;
       const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
       const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
+      const housingPosts = housingResult.status === "fulfilled" ? housingResult.value : [] as HousingActivityPost[];
       const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
         || bookings.find((booking) => ["MODIFIED", "CANCELLATION_REQUESTED"].includes(booking.status))
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "HOLD_PAID")
@@ -384,6 +387,28 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         return;
       }
 
+      const housingInquiry = housingPosts.find((post) => (
+        post.status === "ACTIVE"
+        && post.expiryLabel !== "Expired"
+        && Number(post.unreadInquiryCount || 0) > 0
+        && Number(post.latestInquiryUserId || 0) > 0
+      ));
+      if (housingInquiry) {
+        const inquiryCount = Number(housingInquiry.unreadInquiryCount || 0);
+        setActionNotice({
+          id: `housing:${housingInquiry.id}:${inquiryCount}:${housingInquiry.latestInquiryUserId}`,
+          icon: "🏠",
+          eyebrow: "Housing inquiry",
+          title: inquiryCount === 1 ? "You have a new housing inquiry" : `You have ${inquiryCount} new housing inquiries`,
+          body: `${housingInquiry.title} · ${housingInquiry.location}`,
+          actionLabel: "Open Chitthi",
+          action: "housing",
+          housingPostId: housingInquiry.id,
+          housingInquiryUserId: housingInquiry.latestInquiryUserId,
+        });
+        return;
+      }
+
       const pendingDriverRequest = rides.find((item) => {
         const status = String(item.dispatchStatus || item.status || "").toUpperCase();
         return item.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
@@ -392,7 +417,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       if (!ride) {
         // Keep the cached notice while the screen remounts, but remove it
         // once both live sources confirm there is no longer an action.
-        if (rideResult.status === "fulfilled" && rentalResult.status === "fulfilled") setActionNotice(null);
+        if (rideResult.status === "fulfilled" && rentalResult.status === "fulfilled" && housingResult.status === "fulfilled") setActionNotice(null);
         return;
       }
       const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
@@ -1346,7 +1371,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <View style={styles.actionNoticeActions}>
           <TouchableOpacity
             style={styles.actionNoticeButton}
-            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "", actionNotice.rentalAction) : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride", actionNotice.rideId)}
+            onPress={() => actionNotice.action === "rental"
+              ? onOpenRentalBooking(actionNotice.bookingId || "", actionNotice.rentalAction)
+              : actionNotice.action === "housing"
+                ? actionNotice.housingInquiryUserId
+                  ? onOpenUserChat(actionNotice.housingInquiryUserId)
+                  : onOpenHousing(actionNotice.housingPostId)
+                : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride", actionNotice.rideId)}
             accessibilityRole="button"
             accessibilityLabel={actionNotice.actionLabel}
           >

@@ -34,6 +34,78 @@ class MobileAuthTest(unittest.TestCase):
         self.assertEqual(app.canonical_e164_phone("+44 7700 900123", "+1"), "+447700900123")
         self.assertEqual(app.canonical_e164_phone("555", "+1"), "")
 
+    def test_housing_activity_inquiries_only_include_unread_messages_for_live_owner_listings(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Listing Owner", "owner@example.com", "unused"),
+            )
+            owner_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("Interested Member", "member@example.com", "unused"),
+            )
+            member_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO accommodation_posts
+                   (public_id, user_id, post_mode, title, city, city_area_zip, visibility_status, expires_at)
+                   VALUES (?, ?, 'HAVE_PLACE', ?, ?, ?, 'ACTIVE', datetime('now', '+7 days'))""",
+                ("FFH-INQUIRY-1", owner_id, "Sunny room", "Denver, CO", "Capitol Hill, Denver, CO"),
+            )
+            post_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute(
+                """INSERT INTO chat_conversations
+                   (public_id, conversation_type, accommodation_post_id, subject, status)
+                   VALUES (?, 'HOST_GUEST', ?, ?, 'ACTIVE')""",
+                ("FFC-INQUIRY-1", post_id, "Sunny room"),
+            )
+            conversation_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, owner_id))
+            con.execute("INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, member_id))
+            con.execute(
+                "INSERT INTO chat_messages (conversation_id, sender_id, message_text) VALUES (?, ?, ?)",
+                (conversation_id, member_id, "Is this room still available?"),
+            )
+
+        self.assertEqual(
+            app.housing_unread_inquiries_by_post(owner_id),
+            {"FFH-INQUIRY-1": {"unreadInquiryCount": 1, "latestInquiryUserId": member_id}},
+        )
+
+        with app.db() as con:
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("housing-inquiry-owner", owner_id))
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing/activity",
+                headers={"Authorization": "Bearer housing-inquiry-owner"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                activity = json.loads(response.read().decode("utf-8"))
+            summary = next(post for post in activity["posts"] if post["id"] == "FFH-INQUIRY-1")
+            self.assertEqual(summary["unreadInquiryCount"], 1)
+            self.assertEqual(summary["latestInquiryUserId"], member_id)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+        with app.db() as con:
+            latest_id = int(con.execute("SELECT MAX(id) AS id FROM chat_messages").fetchone()["id"])
+            con.execute(
+                "UPDATE chat_participants SET last_read_message_id = ? WHERE conversation_id = ? AND user_id = ?",
+                (latest_id, conversation_id, owner_id),
+            )
+        self.assertEqual(app.housing_unread_inquiries_by_post(owner_id), {})
+
+        with app.db() as con:
+            con.execute(
+                "UPDATE chat_participants SET last_read_message_id = 0 WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, owner_id),
+            )
+            con.execute("UPDATE accommodation_posts SET visibility_status = 'EXPIRED' WHERE id = ?", (post_id,))
+        self.assertEqual(app.housing_unread_inquiries_by_post(owner_id), {})
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")

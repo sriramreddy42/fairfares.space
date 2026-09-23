@@ -19313,6 +19313,65 @@ def mobile_housing_post_summary(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def housing_unread_inquiries_by_post(user_id: int) -> dict[str, dict[str, int]]:
+    """Return unread Chitthi inquiries for live listings owned by ``user_id``.
+
+    A housing inquiry is a message from the other participant in a conversation
+    that was opened from an accommodation listing. Keeping this separate from
+    the legacy ``accommodation_interests`` table makes the activity card depend
+    on an actual contact event, rather than an unverified expression of intent.
+    """
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT posts.public_id AS post_public_id,
+                   COUNT(messages.id) AS unread_inquiry_count,
+                   (
+                       SELECT latest.sender_id
+                       FROM chat_messages latest
+                       JOIN chat_conversations latest_conversation
+                         ON latest_conversation.id = latest.conversation_id
+                       JOIN chat_participants latest_owner
+                         ON latest_owner.conversation_id = latest_conversation.id
+                        AND latest_owner.user_id = posts.user_id
+                       WHERE latest_conversation.accommodation_post_id = posts.id
+                         AND latest.sender_id != posts.user_id
+                         AND latest.id > latest_owner.last_read_message_id
+                         AND latest.id >= latest_owner.visible_from_message_id
+                         AND latest.deleted_at IS NULL
+                       ORDER BY latest.id DESC
+                       LIMIT 1
+                   ) AS latest_inquiry_user_id
+            FROM accommodation_posts posts
+            JOIN chat_conversations conversations
+              ON conversations.accommodation_post_id = posts.id
+             AND conversations.status = 'ACTIVE'
+            JOIN chat_participants owner
+              ON owner.conversation_id = conversations.id
+             AND owner.user_id = posts.user_id
+            JOIN chat_messages messages
+              ON messages.conversation_id = conversations.id
+             AND messages.sender_id != posts.user_id
+             AND messages.id > owner.last_read_message_id
+             AND messages.id >= owner.visible_from_message_id
+             AND messages.deleted_at IS NULL
+            WHERE posts.user_id = ?
+              AND posts.visibility_status = 'ACTIVE'
+              AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))
+            GROUP BY posts.id
+            """,
+            (user_id,),
+        ).fetchall()
+    return {
+        str(row_value(row, "post_public_id")): {
+            "unreadInquiryCount": int(row_value(row, "unread_inquiry_count") or 0),
+            "latestInquiryUserId": int(row_value(row, "latest_inquiry_user_id") or 0),
+        }
+        for row in rows
+        if int(row_value(row, "unread_inquiry_count") or 0) > 0
+    }
+
+
 def mobile_support_ticket_summary(row: sqlite3.Row) -> dict[str, object]:
     return {
         "ticketId": row_value(row, "ticket_id"),
@@ -39349,7 +39408,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "error": "Login required."}, 401)
             return
         user_id = int(row_value(user, "id") or 0)
-        posts = [mobile_housing_post_summary(post) for post in get_accommodation_posts_for_user(user_id)]
+        inquiries = housing_unread_inquiries_by_post(user_id)
+        posts = []
+        for post in get_accommodation_posts_for_user(user_id):
+            summary = mobile_housing_post_summary(post)
+            summary.update(inquiries.get(str(summary["id"]), {}))
+            posts.append(summary)
         self.send_json({"ok": True, "posts": posts})
 
     def api_mobile_community_user(self, parsed: urllib.parse.ParseResult) -> None:
