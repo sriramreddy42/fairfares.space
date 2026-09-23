@@ -2359,7 +2359,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       mediaGroups.set(mediaGroupKey, group);
     });
     mediaGroups.forEach((group, key) => {
-      mediaGroups.set(key, group.sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
+      // A retry can overlap a realtime refresh for one render. Each collage
+      // position represents one selected attachment, never two copies.
+      const byBatchIndex = new Map<number, ChatMessage>();
+      group.forEach((message) => {
+        const index = Number(message.metadata?.mediaGroupIndex || 0);
+        const existing = byBatchIndex.get(index);
+        const existingIsPending = Boolean(existing?.metadata?.uploading) || Number(existing?.id || 0) < 0;
+        const messageIsAccepted = !message.metadata?.uploading && Number(message.id) > 0;
+        if (!existing || (existingIsPending && messageIsAccepted)) byBatchIndex.set(index, message);
+      });
+      mediaGroups.set(key, [...byBatchIndex.values()].sort((a, b) => Number(a.metadata?.mediaGroupIndex || 0) - Number(b.metadata?.mediaGroupIndex || 0)));
     });
     const rows: ThreadMessageItem[] = [];
     const renderedImageGroupIds = new Set<string>();
@@ -4573,6 +4583,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       attachmentCryptoAbortRef.current = mediaSendAbort;
       const mediaGroupId = attachments.length > 1 ? `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : "";
       const optimisticAttachmentIds = attachments.map(() => nextOptimisticAttachmentIdRef.current--);
+      const attachmentClientMessageIds = optimisticAttachmentIds.map((optimisticId, index) =>
+        `attachment-${operationUserId}-${operationConversationId}-${Math.abs(optimisticId)}-${index}`
+      );
       const removeOptimisticMessages = (messageIds = optimisticAttachmentIds) => {
         messageIds.forEach((messageId) => {
           removePendingMediaMessage(operationConversationId, messageId);
@@ -4608,7 +4621,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             ...mediaMetadata,
           },
           createdAt: new Date(optimisticCreatedAt + index).toISOString(), deliveredAt: "", readAt: "", editedAt: "", deletedAt: "",
-          canEdit: false, status: "pending",
+          canEdit: false, status: "pending", localClientMessageId: attachmentClientMessageIds[index],
         };
       });
       optimisticMessages.forEach((message) => {
@@ -4929,7 +4942,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               attachment.mimeType,
               index + 1 < attachments.length,
               mediaSendAbort.signal,
-              (progress) => publishMediaProgress(optimisticAttachmentId, 0.62 + progress * 0.36)
+              (progress) => publishMediaProgress(optimisticAttachmentId, 0.62 + progress * 0.36),
+              undefined,
+              attachmentClientMessageIds[index]
             );
             if (attachment.kind === "VIDEO") logDevelopmentPerformance("media-upload-complete", {
               durationMs: Date.now() - uploadStartedAt,
@@ -5979,7 +5994,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setAttachmentStatus("");
       if (!media.length) return;
       const canPrepareVideo = Platform.OS === "ios" && (FairFaresCrypto.videoPreparationAvailable || FairFaresCrypto.videoOptimizationAvailable);
-      const mediaWithFastDefaults = media.map((item) => item.kind === "VIDEO"
+      const uniqueMedia = media.filter((item, index, items) =>
+        items.findIndex((candidate) => (candidate.pickerAssetId && candidate.pickerAssetId === item.pickerAssetId) || candidate.uri === item.uri) === index
+      );
+      const mediaWithFastDefaults = uniqueMedia.map((item) => item.kind === "VIDEO"
         ? {
             ...item,
             videoQuality: canPrepareVideo && item.size >= CHAT_HD_VIDEO_PREPARE_MIN_BYTES ? "data-saver" as const : "original" as const
