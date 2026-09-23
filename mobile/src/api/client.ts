@@ -895,6 +895,55 @@ export type HousingAreaStat = {
   currencySymbol: string;
 };
 
+type HousingAreaStatsCacheEntry = {
+  savedAt: number;
+  areas: HousingAreaStat[];
+};
+
+const HOUSING_AREA_STATS_CACHE_PREFIX = "fairfares.housing-area-stats.v1:";
+const HOUSING_AREA_STATS_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+const housingAreaStatsMemoryCache = new Map<string, HousingAreaStatsCacheEntry>();
+
+function housingAreaStatsCacheKey(city: string, area = "") {
+  return `${city.trim().toLocaleLowerCase()}|${area.trim().toLocaleLowerCase()}`;
+}
+
+function validHousingAreaStatsCacheEntry(value: unknown): HousingAreaStatsCacheEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Partial<HousingAreaStatsCacheEntry>;
+  if (!Array.isArray(entry.areas) || !Number.isFinite(Number(entry.savedAt)) || Date.now() - Number(entry.savedAt) > HOUSING_AREA_STATS_CACHE_MAX_AGE_MS) return null;
+  return { savedAt: Number(entry.savedAt), areas: entry.areas as HousingAreaStat[] };
+}
+
+function rememberHousingAreaStats(city: string, area: string, areas: HousingAreaStat[]) {
+  const key = housingAreaStatsCacheKey(city, area);
+  if (!key || key === "|") return;
+  const entry = { savedAt: Date.now(), areas };
+  housingAreaStatsMemoryCache.set(key, entry);
+  void AsyncStorage.setItem(`${HOUSING_AREA_STATS_CACHE_PREFIX}${key}`, JSON.stringify(entry)).catch(() => undefined);
+}
+
+export function getCachedHousingAreaStats(city: string, area = "") {
+  const entry = validHousingAreaStatsCacheEntry(housingAreaStatsMemoryCache.get(housingAreaStatsCacheKey(city, area)));
+  return entry?.areas || null;
+}
+
+export async function hydrateCachedHousingAreaStats(city: string, area = "") {
+  const key = housingAreaStatsCacheKey(city, area);
+  if (!key || key === "|") return null;
+  const memoryEntry = validHousingAreaStatsCacheEntry(housingAreaStatsMemoryCache.get(key));
+  if (memoryEntry) return memoryEntry.areas;
+  try {
+    const raw = await AsyncStorage.getItem(`${HOUSING_AREA_STATS_CACHE_PREFIX}${key}`);
+    const entry = validHousingAreaStatsCacheEntry(raw ? JSON.parse(raw) : null);
+    if (!entry) return null;
+    housingAreaStatsMemoryCache.set(key, entry);
+    return entry.areas;
+  } catch {
+    return null;
+  }
+}
+
 export async function lookupAccommodationLocation(query: string) {
   const cleanQuery = query.trim();
   if (!cleanQuery) return null;
@@ -919,13 +968,17 @@ export async function getAccommodationLocationOptions(city: string, area = "") {
 }
 
 export async function getHousingAreaStats(city: string, area = "") {
-  const params = new URLSearchParams({ city: city.trim() });
-  if (area.trim()) params.set("area", area.trim());
+  const cleanCity = city.trim();
+  const cleanArea = area.trim();
+  const params = new URLSearchParams({ city: cleanCity });
+  if (cleanArea) params.set("area", cleanArea);
   try {
     const payload = await request<{ ok: boolean; areas: HousingAreaStat[] }>(`/api/mobile/housing/area-stats?${params.toString()}`);
-    return payload.areas || [];
+    const areas = payload.areas || [];
+    rememberHousingAreaStats(cleanCity, cleanArea, areas);
+    return areas;
   } catch {
-    return [];
+    return getCachedHousingAreaStats(cleanCity, cleanArea) || [];
   }
 }
 

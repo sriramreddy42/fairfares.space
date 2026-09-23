@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCars, getHousingAreaStats, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, HousingAreaStat, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCachedHousingAreaStats, getCars, getHousingAreaStats, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, hydrateCachedHousingAreaStats, HousingAreaStat, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -738,6 +738,12 @@ export function HousingScreen({
       setHousingAreaStats([]);
       return () => { cancelled = true; };
     }
+    const cached = getCachedHousingAreaStats(city);
+    if (cached) setHousingAreaStats(cached);
+    else setHousingAreaStats([]);
+    void hydrateCachedHousingAreaStats(city).then((areas) => {
+      if (!cancelled && areas) setHousingAreaStats(areas);
+    });
     void getHousingAreaStats(city).then((areas) => {
       if (!cancelled) setHousingAreaStats(areas);
     });

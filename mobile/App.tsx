@@ -16,7 +16,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -851,10 +851,14 @@ function FairFaresApp() {
     bootstrapGenerationRef.current = generation;
     if (showLoader) setLoading(true);
     try {
+      // Start the independent rent graph request while bootstrap is loading.
+      // Housing can then paint verified data from its cache on first open.
+      if (requestedCity.trim()) void getHousingAreaStats(requestedCity);
       const payload = await getBootstrap(requestedCity);
       if (bootstrapGenerationRef.current !== generation) return;
       setData(payload);
       setDiscoveryLocation((current) => current || payload.location.city || requestedCity);
+      if (payload.location.city && payload.location.city.trim() !== requestedCity.trim()) void getHousingAreaStats(payload.location.city);
       setVisiblePosts(payload.housing);
       const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
       if (bootstrapGenerationRef.current !== generation) return;
