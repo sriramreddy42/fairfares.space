@@ -833,7 +833,13 @@ export async function updateRideDriverLocation(rideId: string, latitude: number,
 }
 
 export async function getRideDriverLocation(rideId: string) {
-  return request<{ ok: boolean; available: boolean; status: string; location?: { latitude: number; longitude: number; updatedAt: string; ageSeconds: number } }>(`/api/mobile/rides/driver-location?rideId=${encodeURIComponent(rideId)}`);
+  return request<{
+    ok: boolean;
+    available: boolean;
+    status: string;
+    location?: { latitude: number; longitude: number; updatedAt: string; ageSeconds: number };
+    trip?: { distanceMiles: number; etaMinutes: number | null; source: "ROUTED" | "STRAIGHT_LINE" } | null;
+  }>(`/api/mobile/rides/driver-location?rideId=${encodeURIComponent(rideId)}`);
 }
 
 export async function rateCompletedRide(rideId: string, score: number, comment = "") {

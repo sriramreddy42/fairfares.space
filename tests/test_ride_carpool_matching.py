@@ -1289,6 +1289,13 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             self.assertAlmostEqual(visible["location"]["latitude"], 39.7001, places=4)
             self.assertAlmostEqual(visible["location"]["longitude"], -104.9002, places=4)
             self.assertIn("ageSeconds", visible["location"])
+            self.assertIn("trip", visible)
+            self.assertIsNotNone(visible["trip"])
+            self.assertGreater(float(visible["trip"]["distanceMiles"]), 0)
+            if visible["trip"]["source"] == "STRAIGHT_LINE":
+                self.assertIsNone(visible["trip"]["etaMinutes"])
+            else:
+                self.assertGreaterEqual(int(visible["trip"]["etaMinutes"]), 1)
 
             status, blocked = self.request_json(server, "GET", f"/api/mobile/rides/driver-location?rideId={request_public_id}", outsider_token)
             self.assertEqual(status, 404)

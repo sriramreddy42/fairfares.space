@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { BlurView } from "expo-blur";
 import { ActivityIndicator, Alert, Image, ImageBackground, ImageSourcePropType, KeyboardAvoidingView, LayoutChangeEvent, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { absoluteAssetUrl, createMobileRide, getCachedHousingAreaStats, getCars, getHousingAreaStats, getMyRentalCarListings, getRideActivity, getRideDriverProfile, getRides, getRidePlaceSuggestions, hydrateCachedHousingAreaStats, HousingAreaStat, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
+import { absoluteAssetUrl, createMobileRide, getCachedHousingAreaStats, getCars, getHousingAreaStats, getMyRentalCarListings, getRideActivity, getRideDriverLocation, getRideDriverProfile, getRides, getRidePlaceSuggestions, hydrateCachedHousingAreaStats, HousingAreaStat, listRentalCar, quoteRentalCar, respondToRideDispatch, reverseGeocodeRideLocation, rideMapUrl, RidePlaceSuggestion, saveRideDriverProfile, submitAppFeedback, trackProductEvent, updateMobileRide, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { HousingCard } from "../components/HousingCard";
 import { DateTimeField } from "../components/DateTimeField";
@@ -70,6 +70,14 @@ type CurrentRideLocation = {
     latitude: number;
     longitude: number;
   };
+};
+
+type DriverLocationStatus = {
+  available: boolean;
+  distanceMiles?: number;
+  etaMinutes?: number | null;
+  source?: "ROUTED" | "STRAIGHT_LINE";
+  ageSeconds?: number;
 };
 
 const quickLinks: Array<{
@@ -673,6 +681,7 @@ export function HousingScreen({
   const [rideForm, setRideForm] = useState<RideInput>(initialRideForm);
   const [rideRows, setRideRows] = useState<RidePost[]>([]);
   const [rideActivityRows, setRideActivityRows] = useState<RidePost[]>([]);
+  const [driverLocationByRideId, setDriverLocationByRideId] = useState<Record<string, DriverLocationStatus>>({});
   const [rideActivityBusy, setRideActivityBusy] = useState(false);
   const [rideBusy, setRideBusy] = useState(false);
   const [ridePlanBusy, setRidePlanBusy] = useState(false);
@@ -787,6 +796,33 @@ export function HousingScreen({
     rideOwnerLocationSubscription.current?.remove();
     rideOwnerLocationSubscription.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!rideOwnerOpen) return;
+    const activeRiderRideIds = rideActivityRows
+      .filter((ride) => ride.activityRole === "MINE" && ride.role === "RIDER" && ["EN_ROUTE", "ARRIVED"].includes(String(ride.dispatchStatus || "").toUpperCase()))
+      .map((ride) => ride.id)
+      .filter(Boolean);
+    if (!activeRiderRideIds.length) {
+      setDriverLocationByRideId({});
+      return;
+    }
+    let cancelled = false;
+    const refreshDriverLocations = async () => {
+      const results = await Promise.all(activeRiderRideIds.map(async (rideId) => {
+        try {
+          const response = await getRideDriverLocation(rideId);
+          return [rideId, { available: response.available, distanceMiles: response.trip?.distanceMiles, etaMinutes: response.trip?.etaMinutes, source: response.trip?.source, ageSeconds: response.location?.ageSeconds }] as const;
+        } catch {
+          return [rideId, { available: false }] as const;
+        }
+      }));
+      if (!cancelled) setDriverLocationByRideId(Object.fromEntries(results));
+    };
+    void refreshDriverLocations();
+    const interval = setInterval(() => void refreshDriverLocations(), 20_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [rideActivityRows, rideOwnerOpen]);
 
   useEffect(() => {
     if (!linkedHousingPost) return;
@@ -1826,6 +1862,13 @@ export function HousingScreen({
     ].filter(Boolean).join(" · ");
   }
 
+  function formatLiveDriverStatus(location?: DriverLocationStatus) {
+    if (!location?.available) return "Driver location will appear after the driver starts sharing it.";
+    const distance = formatRideMiles(location.distanceMiles);
+    const eta = location.source === "ROUTED" && location.etaMinutes ? `${location.etaMinutes === 1 ? "1 min" : `${location.etaMinutes} mins`} away` : "Driver location shared";
+    return [eta, distance ? `${distance}${location.source === "ROUTED" ? " by road" : " direct"}` : ""].filter(Boolean).join(" · ");
+  }
+
   function selectRideService(service: (typeof rideServicePosters)[number]) {
     if (!service.available) {
       Alert.alert("Available soon", `${service.title} will be available soon. Carpool is open now for shared route matching.`);
@@ -2277,12 +2320,13 @@ export function HousingScreen({
       return ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN", "ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
     }).slice(0, 8);
     const listedRouteRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "DRIVER");
+    const riderTripRows = rideActivityRows.filter((ride) => ride.activityRole === "MINE" && ride.role === "RIDER" && !ride.isExpired && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(String(ride.dispatchStatus || "").toUpperCase()));
     const requestRows = rideOwnerOpenTarget === "listings"
       ? listedRouteRows
       : rideOwnerOpenTarget === "requests"
-        ? incomingRequestRows
+        ? [...incomingRequestRows, ...riderTripRows]
         : incomingRequestRows.length ? incomingRequestRows : listedRouteRows;
-    const trackerTitle = rideOwnerOpenTarget === "listings" ? "Your listings" : rideOwnerOpenTarget === "requests" ? "Rider requests" : "Request tracker";
+    const trackerTitle = rideOwnerOpenTarget === "listings" ? "Your listings" : rideOwnerOpenTarget === "requests" ? "Carpool activity" : "Request tracker";
     return (
       <Modal visible={rideOwnerOpen} animationType="slide" onRequestClose={closeRideOwnerTracker}>
         <SafeAreaView style={styles.rideOwnerScreen} edges={["right", "bottom", "left"]}>
@@ -2457,6 +2501,8 @@ export function HousingScreen({
                 requestRows.map((ride) => {
                   const status = String(ride.isExpired ? "EXPIRED" : ride.dispatchStatus || (ride.activityRole === "DRIVER_NOTIFICATION" ? "PENDING" : "LISTED")).toUpperCase();
                   const isIncoming = ride.activityRole === "DRIVER_NOTIFICATION";
+                  const isRiderTrip = ride.activityRole === "MINE" && ride.role === "RIDER";
+                  const driverLocation = isRiderTrip ? driverLocationByRideId[ride.id] : undefined;
                   const canAccept = isIncoming && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
                   const canAdvance = isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status);
                   const nextAction = status === "ACCEPTED" ? "EN_ROUTE" : status === "EN_ROUTE" ? "ARRIVED" : status === "ARRIVED" ? "COMPLETED" : null;
@@ -2466,7 +2512,7 @@ export function HousingScreen({
                       <View style={styles.rideOwnerRequestTop}>
                         <Text style={styles.rideOwnerRequestTitle} numberOfLines={2}>{ride.title || ride.typeLabel}</Text>
                         <Text style={[styles.rideOwnerRequestBadge, ride.isExpired && styles.rideOwnerRequestBadgeExpired]}>
-                          {ride.isExpired ? "Expired" : isIncoming ? status.replace("_", " ") : "Listed"}
+                          {ride.isExpired ? "Expired" : isIncoming || isRiderTrip ? status.replace("_", " ") : "Listed"}
                         </Text>
                       </View>
                       <Text style={styles.rideOwnerRequestRoute}>{ride.origin} → {ride.destination}</Text>
@@ -2476,6 +2522,8 @@ export function HousingScreen({
                         <Text style={styles.rideOwnerRequestFact}>{ride.seats} seat{ride.seats === 1 ? "" : "s"}</Text>
                         <Text style={styles.rideOwnerRequestFact}>{ride.pickupDate || "Date open"} · {ride.pickupTime || "Time open"}</Text>
                       </View>
+                      {isRiderTrip ? <View style={styles.rideOwnerLiveLocation}><Text style={styles.rideOwnerLiveLocationTitle}>● Driver location</Text><Text style={styles.rideOwnerLiveLocationCopy}>{formatLiveDriverStatus(driverLocation)}</Text></View> : null}
+                      {isIncoming && ["ACCEPTED", "EN_ROUTE", "ARRIVED"].includes(status) ? <Text style={styles.rideOwnerPickupLabel}>Rider pickup: {cleanRideRoutePoint(ride.origin) || "Location being confirmed"}</Text> : null}
                       {ride.pickupPin ? (
                         <View style={styles.rideOwnerPinBox}>
                           <Text style={styles.rideOwnerPinLabel}>Pickup PIN</Text>
@@ -2487,6 +2535,8 @@ export function HousingScreen({
                           ? ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status)
                             ? `Matched within a ${ride.dispatchNearestRadius || 10} mi route band. Messaging is available now; accept to confirm the seat and unlock the pickup PIN.`
                             : "Message the rider about ETA, pickup notes, route changes, and arrival updates."
+                          : isRiderTrip
+                            ? status === "ARRIVED" ? "Your driver has arrived at the pickup point. Confirm the pickup PIN before starting the trip." : "Live location refreshes while the driver is en route. The ETA appears only when road routing is available."
                           : ride.isExpired
                             ? "This ride date has passed. It remains visible here as expired."
                             : "Your route is listed. Matching rider requests will appear here with route distance, status, and Chitthi."}
@@ -2512,6 +2562,7 @@ export function HousingScreen({
                             <Text style={styles.rideOwnerChatText}>Navigate pickup</Text>
                           </TouchableOpacity>
                         ) : null}
+                        {isIncoming && status === "ACCEPTED" ? <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => void openRiderPickupNavigation(ride)}><Text style={styles.rideOwnerChatText}>Open pickup map</Text></TouchableOpacity> : null}
                         {isIncoming && ["ARRIVED", "IN_PROGRESS"].includes(status) ? (
                           <TouchableOpacity style={styles.rideOwnerChatButton} onPress={() => void openRiderDestinationNavigation(ride)}>
                             <Text style={styles.rideOwnerChatText}>Navigate destination</Text>
@@ -5728,6 +5779,10 @@ const styles = StyleSheet.create({
   rideOwnerRequestRoute: { color: "#c7c9cc", fontSize: 12, lineHeight: 17, fontWeight: "500" },
   rideOwnerRequestFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   rideOwnerRequestFact: { color: "#f7f7f8", backgroundColor: "rgba(255,255,255,0.08)", borderRadius: theme.radius.pill, paddingHorizontal: 8, paddingVertical: 4, overflow: "hidden", fontSize: 10, fontWeight: "600" },
+  rideOwnerLiveLocation: { gap: 2, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: "rgba(0,201,151,0.14)", borderWidth: 1, borderColor: "rgba(0,201,151,0.32)" },
+  rideOwnerLiveLocationTitle: { color: "#63e3b0", fontSize: 11, fontWeight: "800" },
+  rideOwnerLiveLocationCopy: { color: "#e1f8ed", fontSize: 11, lineHeight: 16, fontWeight: "600" },
+  rideOwnerPickupLabel: { color: "#d8e6e0", fontSize: 11, lineHeight: 16, fontWeight: "600" },
   rideOwnerRequestMeta: { color: "#aeb2b8", fontSize: 11, lineHeight: 16, fontWeight: "500" },
   rideOwnerPinBox: { alignSelf: "flex-start", borderRadius: 14, borderWidth: 1, borderColor: "rgba(34,197,94,0.38)", backgroundColor: "rgba(34,197,94,0.12)", paddingHorizontal: 12, paddingVertical: 8 },
   rideOwnerPinLabel: { color: theme.colors.green, fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1 },

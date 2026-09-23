@@ -39890,7 +39890,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             dispatch = con.execute(
                 """
-                SELECT notifications.*, requests.user_id AS rider_user_id
+                SELECT notifications.*, requests.user_id AS rider_user_id,
+                       requests.origin_lat AS rider_origin_lat,
+                       requests.origin_lng AS rider_origin_lng
                 FROM ride_dispatch_notifications notifications
                 JOIN ride_posts requests ON requests.id = notifications.request_ride_post_id
                 WHERE requests.public_id = ?
@@ -39917,11 +39919,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             age_seconds = max(0, int((datetime.now(timezone.utc) - updated).total_seconds()))
         except ValueError:
             age_seconds = 0
+        rider_latitude = float(row_value(dispatch, "rider_origin_lat") or 0)
+        rider_longitude = float(row_value(dispatch, "rider_origin_lng") or 0)
+        trip: dict[str, object] | None = None
+        if valid_ride_coordinate_pair(rider_latitude, rider_longitude):
+            routed = google_route_totals([
+                {"lat": float(latitude), "lng": float(longitude)},
+                {"lat": rider_latitude, "lng": rider_longitude},
+            ])
+            if routed:
+                trip = {"distanceMiles": round(routed[0], 1), "etaMinutes": max(1, int(routed[1] or 0)) if routed[1] else None, "source": "ROUTED"}
+            else:
+                trip = {"distanceMiles": round(distance_miles_between(float(latitude), float(longitude), rider_latitude, rider_longitude), 1), "etaMinutes": None, "source": "STRAIGHT_LINE"}
         self.send_json({
             "ok": True,
             "available": True,
             "location": {"latitude": float(latitude), "longitude": float(longitude), "updatedAt": updated_at, "ageSeconds": age_seconds},
             "status": row_value(dispatch, "status") or "ACCEPTED",
+            "trip": trip,
         })
 
     def api_mobile_ride_driver_profile(self) -> None:
