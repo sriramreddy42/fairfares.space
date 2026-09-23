@@ -2787,14 +2787,14 @@ function FairFaresApp() {
           setHousingWelcomeFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
-        onOpenRides={() => {
+        onOpenRides={(target = "ride") => {
           setRentalFocusKey(0);
-          setRideOwnerOpenTarget("workspace");
+          setRideOwnerOpenTarget(target === "requests" ? "requests" : "workspace");
           setRideOwnerEditId("");
           setRideOwnerReturnTab(null);
-          setRideOwnerOpenToken(0);
-          setSelectedNeed("ride_need");
-          setCarpoolFocusKey((value) => value + 1);
+          setSelectedNeed(target === "requests" ? "ride_offer" : "ride_need");
+          if (target === "requests") setRideOwnerOpenToken((value) => value + 1);
+          else setCarpoolFocusKey((value) => value + 1);
           setActiveTab("housing");
         }}
         onOpenRentalCars={() => {

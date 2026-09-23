@@ -33,7 +33,7 @@ type Props = {
   onRequireLogin: () => void;
   onRequireSignup: () => void;
   onOpenHousing: (postId?: string) => void;
-  onOpenRides: () => void;
+  onOpenRides: (target?: "ride" | "requests") => void;
   onOpenRentalCars: () => void;
   onOpenRentalBooking: (bookingId: string) => void;
   onOpenGas: () => void;
@@ -97,7 +97,7 @@ type CommunityActionNotice = {
   title: string;
   body: string;
   actionLabel: string;
-  action: "ride" | "rental";
+  action: "ride" | "ride-request" | "rental";
   bookingId?: string;
 };
 
@@ -408,7 +408,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         title: rideTitle,
         body: `${ride.origin || "Pickup"} → ${ride.destination || "Destination"}`,
         actionLabel: incomingRequest ? "Review request" : "Review ride",
-        action: "ride",
+        action: incomingRequest ? "ride-request" : "ride",
       });
     });
 
@@ -1330,7 +1330,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <View style={styles.actionNoticeActions}>
           <TouchableOpacity
             style={styles.actionNoticeButton}
-            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "") : onOpenRides()}
+            onPress={() => actionNotice.action === "rental" ? onOpenRentalBooking(actionNotice.bookingId || "") : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride")}
             accessibilityRole="button"
             accessibilityLabel={actionNotice.actionLabel}
           >
