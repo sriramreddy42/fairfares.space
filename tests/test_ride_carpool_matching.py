@@ -1594,6 +1594,22 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(accepted, 1)
 
+    def test_loaded_blank_activity_avatar_does_not_trigger_per_ride_database_lookup(self):
+        row = {
+            "public_id": "FFR-ACTIVITY-AVATAR", "ride_type": "CARPOOL_REQUEST", "rider_role": "RIDER",
+            "user_id": 77, "owner_name": "No Avatar", "owner_photo": "", "title": "Ride request",
+            "origin_label": "Denver, CO", "destination_label": "Aurora, CO", "city_label": "Denver, CO",
+            "status": "ACTIVE", "seats": 1,
+        }
+        with patch.object(app, "db", side_effect=AssertionError("activity payload reopened the database")):
+            payload = app.mobile_ride_payload(
+                row, allow_google_routes=False,
+                owner_rating_summary={"average": 0, "count": 0, "label": "New member"},
+                owner_profile_loaded=True,
+                ride_currency=("USD", "$"),
+            )
+        self.assertEqual(payload["ownerName"], "No Avatar")
+
 
 if __name__ == "__main__":
     unittest.main()

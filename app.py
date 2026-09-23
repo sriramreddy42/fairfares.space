@@ -236,6 +236,8 @@ _RIDE_LIVE_ROUTE_CACHE: dict[int, tuple[float, float, float, dict[str, object]]]
 _RIDE_LIVE_ROUTE_CACHE_LOCK = threading.Lock()
 _RIDE_REVERSE_GEOCODE_CACHE: OrderedDict[tuple[int, int], tuple[float, str]] = OrderedDict()
 _RIDE_REVERSE_GEOCODE_CACHE_LOCK = threading.Lock()
+_APPLICATION_SECRET_LOCK = threading.Lock()
+_APPLICATION_SECRET_CACHE = ""
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
 MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 30)
@@ -842,14 +844,18 @@ SHARED_STYLESHEETS = [
 
 
 def refresh_storage_paths() -> None:
-    global DB_PATH, BACKUP_DIR
+    global DB_PATH, BACKUP_DIR, _APPLICATION_SECRET_CACHE
     configured_db_path = Path(os.environ.get("FAIRFARES_DB_PATH", DEFAULT_DB_PATH))
     configured_backup_dir = Path(os.environ.get("FAIRFARES_BACKUP_DIR", configured_db_path.parent / "backups"))
     render_runtime = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
     if not render_runtime and str(configured_db_path).startswith("/var/data"):
+        if DB_PATH != DEFAULT_DB_PATH:
+            _APPLICATION_SECRET_CACHE = ""
         DB_PATH = DEFAULT_DB_PATH
         BACKUP_DIR = DATA_DIR / "backups"
         return
+    if DB_PATH != configured_db_path:
+        _APPLICATION_SECRET_CACHE = ""
     DB_PATH = configured_db_path
     BACKUP_DIR = configured_backup_dir
 
@@ -3501,28 +3507,38 @@ def api_rate_limit_retry_after(
 
 
 def application_secret() -> str:
-    configured = (os.environ.get("FAIRFARES_APP_SECRET") or os.environ.get("SECRET_KEY") or "").strip()
-    if len(configured) >= 32:
-        return configured
-    secret_path = DB_PATH.parent / ".fairfares-app-secret"
-    secret_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        existing = secret_path.read_text(encoding="utf-8").strip()
-        if len(existing) >= 32:
-            return existing
-    except FileNotFoundError:
-        pass
-    generated = secrets.token_urlsafe(48)
-    try:
-        with secret_path.open("x", encoding="utf-8") as handle:
-            handle.write(generated)
-        secret_path.chmod(0o600)
-        return generated
-    except FileExistsError:
-        existing = secret_path.read_text(encoding="utf-8").strip()
-        if len(existing) >= 32:
-            return existing
-    raise RuntimeError("FairFares application secret could not be initialized securely.")
+    global _APPLICATION_SECRET_CACHE
+    if _APPLICATION_SECRET_CACHE:
+        return _APPLICATION_SECRET_CACHE
+    with _APPLICATION_SECRET_LOCK:
+        if _APPLICATION_SECRET_CACHE:
+            return _APPLICATION_SECRET_CACHE
+        configured = (os.environ.get("FAIRFARES_APP_SECRET") or os.environ.get("SECRET_KEY") or "").strip()
+        if len(configured) >= 32:
+            _APPLICATION_SECRET_CACHE = configured
+            return _APPLICATION_SECRET_CACHE
+        secret_path = DB_PATH.parent / ".fairfares-app-secret"
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            existing = secret_path.read_text(encoding="utf-8").strip()
+            if len(existing) >= 32:
+                _APPLICATION_SECRET_CACHE = existing
+                return _APPLICATION_SECRET_CACHE
+        except FileNotFoundError:
+            pass
+        generated = secrets.token_urlsafe(48)
+        try:
+            with secret_path.open("x", encoding="utf-8") as handle:
+                handle.write(generated)
+            secret_path.chmod(0o600)
+            _APPLICATION_SECRET_CACHE = generated
+            return _APPLICATION_SECRET_CACHE
+        except FileExistsError:
+            existing = secret_path.read_text(encoding="utf-8").strip()
+            if len(existing) >= 32:
+                _APPLICATION_SECRET_CACHE = existing
+                return _APPLICATION_SECRET_CACHE
+        raise RuntimeError("FairFares application secret could not be initialized securely.")
 
 
 def normalize_email(value: object) -> str:
@@ -8174,6 +8190,9 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_instances_post_date ON ride_instances(ride_post_id, instance_date, pickup_time)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_status ON ride_dispatch_notifications(driver_user_id, status, notified_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rater_dispatch ON ride_ratings(rater_user_id, dispatch_notification_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rated_user ON ride_ratings(rated_user_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_user_ratings_reviewed_status ON user_ratings(reviewed_user_id, status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_user_status_dates ON bookings(user_id, booking_status, pickup_date)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_bookings_car_status_dates ON bookings(car_id, booking_status, pickup_date, dropoff_date)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_transactions_booking_created ON transactions(booking_id, created_at DESC, id DESC)")
@@ -18739,6 +18758,8 @@ def mobile_ride_payload(
     allow_google_routes: bool = True,
     include_private_vehicle: bool = False,
     owner_rating_summary: dict[str, object] | None = None,
+    owner_profile_loaded: bool = False,
+    ride_currency: tuple[str, str] | None = None,
 ) -> dict[str, object]:
     origin_point = origin_point or {}
     destination_point = destination_point or {}
@@ -18748,7 +18769,9 @@ def mobile_ride_payload(
     owner_user_id = int(row_value(row, "user_id") or 0)
     owner_name = row_value(row, "owner_name")
     owner_photo = row_value(row, "owner_photo")
-    if owner_user_id and (not owner_name or not owner_photo):
+    # Search and activity queries join the owner fields. An empty avatar is a
+    # valid loaded value, not a reason to reopen SQLite once per ride.
+    if owner_user_id and not owner_profile_loaded and (not owner_name or not owner_photo):
         try:
             with db() as con:
                 owner = con.execute("SELECT name, profile_photo_url FROM users WHERE id = ? LIMIT 1", (owner_user_id,)).fetchone()
@@ -18757,7 +18780,7 @@ def mobile_ride_payload(
         except sqlite3.Error:
             owner_name = owner_name or ""
             owner_photo = owner_photo or ""
-    ride_currency_code, ride_currency_symbol = accommodation_currency(
+    ride_currency_code, ride_currency_symbol = ride_currency or accommodation_currency(
         row_value(row, "city_label") or row_value(row, "origin_label")
     )
     payload = {
@@ -39771,11 +39794,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
             rides: list[dict[str, object]] = []
             seen: set[str] = set()
+            currencies_by_location: dict[str, tuple[str, str]] = {}
+
+            def ride_currency_for_activity(row: sqlite3.Row) -> tuple[str, str]:
+                location = str(row_value(row, "city_label") or row_value(row, "origin_label") or "").strip()
+                if location not in currencies_by_location:
+                    currencies_by_location[location] = accommodation_currency(location)
+                return currencies_by_location[location]
+
             for row in own_rows:
                 payload = mobile_ride_payload(
                     row,
+                    allow_google_routes=False,
                     include_private_vehicle=True,
                     owner_rating_summary=owner_ratings.get(int(row_value(row, "user_id") or 0)),
+                    owner_profile_loaded=True,
+                    ride_currency=ride_currency_for_activity(row),
                 )
                 payload["activityRole"] = "MINE"
                 payload["dispatchNotifiedCount"] = int(row_value(row, "dispatch_notified_count") or 0)
@@ -39816,7 +39850,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for row in incoming_rows:
                 payload = mobile_ride_payload(
                     row,
+                    allow_google_routes=False,
                     owner_rating_summary=owner_ratings.get(int(row_value(row, "user_id") or 0)),
+                    owner_profile_loaded=True,
+                    ride_currency=ride_currency_for_activity(row),
                 )
                 public_id = str(payload.get("id") or "")
                 dispatch_status = str(row_value(row, "dispatch_status") or "PENDING").upper()
