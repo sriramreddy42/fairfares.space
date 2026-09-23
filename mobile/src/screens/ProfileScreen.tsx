@@ -803,7 +803,10 @@ const styles = StyleSheet.create({
   modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.68)" },
   supportModalBackdrop: { justifyContent: "flex-start" },
   supportSheet: { flex: 1, width: "100%", backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, paddingTop: 52, paddingHorizontal: 18, paddingBottom: 18, gap: 14 },
-  notificationSheet: { maxHeight: "85%", width: "100%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 10 },
+  // A maxHeight leaves no resolved height for the flex ScrollView on iOS, so
+  // the category switches can collapse below the header. Give this bottom
+  // sheet a real viewport while retaining a scrollable list for smaller phones.
+  notificationSheet: { height: "78%", width: "100%", backgroundColor: theme.colors.panel, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: theme.colors.line, padding: 18, paddingBottom: 28, gap: 10 },
   notificationContent: { paddingBottom: 16 },
   supportScroll: { flex: 1 },
   supportContent: { gap: 11, paddingBottom: 28 },
