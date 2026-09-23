@@ -1372,8 +1372,8 @@ function FairFaresApp() {
       void SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY);
       setPaymentStatus({
         title: "Payment completed",
-        body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
-        action: "View booking"
+        body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now. You can return to your rental whenever you are ready.",
+        action: "Back to rentals"
       });
       void load();
     }
@@ -1620,8 +1620,8 @@ function FairFaresApp() {
           await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
           setPaymentStatus({
             title: "Payment completed",
-            body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
-            action: "View booking"
+            body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now. You can return to your rental whenever you are ready.",
+            action: "Back to rentals"
           });
           void load();
         } else if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
@@ -1659,8 +1659,8 @@ function FairFaresApp() {
         await SecureStore.deleteItemAsync(PENDING_RENTAL_CHECKOUT_KEY).catch(() => undefined);
         setPaymentStatus({
           title: "Payment completed",
-          body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now.",
-          action: "View booking"
+          body: "Stripe confirmed your payment. Your FairFares booking is being refreshed now. You can return to your rental whenever you are ready.",
+          action: "Back to rentals"
         });
         void load();
       } else if (browserResult.type !== "success" || browserResult.url?.includes("payment/cancel")) {
@@ -3590,11 +3590,7 @@ function FairFaresApp() {
             <Text style={styles.modalCopy}>{paymentMessage || "Stripe checkout is ready."}</Text>
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => {
-                if (paymentUrl) {
-                  void Linking.openURL(paymentUrl);
-                }
-              }}
+              onPress={() => void resumePendingRentalCheckout()}
             >
               <Text style={styles.primaryButtonText}>Open payment</Text>
             </TouchableOpacity>

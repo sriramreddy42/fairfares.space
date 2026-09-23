@@ -103,6 +103,7 @@ type CommunityActionNotice = {
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
 const communityGroupSnapshots = new Map<string, Community[]>();
+const communityActionNoticeSnapshots = new Map<number, CommunityActionNotice | null>();
 const communityReviewFallback: BootstrapPayload["testimonials"][number] = {
   id: -10,
   name: "Sriram Reddy Bandari",
@@ -282,9 +283,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [selectedGroup, setSelectedGroup] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
-  const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(null);
+  const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(() => communityActionNoticeSnapshots.get(Number(user?.id || 0)) || null);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
   const actionNoticeVisible = useRef(false);
+
+  useEffect(() => {
+    setActionNotice(communityActionNoticeSnapshots.get(Number(user?.id || 0)) || null);
+  }, [user?.id]);
+
+  useEffect(() => {
+    const userId = Number(user?.id || 0);
+    if (userId) communityActionNoticeSnapshots.set(userId, actionNotice);
+  }, [actionNotice, user?.id]);
   const lastFeedScrollOffset = useRef(0);
   const pullOffset = useRef(new Animated.Value(0)).current;
   const heroEntrance = useRef(new Animated.Value(0)).current;
@@ -335,7 +345,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   useEffect(() => {
     let cancelled = false;
-    setActionNotice(null);
     if (!user?.id) return () => { cancelled = true; };
 
     void Promise.allSettled([getRideActivity(), getRentalBookings()]).then(([rideResult, rentalResult]) => {
@@ -373,7 +382,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         const status = String(item.dispatchStatus || item.status || "").toUpperCase();
         return item.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
       }) || rides.find((item) => ["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"].includes(String(item.dispatchStatus || item.status || "").toUpperCase()));
-      if (!ride) return;
+      if (!ride) {
+        // Keep the cached notice while the screen remounts, but remove it
+        // once both live sources confirm there is no longer an action.
+        if (rideResult.status === "fulfilled" && rentalResult.status === "fulfilled") setActionNotice(null);
+        return;
+      }
       const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
       const incomingRequest = ride.activityRole === "DRIVER_NOTIFICATION";
       const rideTitle = incomingRequest ? "A rider is waiting for your response" : status === "ACCEPTED" ? "Your ride was accepted" : status === "EN_ROUTE" ? "Your driver is on the way" : status === "ARRIVED" ? "Your driver has arrived" : "Your ride is in progress";
