@@ -1367,6 +1367,22 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertAlmostEqual(results[0]["lat"], 39.73435 - 0.016, places=4)
         self.assertAlmostEqual(results[0]["lng"], -104.98162 - 0.006, places=4)
 
+    def test_india_housing_search_uses_explicit_country_without_google(self):
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}), patch.object(
+            app, "google_accommodation_geocode", side_effect=AssertionError("Google must not be called")
+        ):
+            results = app.mobile_housing_posts(
+                city="Hyderabad, Telangana, India",
+                area="airport",
+                radius=60,
+                center_lat=17.23132,
+                center_lng=78.42986,
+                limit=2,
+            )
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(item["country"] == "IN" for item in results))
+        self.assertTrue(all(item["currencyCode"] == "INR" for item in results))
+
     def test_offline_catalogue_supplies_city_autocomplete(self):
         with app.db() as con:
             con.execute(

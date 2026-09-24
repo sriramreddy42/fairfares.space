@@ -19235,7 +19235,12 @@ def mobile_housing_posts(
         "COALESCE(source_label, '') != 'SAMPLE_DATA'",
     ]
     values: list[object] = []
-    requested_country = resolve_accommodation_country(area) or resolve_accommodation_country(city)
+    requested_country = (
+        resolve_accommodation_country(area, allow_refresh=False)
+        or inferred_location_country(area)
+        or resolve_accommodation_country(city, allow_refresh=False)
+        or inferred_location_country(city)
+    )
     try:
         with db() as con:
             structured_country_rows_exist = bool(con.execute(
@@ -19752,8 +19757,9 @@ def mobile_sample_housing_posts(
     sample_owner_name = str(row_value(sample_owner, "name") or SAMPLE_HOUSING_OWNER_NAME) if sample_owner else SAMPLE_HOUSING_OWNER_NAME
     sample_owner_photo = avatar_delivery_path(row_value(sample_owner, "profile_photo_url"), sample_owner_id) if sample_owner else ""
     selected_location = " ".join((area or city or "your selected location").split())[:120]
-    selected_country = accommodation_country_code(selected_location)
-    currency_code, currency_symbol = accommodation_currency(selected_location)
+    location_context = ", ".join(value for value in (area, city) if value).strip() or selected_location
+    selected_country = accommodation_country_code(location_context)
+    currency_code, currency_symbol = accommodation_currency(location_context)
     mode = "NEED_PLACE" if need in {"have_place", "need_roommates"} else "HAVE_PLACE"
     mode_label = "Looking for a place" if mode == "NEED_PLACE" else "Place available"
     selected_budget = int(float_from_value(budget) or 0)
