@@ -130,6 +130,22 @@ class CommunityFeatureTest(unittest.TestCase):
             self.assertTrue(started.wait(timeout=1))
             release.set()
 
+    def test_feed_batches_author_rating_summaries(self):
+        self.create_post(title="Owner community question")
+        self.create_post(token="member-token", title="Member community question")
+        self.create_post(token="outsider-token", title="Outsider community question")
+
+        with mock.patch.object(
+            app,
+            "user_rating_summary",
+            side_effect=AssertionError("feed serialization must not query ratings one post at a time"),
+        ), mock.patch.object(app, "user_rating_summaries", wraps=app.user_rating_summaries) as batched:
+            status, feed = self.request("GET", "/api/mobile/community?limit=30", "owner-token")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(len(feed["posts"]), 3)
+        self.assertEqual(batched.call_count, 1)
+
     def test_post_photos_are_limited_ordered_and_editable(self):
         png = "data:image/png;base64," + base64.b64encode(
             base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
@@ -737,6 +753,10 @@ class CommunityFeatureTest(unittest.TestCase):
                 (self.owner_id,),
             )
 
+        # Direct fixture inserts bypass the normal housing write endpoint,
+        # which schedules this derived projection after commit.
+        app.repair_active_housing_city_labels(force=True)
+        app.ensure_housing_community_projection_current()
         status, dayton = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&category=HOUSING")
         self.assertEqual(status, 200)
         self.assertIn("FFH-CITY-ONLY-DAYTON", [post["id"] for post in dayton["sections"]["local"]["posts"]])
@@ -863,6 +883,9 @@ class CommunityFeatureTest(unittest.TestCase):
                            'Brookville', '2026-09-01', 900, '12_months', 'ACTIVE')""",
                 (self.owner_id,),
             )
+        # Direct fixture inserts bypass the normal housing write endpoint,
+        # which schedules this derived projection after commit.
+        app.ensure_housing_community_projection_current()
         status, feed = self.request("GET", "/api/mobile/community?category=HOUSING", "member-token")
         self.assertEqual(status, 200)
         housing = next(post for post in feed["posts"] if post["sourceId"] == "FFP-HOUSING-1")

@@ -8169,10 +8169,14 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_location ON ask_community_posts(city COLLATE NOCASE, area COLLATE NOCASE, status, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_author ON ask_community_posts(author_id, id DESC)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_posts_source ON ask_community_posts(source_kind, source_public_id) WHERE source_kind != '' AND source_public_id != ''")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_post_images_post_sort ON ask_community_post_images(post_id, sort_order, id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_answers_post ON ask_community_answers(post_id, status, id ASC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_post_reaction ON ask_community_reactions(post_id, reaction) WHERE post_id IS NOT NULL")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_post_user ON ask_community_reactions(post_id, user_id) WHERE post_id IS NOT NULL")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_answer_reaction ON ask_community_reactions(answer_id, reaction) WHERE answer_id IS NOT NULL")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reactions_answer_user ON ask_community_reactions(answer_id, user_id) WHERE answer_id IS NOT NULL")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reports_status ON ask_community_reports(status, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_reports_post_status ON ask_community_reports(post_id, status) WHERE post_id IS NOT NULL")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_reports_one_per_target ON ask_community_reports(COALESCE(post_id, 0), COALESCE(answer_id, 0), reporter_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_reactions_message ON chat_message_reactions(message_id, emoji)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_message_mentions_user ON chat_message_mentions(user_id, message_id DESC)")
@@ -12522,7 +12526,11 @@ def can_rate_chat_member(conversation_public_id: str, reviewer_user_id: int, rev
     return bool(row)
 
 
-def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, object]:
+def community_post_payload(
+    row: sqlite3.Row,
+    viewer_id: int = 0,
+    rating_summaries: dict[int, dict[str, object]] | None = None,
+) -> dict[str, object]:
     author_id = int(row_value(row, "author_id") or 0)
     images = [item for item in str(row_value(row, "image_urls") or "").split(chr(31)) if item]
     try:
@@ -12531,7 +12539,11 @@ def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, ob
         details = {}
     if not isinstance(details, dict):
         details = {}
-    author_rating = user_rating_summary(author_id)
+    author_rating = (
+        rating_summaries.get(author_id, {"average": 0, "count": 0, "label": "New member"})
+        if rating_summaries is not None
+        else user_rating_summary(author_id)
+    )
     return {
         "id": str(row_value(row, "public_id") or ""),
         "type": str(row_value(row, "post_type") or "QUESTION"),
@@ -12589,6 +12601,19 @@ def community_post_payload(row: sqlite3.Row, viewer_id: int = 0) -> dict[str, ob
         "sourceKind": str(row_value(row, "source_kind") or ""),
         "sourceId": str(row_value(row, "source_public_id") or ""),
     }
+
+
+def community_post_payloads(rows: Iterable[sqlite3.Row], viewer_id: int = 0) -> list[dict[str, object]]:
+    """Serialize a feed page with one batched rating lookup instead of one per post."""
+    feed_rows = list(rows)
+    if not feed_rows:
+        return []
+    with db() as con:
+        rating_summaries = user_rating_summaries(
+            con,
+            (int(row_value(row, "author_id") or 0) for row in feed_rows),
+        )
+    return [community_post_payload(row, viewer_id, rating_summaries) for row in feed_rows]
 
 
 def community_answer_rows(post_id: int, viewer_id: int = 0) -> list[sqlite3.Row]:
@@ -41002,9 +41027,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 limit=section_limit,
                 offset=local_offset,
             )
-            local_posts = [community_post_payload(row, viewer_id) for row in local_rows]
-            local_ids = tuple(str(post.get("id") or "") for post in local_posts)
-            national_posts: list[dict[str, object]] = []
+            local_ids = tuple(str(row_value(row, "public_id") or "") for row in local_rows)
+            national_rows: list[sqlite3.Row] = []
             if selected_country == "US":
                 national_rows = community_post_rows(
                     viewer_id,
@@ -41019,7 +41043,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     limit=section_limit,
                     offset=national_offset,
                 )
-                national_posts = [community_post_payload(row, viewer_id) for row in national_rows]
+            combined_payloads = community_post_payloads([*local_rows, *national_rows], viewer_id)
+            local_posts = combined_payloads[:len(local_rows)]
+            national_posts = combined_payloads[len(local_rows):]
             combined_posts = local_posts + national_posts
             self.send_json({
                 "ok": True,
@@ -41042,7 +41068,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             limit=limit,
             offset=offset,
         )
-        posts = [community_post_payload(row, viewer_id) for row in rows]
+        posts = community_post_payloads(rows, viewer_id)
         if post_public_id and posts:
             database_id = int(row_value(rows[0], "id") or 0)
             accepted_id = int(row_value(rows[0], "accepted_answer_id") or 0)

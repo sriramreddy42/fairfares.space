@@ -308,6 +308,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const gasIconScale = useRef(new Animated.Value(1)).current;
   const gasIconShake = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(!initialFeedSnapshot);
+  const [feedReadyForSecondaryReads, setFeedReadyForSecondaryReads] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -352,21 +353,22 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   useEffect(() => {
     let cancelled = false;
-    if (!user?.id) return () => { cancelled = true; };
+    if (!user?.id || !feedReadyForSecondaryReads || loading || refreshing) return () => { cancelled = true; };
 
-    void Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]).then(([rideResult, rentalResult, housingResult]) => {
-      if (cancelled) return;
-      const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
-      const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
-      const housingPosts = housingResult.status === "fulfilled" ? housingResult.value : [] as HousingActivityPost[];
-      const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
+    const timer = setTimeout(() => {
+      void Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]).then(([rideResult, rentalResult, housingResult]) => {
+        if (cancelled) return;
+        const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
+        const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
+        const housingPosts = housingResult.status === "fulfilled" ? housingResult.value : [] as HousingActivityPost[];
+        const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
         || bookings.find((booking) => ["MODIFIED", "CANCELLATION_REQUESTED"].includes(booking.status))
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "HOLD_PAID")
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus !== "AUTHORIZED")
         || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED")
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED");
 
-      if (actionableBooking) {
+        if (actionableBooking) {
         const extensionDue = actionableBooking.extensionPaymentStatus === "PENDING" && Number(actionableBooking.extensionPaymentDue || 0) > 0;
         const modificationReview = actionableBooking.status === "MODIFIED";
         const cancellationReview = actionableBooking.status === "CANCELLATION_REQUESTED";
@@ -389,16 +391,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           bookingId: actionableBooking.id,
           rentalAction: extensionDue ? "extension" : modificationReview || cancellationReview ? "manage" : balanceDue ? "balance" : depositDue ? "deposit" : rentalInProgress ? "extension" : "manage",
         });
-        return;
-      }
+          return;
+        }
 
-      const housingInquiry = housingPosts.find((post) => (
+        const housingInquiry = housingPosts.find((post) => (
         post.status === "ACTIVE"
         && post.expiryLabel !== "Expired"
         && Number(post.unreadInquiryCount || 0) > 0
         && Number(post.latestInquiryUserId || 0) > 0
       ));
-      if (housingInquiry) {
+        if (housingInquiry) {
         const inquiryCount = Number(housingInquiry.unreadInquiryCount || 0);
         setActionNotice({
           id: `housing:${housingInquiry.id}:${inquiryCount}:${housingInquiry.latestInquiryUserId}`,
@@ -411,20 +413,20 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           housingPostId: housingInquiry.id,
           housingInquiryUserId: housingInquiry.latestInquiryUserId,
         });
-        return;
-      }
+          return;
+        }
 
-      const pendingDriverRequest = rides.find((item) => {
+        const pendingDriverRequest = rides.find((item) => {
         const status = String(item.dispatchStatus || item.status || "").toUpperCase();
         return item.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
       });
       const ride = pendingDriverRequest || rides.find((item) => ["ACCEPTED", "EN_ROUTE", "ARRIVED", "IN_PROGRESS"].includes(String(item.dispatchStatus || item.status || "").toUpperCase()));
-      if (!ride) {
+        if (!ride) {
         // Keep the cached notice while the screen remounts, but remove it
         // once both live sources confirm there is no longer an action.
         if (rideResult.status === "fulfilled" && rentalResult.status === "fulfilled" && housingResult.status === "fulfilled") setActionNotice(null);
-        return;
-      }
+          return;
+        }
       const status = String(ride.dispatchStatus || ride.status || "").toUpperCase();
       const incomingRequest = ride.activityRole === "DRIVER_NOTIFICATION" && ["PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status);
       const driverTrip = ride.activityRole === "DRIVER_NOTIFICATION";
@@ -443,7 +445,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
                   : status === "ARRIVED"
                     ? "Your driver has arrived"
                     : "Your ride is in progress";
-      setActionNotice({
+        setActionNotice({
         id: `ride:${ride.id}:${status}:${incomingRequest ? "incoming" : "trip"}`,
         icon: incomingRequest ? "🙋" : "🚗",
         eyebrow: incomingRequest ? "Carpool request" : driverTrip ? "Carpool trip" : "Ride update",
@@ -452,11 +454,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         actionLabel: incomingRequest ? "Review request" : driverTrip ? "Manage ride" : "Review ride",
         action: incomingRequest ? "ride-request" : "ride",
         rideId: ride.id,
+        });
       });
-    });
+    }, 400);
 
-    return () => { cancelled = true; };
-  }, [actionNoticeRefreshKey, user?.id]);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [actionNoticeRefreshKey, feedReadyForSecondaryReads, loading, refreshing, user?.id]);
 
   const setActionNoticeVisibility = useCallback((visible: boolean) => {
     if (actionNoticeVisible.current === visible) return;
@@ -587,7 +590,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       setHasMore(nextHasMore);
       communityFeedSnapshots.set(snapshotKey, { posts: nextPosts, nationalPosts: nextNationalPosts, hasMore: nextHasMore, updatedAt: Date.now() });
     } catch { if (feedLoadGeneration.current === requestedFeedGeneration) { setPosts([]); setNationalPosts([]); } }
-    finally { if (feedLoadGeneration.current === requestedFeedGeneration) { setLoading(false); setRefreshing(false); } }
+    finally { if (feedLoadGeneration.current === requestedFeedGeneration) { setLoading(false); setRefreshing(false); setFeedReadyForSecondaryReads(true); } }
   }, [appliedQuery, category, city, groupSuggestionCity, selectedGroup, user?.id]);
 
   useEffect(() => { void load(); }, [load]);
