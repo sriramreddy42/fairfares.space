@@ -1353,6 +1353,33 @@ function FairFaresApp() {
     try {
       const parsed = new URL(url);
       const host = parsed.hostname.replace(/^www\./i, "");
+      const notificationDiagnosticCategory = parsed.protocol === "fairfares:" && host === "notification-test"
+        ? String(parsed.searchParams.get("category") || "").toLowerCase()
+        : "";
+      if (!Device.isDevice && notificationDiagnosticCategory) {
+        const diagnosticPayloads: Record<string, Record<string, unknown>> = {
+          general: { type: "NOTIFICATION_TEST", target: "account" },
+          chitthi: { type: "CHITTHI_MESSAGE", conversationId: "notification-test", messageId: Date.now(), senderName: "FairFares", isGroup: false },
+          carpool: { type: "CARPOOL_STATUS", rideId: "diagnostic-ride", status: "TEST", target: "activity" },
+          housing: { type: "HOUSING_MATCH", listingId: "diagnostic-listing", target: "housing" },
+          rentals: { type: "RENTAL_BOOKING", bookingId: "diagnostic-booking", event: "TEST", target: "manage" },
+          support: { type: "SUPPORT_REPLY", supportId: "diagnostic-support", target: "account" },
+          marketing: { type: "FAIRFARES_PROMO", campaign: "diagnostic-marketing", target: "home" }
+        };
+        const diagnosticData = diagnosticPayloads[notificationDiagnosticCategory];
+        if (diagnosticData) {
+          navigateFromNotification({
+            actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+            notification: {
+              request: {
+                identifier: `simulator-${notificationDiagnosticCategory}-${Date.now()}`,
+                content: { data: { ...diagnosticData, diagnosticId: `simulator-${notificationDiagnosticCategory}` } }
+              }
+            }
+          } as unknown as Notifications.NotificationResponse, true);
+        }
+        return;
+      }
       const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
       const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
       const opensHousing = (host === "fairfare.space" && (parsed.pathname === "/accommodations" || parsed.pathname === "/accommodations/open")) || (parsed.protocol === "fairfares:" && host === "housing");

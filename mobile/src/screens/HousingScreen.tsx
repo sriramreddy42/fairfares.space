@@ -1334,6 +1334,13 @@ export function HousingScreen({
   }, [rideOwnerEditId, rideOwnerOpenTarget, rideOwnerOpenToken]);
 
   useEffect(() => {
+    if (rideOwnerOpenToken) return;
+    setRideOwnerOpen(false);
+    setRideOwnerRequestsAfterListing(false);
+    onBottomTabsHiddenChange?.(false);
+  }, [rideOwnerOpenToken]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!ridePlannerOpen || ridePlannerStage !== "plan" || !rideSuggestionsEnabled) {
       setRideSuggestions([]);
