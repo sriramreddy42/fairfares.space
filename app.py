@@ -13314,6 +13314,11 @@ def truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def google_location_fallback_enabled() -> bool:
+    """Maps is an explicit fallback, never the source for normal app screens."""
+    return truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK"))
+
+
 
 
 def slugify_mcp_label(value: object, fallback: str) -> str:
@@ -15878,6 +15883,8 @@ def inferred_location_country(place: str) -> str:
 
 
 def google_accommodation_geocode(query: str) -> dict[str, object] | None:
+    if not google_location_fallback_enabled():
+        return None
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     query = (query or "").strip()
     if not api_key or not query:
@@ -16025,6 +16032,8 @@ def log_google_places_issue(operation: str, status: str, error_message: str = ""
 
 
 def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False, session_token: str = "") -> list[dict[str, str]]:
+    if not google_location_fallback_enabled():
+        return []
     # Ride entry can start with a completely new route, before a city has
     # been chosen. A Maps key that is permitted for Places must work here too;
     # requiring a separate Places-only variable made autocomplete silently
@@ -16093,6 +16102,8 @@ def google_accommodation_place_suggestions(city: str, area: str = "", limit: int
 
 def google_ride_place_details(place_id: str, session_token: str = "") -> dict[str, object]:
     """Fetch the selected prediction's geometry, never a similarly named city."""
+    if not google_location_fallback_enabled():
+        return {}
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     place_id = str(place_id or "").strip()
     if not api_key or not re.fullmatch(r"[A-Za-z0-9_-]{8,256}", place_id):
@@ -16406,6 +16417,8 @@ def normalize_google_gas_station(place: object, latitude: float, longitude: floa
 
 
 def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: float, fuel: str) -> dict[str, object]:
+    if not google_location_fallback_enabled():
+        return {"configured": False, "stations": [], "fuel": fuel.lower() if fuel.lower() in GAS_FUEL_TYPES else "regular", "source": "local"}
     api_keys: list[str] = []
     for candidate in (
         os.environ.get("GOOGLE_PLACES_API_KEY", "").strip(),
