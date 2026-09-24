@@ -119,6 +119,166 @@ class BookingHoldTest(unittest.TestCase):
         booking["booking_status"] = "MODIFIED"
         self.assertFalse(app.booking_releasable_at_pickup(booking))
 
+    def test_mobile_customer_pickup_and_return_require_staff_approval(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID', security_deposit_status = 'AUTHORIZED', security_deposit_payment_intent_id = 'pi_handoff_test' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Handoff Admin', 'handoff-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            customer = con.execute("SELECT * FROM users WHERE id = ?", (self.user_id,)).fetchone()
+            admin = con.execute("SELECT * FROM users WHERE id = ?", (admin_id,)).fetchone()
+
+        photo = "data:image/jpeg;base64,dGVzdA=="
+        photos = {key: photo for key in ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")}
+
+        class Handler:
+            def __init__(self, current_user, payload):
+                self._user = current_user
+                self._payload = payload
+                self.response = None
+
+            def current_user(self):
+                return self._user
+
+            def read_json_body(self):
+                return self._payload
+
+            def public_origin(self):
+                return "https://fairfare.space"
+
+            def send_json(self, payload, status=200, headers=None):
+                self.response = (status, payload)
+
+            def require_mobile_admin(self):
+                return self._user if int(app.row_value(self._user, "is_admin") or 0) else None
+
+        pickup = Handler(customer, {
+            "bookingId": booking["booking_id"], "odometer": "12000", "fuelLevel": "FULL",
+            "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+        })
+        with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
+            app.FairFaresHandler.api_mobile_rental_handoff_submit(pickup, "pickup")
+        self.assertEqual(pickup.response[0], 200)
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "PICKUP_SUBMITTED")
+
+        pickup_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
+        app.FairFaresHandler.api_mobile_admin_handoff_review(pickup_review)
+        self.assertEqual(pickup_review.response[0], 200)
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "PICKED_UP")
+
+        returned = Handler(customer, {
+            "bookingId": booking["booking_id"], "odometer": "12150", "fuelLevel": "FULL",
+            "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+        })
+        with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
+            app.FairFaresHandler.api_mobile_rental_handoff_submit(returned, "return")
+        self.assertEqual(returned.response[0], 200)
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "RETURN_SUBMITTED")
+
+        return_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_RETURN"})
+        with patch.object(app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")):
+            app.FairFaresHandler.api_mobile_admin_handoff_review(return_review)
+        self.assertEqual(return_review.response[0], 200)
+        with app.db() as con:
+            completed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(completed["booking_status"], "RETURNED")
+        self.assertEqual(completed["security_deposit_status"], "RELEASED")
+
+    def test_mobile_pickup_to_return_http_end_to_end(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID', security_deposit_status = 'AUTHORIZED', security_deposit_payment_intent_id = 'pi_http_handoff' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('handoff-customer', ?)", (self.user_id,))
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('HTTP Handoff Admin', 'http-handoff-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('handoff-admin', ?)", (admin_id,))
+
+        class QuietHandler(app.FairFaresHandler):
+            suppress_operational_alerts = True
+
+            def log_message(self, _format, *_args):
+                return
+
+        server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        origin = f"http://127.0.0.1:{server.server_port}"
+
+        def request_json(path, token, payload=None):
+            body = json.dumps(payload).encode() if payload is not None else None
+            request = urllib.request.Request(
+                f"{origin}{path}", data=body, method="POST" if payload is not None else "GET",
+                headers={"Accept": "application/json", "Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read().decode())
+
+        photo = "data:image/jpeg;base64,dGVzdA=="
+        photos = {key: photo for key in ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")}
+        try:
+            _, initial = request_json("/api/mobile/rentals/bookings", "handoff-customer")
+            self.assertEqual(initial["bookings"][0]["handoff"]["phase"], "pickup")
+
+            with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
+                status, pickup = request_json("/api/mobile/rentals/pickup-submit", "handoff-customer", {
+                    "bookingId": booking["booking_id"], "odometer": "22000", "fuelLevel": "FULL",
+                    "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+                })
+            self.assertEqual(status, 200)
+            self.assertEqual(pickup["booking"]["handoff"]["phase"], "pickup_review")
+
+            _, staff_pickups = request_json("/api/mobile/admin/pickups", "handoff-admin")
+            queued_pickup = next(item for item in staff_pickups["pickups"] if item["id"] == booking["id"])
+            self.assertTrue(queued_pickup["pickupEvidenceComplete"])
+            status, pickup_review = request_json("/api/mobile/admin/handoff-review", "handoff-admin", {
+                "bookingId": booking["id"], "action": "APPROVE_PICKUP",
+            })
+            self.assertEqual((status, pickup_review["ok"]), (200, True))
+            _, active = request_json("/api/mobile/rentals/bookings", "handoff-customer")
+            self.assertEqual(active["bookings"][0]["handoff"]["phase"], "return")
+
+            with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
+                status, returned = request_json("/api/mobile/rentals/return-submit", "handoff-customer", {
+                    "bookingId": booking["booking_id"], "odometer": "22175", "fuelLevel": "FULL",
+                    "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+                })
+            self.assertEqual(status, 200)
+            self.assertEqual(returned["booking"]["handoff"]["phase"], "return_review")
+
+            _, staff_returns = request_json("/api/mobile/admin/pickups", "handoff-admin")
+            queued_return = next(item for item in staff_returns["pickups"] if item["id"] == booking["id"])
+            self.assertTrue(queued_return["returnEvidenceComplete"])
+            with patch.object(app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")):
+                status, return_review = request_json("/api/mobile/admin/handoff-review", "handoff-admin", {
+                    "bookingId": booking["id"], "action": "APPROVE_RETURN",
+                })
+            self.assertEqual((status, return_review["ok"]), (200, True))
+            _, completed_payload = request_json("/api/mobile/rentals/bookings", "handoff-customer")
+            completed = completed_payload["bookings"][0]
+            self.assertEqual(completed["handoff"]["phase"], "complete")
+            self.assertEqual(completed["depositStatus"], "RELEASED")
+            self.assertEqual(app.get_car(car["id"])["status"], "AVAILABLE")
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_paid_manage_booking_keeps_deposit_panel_visible(self):
         source = Path("app.py").read_text()
         self.assertIn(

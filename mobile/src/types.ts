@@ -93,10 +93,13 @@ export type StaffPickupBooking = {
   pickupDate: string;
   pickupTime: string;
   pickupLocation: string;
-  bookingStatus: "CONFIRMED";
+  bookingStatus: "CONFIRMED" | "PICKUP_SUBMITTED" | "PICKED_UP" | "RETURN_SUBMITTED";
   paymentStatus: "HOLD_PAID" | "PAID";
   depositStatus: string;
   depositAmount: number;
+  returnReviewStatus?: string;
+  pickupEvidenceComplete?: boolean;
+  returnEvidenceComplete?: boolean;
 };
 
 export type ChatConversation = {
@@ -608,6 +611,21 @@ export type RentalServiceBooking = RentalBooking & {
     priority: string;
     bookingId: string;
   }>;
+  handoff?: {
+    phase: "payment" | "deposit" | "pickup" | "pickup_review" | "return" | "return_review" | "complete" | "closed" | "change_review" | "cancellation_review";
+    actualPickupDate: string;
+    actualPickupTime: string;
+    actualReturnDate: string;
+    actualReturnTime: string;
+    pickupOdometer: number;
+    returnOdometer: number;
+    pickupFuelLevel: string;
+    returnFuelLevel: string;
+    returnReviewStatus: string;
+    depositStatus: string;
+    pickupSubmitted: boolean;
+    returnSubmitted: boolean;
+  };
 };
 
 export type RentalSearchInput = {

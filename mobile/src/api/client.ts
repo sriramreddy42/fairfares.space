@@ -329,6 +329,14 @@ export async function createSecurityDepositCheckout(bookingId: number) {
   });
 }
 
+export async function reviewRentalHandoff(bookingId: number, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN", staffSignature = "") {
+  return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, action, staffSignature })
+  });
+}
+
 type RequestOptions = {
   silentNetworkFailure?: boolean;
   silentServerFailure?: boolean;
@@ -358,7 +366,9 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     && path !== "/api/chat/e2ee/attachments/forward";
   const isAvatarUpload = path === "/api/chat/groups/photo"
     || path === "/api/chat/communities"
-    || path === "/api/mobile/profile";
+    || path === "/api/mobile/profile"
+    || path === "/api/mobile/rentals/pickup-submit"
+    || path === "/api/mobile/rentals/return-submit";
   const isMediaUpload = isAttachmentUpload || isAvatarUpload;
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
@@ -1337,6 +1347,23 @@ export async function getRentalBookings() {
     const payload = await request<{ ok: boolean; bookings: RentalServiceBooking[] }>("/api/mobile/rentals/bookings");
     const visiblePaymentStatuses = new Set(["HOLD_PAID", "PAID", "REFUND_REVIEW", "REFUNDED"]);
     return (payload.bookings || []).filter((booking) => visiblePaymentStatuses.has(String(booking.paymentStatus || "").toUpperCase()));
+  });
+}
+
+export type RentalHandoffInput = {
+  odometer: string;
+  fuelLevel: string;
+  conditionStatus: "ACCEPTABLE" | "DAMAGE_REPORTED";
+  signature: string;
+  acknowledged: boolean;
+  photos: Record<"front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear", string>;
+};
+
+export async function submitRentalHandoff(phase: "pickup" | "return", bookingId: string, input: RentalHandoffInput) {
+  return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>(`/api/mobile/rentals/${phase}-submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId, ...input })
   });
 }
 

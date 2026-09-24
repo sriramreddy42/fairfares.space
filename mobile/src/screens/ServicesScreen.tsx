@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as WebBrowser from "expo-web-browser";
+import * as ImageManipulator from "expo-image-manipulator";
 import {
   Alert,
   Image,
@@ -21,16 +22,17 @@ import {
   isAuthenticationRejection,
   requestRentalCancellation,
   requestRentalModification,
+  submitRentalHandoff,
   setAuthToken,
   startRentalCheckout,
   startRentalSecurityDeposit,
-  updateMobileStudentVerification
 } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
+import { takeChatPhoto } from "../utils/imageUpload";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "housing" | "local";
@@ -60,7 +62,15 @@ type ServiceAction = {
   onPress: () => void;
 };
 
-type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | null;
+type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | "handoff" | null;
+type HandoffPhotoKey = "front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear";
+const HANDOFF_PHOTOS: Array<{ key: HandoffPhotoKey; label: string }> = [
+  { key: "front", label: "Front" }, { key: "back", label: "Back" },
+  { key: "left", label: "Driver side" }, { key: "right", label: "Passenger side" },
+  { key: "odometer", label: "Odometer" }, { key: "fuel", label: "Fuel / charge" },
+  { key: "interiorFront", label: "Front interior" }, { key: "interiorRear", label: "Rear interior" },
+];
+const EMPTY_HANDOFF_PHOTOS = (): Record<HandoffPhotoKey, string> => ({ front: "", back: "", left: "", right: "", odometer: "", fuel: "", interiorFront: "", interiorRear: "" });
 type ServicesView = "grid" | "rental";
 type ServiceTile = {
   label: string;
@@ -116,10 +126,6 @@ export function ServicesScreen({
   const [returnDate, setReturnDate] = useState("");
   const [pickupTime, setPickupTime] = useState("");
   const [returnTime, setReturnTime] = useState("");
-  const [selectedVehicleId, setSelectedVehicleId] = useState(0);
-  const [additionalDriverRequested, setAdditionalDriverRequested] = useState(false);
-  const [additionalDriverName, setAdditionalDriverName] = useState("");
-  const [additionalDriverAge, setAdditionalDriverAge] = useState("25+");
   const [modifyNote, setModifyNote] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const [cancelNote, setCancelNote] = useState("");
@@ -128,9 +134,12 @@ export function ServicesScreen({
   const [documentEmail, setDocumentEmail] = useState("");
   const [selectedDocumentSetId, setSelectedDocumentSetId] = useState<number | null>(null);
   const [selectedDocName, setSelectedDocName] = useState("Invoice / Receipt");
-  const [detailsTab, setDetailsTab] = useState<"student" | "saved" | "status" | "housing">("student");
-  const [studentEmail, setStudentEmail] = useState("");
-  const [studentId, setStudentId] = useState("");
+  const [handoffOdometer, setHandoffOdometer] = useState("");
+  const [handoffFuel, setHandoffFuel] = useState("FULL");
+  const [handoffCondition, setHandoffCondition] = useState<"ACCEPTABLE" | "DAMAGE_REPORTED">("ACCEPTABLE");
+  const [handoffSignature, setHandoffSignature] = useState("");
+  const [handoffAcknowledged, setHandoffAcknowledged] = useState(false);
+  const [handoffPhotos, setHandoffPhotos] = useState<Record<HandoffPhotoKey, string>>(EMPTY_HANDOFF_PHOTOS);
   const [supportTopic, setSupportTopic] = useState("Rental support");
   const [supportMessage, setSupportMessage] = useState("");
   const [exportsInfoOpen, setExportsInfoOpen] = useState(false);
@@ -195,10 +204,6 @@ export function ServicesScreen({
     setReturnDate(selectedBooking.returnDate || "");
     setPickupTime(selectedBooking.pickupTime || "");
     setReturnTime(selectedBooking.returnTime || "");
-    setSelectedVehicleId(0);
-    setAdditionalDriverRequested(false);
-    setAdditionalDriverName("");
-    setAdditionalDriverAge("25+");
     setCancelReason("Customer cancellation request");
     setCancelNote("");
     setRefundMethod("Original payment method");
@@ -206,9 +211,12 @@ export function ServicesScreen({
     setDocumentEmail("");
     setSelectedDocumentSetId(selectedBooking.documents?.[0]?.id ?? null);
     setSelectedDocName("Invoice / Receipt");
-    setDetailsTab("student");
-    setStudentEmail(selectedBooking.student?.email || "");
-    setStudentId(selectedBooking.student?.id || "");
+    setHandoffOdometer("");
+    setHandoffFuel("FULL");
+    setHandoffCondition("ACCEPTABLE");
+    setHandoffSignature(user?.name || "");
+    setHandoffAcknowledged(false);
+    setHandoffPhotos(EMPTY_HANDOFF_PHOTOS());
     setModifyNote("");
     setSupportTopic("Rental support");
     setSupportMessage("");
@@ -252,10 +260,6 @@ export function ServicesScreen({
         returnDate,
         pickupTime,
         returnTime,
-        vehicleId: selectedVehicleId || undefined,
-        additionalDriverRequested,
-        additionalDriverName,
-        additionalDriverAge,
         note: modifyNote
       });
       setBookings((rows) => mergeBooking(rows, result.booking));
@@ -328,17 +332,55 @@ export function ServicesScreen({
     }
   }
 
-  async function submitStudentVerification() {
+  async function captureHandoffPhoto(key: HandoffPhotoKey) {
+    try {
+      const selected = await takeChatPhoto(1280, 0.62, 500_000);
+      if (!selected) return;
+      const prepared = await selected.preparation;
+      const image = await ImageManipulator.manipulateAsync(
+        prepared.uri,
+        [{ resize: { width: 1280 } }],
+        { compress: 0.62, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      if (!image.base64) throw new Error("The vehicle photo could not be prepared.");
+      setHandoffPhotos((current) => ({ ...current, [key]: `data:image/jpeg;base64,${image.base64}` }));
+    } catch (photoError) {
+      Alert.alert("Photo unavailable", photoError instanceof Error ? photoError.message : "Try taking this photo again.");
+    }
+  }
+
+  async function submitHandoff() {
+    if (!selectedBooking) return;
+    const phase = selectedBooking.handoff?.phase === "return" ? "return" : "pickup";
+    const missingPhotos = HANDOFF_PHOTOS.filter(({ key }) => !handoffPhotos[key]);
+    if (!handoffOdometer.trim() || !handoffSignature.trim() || missingPhotos.length || !handoffAcknowledged) {
+      Alert.alert("Complete the checklist", "Mileage, signature, acknowledgement, and all eight current vehicle photos are required.");
+      return;
+    }
     setBusy(true);
     try {
-      const result = await updateMobileStudentVerification(studentEmail, studentId);
-      Alert.alert("Student verification", result.message || "Check your .edu inbox for the verification link.");
-      await loadBookings();
-    } catch (studentError) {
-      Alert.alert("Could not update", studentError instanceof Error ? studentError.message : "Try again.");
+      const result = await submitRentalHandoff(phase, selectedBooking.id, {
+        odometer: handoffOdometer,
+        fuelLevel: handoffFuel,
+        conditionStatus: handoffCondition,
+        signature: handoffSignature.trim(),
+        acknowledged: handoffAcknowledged,
+        photos: handoffPhotos,
+      });
+      setBookings((rows) => mergeBooking(rows, result.booking));
+      setPanelMode(null);
+      Alert.alert(phase === "pickup" ? "Pickup submitted" : "Return submitted", result.message);
+    } catch (handoffError) {
+      Alert.alert("Could not submit handoff", handoffError instanceof Error ? handoffError.message : "Try again.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function openHandoffMap() {
+    if (!selectedBooking) return;
+    const location = handoffPhase === "return" ? selectedBooking.returnLocation : selectedBooking.pickupLocation;
+    await Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`);
   }
 
   async function openRentalPayment(kind: "balance" | "deposit" | "extension") {
@@ -367,10 +409,31 @@ export function ServicesScreen({
   }
 
   const bookingIsPast = Boolean(selectedBooking && ["CANCELLED", "RETURNED", "EXPIRED_HOLD"].includes(selectedBooking.status));
-  const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED", "PICKED_UP"].includes(selectedBooking.status));
+  const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "PICKED_UP"].includes(selectedBooking.status));
   const bookingCanCancel = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED"].includes(selectedBooking.status));
   const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
   const inProgressRental = selectedBooking?.status === "PICKED_UP";
+  const handoffPhase = selectedBooking?.handoff?.phase || (selectedBooking?.paymentStatus === "PAID" ? "deposit" : "payment");
+  const handoffReady = handoffPhase === "pickup" || handoffPhase === "return";
+  const primaryStep = handoffPhase === "payment"
+    ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
+    : handoffPhase === "deposit"
+      ? { title: "Authorize refundable deposit", copy: `Authorize the $${Number(selectedBooking?.depositAmount || 250).toFixed(2)} hold before vehicle release.`, label: "Authorize deposit", onPress: () => void openRentalPayment("deposit") }
+      : handoffPhase === "pickup"
+        ? { title: "Vehicle ready for pickup", copy: `Meet at ${selectedBooking?.pickupLocation || "the pickup location"} and document the vehicle condition.`, label: "Start pickup", onPress: () => setPanelMode("handoff" as PanelMode) }
+        : handoffPhase === "pickup_review"
+          ? { title: "Pickup awaiting staff approval", copy: "Your inspection is saved. Staff must approve the vehicle release.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+          : handoffPhase === "return"
+            ? { title: "Rental active", copy: `Return by ${selectedBooking?.returnTime || "the scheduled time"} on ${selectedBooking?.returnDate || "the return date"}.`, label: "Start return", onPress: () => setPanelMode("handoff" as PanelMode) }
+            : handoffPhase === "return_review"
+              ? { title: "Return awaiting inspection", copy: "Your return evidence is saved. Deposit review begins after staff inspection.", label: "View return status", onPress: () => setPanelMode("details" as PanelMode) }
+              : handoffPhase === "change_review"
+                ? { title: "Modification awaiting review", copy: "FairFares will notify you after availability and pricing are confirmed.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+                : handoffPhase === "cancellation_review"
+                  ? { title: "Cancellation awaiting review", copy: "Your booking remains visible while refund and deposit details are reviewed.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+                  : handoffPhase === "closed"
+                    ? { title: "Booking closed", copy: "This reservation is no longer active. Documents remain available when generated.", label: "Booking details", onPress: () => setPanelMode("details" as PanelMode) }
+                    : { title: "Rental completed", copy: "Your final documents and deposit outcome are available below.", label: "Documents & receipt", onPress: () => setPanelMode("documents" as PanelMode) };
   const extensionPaymentDue = Boolean(inProgressRental && selectedBooking?.extensionPaymentStatus === "PENDING" && Number(selectedBooking?.extensionPaymentDue || 0) > 0);
   const actions: ServiceAction[] = [
     {
@@ -384,17 +447,17 @@ export function ServicesScreen({
       onPress: () => openPanel("cancel")
     },
     {
-      label: "Download Invoice",
+      label: "Documents & Receipt",
       icon: appAssets.serviceInvoice,
       primary: true,
       onPress: () => openPanel("documents")
     },
     {
-      label: "View Details",
+      label: "Booking Details",
       icon: appAssets.serviceEye,
       onPress: () => openPanel("details")
     }
-  ].filter((action) => !bookingIsPast || ["Download Invoice", "View Details"].includes(action.label))
+  ].filter((action) => !bookingIsPast || ["Documents & Receipt", "Booking Details"].includes(action.label))
     .filter((action) => bookingCanChange || !["Modify Reservation", "Extend Rental"].includes(action.label))
     .filter((action) => bookingCanCancel || action.label !== "Cancel Reservation");
 
@@ -402,8 +465,6 @@ export function ServicesScreen({
     || selectedBooking?.documents?.[0]
     || null;
   const selectedDocument = selectedDocumentSet?.docs?.[selectedDocName] || null;
-  const selectedUpgrade = selectedBooking?.upgradeOptions?.find((option) => option.id === selectedVehicleId) || null;
-  const estimatedPrice = selectedUpgrade?.estimatedTotalLabel || selectedBooking?.totalLabel || "";
   const fairFaresTiles: ServiceTile[] = [
     { label: "Housing", icon: appAssets.bed, badge: "Posts", badgeTone: "green", onPress: onOpenHousing },
     { label: "Carpool", icon: appAssets.ride, badge: "Carpool", onPress: onOpenRide },
@@ -496,6 +557,16 @@ export function ServicesScreen({
               ) : null}
             </View>
 
+            {selectedBooking ? (
+              <View style={styles.nextStepCard}>
+                <Text style={styles.paymentEyebrow}>NEXT STEP</Text>
+                <Text style={styles.paymentTitle}>{primaryStep.title}</Text>
+                <Text style={styles.paymentCopy}>{primaryStep.copy}</Text>
+                <PrimaryButton label={busy ? "Please wait..." : primaryStep.label} onPress={primaryStep.onPress} disabled={busy} />
+              </View>
+            ) : null}
+
+            <Text style={styles.moreOptionsTitle}>More options</Text>
             <View style={styles.actionGrid}>
               {actions.map((action) => (
                 <TouchableOpacity
@@ -575,7 +646,7 @@ export function ServicesScreen({
             <ScrollView contentContainerStyle={styles.panelContent} showsVerticalScrollIndicator={false}>
               {selectedBooking && panelMode === "modify" ? (
                 <>
-                  <Text style={styles.policyCopy}>{inProgressRental ? "Extend your return time before the current return deadline. Your vehicle and pickup details stay fixed; FairFares checks the added window before approval." : "Make changes to fit your plans. Date, location, vehicle, and additional-driver changes are sent to FairFares for review using the same booking flow as web."}</Text>
+                  <Text style={styles.policyCopy}>{inProgressRental ? "Extend your return time before the current return deadline. Your vehicle and pickup details stay fixed; FairFares checks the added window before approval." : "Date and location changes are reviewed before they update your reservation."}</Text>
                   <View style={styles.detailSection}>
                     <Text style={styles.sectionTitle}>{inProgressRental ? "Extend return" : "Change dates"}</Text>
                     {!inProgressRental ? <View style={styles.twoColumn}>
@@ -591,7 +662,7 @@ export function ServicesScreen({
                   <View style={styles.detailSection}>
                     <Text style={styles.sectionTitle}>Change pickup location</Text>
                     <InputField label="Pickup location" value={pickupLocation} onChangeText={setPickupLocation} />
-                    <InputField label="Drop-off location" value={returnLocation} onChangeText={setReturnLocation} />
+                    <InputField label="Return location" value={returnLocation} onChangeText={setReturnLocation} />
                     <View style={styles.chipWrap}>
                       {(selectedBooking.locations || []).slice(0, 6).map((location) => (
                         <TouchableOpacity key={location} style={styles.choiceChip} onPress={() => { setPickupLocation(location); setReturnLocation(location); }}>
@@ -600,47 +671,9 @@ export function ServicesScreen({
                       ))}
                     </View>
                   </View>
-                  <View style={styles.detailSection}>
-                    <Text style={styles.sectionTitle}>Upgrade vehicle</Text>
-                    <ChoiceRow
-                      label="No upgrade"
-                      detail={`Keep current vehicle - ${selectedBooking.totalLabel}`}
-                      selected={selectedVehicleId === 0}
-                      onPress={() => setSelectedVehicleId(0)}
-                    />
-                    {(selectedBooking.upgradeOptions || []).map((option) => (
-                      <ChoiceRow
-                        key={option.id}
-                        label={option.name}
-                        detail={`${option.category} - ${option.dailyRange} - ${option.estimatedTotalLabel}`}
-                        selected={selectedVehicleId === option.id}
-                        onPress={() => setSelectedVehicleId(option.id)}
-                      />
-                    ))}
-                  </View>
-                  <View style={styles.detailSection}>
-                    <Text style={styles.sectionTitle}>Add additional driver</Text>
-                    <ToggleRow
-                      label="Add an additional driver"
-                      selected={additionalDriverRequested}
-                      onPress={() => setAdditionalDriverRequested((value) => !value)}
-                    />
-                    {additionalDriverRequested ? (
-                      <>
-                        <InputField label="Driver name" value={additionalDriverName} onChangeText={setAdditionalDriverName} placeholder="Enter full name" />
-                        <View style={styles.chipWrap}>
-                          {["21-24", "25+"].map((age) => (
-                            <TouchableOpacity key={age} style={[styles.choiceChip, additionalDriverAge === age && styles.activeChoiceChip]} onPress={() => setAdditionalDriverAge(age)}>
-                              <Text style={[styles.choiceChipText, additionalDriverAge === age && styles.activeChoiceChipText]}>{age}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </>
-                    ) : null}
-                  </View>
                   <View style={styles.modifySummary}>
-                    <AmountPill label="Selected vehicle" value={selectedUpgrade?.name || selectedBooking.carName} />
-                    <AmountPill label="Estimated price" value={estimatedPrice} />
+                    <AmountPill label="Vehicle" value={selectedBooking.carName} />
+                    <AmountPill label="Current total" value={selectedBooking.totalLabel} />
                   </View>
                   </> : <View style={styles.modifySummary}>
                     <AmountPill label="Vehicle" value={selectedBooking.carName} />
@@ -656,10 +689,6 @@ export function ServicesScreen({
                       setReturnDate(selectedBooking.returnDate || "");
                       setPickupTime(selectedBooking.pickupTime || "");
                       setReturnTime(selectedBooking.returnTime || "");
-                      setSelectedVehicleId(0);
-                      setAdditionalDriverRequested(false);
-                      setAdditionalDriverName("");
-                      setAdditionalDriverAge("25+");
                       setModifyNote("");
                     }} />
                   </View>
@@ -736,76 +765,46 @@ export function ServicesScreen({
 
               {selectedBooking && panelMode === "details" ? (
                 <>
-                  <View style={styles.detailTabs}>
-                    {[
-                      ["student", "Student Verification"],
-                      ["saved", "Saved Trips"],
-                      ["status", "Live Status"],
-                      ["housing", "Housing Posts"]
-                    ].map(([key, label]) => (
-                      <TouchableOpacity key={key} style={[styles.detailTab, detailsTab === key && styles.activeDetailTab]} onPress={() => setDetailsTab(key as typeof detailsTab)}>
-                        <Text style={[styles.detailTabText, detailsTab === key && styles.activeDetailTabText]}>{label}</Text>
-                      </TouchableOpacity>
-                    ))}
+                  <Text style={styles.sectionTitle}>Booking details</Text>
+                  <Summary booking={selectedBooking} />
+                  <View style={styles.greenNote}>
+                    <Text style={styles.greenNoteTitle}>{selectedBooking.liveStatus?.title || selectedBooking.statusLabel}</Text>
+                    <Text style={styles.greenNoteBody}>{selectedBooking.liveStatus?.body}</Text>
                   </View>
-                  {detailsTab === "student" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionTitle}>Student Verification</Text>
-                      <View style={styles.greenNote}>
-                        <Text style={styles.greenNoteTitle}>{selectedBooking.student?.statusLabel || "Student Verification Pending"}</Text>
-                        <Text style={styles.greenNoteBody}>{selectedBooking.student?.discountLabel || "0% OFF"}</Text>
-                      </View>
-                      <InputField label="University email" value={studentEmail} onChangeText={setStudentEmail} placeholder="name@school.edu" />
-                      <InputField label="Student ID" value={studentId} onChangeText={setStudentId} placeholder="STU-0000" />
-                      <PrimaryButton label={busy ? "Saving..." : "Update verification"} onPress={submitStudentVerification} disabled={busy} />
-                    </View>
-                  ) : null}
-                  {detailsTab === "saved" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionTitle}>Saved Trips</Text>
-                      <View style={styles.amountGrid}>
-                        <AmountPill label="Upcoming" value={String(selectedBooking.stats?.upcoming ?? 0)} />
-                        <AmountPill label="Past" value={String(selectedBooking.stats?.past ?? 0)} />
-                        <AmountPill label="Saved" value={String(selectedBooking.stats?.saved ?? 0)} />
-                      </View>
-                      <Summary booking={selectedBooking} />
-                    </View>
-                  ) : null}
-                  {detailsTab === "status" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionTitle}>Live Rental Status</Text>
-                      <View style={styles.greenNote}>
-                        <Text style={styles.greenNoteTitle}>{selectedBooking.liveStatus?.title || "No active booking yet"}</Text>
-                        <Text style={styles.greenNoteBody}>{selectedBooking.liveStatus?.body || "Book a car to see live pickup status here."}</Text>
-                      </View>
-                      <View style={styles.countdownRow}>
-                        <AmountPill label="Days" value={selectedBooking.liveStatus?.days || "00"} />
-                        <AmountPill label="Hours" value={selectedBooking.liveStatus?.hours || "00"} />
-                        <AmountPill label="Mins" value={selectedBooking.liveStatus?.mins || "00"} />
-                      </View>
-                      <Text style={styles.detailsLine}>{selectedBooking.liveStatus?.instructions}</Text>
-                    </View>
-                  ) : null}
-                  {detailsTab === "housing" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionTitle}>Housing Posts</Text>
-                      <View style={styles.amountGrid}>
-                        <AmountPill label="Active" value={String(selectedBooking.stats?.housingActive ?? 0)} />
-                        <AmountPill label="Expired" value={String(selectedBooking.stats?.housingExpired ?? 0)} />
-                      </View>
-                      {(selectedBooking.housingPosts || []).length ? (selectedBooking.housingPosts || []).map((post) => (
-                        <View key={post.id} style={styles.documentBox}>
-                          <Text style={styles.detailsCar}>{post.title}</Text>
-                          <Text style={styles.detailsLine}>{post.modeLabel} - {post.categoryLabel} - {post.location}</Text>
-                          <Text style={styles.detailsLine}>{post.rent} - {post.expiryLabel}</Text>
-                        </View>
-                      )) : <Text style={styles.detailsLine}>No housing posts yet.</Text>}
-                    </View>
-                  ) : null}
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailsLine}>Pickup: {selectedBooking.pickupDate} at {selectedBooking.pickupTime}</Text>
+                    <Text style={styles.detailsLine}>{selectedBooking.pickupLocation}</Text>
+                    <Text style={styles.detailsLine}>Return: {selectedBooking.returnDate} at {selectedBooking.returnTime}</Text>
+                    <Text style={styles.detailsLine}>{selectedBooking.returnLocation}</Text>
+                    <Text style={styles.detailsLine}>Payment: {selectedBooking.paymentLabel}</Text>
+                    <Text style={styles.detailsLine}>Deposit: {selectedBooking.depositLabel || selectedBooking.depositStatus}</Text>
+                    <Text style={styles.detailsLine}>{selectedBooking.liveStatus?.instructions}</Text>
+                  </View>
                   <View style={styles.inlineActions}>
                     <SecondaryButton label="Support Center" onPress={() => setPanelMode("support")} />
-                    {selectedBooking.manageUrl ? <SecondaryButton label="Open web details" onPress={() => Linking.openURL(selectedBooking.manageUrl)} /> : null}
                   </View>
+                </>
+              ) : null}
+
+              {selectedBooking && panelMode === "handoff" && handoffReady ? (
+                <>
+                  <Text style={styles.sectionTitle}>{handoffPhase === "pickup" ? "Pickup inspection" : "Return inspection"}</Text>
+                  <View style={styles.greenNote}>
+                    <Text style={styles.greenNoteTitle}>{handoffPhase === "pickup" ? selectedBooking.pickupLocation : selectedBooking.returnLocation}</Text>
+                    <Text style={styles.greenNoteBody}>Take current photos at the handoff location. These images protect both the renter and vehicle provider.</Text>
+                  </View>
+                  <SecondaryButton label={`Open ${handoffPhase === "pickup" ? "pickup" : "return"} map`} onPress={() => void openHandoffMap()} />
+                  <InputField label="Odometer mileage" value={handoffOdometer} onChangeText={setHandoffOdometer} placeholder="Current mileage" />
+                  <Text style={styles.modalFieldLabel}>Fuel or charge level</Text>
+                  <View style={styles.chipWrap}>{["EMPTY", "1/4", "1/2", "3/4", "FULL"].map((level) => <TouchableOpacity key={level} style={[styles.choiceChip, handoffFuel === level && styles.activeChoiceChip]} onPress={() => setHandoffFuel(level)}><Text style={[styles.choiceChipText, handoffFuel === level && styles.activeChoiceChipText]}>{level}</Text></TouchableOpacity>)}</View>
+                  <Text style={styles.modalFieldLabel}>Vehicle condition</Text>
+                  <ChoiceRow label="Condition matches the reservation" detail="No new visible damage" selected={handoffCondition === "ACCEPTABLE"} onPress={() => setHandoffCondition("ACCEPTABLE")} />
+                  <ChoiceRow label="Damage or condition issue found" detail="Staff will review before the trip continues or closes" selected={handoffCondition === "DAMAGE_REPORTED"} onPress={() => setHandoffCondition("DAMAGE_REPORTED")} />
+                  <Text style={styles.modalFieldLabel}>Required live photos</Text>
+                  <View style={styles.photoGrid}>{HANDOFF_PHOTOS.map(({ key, label }) => <TouchableOpacity key={key} style={[styles.photoButton, handoffPhotos[key] && styles.photoButtonDone]} onPress={() => void captureHandoffPhoto(key)} disabled={busy}><Text style={styles.photoButtonIcon}>{handoffPhotos[key] ? "✓" : "+"}</Text><Text style={styles.photoButtonText}>{label}</Text></TouchableOpacity>)}</View>
+                  <InputField label="Type your full name as signature" value={handoffSignature} onChangeText={setHandoffSignature} placeholder="Full legal name" />
+                  <ToggleRow label={handoffPhase === "pickup" ? "I confirm the mileage, fuel level, vehicle condition, photos, and key handoff are accurate." : "I confirm the vehicle is parked at the return location, secured, and the mileage, fuel, condition, photos, and key placement are accurate."} selected={handoffAcknowledged} onPress={() => setHandoffAcknowledged((value) => !value)} />
+                  <PrimaryButton label={busy ? "Submitting securely..." : handoffPhase === "pickup" ? "Submit pickup for approval" : "Submit vehicle return"} onPress={() => void submitHandoff()} disabled={busy} />
                 </>
               ) : null}
 
@@ -1270,6 +1269,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     padding: 14
   },
+  nextStepCard: { borderRadius: 22, borderWidth: 1, borderColor: "rgba(74,222,128,0.45)", backgroundColor: "rgba(34,197,94,0.10)", padding: 16, gap: 9, marginBottom: 16 },
+  moreOptionsTitle: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 10 },
   actionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1582,6 +1583,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "900"
   },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  photoButton: { width: "48%", minHeight: 74, borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.05)", alignItems: "center", justifyContent: "center", gap: 4, padding: 8 },
+  photoButtonDone: { borderColor: "#4ade80", backgroundColor: "rgba(34,197,94,0.14)" },
+  photoButtonIcon: { color: "#4ade80", fontSize: 22, fontWeight: "900" },
+  photoButtonText: { color: "#f8fafc", fontSize: 12, fontWeight: "800", textAlign: "center" },
   detailTabs: {
     flexDirection: "row",
     flexWrap: "wrap",

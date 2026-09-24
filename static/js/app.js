@@ -655,6 +655,53 @@ const filterOptions = document.getElementById("filterOptions");
 const mobileQuery = window.matchMedia("(max-width: 760px)");
 const discountDataNode = document.getElementById("discountData");
 
+function timeTo24(value = "") {
+  const text = String(value || "").trim();
+  const twelveHour = text.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!twelveHour) return /^\d{2}:\d{2}$/.test(text) ? text : "00:00";
+  let hours = Number(twelveHour[1]) % 12;
+  if (twelveHour[3].toUpperCase() === "PM") hours += 12;
+  return `${String(hours).padStart(2, "0")}:${twelveHour[2]}`;
+}
+
+function applyCarFilters() {
+  if (!carList) return;
+  const cards = [...carList.querySelectorAll(".car-card")];
+  const selectedTypes = typeFilters.filter((input) => input.checked).map((input) => String(input.value || "").toLowerCase());
+  const selectedFuels = fuelFilters.filter((input) => input.checked).map((input) => String(input.value || "").toLowerCase());
+  const requestedLocation = String(locationSelect?.value || "").toLowerCase();
+  const selectedPickup = pickupDate?.value ? new Date(`${pickupDate.value}T${timeTo24(pickupTime?.value)}`) : null;
+  const selectedReturn = returnDate?.value ? new Date(`${returnDate.value}T${timeTo24(returnTime?.value)}`) : null;
+  let visible = 0;
+  cards.forEach((card) => {
+    const category = String(card.dataset.category || "").toLowerCase();
+    const fuel = String(card.dataset.fuel || "").toLowerCase();
+    const locations = String(card.dataset.locations || card.dataset.location || "").toLowerCase();
+    const bookedFrom = card.dataset.bookedFromDate ? new Date(`${card.dataset.bookedFromDate}T${timeTo24(card.dataset.bookedFromTime)}`) : null;
+    const availableAfter = card.dataset.bookedUntilDate ? new Date(`${card.dataset.bookedUntilDate}T${timeTo24(card.dataset.bookedUntilTime)}`) : null;
+    const overlapsBookedWindow = Boolean(
+      selectedPickup && selectedReturn && bookedFrom && availableAfter
+      && selectedPickup < availableAfter
+      && selectedReturn > bookedFrom
+    );
+    let availabilityMatch = true;
+    if (overlapsBookedWindow) availabilityMatch = false;
+    const typeMatch = !selectedTypes.length || selectedTypes.some((value) => category.includes(value));
+    const fuelMatch = !selectedFuels.length || selectedFuels.some((value) => fuel.includes(value));
+    const locationMatch = !requestedLocation || locations.includes(requestedLocation);
+    const show = typeMatch && fuelMatch && locationMatch && availabilityMatch;
+    card.classList.toggle("is-hidden", !show);
+    if (show) visible += 1;
+  });
+  const ordered = cards.sort((left, right) => {
+    const direction = sortCars?.value === "price-desc" ? -1 : 1;
+    return direction * (Number(left.dataset.price || 0) - Number(right.dataset.price || 0));
+  });
+  ordered.forEach((card) => carList.appendChild(card));
+  if (resultCount) resultCount.textContent = String(visible);
+  if (noCarResults) noCarResults.hidden = visible > 0;
+}
+
 function todayInputDate() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -713,6 +760,7 @@ function syncRentalDateLimits() {
     returnDate.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
   }
   syncPickupTimeLimits();
+  applyCarFilters();
 }
 
 function setDateValidationMessage(message) {
@@ -801,6 +849,21 @@ function applySearchParamsFromUrl() {
   }
   if (discountCode?.value) validateDiscount();
 }
+
+applySearchParamsFromUrl();
+syncRentalDateLimits();
+[...typeFilters, ...fuelFilters, locationSelect, pickupDate, returnDate, pickupTime, returnTime, sortCars]
+  .filter(Boolean)
+  .forEach((field) => field.addEventListener("change", applyCarFilters));
+clearFilters?.addEventListener("click", () => {
+  [...typeFilters, ...fuelFilters].forEach((input) => { input.checked = false; });
+  applyCarFilters();
+});
+resetCarFilters?.addEventListener("click", () => {
+  [...typeFilters, ...fuelFilters].forEach((input) => { input.checked = false; });
+  if (locationSelect) locationSelect.value = "";
+  applyCarFilters();
+});
 
 const tripFilterButtons = [...document.querySelectorAll("[data-trip-filter]")];
 const tripRows = [...document.querySelectorAll("[data-trip-type]")];
@@ -911,6 +974,30 @@ document.addEventListener("click", (event) => {
     })
     .catch((data) => {
       removeButton.textContent = data?.login_required ? "Sign in required" : "Try again";
+    });
+});
+
+const cancelForm = document.getElementById("cancelForm");
+cancelForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const status = document.getElementById("cancelStatus");
+  const payload = new URLSearchParams();
+  payload.set("booking_id", cancelForm.querySelector('input[name="booking_id"]')?.value || "");
+  payload.set("reason", document.getElementById("cancelReason")?.value || "Customer cancellation");
+  payload.set("note", document.getElementById("cancelNote")?.value || "");
+  payload.set("refund_method", "Original payment method");
+  if (status) status.textContent = "Submitting your cancellation request...";
+  fetch("/bookings/cancel", { method: "POST", body: payload })
+    .then((response) => response.ok ? response.json() : response.json().then((data) => Promise.reject(data)))
+    .then((data) => {
+      if (status) status.textContent = data.message || "Cancellation request submitted.";
+      if (bookingStatusBadge && data.status_label) {
+        bookingStatusBadge.textContent = data.status_label;
+        bookingStatusBadge.className = `status-badge ${data.status_class || "status-pending"}`;
+      }
+    })
+    .catch((data) => {
+      if (status) status.textContent = data?.message || "Cancellation could not be submitted.";
     });
 });
 

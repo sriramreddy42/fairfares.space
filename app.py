@@ -3469,7 +3469,8 @@ for _rate_limited_marketplace_path in (
     "/api/mobile/rentals/listing", "/api/mobile/rentals/checkout-session",
     "/api/mobile/rentals/security-deposit-session", "/api/mobile/rentals/cancel-request",
     "/api/mobile/rentals/modify-request", "/api/mobile/rentals/documents-email",
-    "/api/mobile/rentals/support-ticket",
+    "/api/mobile/rentals/support-ticket", "/api/mobile/rentals/pickup-submit",
+    "/api/mobile/rentals/return-submit",
 ):
     API_WRITE_RATE_LIMITS[_rate_limited_marketplace_path] = ("marketplace-write", 30, 60)
 
@@ -5736,7 +5737,7 @@ def save_booking_contact_and_send_confirmation(
             )
     delivery_status = "not sent"
     outbox_file: Path | None = None
-    if booking and booking_payment_confirmed(booking) and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKED_UP"}:
+    if booking and booking_payment_confirmed(booking) and booking["booking_status"] in {"CONFIRMED", "MODIFIED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}:
         outbox_file, delivery_status = send_confirmed_booking_email_once(booking["id"], origin)
     if booking and booking["booking_status"] == "PENDING_HOLD":
         message = "Details saved. Pay the 10% hold within the reservation window to confirm this car."
@@ -6054,7 +6055,7 @@ def active_customer_bookings() -> list[sqlite3.Row]:
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
-            WHERE bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'PICKED_UP', 'RETURNED', 'PENDING_HOLD', 'EXPIRED_HOLD')
+            WHERE bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED', 'RETURNED', 'PENDING_HOLD', 'EXPIRED_HOLD')
               AND COALESCE(bookings.payment_status, '') NOT IN ('REFUNDED')
             ORDER BY bookings.id DESC
             LIMIT 2000
@@ -6085,7 +6086,7 @@ def user_has_active_booking(user_id: int) -> bool:
             SELECT 1
             FROM bookings
             WHERE user_id = ?
-              AND booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'PICKED_UP', 'CANCELLATION_REQUESTED')
+              AND booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED', 'CANCELLATION_REQUESTED')
             LIMIT 1
             """,
             (user_id,),
@@ -8842,7 +8843,7 @@ def get_cars() -> list[sqlite3.Row]:
                 JOIN (
                     SELECT car_id, MAX(id) AS latest_id
                     FROM bookings
-                    WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                    WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                        OR (
                            booking_status = 'PENDING_HOLD'
                            AND payment_status = 'HOLD_PENDING'
@@ -10872,7 +10873,7 @@ def employee_operations_metrics() -> dict[str, object]:
     ]
     active_bookings = [
         row for row in bookings
-        if row_value(row, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKED_UP"}
+        if row_value(row, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}
     ]
     open_tickets = [row for row in get_admin_tickets() if row_value(row, "status") != "CLOSED"]
     urgent_tickets = [
@@ -10944,7 +10945,7 @@ def get_admin_users(search: str = "", limit: int = 500) -> list[sqlite3.Row]:
             SELECT users.*,
                    COUNT(DISTINCT bookings.id) AS booking_count,
                    COUNT(DISTINCT CASE WHEN bookings.booking_status = 'CANCELLED' THEN bookings.id END) AS cancelled_count,
-                   COUNT(DISTINCT CASE WHEN bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP') THEN bookings.id END) AS current_count,
+                   COUNT(DISTINCT CASE WHEN bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED') THEN bookings.id END) AS current_count,
                    COUNT(DISTINCT transactions.id) AS transaction_count,
                    COALESCE(SUM(transactions.amount), 0) AS transaction_total,
                    MAX(bookings.booking_id) AS latest_booking_id,
@@ -11258,7 +11259,7 @@ def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
                 """
                 SELECT COUNT(*) AS total
                 FROM bookings
-                WHERE booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                WHERE booking_status IN ('PENDING_HOLD', 'CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                 """
             ).fetchone()["total"],
             "tickets": con.execute(
@@ -13810,6 +13811,8 @@ def booking_status_label(status: str, payment_status: str = "") -> str:
         "CANCELLED": "Cancelled",
         "MODIFIED": "Modification sent to admin",
         "PICKED_UP": "Picked up",
+        "PICKUP_SUBMITTED": "Pickup awaiting approval",
+        "RETURN_SUBMITTED": "Return awaiting inspection",
         "RETURNED": "Returned",
     }
     return labels.get(status, status.replace("_", " ").title())
@@ -13983,6 +13986,12 @@ def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
     elif status == "PICKED_UP":
         title = "Vehicle picked up"
         body = f"{booking['car_name']} is currently with you until {booking['dropoff_date']}."
+    elif status == "PICKUP_SUBMITTED":
+        title = "Pickup awaiting approval"
+        body = "Your pickup inspection was submitted. Staff will confirm the vehicle release."
+    elif status == "RETURN_SUBMITTED":
+        title = "Return awaiting inspection"
+        body = "Your return evidence was submitted. Keep the confirmation until staff completes the review."
     elif status == "RETURNED":
         title = "Vehicle returned"
         body = "This trip is complete. Documents remain available in your portal."
@@ -13992,14 +14001,22 @@ def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
     else:
         title = "Car is ready for pickup"
         body = f"Your {booking['car_name']} is scheduled for {booking['pickup_time']} on {booking['pickup_date']}."
+    target = parse_booking_datetime(
+        booking["dropoff_date"] if status in {"PICKED_UP", "RETURN_SUBMITTED"} else booking["pickup_date"],
+        booking["dropoff_time"] if status in {"PICKED_UP", "RETURN_SUBMITTED"} else booking["pickup_time"],
+    )
+    remaining_seconds = max(0, int((target - fairfares_now().replace(tzinfo=None)).total_seconds())) if target else 0
+    remaining_days, day_remainder = divmod(remaining_seconds, 86400)
+    remaining_hours, hour_remainder = divmod(day_remainder, 3600)
+    remaining_minutes, remaining_secs = divmod(hour_remainder, 60)
     return {
         "title": title,
         "body": body,
         "instructions": f"Proceed to {booking['pickup_location']} for provider counter details.",
-        "days": f"{max(int(booking['days']), 0):02d}",
-        "hours": "00",
-        "mins": "00",
-        "secs": "00",
+        "days": f"{remaining_days:02d}",
+        "hours": f"{remaining_hours:02d}",
+        "mins": f"{remaining_minutes:02d}",
+        "secs": f"{remaining_secs:02d}",
     }
 
 
@@ -14325,7 +14342,7 @@ def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
             WHERE bookings.car_id = ?
               AND UPPER(TRIM(cars.status)) IN ('BOOKED', 'HOLD')
               AND (
-                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                 OR (
                     bookings.booking_status = 'PENDING_HOLD'
                     AND bookings.payment_status = 'HOLD_PENDING'
@@ -14369,7 +14386,7 @@ def active_booking_conflict_for_car_in_connection(
         WHERE bookings.car_id = ?
           AND bookings.id != ?
           AND (
-            bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+            bookings.booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
             OR (
                 bookings.booking_status = 'PENDING_HOLD'
                 AND bookings.payment_status = 'HOLD_PENDING'
@@ -14779,7 +14796,7 @@ def ensure_booking_for_user(
         if (
             existing
             and int(row_value(existing, "car_id") or 0) == car_id
-            and row_value(existing, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKED_UP"}
+            and row_value(existing, "booking_status") in {"PENDING_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}
         ):
             return existing
         requested_car = get_car(car_id)
@@ -19256,35 +19273,22 @@ def mobile_rental_service_booking_payload(
     latest_transaction = None
     document_sets: list[dict[str, object]] = []
     support_tickets: list[dict[str, object]] = []
-    housing_posts: list[dict[str, object]] = []
-    service_user = None
     stats = {
         "upcoming": 0,
         "past": 0,
-        "saved": 0,
-        "housingActive": 0,
-        "housingExpired": 0,
         "supportOpen": 0,
     }
     active_booking_id = int(row_value(row, "id") or 0)
     if user_id:
         user_bookings = get_bookings_for_user(user_id)
-        saved_cars = get_saved_cars_for_user(user_id)
         stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
         stats["past"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
-        stats["saved"] = len(saved_cars)
         document_sets = get_user_document_sets(user_id, active_booking_id, include_docs=include_document_bodies)
         if not include_document_bodies:
             document_sets = [item for item in document_sets if int(item.get("id") or 0) == active_booking_id]
         support_rows = get_support_tickets_for_user(user_id)
         support_tickets = [mobile_support_ticket_summary(ticket) for ticket in support_rows]
         stats["supportOpen"] = sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"})
-        post_rows = get_accommodation_posts_for_user(user_id)
-        stats["housingActive"] = sum(1 for post in post_rows if row_value(post, "visibility_status") == "ACTIVE" and accommodation_expiry_label(post) != "Expired")
-        stats["housingExpired"] = sum(1 for post in post_rows if accommodation_expiry_label(post) == "Expired")
-        housing_posts = [mobile_housing_post_summary(post) for post in post_rows[:12]]
-        with db() as con:
-            service_user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     with db() as con:
         latest_transaction = con.execute(
             """
@@ -19327,16 +19331,34 @@ def mobile_rental_service_booking_payload(
             "documentsLocked": documents_locked,
             "documentsLockedMessage": (current_doc or {}).get("lockMessage") or "Documents can be retrieved once pickup is completed.",
             "liveStatus": live_status_for_booking(row),
-            "student": {
-                "email": row_value(service_user, "student_email") if service_user else "",
-                "id": row_value(service_user, "student_id") if service_user else "",
-                "verified": str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"},
-                "statusLabel": "Student verified" if service_user and str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"} else "Student Verification Pending",
-                "discountLabel": "10% OFF" if service_user and str(row_value(service_user, "student_verified") or "0") in {"1", "true", "True"} else "0% OFF",
-            },
             "stats": stats,
-            "housingPosts": housing_posts,
             "supportTickets": support_tickets,
+            "handoff": {
+                "phase": (
+                    "closed" if row_value(row, "booking_status") in {"CANCELLED", "EXPIRED_HOLD"}
+                    else "cancellation_review" if row_value(row, "booking_status") == "CANCELLATION_REQUESTED"
+                    else "change_review" if row_value(row, "booking_status") == "MODIFIED"
+                    else "complete" if row_value(row, "booking_status") == "RETURNED"
+                    else "return_review" if row_value(row, "booking_status") == "RETURN_SUBMITTED"
+                    else "return" if row_value(row, "booking_status") == "PICKED_UP"
+                    else "pickup_review" if row_value(row, "booking_status") == "PICKUP_SUBMITTED"
+                    else "pickup" if row_value(row, "booking_status") == "CONFIRMED" and row_value(row, "payment_status") == "PAID" and row_value(row, "security_deposit_status") == "AUTHORIZED"
+                    else "deposit" if row_value(row, "booking_status") == "CONFIRMED" and row_value(row, "payment_status") == "PAID"
+                    else "payment"
+                ),
+                "actualPickupDate": row_value(row, "actual_pickup_date"),
+                "actualPickupTime": row_value(row, "actual_pickup_time"),
+                "actualReturnDate": row_value(row, "actual_return_date"),
+                "actualReturnTime": row_value(row, "actual_return_time"),
+                "pickupOdometer": int(row_value(row, "pickup_odometer") or 0),
+                "returnOdometer": int(row_value(row, "return_odometer") or 0),
+                "pickupFuelLevel": row_value(row, "pickup_fuel_level"),
+                "returnFuelLevel": row_value(row, "return_fuel_level"),
+                "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
+                "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
+                "pickupSubmitted": row_value(row, "booking_status") in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"},
+                "returnSubmitted": row_value(row, "booking_status") in {"RETURN_SUBMITTED", "RETURNED"},
+            },
         }
     )
     return payload
@@ -26485,8 +26507,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
+            "/api/mobile/rentals/pickup-submit": self.api_mobile_rental_pickup_submit,
+            "/api/mobile/rentals/return-submit": self.api_mobile_rental_return_submit,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
             "/api/mobile/admin/security-deposit-session": self.api_mobile_security_deposit_checkout,
+            "/api/mobile/admin/handoff-review": self.api_mobile_admin_handoff_review,
             "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/profile/update": self.update_user_profile,
             "/profile/photo": self.update_profile_photo,
@@ -31330,8 +31355,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.not_found()
             return
-        if row_value(booking, "booking_status") in {"RETURNED", "CANCELLED", "EXPIRED_HOLD"}:
-            self.send_json({"ok": False, "message": "Past bookings cannot be cancelled or modified. Their invoices remain available."}, 409)
+        if row_value(booking, "booking_status") != "CONFIRMED":
+            self.send_json({"ok": False, "message": "Only a confirmed reservation can be cancelled. Contact support for an active pickup or return."}, 409)
             return
         if row_value(booking, "booking_status") in {"MODIFIED", "CANCELLATION_REQUESTED"}:
             self.send_json({"ok": False, "message": "This booking already has a pending request. Cancel or wait for that review before requesting cancellation."}, 409)
@@ -31954,7 +31979,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 FROM bookings
                 WHERE car_id = ?
                   AND id != ?
-                  AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                  AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                 LIMIT 1
                 """,
                 (booking["car_id"], booking["id"]),
@@ -32835,7 +32860,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("MODIFIED", "Modification requests"),
             ("CANCELLATION_REQUESTED", "Cancellation requests"),
             ("CANCELLED", "Cancelled"),
+            ("PICKUP_SUBMITTED", "Pickup awaiting approval"),
             ("PICKED_UP", "Picked up"),
+            ("RETURN_SUBMITTED", "Return awaiting inspection"),
             ("RETURNED", "Returned"),
         ]
         return "".join(
@@ -33192,7 +33219,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         selected_status = query.get("status", ["ALL"])[0].upper()
         selected_calendar = query.get("calendar", ["today"])[0].lower()
-        allowed_statuses = {"ALL", "PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}
+        allowed_statuses = {"ALL", "PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"}
         if selected_status not in allowed_statuses:
             selected_status = "ALL"
         if selected_calendar not in {"today", "tomorrow", "weekly", "monthly"}:
@@ -34616,7 +34643,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("MODIFIED", "Modification pending"),
             ("CANCELLATION_REQUESTED", "Cancellation requested"),
             ("CANCELLED", "Cancelled"),
+            ("PICKUP_SUBMITTED", "Pickup awaiting approval"),
             ("PICKED_UP", "Picked up"),
+            ("RETURN_SUBMITTED", "Return awaiting inspection"),
             ("RETURNED", "Returned"),
         )
         status_options = "".join(
@@ -35610,7 +35639,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         booking_status = form.get("booking_status", "CONFIRMED")
         payment_status = form.get("payment_status", "PAY_AT_PICKUP")
-        if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKED_UP", "RETURNED"}:
+        if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"}:
             booking_status = "CONFIRMED"
         if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAID", "PAY_AT_PICKUP", "REFUND_REVIEW", "REFUNDED"}:
             payment_status = "PAY_AT_PICKUP"
@@ -35738,7 +35767,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         """
                         SELECT 1 FROM bookings
                         WHERE car_id = ? AND id != ?
-                          AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                          AND booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                         LIMIT 1
                         """,
                         (row_value(previous_booking, "car_id"), row_value(previous_booking, "id")),
@@ -35775,7 +35804,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (form.get("booking_id"),),
                 )
-            elif booking_status in {"CONFIRMED", "MODIFIED", "PICKED_UP", "CANCELLATION_REQUESTED"}:
+            elif booking_status in {"CONFIRMED", "MODIFIED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "CANCELLATION_REQUESTED"}:
                 con.execute(
                     """
                     UPDATE cars
@@ -38761,7 +38790,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         pickups = []
         for row in get_admin_bookings():
-            if not booking_ready_for_pickup(row):
+            booking_status = str(row_value(row, "booking_status") or "")
+            if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}:
                 continue
             pickups.append(
                 {
@@ -38777,6 +38807,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "paymentStatus": row_value(row, "payment_status"),
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                     "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
+                    "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
+                    "pickupEvidenceComplete": all(row_value(row, field) for field in (
+                        "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
+                        "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
+                        "pickup_customer_signature",
+                    )),
+                    "returnEvidenceComplete": all(row_value(row, field) for field in (
+                        "return_front_image", "return_back_image", "return_left_image", "return_right_image",
+                        "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
+                        "return_customer_signature",
+                    )),
                 }
             )
         self.send_json(
@@ -38789,6 +38830,77 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
             }
         )
+
+    def api_mobile_admin_handoff_review(self) -> None:
+        admin = self.require_mobile_admin()
+        if not admin:
+            return
+        payload = self.read_json_body()
+        try:
+            booking_id = int(payload.get("bookingId") or 0)
+        except (TypeError, ValueError):
+            booking_id = 0
+        action = clean_text_value(payload.get("action"), 40).upper()
+        staff_signature = clean_text_value(payload.get("staffSignature") or row_value(admin, "name"), 160)
+        booking = get_booking_by_id(booking_id) if booking_id else None
+        if not booking:
+            self.send_json({"ok": False, "error": "Booking not found."}, 404)
+            return
+        status = str(row_value(booking, "booking_status") or "")
+        if action == "APPROVE_PICKUP":
+            pickup_evidence_complete = all(row_value(booking, field) for field in (
+                "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
+                "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
+                "pickup_customer_signature",
+            ))
+            if (
+                status != "PICKUP_SUBMITTED"
+                or row_value(booking, "payment_status") != "PAID"
+                or row_value(booking, "security_deposit_status") != "AUTHORIZED"
+                or not pickup_evidence_complete
+            ):
+                self.send_json({"ok": False, "error": "Pickup evidence, full payment, and deposit authorization are required."}, 409)
+                return
+            with db() as con:
+                con.execute(
+                    "UPDATE bookings SET booking_status = 'PICKED_UP', status = 'PICKED_UP', pickup_staff_signature = ? WHERE id = ?",
+                    (staff_signature, booking_id),
+                )
+            self.send_json({"ok": True, "message": "Vehicle pickup approved."})
+            return
+        if action == "APPROVE_RETURN":
+            if status != "RETURN_SUBMITTED":
+                self.send_json({"ok": False, "error": "This return is not awaiting review."}, 409)
+                return
+            if row_value(booking, "return_condition_status") != "ACCEPTABLE" or row_value(booking, "new_damage_found") != "NO":
+                self.send_json({"ok": False, "error": "Damage was reported. Hold this return for charge review instead."}, 409)
+                return
+            with db() as con:
+                con.execute(
+                    """
+                    UPDATE bookings SET return_staff_signature = ?, return_review_status = 'CLEAR_TO_RELEASE',
+                        post_return_charge_amount = 0, booking_status = 'RETURNED', status = 'RETURNED'
+                    WHERE id = ?
+                    """,
+                    (staff_signature, booking_id),
+                )
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
+            reviewed = get_booking_by_id(booking_id)
+            released, release_message = release_security_deposit_after_clear_return(reviewed)
+            if not released:
+                self.send_json({"ok": True, "message": f"Return approved. Deposit release needs staff review: {release_message}", "depositReviewRequired": True})
+                return
+            self.send_json({"ok": True, "message": f"Return approved. {release_message}"})
+            return
+        if action == "HOLD_RETURN":
+            if status != "RETURN_SUBMITTED":
+                self.send_json({"ok": False, "error": "This return is not awaiting review."}, 409)
+                return
+            with db() as con:
+                con.execute("UPDATE bookings SET return_staff_signature = ?, return_review_status = 'CHARGES_PENDING' WHERE id = ?", (staff_signature, booking_id))
+            self.send_json({"ok": True, "message": "Return held for damage or charge review."})
+            return
+        self.send_json({"ok": False, "error": "Choose a valid pickup or return review action."}, 400)
 
     def api_mobile_security_deposit_checkout(self) -> None:
         admin = self.require_mobile_admin()
@@ -39971,7 +40083,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     JOIN (
                         SELECT car_id, MAX(id) AS latest_id
                         FROM bookings
-                        WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKED_UP')
+                        WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
                            OR (
                                booking_status = 'PENDING_HOLD'
                                AND payment_status = 'HOLD_PENDING'
@@ -40134,6 +40246,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
             return
+        if row_value(booking, "booking_status") not in {"CONFIRMED", "MODIFIED"}:
+            self.send_json({"ok": False, "error": "Only a confirmed reservation can be cancelled. Contact support for an active pickup or return."}, 409)
+            return
         if row_value(booking, "booking_status") == "CANCELLED":
             self.send_json({"ok": False, "error": "This booking is already cancelled."}, 409)
             return
@@ -40208,7 +40323,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
             return
-        if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED"}:
+        if row_value(booking, "booking_status") not in {"CONFIRMED", "PICKED_UP"}:
             self.send_json({"ok": False, "error": "This booking cannot be modified now."}, 400)
             return
         if row_value(booking, "booking_status") in {"MODIFIED", "CANCELLATION_REQUESTED"}:
@@ -40384,6 +40499,133 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         outbox_file, delivery_status = send_booking_documents_email(email, row_value(user, "name"), booking, documents, self.public_origin())
         message = f"Documents emailed to {email}." if delivery_status.startswith("sent") else f"Documents email copy saved for {email}."
         self.send_json({"ok": True, "message": message, "deliveryStatus": delivery_status, "outboxFile": str(outbox_file)})
+
+    def api_mobile_rental_pickup_submit(self) -> None:
+        self.api_mobile_rental_handoff_submit("pickup")
+
+    def api_mobile_rental_return_submit(self) -> None:
+        self.api_mobile_rental_handoff_submit("return")
+
+    def api_mobile_rental_handoff_submit(self, phase: str) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to submit a vehicle handoff."}, 401)
+            return
+        payload = self.read_json_body()
+        user_id = int(row_value(user, "id") or 0)
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
+            return
+        current_status = str(row_value(booking, "booking_status") or "")
+        if phase == "pickup":
+            if current_status != "CONFIRMED":
+                self.send_json({"ok": False, "error": "Pickup can only be submitted for a confirmed booking."}, 409)
+                return
+            if row_value(booking, "payment_status") != "PAID":
+                self.send_json({"ok": False, "error": "Pay the rental balance before starting pickup."}, 409)
+                return
+            if row_value(booking, "security_deposit_status") != "AUTHORIZED":
+                self.send_json({"ok": False, "error": "Authorize the refundable deposit before starting pickup."}, 409)
+                return
+        elif current_status != "PICKED_UP":
+            self.send_json({"ok": False, "error": "Return can only be submitted after staff confirms pickup."}, 409)
+            return
+
+        try:
+            odometer = max(1, int(float(payload.get("odometer") or 0)))
+        except (TypeError, ValueError):
+            odometer = 0
+        fuel_level = clean_text_value(payload.get("fuelLevel"), 40).upper()
+        signature = clean_text_value(payload.get("signature"), 160)
+        condition = clean_text_value(payload.get("conditionStatus"), 40).upper()
+        acknowledgement = bool(payload.get("acknowledged"))
+        if not odometer or not fuel_level or not signature or not acknowledgement:
+            self.send_json({"ok": False, "error": "Mileage, fuel level, signature, and acknowledgement are required."}, 400)
+            return
+        allowed_fuel = {"EMPTY", "1/4", "1/2", "3/4", "FULL", "25%", "50%", "75%", "100%"}
+        if fuel_level not in allowed_fuel:
+            self.send_json({"ok": False, "error": "Choose the vehicle fuel or charge level."}, 400)
+            return
+        if condition not in {"ACCEPTABLE", "DAMAGE_REPORTED"}:
+            self.send_json({"ok": False, "error": "Confirm the vehicle condition or report damage."}, 400)
+            return
+
+        photo_names = ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")
+        raw_photos = payload.get("photos") if isinstance(payload.get("photos"), dict) else {}
+        missing = [name for name in photo_names if not str(raw_photos.get(name) or "").startswith("data:image/")]
+        if missing:
+            self.send_json({"ok": False, "error": f"Add all required vehicle photos: {', '.join(missing)}."}, 400)
+            return
+
+        now_local = fairfares_now()
+        booking_db_id = int(row_value(booking, "id") or 0)
+        prefix = "pickup" if phase == "pickup" else "return"
+        column_by_photo = {
+            "front": f"{prefix}_front_image",
+            "back": f"{prefix}_back_image",
+            "left": f"{prefix}_left_image",
+            "right": f"{prefix}_right_image",
+            "odometer": f"{prefix}_odometer_image",
+            "fuel": f"{prefix}_fuel_image",
+            "interiorFront": f"{prefix}_interior_front_image",
+            "interiorRear": f"{prefix}_interior_rear_image",
+        }
+        stored_photos: dict[str, str] = {}
+        with db() as con:
+            for photo_name, column in column_by_photo.items():
+                stored_photos[column] = upload_data_url_to_drive(
+                    con,
+                    folder_key="pickup_return",
+                    file_scope=column,
+                    data_url=str(raw_photos.get(photo_name) or ""),
+                    fallback_name=f"{row_value(booking, 'booking_id') or booking_db_id}-{column}",
+                    uploaded_by=user_id,
+                    user_id=user_id,
+                    booking_id=booking_db_id,
+                )
+            if phase == "pickup":
+                con.execute(
+                    """
+                    UPDATE bookings SET booking_status = 'PICKUP_SUBMITTED', status = 'PICKUP_SUBMITTED',
+                        actual_pickup_date = ?, actual_pickup_time = ?, pickup_odometer = ?,
+                        pickup_fuel_level = ?, pickup_condition_status = ?, pickup_customer_signature = ?,
+                        pickup_front_image = ?, pickup_back_image = ?, pickup_left_image = ?, pickup_right_image = ?,
+                        pickup_odometer_image = ?, pickup_fuel_image = ?, pickup_interior_front_image = ?, pickup_interior_rear_image = ?
+                    WHERE id = ?
+                    """,
+                    (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
+                     fuel_level, condition, signature, stored_photos["pickup_front_image"],
+                     stored_photos["pickup_back_image"], stored_photos["pickup_left_image"],
+                     stored_photos["pickup_right_image"], stored_photos["pickup_odometer_image"],
+                     stored_photos["pickup_fuel_image"], stored_photos["pickup_interior_front_image"],
+                     stored_photos["pickup_interior_rear_image"], booking_db_id),
+                )
+            else:
+                new_damage = "YES" if condition == "DAMAGE_REPORTED" else "NO"
+                con.execute(
+                    """
+                    UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
+                        actual_return_date = ?, actual_return_time = ?, return_odometer = ?,
+                        return_fuel_level = ?, return_condition_status = ?, new_damage_found = ?,
+                        return_customer_signature = ?, return_review_status = 'PENDING',
+                        return_front_image = ?, return_back_image = ?, return_left_image = ?, return_right_image = ?,
+                        return_odometer_image = ?, return_fuel_image = ?, return_interior_front_image = ?, return_interior_rear_image = ?
+                    WHERE id = ?
+                    """,
+                    (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
+                     fuel_level, condition, new_damage, signature, stored_photos["return_front_image"],
+                     stored_photos["return_back_image"], stored_photos["return_left_image"],
+                     stored_photos["return_right_image"], stored_photos["return_odometer_image"],
+                     stored_photos["return_fuel_image"], stored_photos["return_interior_front_image"],
+                     stored_photos["return_interior_rear_image"], booking_db_id),
+                )
+        updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
+        self.send_json({
+            "ok": True,
+            "message": "Pickup submitted for staff approval." if phase == "pickup" else "Return submitted for staff inspection.",
+            "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), user_id) if updated else None,
+        })
 
     def api_mobile_rental_support_ticket(self) -> None:
         user = self.current_user()
