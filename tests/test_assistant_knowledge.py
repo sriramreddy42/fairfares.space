@@ -48,7 +48,6 @@ class AssistantKnowledgeTest(unittest.TestCase):
         self.assertTopArticle("Why is there a hold on my card?", "Payment FAQ")
         self.assertArticlePresent("insurance requirement", "Insurance Requirement")
         self.assertTopArticle("What do I do if I get a flat tire?", "Fees, tolls, tickets, and roadside FAQ")
-        self.assertTopArticle("Can I upload reels?", "Explorer FAQ")
         self.assertTopArticle("Can I list my car on FairFares?", "Marketplace and future host program FAQ")
 
     def test_booking_policy_surfaces_insurance_requirement(self):

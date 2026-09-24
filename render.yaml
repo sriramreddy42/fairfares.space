@@ -37,11 +37,9 @@ services:
         sync: false
       - key: GOOGLE_PLACES_API_KEY
         sync: false
-      # Broad Places Text Search is intentionally off. Explorer and housing
+      # Broad Places Text Search is intentionally off. Housing
       # use FairFares-backed data unless this is explicitly approved later.
       - key: FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH
-        value: "0"
-      - key: FAIRFARES_ENABLE_EXPLORER
         value: "0"
       # Google ID tokens created by the native apps use the server/Web OAuth
       # client as their audience. Keep every FairFares client in the backend

@@ -1026,7 +1026,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         ), patch.object(app, "google_api_get", side_effect=google_response):
             results = app.google_ride_popular_cities("Mumbai, India")
         self.assertEqual([item["label"] for item in results], ["Pune, Maharashtra, India"])
-        self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=pune-photo-ref")
+        self.assertEqual(results[0]["imageUrl"], "")
 
     def test_popular_ride_cities_cache_country_result(self):
         origin = {
@@ -1110,7 +1110,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertNotIn("New York, NY, USA", [item["label"] for item in results])
         self.assertEqual(results[0]["label"], "Bengaluru, Karnataka, India")
         self.assertEqual(results[0]["source"], "country-fallback")
-        self.assertEqual(results[0]["imageUrl"], "/api/explorer/place-photo?ref=bengaluru-photo")
+        self.assertEqual(results[0]["imageUrl"], "")
 
     def test_popular_ride_cities_prefer_population_ranked_dynamic_source(self):
         origin = {
@@ -1230,7 +1230,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(results)
         self.assertNotIn("Denver", " ".join(str(item.get("label") or "") for item in results))
         self.assertTrue(all(str(item.get("secondary") or "").endswith("India") for item in results))
-        self.assertTrue(all(str(item.get("imageUrl") or "").startswith("/api/explorer/") for item in results))
+        self.assertTrue(all(not str(item.get("imageUrl") or "").startswith("/api/") for item in results))
 
     def test_us_popular_ride_cities_remain_visible_when_google_returns_none(self):
         with patch.object(app, "google_ride_popular_cities", return_value=[]), patch.object(
@@ -1239,7 +1239,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             results = app.ride_place_suggestions("Denver, CO", "", cities_only=True)
         self.assertEqual([item["main"] for item in results], ["New York", "Los Angeles", "Chicago", "Denver"])
         self.assertTrue(all(item["source"] == "country-fallback" for item in results))
-        self.assertTrue(all(str(item["imageUrl"]).startswith("/api/explorer/city-photo?") for item in results))
+        self.assertTrue(all(not str(item["imageUrl"]).startswith("/api/") for item in results))
 
     def test_us_popular_destination_labels_resolve_without_google(self):
         expected = {

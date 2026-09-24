@@ -100,34 +100,7 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
             [token, token],
         )
 
-    def test_explorer_uses_alternate_text_search_only_when_primary_has_no_stop(self):
-        calls = []
 
-        def google_response(url):
-            calls.append(url)
-            return {
-                "status": "OK",
-                "results": [{
-                    "place_id": f"place-{len(calls)}",
-                    "name": "Useful stop",
-                    "formatted_address": "Denver, CO",
-                    "geometry": {"location": {"lat": 39.7392, "lng": -104.9903}},
-                }],
-            }
-
-        with patch.dict(app.os.environ, {"GOOGLE_PLACES_API_KEY": "private-key", "FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH": "1"}), patch.object(
-            app, "google_api_get", side_effect=google_response
-        ):
-            app.fetch_google_explorer_stops("Denver, CO", ["Food"], 39.7392, -104.9903)
-
-        # Food, Hidden Gems, and Surprise Me each use their primary query.
-        self.assertEqual(len(calls), 3)
-
-    def test_explorer_text_search_is_off_without_explicit_opt_in(self):
-        with patch.dict(app.os.environ, {"GOOGLE_PLACES_API_KEY": "private-key", "FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH": ""}), patch.object(
-            app, "google_api_get", side_effect=AssertionError("Text Search must remain disabled")
-        ):
-            self.assertEqual(app.fetch_google_explorer_stops("Denver, CO", ["Food"], 39.7392, -104.9903), [])
 
     def test_listing_city_rail_avoids_google_when_local_listings_fill_it(self):
         local_cities = [

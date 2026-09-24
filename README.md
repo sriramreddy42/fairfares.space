@@ -109,34 +109,6 @@ invalidated automatically; use the verified password-reset flow to regain access
 
 Use the dashboard to update homepage copy and the poster image path. Drop supplied poster files into `static/posters/` and set `poster_image` to a path like `/static/posters/my-poster.jpg`.
 
-## FairFares Explorer Sprint 1
-
-Explorer is implemented at `/explorer` in the current Python + SQLite app stack. This repository is not currently a Next.js/Prisma codebase, so no Prisma migration is required for this sprint. The app creates the Explorer tables automatically on startup.
-
-Sprint 1 includes:
-
-- Location state with browser detection and manual city fallback.
-- FairFares booking check with `+100 XP` bonus messaging.
-- Mood tags, preferences, quest generation, mystery stop, stop cards, XP progress, and badge preview.
-- Google Places-backed stop names, addresses, ratings, review snippets, and reference photos when `GOOGLE_PLACES_API_KEY` is set.
-- Google Maps route preview when `GOOGLE_MAPS_API_KEY` is set. Restrict this browser key to your FairFares domains in Google Cloud.
-- API-shaped placeholders:
-  - `POST /api/explorer/quests`
-  - `GET /api/explorer/quests/{id}`
-  - `POST /api/explorer/checkins`
-  - `POST /api/explorer/xp`
-  - `GET /api/explorer/place-photo?ref=...`
-
-Explorer environment hooks:
-
-```bash
-GOOGLE_MAPS_API_KEY=your_google_maps_key
-GOOGLE_PLACES_API_KEY=your_google_places_key
-OPENAI_API_KEY=your_openai_key
-```
-
-`OPENAI_API_KEY` is reserved for a later AI route-writing sprint. The current app uses deterministic quest copy plus Google Places data.
-
 ## Mobile App Shell
 
 FairFares can run as native iOS and Android apps through Capacitor. The current mobile shell loads the canonical website at `https://www.fairfare.space`, which keeps authentication and booking navigation on the same origin as the public website.

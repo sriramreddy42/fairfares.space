@@ -329,7 +329,7 @@ BLOG_POSTS = [
         "sections": [
             ("Confirm arrival and pickup time", "Choose a pickup time that gives you room for baggage, rideshare movement, and airport delays. For Denver Airport car rental, a realistic pickup time protects both the customer and the rental team."),
             ("Bring license and insurance proof", "FairFares pickup flow expects driver license and insurance information before release. If rental coverage is needed, staff can record that separately from the base vehicle price."),
-            ("Plan the first drive", "Once the booking is ready, use Explorer to map a Colorado road trip car rental route, food stop, campus visit, or mountain drive after airport pickup."),
+            ("Plan the first drive", "Once the booking is ready, plan a Colorado road trip route, food stop, campus visit, or mountain drive after airport pickup."),
         ],
         "cta": ("Book airport pickup", "/denver-airport-car-rental"),
     },
@@ -414,7 +414,7 @@ SEO_LANDING_PAGES = {
             ("Clear price review", "Daily rate, taxes, 10% hold, and pickup balance are shown before confirmation."),
             ("Price Match Guarantee", "Found a lower comparable quote? Submit it for review and possible additional 10% off."),
         ],
-        "links": [("Search Denver rentals", "/#results"), ("Student deals", "/deals"), ("Explore Denver routes", "/explorer")],
+        "links": [("Search Denver rentals", "/#results"), ("Student deals", "/deals")],
     },
     "/denver-airport-car-rental": {
         "title": "Denver Airport Car Rental | FairFares",
@@ -422,13 +422,13 @@ SEO_LANDING_PAGES = {
         "kicker": "Airport pickup",
         "h1": "Denver Airport car rental with simple pickup planning",
         "intro": "Book airport pickup rental options for Denver International Airport and nearby Colorado routes with FairFares.",
-        "body": "FairFares is built for travelers who want transparent Denver Airport car rental pricing before arrival. Search by pickup date, compare vehicles, keep booking documents together, and use Explorer to plan the drive after landing.",
+        "body": "FairFares is built for travelers who want transparent Denver Airport car rental pricing before arrival. Search by pickup date, compare vehicles, keep booking documents together, and plan the drive after landing.",
         "features": [
             ("Airport-ready timing", "Choose pickup and return times that match your arrival and return plans."),
             ("Secure online hold", "Confirm the booking online, then manage pickup details in your dashboard."),
-            ("Road trip support", "Use Explorer for Colorado road trip car rental ideas after pickup."),
+            ("Road trip support", "Plan Colorado road trip ideas after pickup."),
         ],
-        "links": [("Book airport pickup", "/#results"), ("Manage booking", "/manage-booking"), ("Open Explorer", "/explorer")],
+        "links": [("Book airport pickup", "/#results"), ("Manage booking", "/manage-booking")],
     },
     "/cheap-car-rental-colorado": {
         "title": "Cheap Car Rental Colorado | FairFares",
@@ -470,7 +470,7 @@ SEO_LANDING_PAGES = {
             ("Trip-friendly options", "Use SUVs for Denver Airport pickup, mountain routes, and group travel."),
             ("Price match review", "Submit comparable lower quotes for eligible review before pickup."),
         ],
-        "links": [("Browse SUVs", "/#results"), ("Colorado trip ideas", "/explorer"), ("Deals", "/deals")],
+        "links": [("Browse SUVs", "/#results"), ("Deals", "/deals")],
     },
     "/monthly-car-rental": {
         "title": "Long-Term Car Rental Colorado | FairFares",
@@ -496,7 +496,7 @@ SEO_LANDING_PAGES = {
         "features": [
             ("Airport pickup timing", "Choose pickup and return times that fit flight arrival, baggage, and return plans."),
             ("Clear checkout", "Review due-now hold, full payment, discounts, and pickup balance before paying."),
-            ("Colorado trip ready", "Use Explorer after booking to plan routes from Denver Airport into Colorado."),
+            ("Colorado trip ready", "Plan routes from Denver Airport into Colorado after booking."),
         ],
         "links": [("Search airport rentals", "/#results"), ("Denver Airport guide", "/denver-airport-car-rental"), ("Pickup checklist", "/blog/denver-airport-car-rental-pickup-checklist")],
     },
@@ -540,21 +540,21 @@ SEO_LANDING_PAGES = {
             ("Transparent pricing", "See rental subtotal, taxes, discounts, and pickup balance before confirmation."),
             ("Price match review", "Submit comparable lower SUV quotes before pickup for eligible review."),
         ],
-        "links": [("Browse SUV rentals", "/#results"), ("SUV rental Colorado", "/suv-rental"), ("Colorado route ideas", "/explorer")],
+        "links": [("Browse SUV rentals", "/#results"), ("SUV rental Colorado", "/suv-rental")],
     },
     "/colorado-road-trip-rental": {
         "title": "Colorado Road Trip Rental | FairFares",
-        "description": "Plan a Colorado road trip rental with FairFares. Compare Denver rental cars, SUVs, airport pickup, weekend trips, and Explorer routes.",
+        "description": "Plan a Colorado road trip rental with FairFares. Compare Denver rental cars, SUVs, airport pickup, weekend trips, and route ideas.",
         "kicker": "Road trip rentals",
         "h1": "Colorado road trip rental planning with cars, routes, and savings",
-        "intro": "FairFares connects rental car booking with Explorer route planning for Denver drives, mountain stops, and weekend escapes.",
-        "body": "A Colorado road trip rental needs the right vehicle, pickup time, rental length, and route plan. FairFares helps compare sedans, SUVs, and fuel-efficient cars, then Explorer helps turn the drive into a plan.",
+        "intro": "FairFares connects rental car booking with route planning for Denver drives, mountain stops, and weekend escapes.",
+        "body": "A Colorado road trip rental needs the right vehicle, pickup time, rental length, and route plan. FairFares helps compare sedans, SUVs, and fuel-efficient cars, then plan the drive around your itinerary.",
         "features": [
             ("Route-ready booking", "Choose a vehicle that fits the route, passengers, bags, and trip length."),
-            ("Explorer planning", "Use Explorer for Denver drives, mountain routes, stops, photos, and memories."),
+            ("Route planning", "Plan Denver drives, mountain routes, and stops."),
             ("Clear travel costs", "Review daily rate, taxes, discounts, hold amount, and pickup balance before checkout."),
         ],
-        "links": [("Search road trip cars", "/#results"), ("Open Explorer", "/explorer"), ("Weekend rentals", "/weekend-car-rental-colorado")],
+        "links": [("Search road trip cars", "/#results"), ("Weekend rentals", "/weekend-car-rental-colorado")],
     },
     "/weekend-car-rental-colorado": {
         "title": "Weekend Car Rental Colorado | FairFares",
@@ -562,7 +562,7 @@ SEO_LANDING_PAGES = {
         "kicker": "Weekend rentals",
         "h1": "Weekend car rental Colorado options for short, useful trips",
         "intro": "FairFares helps drivers compare weekend rentals for Denver errands, airport pickup, campus visits, and Colorado getaways.",
-        "body": "Weekend car rental Colorado planning should be fast and clear. Pick your dates, compare available vehicles, review discounts and payment status, and use Explorer if you want route ideas for the trip.",
+        "body": "Weekend car rental Colorado planning should be fast and clear. Pick your dates, compare available vehicles, review discounts and payment status, and use your itinerary for route ideas.",
         "features": [
             ("Short-trip friendly", "Good for errands, campus visits, mountain drives, and quick airport pickup."),
             ("Vehicle choice", "Compare sedans for efficiency or SUVs for space and gear."),
@@ -825,8 +825,7 @@ BASE_STYLESHEETS = [
     f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/20-admin.css?v={ASSET_VERSION}",
     f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
-    f"/static/css/sections/40-explorer.min.css?v={ASSET_VERSION}",
-    f"/static/css/sections/50-home-results-late-explorer.min.css?v={ASSET_VERSION}",
+    f"/static/css/sections/50-home-results.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/60-payment-admin-final.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/70-mobile-polish.min.css?v={ASSET_VERSION}",
 ]
@@ -6265,10 +6264,9 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
                 user_name,
                 "Popular FairFares routes near you",
                 "Find a nearby ride and a memory worth keeping.",
-                "See current FairFares cars, local pickup options, and Explorer ideas for your next trip.",
+                "See current FairFares cars and local pickup options for your next trip.",
                 "Explore Nearby",
-                "/explorer",
-                origin,
+                    origin,
             )
         )
     sent = sum(1 for result in results if result.get("sent"))
@@ -7357,98 +7355,6 @@ def init_db() -> None:
                 FOREIGN KEY(car_id) REFERENCES cars(id)
             );
 
-            CREATE TABLE IF NOT EXISTS explorer_profiles (
-                user_id INTEGER PRIMARY KEY,
-                xp INTEGER NOT NULL DEFAULT 0,
-                level INTEGER NOT NULL DEFAULT 1,
-                trips INTEGER NOT NULL DEFAULT 0,
-                badges INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_quests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                city TEXT NOT NULL,
-                city_lat REAL NOT NULL DEFAULT 0,
-                city_lng REAL NOT NULL DEFAULT 0,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'ACTIVE',
-                quest_type TEXT NOT NULL DEFAULT '',
-                difficulty INTEGER NOT NULL DEFAULT 2,
-                duration TEXT NOT NULL DEFAULT '',
-                budget TEXT NOT NULL DEFAULT '',
-                travel_with TEXT NOT NULL DEFAULT '',
-                fairfares_booked INTEGER NOT NULL DEFAULT 0,
-                total_hours REAL NOT NULL DEFAULT 0,
-                total_miles REAL NOT NULL DEFAULT 0,
-                total_xp INTEGER NOT NULL DEFAULT 0,
-                stop_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_stops (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                quest_id INTEGER NOT NULL,
-                stop_order INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                lat REAL NOT NULL DEFAULT 0,
-                lng REAL NOT NULL DEFAULT 0,
-                xp_reward INTEGER NOT NULL DEFAULT 0,
-                challenge TEXT NOT NULL DEFAULT '',
-                tips TEXT NOT NULL DEFAULT '',
-                reference_photo_url TEXT NOT NULL DEFAULT '',
-                is_secret INTEGER NOT NULL DEFAULT 0,
-                locked INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(quest_id) REFERENCES explorer_quests(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_checkins (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                stop_id INTEGER NOT NULL,
-                completed INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(user_id) REFERENCES users(id),
-                FOREIGN KEY(stop_id) REFERENCES explorer_stops(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_xp_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                quest_id INTEGER,
-                stop_id INTEGER,
-                event_type TEXT NOT NULL DEFAULT '',
-                xp_amount INTEGER NOT NULL DEFAULT 0,
-                note TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(user_id) REFERENCES users(id),
-                FOREIGN KEY(quest_id) REFERENCES explorer_quests(id),
-                FOREIGN KEY(stop_id) REFERENCES explorer_stops(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_badges (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                icon TEXT NOT NULL DEFAULT '',
-                description TEXT NOT NULL DEFAULT '',
-                xp_required INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS explorer_user_badges (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                badge_id INTEGER NOT NULL,
-                earned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, badge_id),
-                FOREIGN KEY(user_id) REFERENCES users(id),
-                FOREIGN KEY(badge_id) REFERENCES explorer_badges(id)
-            );
 
             CREATE TABLE IF NOT EXISTS email_campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7914,22 +7820,6 @@ def init_db() -> None:
         cleanup_expired_sessions(con)
         ensure_column(con, "workspace_groups", "slack_channel_id", "slack_channel_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "workspace_groups", "slack_channel_name", "slack_channel_name TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_quests", "city_lat", "city_lat REAL NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_quests", "city_lng", "city_lng REAL NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_quests", "description", "description TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_quests", "difficulty", "difficulty INTEGER NOT NULL DEFAULT 2")
-        ensure_column(con, "explorer_quests", "fairfares_booked", "fairfares_booked INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_quests", "stop_count", "stop_count INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_stops", "tips", "tips TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_stops", "reference_photo_url", "reference_photo_url TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_stops", "locked", "locked INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_stops", "place_id", "place_id TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_stops", "address", "address TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_stops", "rating", "rating REAL NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_stops", "review_count", "review_count INTEGER NOT NULL DEFAULT 0")
-        ensure_column(con, "explorer_stops", "reviews_json", "reviews_json TEXT NOT NULL DEFAULT '[]'")
-        ensure_column(con, "explorer_stops", "google_url", "google_url TEXT NOT NULL DEFAULT ''")
-        ensure_column(con, "explorer_stops", "source", "source TEXT NOT NULL DEFAULT 'LOCAL'")
         ensure_column(con, "accommodation_posts", "lat", "lat REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "lng", "lng REAL NOT NULL DEFAULT 0")
         ensure_column(con, "accommodation_posts", "roommate_intent", "roommate_intent INTEGER NOT NULL DEFAULT 0")
@@ -8351,19 +8241,14 @@ def init_db() -> None:
         expire_accommodation_posts_in_connection(con)
         stale_accommodation_images.extend(purge_expired_accommodation_posts_in_connection(con))
         seed_sample_accommodation_posts(con)
-
-        for badge in (
-            ("First Explorer", "compass", "Complete your first FairFares city quest.", 0),
-            ("Hidden Gem Hunter", "gem", "Unlock and complete a mystery stop.", 250),
-            ("Road Warrior", "road", "Keep exploring across multiple quests.", 500),
+        # Permanently remove the retired Explorer feature and its stored data.
+        con.execute("DELETE FROM wiki_articles WHERE title IN (?, ?)", ("Explorer personal travel guide", "Explorer FAQ"))
+        for retired_table in (
+            "explorer_user_badges", "explorer_xp_events", "explorer_checkins",
+            "explorer_stops", "explorer_quests", "explorer_badges", "explorer_profiles",
         ):
-            con.execute(
-                """
-                INSERT OR IGNORE INTO explorer_badges (name, icon, description, xp_required)
-                VALUES (?, ?, ?, ?)
-                """,
-                badge,
-            )
+            con.execute(f"DROP TABLE IF EXISTS {retired_table}")
+
 
         ensure_default_admin(con)
         seed_accommodation_location_cache(con)
@@ -8379,13 +8264,6 @@ def init_db() -> None:
                 "Where discounts, price-match review, receipts, and rental agreements connect.",
                 "FairFares keeps the savings story visible from search to checkout. If a student or promo discount is applied, the saved amount appears on the booking, receipt, rental agreement, and confirmation email. If a customer brings a lower comparable quote before pickup, FairFares can review it, match the eligible price, and add another 10% off after review.",
                 "savings, discount, receipt, agreement, price match",
-                "PUBLIC",
-            ),
-            (
-                "Explorer personal travel guide",
-                "Routes, weather-smart stops, XP, badges, and memories in one travel book.",
-                "Explorer helps customers turn a rental day into a personal travel guide. It can suggest timing, weather fit, stop types, and memory prompts so the trip becomes easier to plan and easier to remember.",
-                "explorer, travel guide, memories, route, weather",
                 "PUBLIC",
             ),
             (
@@ -10618,88 +10496,10 @@ def referral_claim_modal(reward: sqlite3.Row | None) -> str:
 """
 
 
-EXPLORER_DENVER_STOPS = [
-    {
-        "name": "Union Station",
-        "lat": 39.7530,
-        "lng": -105.0008,
-        "tags": {"Food", "Coffee", "Photography", "Hidden Gems"},
-        "challenge": "Snap your starting point and write one line about the vibe.",
-        "xp": 25,
-    },
-    {
-        "name": "Confluence Park",
-        "lat": 39.7547,
-        "lng": -105.0087,
-        "tags": {"Nature", "Scenic Drive", "Photography"},
-        "challenge": "Check in near the water and capture a skyline angle.",
-        "xp": 35,
-    },
-    {
-        "name": "RiNo Art District",
-        "lat": 39.7690,
-        "lng": -104.9794,
-        "tags": {"Food", "Music", "Hidden Gems", "Photography"},
-        "challenge": "Find a mural and upload the most FairFares-looking shot.",
-        "xp": 40,
-    },
-    {
-        "name": "City Park Overlook",
-        "lat": 39.7475,
-        "lng": -104.9481,
-        "tags": {"Sunset", "Nature", "Date Night", "Photography"},
-        "challenge": "Capture the mountain line or sunset light.",
-        "xp": 50,
-    },
-    {
-        "name": "Red Rocks Trading Post",
-        "lat": 39.6654,
-        "lng": -105.2057,
-        "tags": {"Adventure", "Scenic Drive", "Music", "Sunset"},
-        "challenge": "Take one scenic photo and rate the drive.",
-        "xp": 60,
-    },
-    {
-        "name": "Lookout Mountain Pull-Off",
-        "lat": 39.7320,
-        "lng": -105.2399,
-        "tags": {"Adventure", "Nature", "Scenic Drive", "Hidden Gems", "Sunset"},
-        "challenge": "Pull over safely, capture the overlook, and rate the scenic drive.",
-        "xp": 75,
-    },
-]
 
 
-def get_explorer_profile(user_id: int | None) -> dict[str, int]:
-    if not user_id:
-        return {"xp": 0, "level": 1, "trips": 0, "badges": 0}
-    with db() as con:
-        profile = con.execute("SELECT * FROM explorer_profiles WHERE user_id = ?", (user_id,)).fetchone()
-        if not profile:
-            con.execute("INSERT OR IGNORE INTO explorer_profiles (user_id) VALUES (?)", (user_id,))
-            profile = con.execute("SELECT * FROM explorer_profiles WHERE user_id = ?", (user_id,)).fetchone()
-    return {
-        "xp": int(profile["xp"] or 0),
-        "level": int(profile["level"] or 1),
-        "trips": int(profile["trips"] or 0),
-        "badges": int(profile["badges"] or 0),
-    }
 
 
-EXPLORER_PLACE_QUERIES = {
-    "Food": ["best student friendly food near {city}", "popular restaurants near {city}"],
-    "Adventure": ["outdoor adventure near {city}", "unique activities near {city}"],
-    "Nature": ["parks and nature near {city}", "scenic nature spots near {city}"],
-    "Photography": ["best photo spots near {city}", "instagrammable places near {city}"],
-    "Date Night": ["evening date night spots near {city}", "romantic dinner and views near {city}"],
-    "Coffee": ["best coffee shops near {city}", "student coffee near {city}"],
-    "Scenic Drive": ["scenic overlook near {city}", "scenic drive stops near {city}"],
-    "Sunset": ["best evening sunset viewpoint near {city}", "sunset overlook near {city}"],
-    "Hidden Gems": ["hidden gems near {city}", "unique local places near {city}"],
-    "Music": ["live music near {city}", "music venues near {city}"],
-    "Shopping": ["shopping district near {city}", "local shops near {city}"],
-    "Surprise Me": ["top things to do near {city}", "best attractions near {city}"],
-}
 
 
 MOOD_TIME_RULES = {
@@ -10714,84 +10514,19 @@ MOOD_TIME_RULES = {
     "Hidden Gems": ("Late morning to evening", "Flexible, but verify hours for smaller local spots."),
     "Music": ("Evening", "Most venues and performances are strongest at night."),
     "Shopping": ("Late morning to afternoon", "Best while shops are fully open."),
-    "Surprise Me": ("Flexible", "Explorer will adapt the timing to the stop type."),
+    "Surprise Me": ("Flexible", "Timing adapts to the stop type."),
 }
 
 OUTDOOR_MOODS = {"Adventure", "Nature", "Photography", "Scenic Drive", "Sunset"}
 INDOOR_FRIENDLY_MOODS = {"Food", "Coffee", "Music", "Shopping", "Date Night"}
 
 
-def explorer_weather_forecast(city: str, target_date: date | None = None) -> dict[str, object]:
-    """Lightweight seasonal forecast until a live weather provider is connected."""
-    target_date = target_date or date.today()
-    month = target_date.month
-    city_name = city.split(",", 1)[0].strip().lower()
-    mountain_city = any(name in city_name for name in ["denver", "boulder", "colorado", "salt lake", "reno"])
-    desert_city = any(name in city_name for name in ["las vegas", "phoenix", "palm springs"])
-    coastal_city = any(name in city_name for name in ["los angeles", "san diego", "san francisco", "seattle"])
-
-    if month in {12, 1, 2}:
-        high = 42 if mountain_city else 58 if coastal_city else 50
-        low = 22 if mountain_city else 45 if coastal_city else 33
-        condition = "Cold"
-        rain_chance = 25
-    elif month in {3, 4, 5}:
-        high = 68 if not desert_city else 82
-        low = 42 if mountain_city else 55
-        condition = "Mild"
-        rain_chance = 30
-    elif month in {6, 7, 8}:
-        high = 88 if not desert_city else 105
-        low = 61 if mountain_city else 76 if desert_city else 65
-        condition = "Sunny"
-        rain_chance = 18 if not coastal_city else 12
-    else:
-        high = 66 if mountain_city else 78 if desert_city else 70
-        low = 40 if mountain_city else 58
-        condition = "Cool"
-        rain_chance = 22
-
-    if rain_chance >= 35:
-        condition = "Chance of rain"
-    if high >= 95:
-        condition = "Very hot"
-    return {
-        "condition": condition,
-        "high_f": high,
-        "low_f": low,
-        "rain_chance": rain_chance,
-        "summary": f"{condition}, about {high}°F high / {low}°F low, {rain_chance}% rain chance.",
-    }
 
 
-def explorer_stop_advice(mood: str, city: str, weather: dict[str, object]) -> dict[str, str]:
-    time_window, time_reason = MOOD_TIME_RULES.get(mood, MOOD_TIME_RULES["Surprise Me"])
-    condition = str(weather.get("condition") or "Mild")
-    high = int(weather.get("high_f") or 70)
-    rain = int(weather.get("rain_chance") or 0)
-    outdoor = mood in OUTDOOR_MOODS
-    if outdoor and (rain >= 40 or condition == "Very hot" or high >= 95):
-        verdict = "Wait or swap"
-        weather_note = "Outdoor stop is less comfortable in heat or rain. Pick an indoor alternative if conditions look rough."
-    elif outdoor and (condition in {"Cold", "Cool"} or rain >= 25):
-        verdict = "Go prepared"
-        weather_note = "Still worth it, but bring layers and check the sky before you drive."
-    elif mood in INDOOR_FRIENDLY_MOODS:
-        verdict = "Good pick"
-        weather_note = "Weather should not block this stop. It is a strong backup if outdoor plans shift."
-    else:
-        verdict = "Good pick"
-        weather_note = "Conditions look reasonable for this plan."
-    return {
-        "best_time": time_window,
-        "time_reason": time_reason,
-        "weather_verdict": verdict,
-        "weather_note": weather_note,
-    }
 
 
 def google_api_get(url: str, timeout: int = 8) -> dict[str, object]:
-    request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "FairFares/1.0"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
@@ -10854,21 +10589,8 @@ def google_api_post_json(url: str, payload: dict[str, object], headers: dict[str
     return result
 
 
-def explorer_photo_url(photo_reference: str) -> str:
-    if not photo_reference:
-        return ""
-    return f"/api/explorer/place-photo?ref={urllib.parse.quote(photo_reference)}"
 
 
-def explorer_city_photo_url(city_name: str, country_scope: str) -> str:
-    city_name = normalize_accommodation_place_label(city_name)
-    country_scope = normalize_accommodation_place_label(country_scope)
-    if not city_name:
-        return ""
-    params = {"city": city_name}
-    if country_scope:
-        params["country"] = country_scope
-    return f"/api/explorer/city-photo?{urllib.parse.urlencode(params)}"
 
 
 def normalize_google_review(review: dict[str, object]) -> dict[str, str | int]:
@@ -10882,558 +10604,21 @@ def normalize_google_review(review: dict[str, object]) -> dict[str, str | int]:
     }
 
 
-def google_place_details(place_id: str, api_key: str) -> dict[str, object]:
-    fields = ",".join(
-        [
-            "place_id",
-            "name",
-            "formatted_address",
-            "geometry",
-            "rating",
-            "user_ratings_total",
-            "photos",
-            "reviews",
-            "types",
-            "url",
-            "website",
-            "opening_hours",
-        ]
-    )
-    query = urllib.parse.urlencode({"place_id": place_id, "fields": fields, "key": api_key})
-    details = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{query}")
-    if details.get("status") not in {"OK", "ZERO_RESULTS"}:
-        raise RuntimeError(str(details.get("error_message") or details.get("status") or "Google Places details failed"))
-    return dict(details.get("result") or {})
 
 
-def explorer_mission_pack(name: str, mood: str, order: int, secret: bool) -> dict[str, object]:
-    xp_bonus = 35 if secret else 25
-    title = "Explorer Field Mission"
-    challenge = f"Visit {name}, check in, capture one photo, and leave a quick Explorer rating."
-    prompt = "What made this stop worth the drive?"
-    checklist = ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"]
-    if mood in {"Food", "Coffee"}:
-        title = "Food Hunter"
-        challenge = f"Order a signature item at {name}, take a food photo, and rate the taste."
-        prompt = "What should the next FairFares traveler order here?"
-        checklist = ["Order the house favorite", "Upload a food photo", "Rate taste 1-5"]
-    elif mood in {"Sunset", "Photography", "Scenic Drive"}:
-        title = "Scenic Shot Challenge"
-        challenge = f"Find the best angle at {name}, take a photo, and mark the view quality."
-        prompt = "Where is the best angle or safest pull-off?"
-        checklist = ["Find the viewpoint", "Upload your best shot", "Rate the view 1-5"]
-    elif mood in {"Adventure", "Nature"}:
-        title = "Trail & Vista Scout"
-        challenge = f"Complete a short walk or viewpoint check at {name}, then log a safety tip."
-        prompt = "What should someone know before they go?"
-        checklist = ["Check in safely", "Capture the route or view", "Leave one travel tip"]
-    elif mood in {"Music", "Shopping"}:
-        title = "Local Gem Scout"
-        challenge = f"Explore {name}, find one standout detail, and share whether it is worth a stop."
-        prompt = "What was the best find?"
-        checklist = ["Explore the location", "Capture one detail", "Share a quick recommendation"]
-    if secret:
-        title = "Mystery Stop Unlock"
-        challenge = f"Reveal {name}, complete the hidden challenge, and earn the final bonus."
-        prompt = "Was the mystery stop worth the reveal?"
-        checklist = ["Unlock the stop", "Complete the hidden challenge", "Upload proof of adventure"]
-    return {
-        "mission_title": title,
-        "challenge": challenge,
-        "story_prompt": prompt,
-        "checklist": checklist,
-        "photo_bonus_xp": xp_bonus,
-        "completion_label": f"Stop {order} reward",
-    }
 
 
-def google_place_to_stop(place: dict[str, object], api_key: str, order: int, mood: str, secret: bool, city_label: str = "", weather: dict[str, object] | None = None, include_details: bool = True) -> dict[str, object] | None:
-    place_id = str(place.get("place_id") or "")
-    if not place_id:
-        return None
-    if include_details:
-        try:
-            detail = google_place_details(place_id, api_key)
-        except Exception:
-            detail = place
-    else:
-        detail = place
-    geometry = dict(detail.get("geometry") or place.get("geometry") or {})
-    location = dict(geometry.get("location") or {})
-    lat = float(location.get("lat") or 0)
-    lng = float(location.get("lng") or 0)
-    if not lat or not lng:
-        return None
-    name = str(detail.get("name") or place.get("name") or "Explorer Stop")
-    rating = float(detail.get("rating") or place.get("rating") or 0)
-    review_count = int(detail.get("user_ratings_total") or place.get("user_ratings_total") or 0)
-    photos = detail.get("photos") if isinstance(detail.get("photos"), list) else []
-    photo_urls = []
-    for photo in photos[:5]:
-        photo_reference = str(dict(photo).get("photo_reference") or "")
-        if photo_reference:
-            photo_urls.append(explorer_photo_url(photo_reference))
-    photo_reference_url = photo_urls[0] if photo_urls else ""
-    reviews = []
-    for review in detail.get("reviews") or []:
-        if isinstance(review, dict):
-            normalized = normalize_google_review(review)
-            if normalized["text"]:
-                reviews.append(normalized)
-        if len(reviews) >= 2:
-            break
-    mission_pack = explorer_mission_pack(name, mood, order, secret)
-    if not secret and city_label:
-        mission_pack["mission_title"] = f"{city_label} {mission_pack['mission_title']}"
-    weather = weather or explorer_weather_forecast(city_label or "")
-    advice = explorer_stop_advice(mood, city_label, weather)
-    return {
-        "order": order,
-        "name": name,
-        "lat": lat,
-        "lng": lng,
-        "xp_reward": 90 if secret else 55 + (order * 10),
-        "mission": mission_pack["challenge"],
-        "challenge": mission_pack["challenge"],
-        "mission_title": mission_pack["mission_title"],
-        "story_prompt": mission_pack["story_prompt"],
-        "checklist": mission_pack["checklist"],
-        "photo_bonus_xp": mission_pack["photo_bonus_xp"],
-        "tips": "Live Google Places result. Check current hours, parking, and safety before you go.",
-        "reference_photo_url": photo_reference_url,
-        "reference_media_urls": photo_urls,
-        "is_secret": 1 if secret else 0,
-        "locked": 1 if secret else 0,
-        "place_id": str(detail.get("place_id") or place_id),
-        "address": str(detail.get("formatted_address") or place.get("formatted_address") or ""),
-        "rating": rating,
-        "review_count": review_count,
-        "reviews": reviews,
-        "google_url": str(detail.get("url") or ""),
-        "source": "GOOGLE_PLACES",
-        "mood": mood,
-        "tags": [mood],
-        "best_time": advice["best_time"],
-        "time_reason": advice["time_reason"],
-        "weather_verdict": advice["weather_verdict"],
-        "weather_note": advice["weather_note"],
-    }
 
 
-def explorer_preference_terms(duration: str, budget: str, travel_with: str) -> list[str]:
-    terms: list[str] = []
-    if duration in {"2 Hours", "3 Hours"}:
-        terms.extend(["nearby", "quick stop"])
-    elif duration in {"Weekend", "Week"}:
-        terms.extend(["best rated", "day trip"])
-    if budget == "$":
-        terms.extend(["affordable", "budget friendly"])
-    elif budget == "$$$":
-        terms.extend(["premium", "highly rated"])
-    if travel_with == "Family":
-        terms.extend(["family friendly"])
-    elif travel_with == "Couple":
-        terms.extend(["romantic"])
-    elif travel_with == "Solo":
-        terms.extend(["safe solo"])
-    return terms[:4]
 
 
-def explorer_duration_profile(duration: str) -> tuple[int, int, int]:
-    profiles = {
-        "2 Hours": (2, 3, 12),
-        "3 Hours": (3, 3, 16),
-        "4 Hours": (4, 4, 22),
-        "5 Hours": (5, 4, 28),
-        "6 Hours": (6, 5, 34),
-        "Half Day": (4, 4, 26),
-        "Full Day": (8, 5, 54),
-        "Weekend": (18, 5, 120),
-        "Week": (40, 5, 220),
-    }
-    return profiles.get(duration, profiles["Half Day"])
 
 
-def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, city_lng: float, duration: str = "", budget: str = "", travel_with: str = "") -> list[dict[str, object]]:
-    # Text Search is the highest-cost Maps path in FairFares. Explorer has a
-    # complete local route catalogue, so it must stay local unless a deliberate
-    # production rollout opts in after its per-request budget is approved.
-    if not truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH")):
-        return []
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    if not api_key:
-        return []
-    title_city = city.split(",", 1)[0].strip() or "Denver"
-    query_moods = moods[:5] or ["Scenic Drive", "Hidden Gems", "Food"]
-    preference_terms = explorer_preference_terms(duration, budget, travel_with)
-    preference_suffix = " ".join(preference_terms)
-    weather = explorer_weather_forecast(city)
-    seen_place_ids: set[str] = set()
-    mood_buckets: dict[str, list[dict[str, object]]] = {}
-    for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
-        if mood in mood_buckets:
-            continue
-        mood_buckets[mood] = []
-        templates = EXPLORER_PLACE_QUERIES.get(mood, EXPLORER_PLACE_QUERIES["Surprise Me"])
-        # One ranked Text Search normally provides several usable stops. The
-        # alternate wording is only a recovery path when the first search has
-        # no usable result, rather than a duplicate paid discovery request.
-        for template_index, template in enumerate(templates):
-            params = {
-                "query": f"{template.format(city=title_city)} {preference_suffix}".strip(),
-                "key": api_key,
-            }
-            if city_lat and city_lng:
-                params["location"] = f"{city_lat},{city_lng}"
-                params["radius"] = "35000"
-            url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
-            try:
-                payload = google_api_get(url)
-            except Exception:
-                continue
-            if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
-                continue
-            for place in payload.get("results") or []:
-                if not isinstance(place, dict):
-                    continue
-                place_id = str(place.get("place_id") or "")
-                if not place_id or place_id in seen_place_ids:
-                    continue
-                seen_place_ids.add(place_id)
-                stop = google_place_to_stop(place, api_key, len(mood_buckets[mood]) + 1, mood, False, title_city, weather, include_details=False)
-                if stop:
-                    mood_buckets[mood].append(stop)
-                if len(mood_buckets[mood]) >= 4:
-                    break
-            if len(mood_buckets[mood]) >= 4:
-                break
-            if mood_buckets[mood] or template_index == len(templates) - 1:
-                break
-    stops: list[dict[str, object]] = []
-    for round_index in range(4):
-        for mood in query_moods + ["Hidden Gems", "Surprise Me"]:
-            bucket = mood_buckets.get(mood) or []
-            if len(bucket) > round_index:
-                stop = bucket[round_index]
-                stop["order"] = len(stops) + 1
-                stops.append(stop)
-            if len(stops) >= 12:
-                return stops
-    return stops
 
 
-def explorer_maps_loader() -> str:
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    if not api_key:
-        return '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=false;</script>'
-    escaped_key = html.escape(urllib.parse.quote(api_key, safe=""), quote=True)
-    return (
-        '<script>window.FAIRFARES_EXPLORER_MAPS_ENABLED=true;'
-        'window.FAIRFARES_MAP_LOAD_FAILED=false;'
-        'window.loadFairFaresMaps=window.loadFairFaresMaps||function(){'
-        'if(window.google&&window.google.maps)return Promise.resolve();'
-        'if(window.FAIRFARES_MAP_LOAD_PROMISE)return window.FAIRFARES_MAP_LOAD_PROMISE;'
-        'window.FAIRFARES_MAP_LOAD_PROMISE=new Promise(function(resolve,reject){'
-        'var settled=false;var finish=function(error){if(settled)return;settled=true;'
-        'if(error){window.FAIRFARES_MAP_LOAD_FAILED=true;window.dispatchEvent(new Event("fairfares-map-error"));reject(error);}else{resolve();}};'
-        'window.gm_authFailure=function(){finish(new Error("Google Maps authorization failed"));};'
-        'var script=document.createElement("script");script.async=true;script.referrerPolicy="origin";'
-        f'script.src="https://maps.googleapis.com/maps/api/js?key={escaped_key}&loading=async&v=weekly";'
-        'script.onload=function(){window.setTimeout(function(){finish(window.google&&window.google.maps?null:new Error("Google Maps did not initialize"));},0);};'
-        'script.onerror=function(){finish(new Error("Google Maps failed to load"));};document.head.appendChild(script);'
-        '});return window.FAIRFARES_MAP_LOAD_PROMISE;};</script>'
-    )
 
 
-def explorer_config_status() -> dict[str, bool]:
-    return {
-        "mapsKeyPresent": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
-        "placesKeyPresent": bool(os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()),
-        "openAiKeyPresent": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
-    }
 
-
-def log_explorer_config_status() -> None:
-    status = explorer_config_status()
-    print(
-        "Explorer config: "
-        f"maps={'present' if status['mapsKeyPresent'] else 'missing'}, "
-        f"places={'present' if status['placesKeyPresent'] else 'missing'}, "
-        f"openai={'present' if status['openAiKeyPresent'] else 'missing'}"
-    )
-
-
-def generate_explorer_quest(city: str, moods: list[str], duration: str, budget: str, travel_with: str, fairfares_booked: bool, city_lat: float = 0, city_lng: float = 0) -> dict[str, object]:
-    mood_order = moods[:5] or ["Scenic Drive"]
-    selected_moods = set(mood_order)
-    duration_hours, target_stop_count, total_miles = explorer_duration_profile(duration)
-    weather = explorer_weather_forecast(city)
-    google_stops = fetch_google_explorer_stops(city, mood_order, city_lat, city_lng, duration, budget, travel_with)
-    scored_by_mood: dict[str, list[dict[str, object]]] = {}
-    for mood in mood_order:
-        scored = []
-        for stop in EXPLORER_DENVER_STOPS:
-            score = (2 if mood in stop["tags"] else 0) + len(selected_moods & stop["tags"])
-            scored.append((score, stop["name"], stop))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        scored_by_mood[mood] = [item[2] for item in scored]
-    visible_stops = []
-    used_local_names: set[str] = set()
-    while len(visible_stops) < max(1, target_stop_count - 1):
-        added = False
-        for mood in mood_order:
-            for stop in scored_by_mood.get(mood, []):
-                if stop["name"] not in used_local_names:
-                    visible_stop = dict(stop)
-                    visible_stop["_primary_mood"] = mood
-                    visible_stops.append(visible_stop)
-                    used_local_names.add(str(stop["name"]))
-                    added = True
-                    break
-            if len(visible_stops) >= max(1, target_stop_count - 1):
-                break
-        if not added:
-            break
-    remaining_stops = [stop for stop in EXPLORER_DENVER_STOPS if str(stop["name"]) not in used_local_names]
-    secret_stop = next((stop for stop in remaining_stops if "Hidden Gems" in stop["tags"]), remaining_stops[0] if remaining_stops else EXPLORER_DENVER_STOPS[-1])
-    stops = visible_stops + [secret_stop]
-    quest_type = " + ".join(mood_order[:2])
-    total_xp = sum(int(stop["xp"]) for stop in stops) + (100 if fairfares_booked else 0)
-    title_mood = "Sunset" if "Sunset" in selected_moods else "Hidden Gem" if "Hidden Gems" in selected_moods else next(iter(selected_moods))
-    title_city = city.split(",", 1)[0].strip() or "Denver"
-    difficulty = 1 if duration in {"2 Hours", "3 Hours"} else 2 if duration in {"4 Hours", "5 Hours", "6 Hours", "Half Day"} else 3
-    def local_payload_stop(stop: dict[str, object], index: int, tip: str, source: str, secret: bool = False) -> dict[str, object]:
-        primary_mood = stop.get("_primary_mood") or ("Hidden Gems" if secret and "Hidden Gems" in stop["tags"] else next((mood for mood in mood_order if mood in stop["tags"]), next(iter(stop["tags"]), "Surprise Me")))
-        advice = explorer_stop_advice(str(primary_mood), city, weather)
-        return {
-            "order": index + 1,
-            "name": stop["name"],
-            "lat": stop["lat"],
-            "lng": stop["lng"],
-            "xp_reward": stop["xp"],
-            "mission": stop["challenge"],
-            "challenge": stop["challenge"],
-            "mission_title": "Mystery Stop Unlock" if secret else "Local Explorer Mission",
-            "story_prompt": "What should another FairFares traveler know?",
-            "checklist": ["Check in at the stop", "Capture a photo", "Share one local tip"],
-            "photo_bonus_xp": 35 if secret else 25,
-            "tips": tip,
-            "reference_photo_url": "",
-            "reference_media_urls": [],
-            "is_secret": 1 if secret else 0,
-            "locked": 1 if secret else 0,
-            "place_id": "",
-            "address": "",
-            "rating": 0,
-            "review_count": 0,
-            "reviews": [],
-            "google_url": "",
-            "source": source,
-            "mood": primary_mood,
-            "tags": sorted(stop["tags"]),
-            "best_time": advice["best_time"],
-            "time_reason": advice["time_reason"],
-            "weather_verdict": advice["weather_verdict"],
-            "weather_note": advice["weather_note"],
-        }
-    if len(google_stops) >= 3:
-        while len(google_stops) < target_stop_count:
-            fallback = EXPLORER_DENVER_STOPS[len(google_stops) % len(EXPLORER_DENVER_STOPS)]
-            google_stops.append(local_payload_stop(fallback, len(google_stops), "Local fallback stop added because Google Places returned fewer route options.", "LOCAL_FALLBACK", len(google_stops) == target_stop_count - 1))
-        payload_stops = google_stops[:target_stop_count]
-        alternate_stops = google_stops[target_stop_count:target_stop_count + 6]
-        for index, stop in enumerate(payload_stops):
-            stop["order"] = index + 1
-            stop["is_secret"] = 1 if index == len(payload_stops) - 1 else 0
-            stop["locked"] = 1 if index == len(payload_stops) - 1 else 0
-            if stop["is_secret"]:
-                stop["mission_title"] = "Mystery Stop Unlock"
-        for index, stop in enumerate(alternate_stops):
-            stop["order"] = target_stop_count + index + 1
-            stop["is_secret"] = 0
-            stop["locked"] = 0
-    else:
-        local_stops = stops[:target_stop_count - 1] + [secret_stop]
-        payload_stops = [
-            local_payload_stop(stop, index, "Local Explorer preview. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.", "LOCAL", index == len(local_stops) - 1)
-            for index, stop in enumerate(local_stops)
-        ]
-        alternate_stops = [
-            local_payload_stop(stop, index, "Local alternate stop. Render will use Google Places when GOOGLE_PLACES_API_KEY is available.", "LOCAL", False)
-            for index, stop in enumerate(EXPLORER_DENVER_STOPS[target_stop_count:target_stop_count + 6])
-        ]
-    total_xp = sum(int(stop["xp_reward"]) for stop in payload_stops) + (100 if fairfares_booked else 0)
-    return {
-        "title": f"{title_city} {title_mood} Explorer Quest",
-        "description": f"A {duration.lower()} {quest_type.lower()} route for {travel_with.lower()} travelers in {title_city}. Explorer balances your selected moods, suggests the best time to go, and checks weather fit before each stop.",
-        "city": city,
-        "city_lat": city_lat,
-        "city_lng": city_lng,
-        "start_lat": city_lat,
-        "start_lng": city_lng,
-        "start_label": title_city,
-        "quest_type": quest_type,
-        "difficulty": difficulty,
-        "duration": duration,
-        "budget": budget,
-        "travel_with": travel_with,
-        "fairfares_booked": fairfares_booked,
-        "total_hours": duration_hours,
-        "total_miles": total_miles,
-        "total_xp": total_xp,
-        "stop_count": len(payload_stops),
-        "fairfares_bonus": 100 if fairfares_booked else 0,
-        "source": "GOOGLE_PLACES" if len(google_stops) >= 3 else "LOCAL",
-        "weather": weather,
-        "stops": payload_stops,
-        "alternatives": alternate_stops,
-    }
-
-
-def row_to_explorer_quest(quest: sqlite3.Row, stops: list[sqlite3.Row]) -> dict[str, object]:
-    city = quest["city"]
-    weather = explorer_weather_forecast(city)
-    quest_moods = [item.strip() for item in str(quest["quest_type"] or "").split("+") if item.strip()]
-    return {
-        "quest_id": quest["id"],
-        "title": quest["title"],
-        "description": row_value(quest, "description"),
-        "city": city,
-        "city_lat": row_value(quest, "city_lat", 0),
-        "city_lng": row_value(quest, "city_lng", 0),
-        "start_lat": row_value(quest, "city_lat", 0),
-        "start_lng": row_value(quest, "city_lng", 0),
-        "start_label": quest["city"].split(",", 1)[0].strip() or quest["city"],
-        "quest_type": quest["quest_type"],
-        "difficulty": int(row_value(quest, "difficulty", 2) or 2),
-        "duration": quest["duration"],
-        "budget": quest["budget"],
-        "travel_with": quest["travel_with"],
-        "fairfares_booked": bool(row_value(quest, "fairfares_booked")),
-        "total_hours": quest["total_hours"],
-        "total_miles": quest["total_miles"],
-        "total_xp": quest["total_xp"],
-        "stop_count": int(row_value(quest, "stop_count", len(stops)) or len(stops)),
-        "weather": weather,
-        "stops": [
-            dict(
-                {
-                "stop_id": stop["id"],
-                "order": stop["stop_order"],
-                "name": stop["name"],
-                "lat": stop["lat"],
-                "lng": stop["lng"],
-                "xp_reward": stop["xp_reward"],
-                "mission": row_value(stop, "challenge"),
-                "challenge": row_value(stop, "challenge"),
-                "mission_title": "Explorer Field Mission" if not row_value(stop, "is_secret", 0) else "Mystery Stop Unlock",
-                "story_prompt": "What made this stop worth the drive?",
-                "checklist": ["Check in at the stop", "Capture a photo", "Rate the experience 1-5"],
-                "photo_bonus_xp": 25,
-                "tips": row_value(stop, "tips"),
-                "reference_photo_url": row_value(stop, "reference_photo_url"),
-                "reference_media_urls": [row_value(stop, "reference_photo_url")] if row_value(stop, "reference_photo_url") else [],
-                "is_secret": int(row_value(stop, "is_secret", 0) or 0),
-                "locked": int(row_value(stop, "locked", 0) or 0),
-                "completed": int(row_value(stop, "completed", 0) or 0),
-                "place_id": row_value(stop, "place_id"),
-                "address": row_value(stop, "address"),
-                "rating": float(row_value(stop, "rating", 0) or 0),
-                "review_count": int(row_value(stop, "review_count", 0) or 0),
-                "reviews": json.loads(row_value(stop, "reviews_json", "[]") or "[]"),
-                "google_url": row_value(stop, "google_url"),
-                "source": row_value(stop, "source", "LOCAL"),
-                "mood": quest_moods[(int(row_value(stop, "stop_order", 1) or 1) - 1) % len(quest_moods)] if quest_moods else "Explorer",
-                },
-                **explorer_stop_advice(quest_moods[(int(row_value(stop, "stop_order", 1) or 1) - 1) % len(quest_moods)] if quest_moods else "Surprise Me", city, weather),
-            )
-            for stop in stops
-        ],
-    }
-
-
-def persist_explorer_quest(user_id: int | None, quest: dict[str, object]) -> int:
-    with db() as con:
-        con.execute(
-            """
-            INSERT INTO explorer_quests
-            (user_id, city, city_lat, city_lng, title, description, quest_type, difficulty, duration, budget, travel_with, fairfares_booked, total_hours, total_miles, total_xp, stop_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                quest["city"],
-                quest.get("city_lat", 0),
-                quest.get("city_lng", 0),
-                quest["title"],
-                quest.get("description", ""),
-                quest["quest_type"],
-                quest.get("difficulty", 2),
-                quest["duration"],
-                quest["budget"],
-                quest["travel_with"],
-                1 if quest.get("fairfares_booked") else 0,
-                quest["total_hours"],
-                quest["total_miles"],
-                quest["total_xp"],
-                quest.get("stop_count", len(quest.get("stops", []))),
-            ),
-        )
-        quest_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
-        for stop in quest["stops"]:
-            con.execute(
-                """
-                INSERT INTO explorer_stops
-                (quest_id, stop_order, name, lat, lng, xp_reward, challenge, tips, reference_photo_url, is_secret, locked, place_id, address, rating, review_count, reviews_json, google_url, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    quest_id,
-                    stop["order"],
-                    stop["name"],
-                    stop["lat"],
-                    stop["lng"],
-                    stop["xp_reward"],
-                    stop.get("mission") or stop.get("challenge", ""),
-                    stop.get("tips", ""),
-                    stop.get("reference_photo_url", ""),
-                    stop.get("is_secret", 0),
-                    stop.get("locked", stop.get("is_secret", 0)),
-                    stop.get("place_id", ""),
-                    stop.get("address", ""),
-                    stop.get("rating", 0),
-                    stop.get("review_count", 0),
-                    json.dumps(stop.get("reviews", [])),
-                    stop.get("google_url", ""),
-                    stop.get("source", "LOCAL"),
-                ),
-            )
-            stop["stop_id"] = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
-        if user_id and quest.get("fairfares_bonus"):
-            bonus = int(quest["fairfares_bonus"])
-            con.execute(
-                """
-                INSERT INTO explorer_profiles (user_id, xp, level, trips, badges)
-                VALUES (?, ?, 1, 0, 1)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    xp = xp + ?,
-                    level = MAX(1, ((xp + ?) / 250) + 1),
-                    badges = MAX(badges, 1),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, bonus, bonus, bonus),
-            )
-            con.execute(
-                """
-                INSERT INTO explorer_xp_events (user_id, quest_id, event_type, xp_amount, note)
-                VALUES (?, ?, 'FAIRFARES_BOOKING_BONUS', ?, 'Explorer Bonus Active')
-                """,
-                (user_id, quest_id, bonus),
-            )
-            badge = con.execute("SELECT id FROM explorer_badges WHERE name = 'First Explorer'").fetchone()
-            if badge:
-                con.execute("INSERT OR IGNORE INTO explorer_user_badges (user_id, badge_id) VALUES (?, ?)", (user_id, badge["id"]))
-    return quest_id
 
 
 def get_admin_cars() -> list[sqlite3.Row]:
@@ -12033,8 +11218,7 @@ ADMIN_NAV_ICONS = {
     "Documents": "&#128196;",
     "Email Marketing": "&#9993;",
     "Employees": "&#128101;",
-    "Explorer": "&#129517;",
-    "Fleet": "&#128664;",
+        "Fleet": "&#128664;",
     "Inventory": "&#128664;",
     "Knowledge": "&#129302;",
     "Log out": "&#8617;",
@@ -14121,7 +13305,7 @@ def local_assistant_answer(question: str, context: dict[str, object]) -> str:
         primary = wiki[0]
         return f"{primary['title']}: {primary['body']}"
     return (
-        "I can help with cars, booking status, cancellation, refunds, receipts, Explorer trips, discounts, and support. "
+        "I can help with cars, booking status, cancellation, refunds, receipts, discounts, and support. "
         "Ask for the cheapest car, your pickup time, refund policy, or help booking."
     )
 
@@ -14130,9 +13314,6 @@ def truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def explorer_feature_enabled() -> bool:
-    """Keep the retired public Explorer surface off until intentionally relaunched."""
-    return truthy_env(os.environ.get("FAIRFARES_ENABLE_EXPLORER"))
 
 
 def slugify_mcp_label(value: object, fallback: str) -> str:
@@ -15690,7 +14871,7 @@ def default_email_campaign_plans(today: date | None = None) -> list[dict[str, st
                 "trigger_rule": "90 days inactive",
                 "subject_line": "Ready for another fair ride?",
                 "headline": "Come back and save.",
-                "message_body": "FairFares keeps pricing transparent, documents easy to find, and Explorer memories ready when you travel again.",
+                "message_body": "FairFares keeps pricing transparent, documents easy to find, and documents ready when you travel again.",
                 "cta_label": "Book Again",
                 "status": "DRAFT",
                 "notes": "Calendar item: comeback offer for 90-day inactive users.",
@@ -15768,7 +14949,7 @@ def default_email_campaign_plans(today: date | None = None) -> list[dict[str, st
                 "trigger_rule": "Repeat customer",
                 "subject_line": "Welcome back to FairFares",
                 "headline": "Your next ride should feel simple too.",
-                "message_body": "Thank repeat customers and point them to saved profile, documents, and Explorer memories.",
+                "message_body": "Thank repeat customers and point them to saved profile and documents.",
                 "cta_label": "Book Again",
                 "status": "DRAFT",
                 "notes": "Behavioral calendar item: welcome-back offer.",
@@ -15780,7 +14961,7 @@ def default_email_campaign_plans(today: date | None = None) -> list[dict[str, st
                 "trigger_rule": "Location-based offers",
                 "subject_line": "Popular FairFares routes near you",
                 "headline": "Find a nearby ride and a memory worth keeping.",
-                "message_body": "Feature monthly popular destinations and Explorer ideas by city.",
+                "message_body": "Feature monthly popular destinations by city.",
                 "cta_label": "Explore Nearby",
                 "status": "DRAFT",
                 "notes": "Behavioral calendar item: monthly popular destinations.",
@@ -24278,9 +23459,6 @@ def render_profile_drawer(user: sqlite3.Row | None) -> str:
           <a href="/dashboard?tab=messages#messages">
             <span>💬</span><b>Fair Messenger</b><small>{chat_count} unread message(s)</small><em>Open Messages</em>
           </a>
-          <a href="/explorer">
-            <span>🧭</span><b>Explorer</b><small>Find areas, routes, and nearby places.</small><em>Go to Website</em>
-          </a>
           <a href="/contact">
             <span>☎</span><b>Support</b><small>Contact FairFares for help.</small><em>Go to Website</em>
           </a>
@@ -25192,8 +24370,6 @@ def render_template(template_name: str, **context: object) -> bytes:
     html_text = html_text.replace("$favicon_links", favicon_links)
     if favicon_links not in html_text:
         html_text = re.sub(r"(<head\b[^>]*>)", r"\1\n" + favicon_links, html_text, count=1)
-    html_text = html_text.replace("/static/js/app.js?v=54", f"/static/js/app.min.js?v={ASSET_VERSION}")
-    html_text = html_text.replace("/static/js/app.js?v=explorer-26", f"/static/js/app.min.js?v=explorer-{ASSET_VERSION}")
     html_text = inject_social_meta(html_text, template_name)
     html_text = inject_structured_data(html_text, template_name)
     if should_track_google_analytics(template_name):
@@ -25219,7 +24395,6 @@ def render_internal_links() -> str:
         ("Airport pickup rental", "/denver-airport-car-rental"),
         ("Rental cars Denver", "/car-rental-denver"),
         ("Affordable car rental Colorado", "/cheap-car-rental-colorado"),
-        ("Explorer trip planner", "/explorer"),
         ("Deals and price match", "/deals"),
         ("Rental guides", "/blog"),
     )
@@ -25281,7 +24456,7 @@ def value_strip_icon_key(title: str) -> str:
         return "student"
     if any(word in label for word in ("document", "checkout", "secure", "hold")):
         return "document"
-    if any(word in label for word in ("road", "trip", "route", "explorer", "colorado")):
+    if any(word in label for word in ("road", "trip", "route", "colorado")):
         return "route"
     if any(word in label for word in ("support", "review", "guarantee")):
         return "shield"
@@ -25323,7 +24498,6 @@ PUBLIC_SCHEMA_TEMPLATES = {
     "blog_index.html",
     "blog_post.html",
     "deals.html",
-    "explorer.html",
     "wiki.html",
 }
 
@@ -26128,7 +25302,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/community-guidelines",
             "/account-deletion",
             "/deals",
-            "/explorer",
             "/carpool/open",
             "/community/open",
             "/chitthi/invite",
@@ -26159,12 +25332,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/uploads/"):
             self.serve_upload(parsed.path)
-            return
-        if parsed.path == "/api/explorer/place-photo":
-            self.api_explorer_place_photo(parsed, head_only=True)
-            return
-        if parsed.path == "/api/explorer/city-photo":
-            self.api_explorer_city_photo(parsed, head_only=True)
             return
         if parsed.path == "/admin/email-automation/run" and not (
             os.environ.get("EMAIL_AUTOMATION_TOKEN", "").strip()
@@ -26202,15 +25369,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/uploads/"):
             self.serve_upload(parsed.path)
-            return
-        if parsed.path == "/api/explorer/place-photo":
-            self.api_explorer_place_photo(parsed)
-            return
-        if parsed.path == "/api/explorer/city-photo":
-            self.api_explorer_city_photo(parsed)
-            return
-        if parsed.path == "/api/explorer/config-status":
-            self.api_explorer_config_status()
             return
         if parsed.path == "/api/accommodations/locations":
             self.api_accommodation_locations(parsed)
@@ -26353,9 +25511,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/chat/attachments/"):
             self.api_chat_attachment(parsed.path.rsplit("/", 1)[-1])
             return
-        if parsed.path.startswith("/api/explorer/quests/"):
-            self.api_get_explorer_quest(parsed.path.rsplit("/", 1)[-1])
-            return
         if parsed.path.startswith("/blog/"):
             self.blog_post_page(parsed.path.rsplit("/", 1)[-1])
             return
@@ -26384,7 +25539,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/carpool/open": self.carpool_open_landing,
             "/carpool": self.carpool_page,
             "/wiki": self.wiki_page,
-            "/explorer": self.explorer_page if explorer_feature_enabled() else self.not_found,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
@@ -26594,11 +25748,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/saved-cars": self.save_search_car,
             "/documents/email": self.email_booking_documents,
             "/guest-booking": self.create_guest_booking,
-            "/explorer/quest": self.create_explorer_quest,
-            "/explorer/checkin": self.checkin_explorer_stop,
-            "/api/explorer/quests": self.api_create_explorer_quest,
-            "/api/explorer/checkins": self.api_explorer_checkin,
-            "/api/explorer/xp": self.api_explorer_xp,
             "/api/chat/conversations": self.api_create_chat_conversation,
             "/api/chat/feedback-conversation": self.api_open_feedback_conversation,
             "/api/chat/communities": self.api_create_chat_community,
@@ -27386,7 +26535,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             (
                 "# FairFares",
                 "",
-                "> FairFares offers affordable car rentals in Denver and Colorado with airport pickup support, student savings, secure payments, Explorer trip planning, and price match review.",
+                "> FairFares offers affordable car rentals in Denver and Colorado with airport pickup support, student savings, secure payments, and price match review.",
                 "",
                 "## Public pages",
                 "- Homepage: https://www.fairfare.space/",
@@ -27394,7 +26543,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "- Deals: https://www.fairfare.space/deals",
                 "- FAQ: https://www.fairfare.space/wiki",
                 "- Blog: https://www.fairfare.space/blog",
-                "- Explorer: https://www.fairfare.space/explorer",
                 "- Contact: https://www.fairfare.space/contact",
                 "",
                 "## Search topics",
@@ -27424,7 +26572,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/community-guidelines",
             "/account-deletion",
             "/deals",
-            "/explorer",
         ]
         urls = [*static_urls, *SEO_LANDING_PAGES.keys(), *(f"/blog/{post['slug']}" for post in BLOG_POSTS)]
         today = date.today().isoformat()
@@ -27985,7 +27132,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             posts_html=render_accommodation_posts(posts),
             profile_drawer_html=render_profile_drawer(user),
             map_payload_json=map_payload_json,
-            maps_loader=explorer_maps_loader(),
             asset_version=ASSET_VERSION,
             share_title=escape(share_title),
             share_description=escape(share_description),
@@ -30618,69 +29764,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
-    def explorer_page(self) -> None:
-        user = self.current_user()
-        profile = get_explorer_profile(user["id"] if user else None)
-        photo = profile_photo_url(user)
-        body = render_template(
-            "explorer.html",
-            auth_link='<span class="explorer-nav-tag">Explorer by FairFares</span>' if user else '<a href="/login">Sign in / Join</a>',
-            profile_photo_url=escape(photo),
-            explorer_photo_class="has-photo" if photo else "has-empty-photo",
-            explorer_photo_src=escape(photo),
-            explorer_photo_hidden="" if photo else "hidden",
-            explorer_photo_label="Change photo" if photo else "Upload your photo",
-            level=escape(str(profile["level"])),
-            xp=escape(str(profile["xp"])),
-            trips=escape(str(profile["trips"])),
-            badges=escape(str(profile["badges"])),
-            booked_checked="",
-            exploring_checked="",
-            maps_loader=explorer_maps_loader(),
-        )
-        self.send_html(body)
 
-    def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
-        if not explorer_feature_enabled():
-            self.not_found()
-            return
-        api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-        ref = (urllib.parse.parse_qs(parsed.query).get("ref") or [""])[0].strip()
-        if not api_key or not ref or len(ref) > 2048 or not re.fullmatch(r"[A-Za-z0-9._~-]+", ref):
-            self.send_json({"ok": False, "message": "Place photo is not available."}, 404)
-            return
-        query = urllib.parse.urlencode({"maxwidth": "900", "photo_reference": ref, "key": api_key})
-        url = f"https://maps.googleapis.com/maps/api/place/photo?{query}"
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": "FairFares Explorer/1.0"})
-            with urllib.request.urlopen(request, timeout=8) as response:
-                body = response.read(5_000_001)
-                content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-            if len(body) > 5_000_000 or content_type not in {"image/jpeg", "image/png", "image/webp"}:
-                raise ValueError("Unexpected place photo response")
-        except Exception:
-            self.send_json({"ok": False, "message": "Unable to load place photo."}, 502)
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=86400")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if head_only:
-            return
-        try:
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            return
 
-    def api_explorer_city_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
-        # City cards now use FairFares listing data and bundled artwork. Keep
-        # this retired legacy endpoint network-free so an old app build cannot
-        # trigger a Text Search merely to decorate a fallback city card.
-        self.send_json({"ok": False, "message": "City photos are no longer provided."}, 404)
 
-    def api_explorer_config_status(self) -> None:
-        self.send_json({"ok": True, "explorer": explorer_config_status()})
 
     def api_accommodation_locations(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
@@ -30745,161 +29831,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
-    def create_explorer_quest(self) -> None:
-        if not explorer_feature_enabled():
-            self.send_json({"ok": False, "message": "Explorer is not available."}, 404)
-            return
-        user = self.current_user()
-        form = self.read_form()
-        moods = [item.strip() for item in form.get("moods", "").split(",") if item.strip()]
-        city = form.get("city", "Denver, Colorado") or "Denver, Colorado"
-        try:
-            city_lat = float(form.get("city_lat", "0") or 0)
-            city_lng = float(form.get("city_lng", "0") or 0)
-        except ValueError:
-            city_lat = 0
-            city_lng = 0
-        fairfares_booked = form.get("fairfares_booked") == "yes"
-        quest = generate_explorer_quest(
-            city,
-            moods,
-            form.get("duration", "Half Day"),
-            form.get("budget", "$$"),
-            form.get("travel_with", "Friends"),
-            fairfares_booked,
-            city_lat,
-            city_lng,
-        )
-        quest_id = persist_explorer_quest(user["id"] if user else None, quest)
-        quest["quest_id"] = quest_id
-        self.send_json({"ok": True, "quest": quest})
 
-    def api_create_explorer_quest(self) -> None:
-        self.create_explorer_quest()
 
-    def api_get_explorer_quest(self, raw_id: str) -> None:
-        if not explorer_feature_enabled():
-            self.send_json({"ok": False, "message": "Explorer is not available."}, 404)
-            return
-        try:
-            quest_id = int(raw_id)
-        except ValueError:
-            self.send_json({"ok": False, "message": "Explorer quest id is invalid."}, 400)
-            return
-        with db() as con:
-            quest = con.execute("SELECT * FROM explorer_quests WHERE id = ?", (quest_id,)).fetchone()
-            if not quest:
-                self.send_json({"ok": False, "message": "Explorer quest not found."}, 404)
-                return
-            stops = con.execute("SELECT * FROM explorer_stops WHERE quest_id = ? ORDER BY stop_order", (quest_id,)).fetchall()
-        self.send_json({"ok": True, "quest": row_to_explorer_quest(quest, stops)})
 
-    def api_explorer_checkin(self) -> None:
-        self.checkin_explorer_stop()
 
-    def api_explorer_xp(self) -> None:
-        user = self.current_user()
-        form = self.read_form()
-        try:
-            xp_amount = int(form.get("xp_amount", "0") or 0)
-            quest_id = int(form.get("quest_id", "0") or 0) or None
-            stop_id = int(form.get("stop_id", "0") or 0) or None
-        except ValueError:
-            self.send_json({"ok": False, "message": "XP payload is invalid."}, 400)
-            return
-        if xp_amount <= 0:
-            self.send_json({"ok": False, "message": "XP amount must be positive."}, 400)
-            return
-        if not user:
-            self.send_json({"ok": True, "message": "Guest XP preview only. Sign in to save Explorer XP.", "xp": xp_amount})
-            return
-        with db() as con:
-            con.execute(
-                """
-                INSERT INTO explorer_profiles (user_id, xp, level, trips, badges)
-                VALUES (?, ?, 1, 0, 0)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    xp = xp + ?,
-                    level = MAX(1, ((xp + ?) / 250) + 1),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user["id"], xp_amount, xp_amount, xp_amount),
-            )
-            con.execute(
-                """
-                INSERT INTO explorer_xp_events (user_id, quest_id, stop_id, event_type, xp_amount, note)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    user["id"],
-                    quest_id,
-                    stop_id,
-                    form.get("event_type", "MANUAL_XP"),
-                    xp_amount,
-                    form.get("note", "Sprint 1 XP hook"),
-                ),
-            )
-            profile = con.execute("SELECT * FROM explorer_profiles WHERE user_id = ?", (user["id"],)).fetchone()
-        self.send_json({"ok": True, "xp": int(profile["xp"] or 0), "level": int(profile["level"] or 1)})
 
-    def checkin_explorer_stop(self) -> None:
-        user = self.current_user()
-        form = self.read_form()
-        try:
-            stop_id = int(form.get("stop_id", "0"))
-        except ValueError:
-            stop_id = 0
-        if not user or not stop_id:
-            self.send_json({"ok": True, "message": "Guest check-in saved locally.", "xp": 20})
-            return
-        with db() as con:
-            stop = con.execute("SELECT * FROM explorer_stops WHERE id = ?", (stop_id,)).fetchone()
-            if not stop:
-                self.send_json({"ok": False, "message": "Explorer stop not found."}, 404)
-                return
-            con.execute("UPDATE explorer_stops SET completed = 1 WHERE id = ?", (stop_id,))
-            con.execute(
-                "UPDATE explorer_stops SET locked = 0 WHERE quest_id = ? AND stop_order = ?",
-                (stop["quest_id"], int(stop["stop_order"] or 0) + 1),
-            )
-            con.execute(
-                "INSERT INTO explorer_checkins (user_id, stop_id) VALUES (?, ?)",
-                (user["id"], stop_id),
-            )
-            earned = int(stop["xp_reward"] or 20)
-            con.execute(
-                """
-                INSERT INTO explorer_profiles (user_id, xp, level, trips, badges)
-                VALUES (?, ?, 1, 0, 1)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    xp = xp + ?,
-                    level = MAX(1, ((xp + ?) / 250) + 1),
-                    badges = MAX(badges, CASE WHEN xp + ? >= 250 THEN 2 ELSE badges END),
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user["id"], earned, earned, earned, earned),
-            )
-            con.execute(
-                """
-                INSERT INTO explorer_xp_events (user_id, quest_id, stop_id, event_type, xp_amount, note)
-                VALUES (?, ?, ?, 'STOP_CHECKIN', ?, ?)
-                """,
-                (user["id"], stop["quest_id"], stop_id, earned, f"Checked in at {stop['name']}"),
-            )
-            open_stops = con.execute(
-                "SELECT COUNT(*) AS total FROM explorer_stops WHERE quest_id = ? AND completed = 0",
-                (stop["quest_id"],),
-            ).fetchone()["total"]
-            if int(open_stops or 0) == 0:
-                con.execute("UPDATE explorer_quests SET status = 'COMPLETED' WHERE id = ?", (stop["quest_id"],))
-                con.execute(
-                    "UPDATE explorer_profiles SET trips = trips + 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-                    (user["id"],),
-                )
-                badge = con.execute("SELECT id FROM explorer_badges WHERE name = 'Hidden Gem Hunter'").fetchone()
-                if badge:
-                    con.execute("INSERT OR IGNORE INTO explorer_user_badges (user_id, badge_id) VALUES (?, ?)", (user["id"], badge["id"]))
-        self.send_json({"ok": True, "message": f"Check-in complete. +{earned} XP", "xp": earned})
 
     def deals_page(self, code: str = "", message: str = "") -> None:
         user = self.current_user()
@@ -30961,7 +29897,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return f"""
             <article class="wiki-empty">
               <b>No Wiki result found for "{escape(query)}".</b>
-              <span>{'Create an article below or adjust your search.' if admin else 'Try a simpler search like savings, Explorer, pickup, receipt, or cancellation.'}</span>
+              <span>{'Create an article below or adjust your search.' if admin else 'Try a simpler search like savings, pickup, receipt, or cancellation.'}</span>
             </article>
             """
         return """
@@ -32989,7 +31925,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         question = " ".join((form.get("question") or "").split())[:180]
         if not question:
-            self.send_json({"ok": False, "message": "Ask about cars, booking, cancellation, refunds, Explorer, or support."}, 400)
+            self.send_json({"ok": False, "message": "Ask about cars, booking, cancellation, refunds, or support."}, 400)
             return
         context = assistant_database_context(question, user, include_internal)
         answer = llm_assistant_answer(question, context) or local_assistant_answer(question, context)
@@ -42629,7 +41565,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     load_env_file()
-    log_explorer_config_status()
     # Prune expired backups before SQLite needs space for its migration journal.
     # If a previously over-retained backup set filled Render's persistent disk,
     # keep the two newest recovery points and retry initialization once. Never

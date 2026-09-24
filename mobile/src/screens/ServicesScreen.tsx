@@ -33,7 +33,7 @@ import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
-export type ServiceKey = "cars" | "deals" | "explorer" | "housing" | "local";
+export type ServiceKey = "cars" | "deals" | "housing" | "local";
 
 type Props = {
   cars: Car[];

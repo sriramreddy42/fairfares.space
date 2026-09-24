@@ -33,7 +33,7 @@ async function expectPrimaryControlsFit(page) {
           node.tagName;
         const isTinyControl = node.matches("input[type='checkbox'], input[type='radio']");
 
-        const isActionLink = node.matches("a.select-button, a.light-button, a.nav-button, a.button, a.user-chip, a.explorer-inline-button");
+        const isActionLink = node.matches("a.select-button, a.light-button, a.nav-button, a.button, a.user-chip");
         // Icon buttons expose their name through aria-label; their visually
         // hidden hover tooltip can legitimately extend beyond the circle.
         const checkClipping =
@@ -119,11 +119,6 @@ test("home page desktop and mobile visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await smokePage(page, "/car-rentals", "home-desktop.png");
   await expect(page.getByRole("heading", { name: /Your Colorado drive starts here/i })).toBeVisible();
-  await expect(page.locator(".results-promo", { hasText: "Explorer is your Colorado road trip guide." })).toBeVisible();
-  await expect(page.locator(".results-ad-card", { hasText: "Affordable car rental across Colorado." })).toBeVisible();
-  const filterBox = await page.locator(".results-side-rail .filters").boundingBox();
-  const promoBox = await page.locator(".results-side-rail .results-promo").boundingBox();
-  expect(filterBox.y, "Apply filter should be above Explorer advertisements").toBeLessThan(promoBox.y);
   await expectFeedbackWidget(page);
   await expectReadableCards(page, ".car-card, .search-panel, .hero-media");
 
@@ -162,23 +157,6 @@ test("manage booking page desktop and mobile visual smoke", async ({ page }) => 
   await expectReadableCards(page, ".booking-card, .docs-card, .profile-panel, .empty-booking-promo");
 });
 
-test("uploaded Explorer avatar follows the user into the header", async ({ page }) => {
-  const avatarData =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-  await loginAsAdmin(page);
-  await page.goto("/explorer");
-  const saveResult = await page.evaluate(async (src) => {
-    const response = await fetch("/profile/photo", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ photo: src }),
-    });
-    return response.json();
-  }, avatarData);
-  expect(saveResult.ok).toBeTruthy();
-  await page.goto("/manage-booking");
-  await expect(page.locator(".user-chip span").first()).toHaveCSS("background-image", /url\(/);
-});
 
 test("deals page visual smoke", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -193,7 +171,7 @@ test("wiki search respects public and internal visibility", async ({ page }) => 
   await smokePage(page, "/wiki", "wiki-desktop.png");
   await expect(page.locator(".wiki-result-card", { hasText: "How FairFares savings work" })).toBeVisible();
   await expect(page.locator("#wikiAgentWidget")).toBeVisible();
-  await expect(page.locator(".wiki-agent-prompt")).toContainText(/cheapest cars|refund policy|Explorer memories|pickup documents|student savings/);
+  await expect(page.locator(".wiki-agent-prompt")).toContainText(/cheapest cars|refund policy|pickup documents|student savings/);
   await page.locator(".wiki-agent-orb").click();
   await expect(page.locator(".wiki-agent-panel")).toBeVisible();
   await expect(page.locator(".wiki-agent-backdrop")).toBeVisible();

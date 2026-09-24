@@ -573,33 +573,6 @@ input:focus, select:focus, textarea:focus {
   text-underline-offset: 2px;
 }
 
-.explorer-inline-button {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.68);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--navy);
-  display: grid;
-  gap: 8px;
-  grid-column: 1 / -1;
-  grid-template-columns: 74px minmax(0, 1fr);
-  min-height: 64px;
-  overflow: hidden;
-  padding: 8px 12px;
-  text-decoration: none;
-}
-
-.explorer-inline-button img {
-  height: 48px;
-  object-fit: cover;
-  object-position: left center;
-  width: 74px;
-}
-
-.explorer-inline-button span {
-  font-size: 1.05rem;
-  font-weight: 800;
-}
 .rental-estimate {
   background: #f7f9fc;
   border: 1px solid var(--line);
