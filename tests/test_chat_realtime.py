@@ -1157,6 +1157,27 @@ class ChatRealtimeTest(unittest.TestCase):
         error = app.register_chat_device_key(self.recipient_id, "recovered-device-01", different_encryption_key, restored_signing_key)
         self.assertIn("different encryption key", error)
 
+    def test_repeated_device_key_registration_does_not_take_a_write_lock(self):
+        encryption_key = base64.b64encode(b"K" * 32).decode("ascii")
+        signing_key = base64.b64encode(b"L" * 32).decode("ascii")
+        device_id = "stable-device-key-01"
+
+        self.assertEqual(app.register_chat_device_key(self.recipient_id, device_id, encryption_key, signing_key), "")
+        with app.db() as con:
+            con.execute(
+                "UPDATE chat_device_keys SET last_seen_at = '2025-01-02 03:04:05' WHERE user_id = ? AND device_id = ?",
+                (self.recipient_id, device_id),
+            )
+
+        self.assertEqual(app.register_chat_device_key(self.recipient_id, device_id, encryption_key, signing_key), "")
+        with app.db() as con:
+            row = con.execute(
+                "SELECT last_seen_at, revoked_at FROM chat_device_keys WHERE user_id = ? AND device_id = ?",
+                (self.recipient_id, device_id),
+            ).fetchone()
+        self.assertEqual(row["last_seen_at"], "2025-01-02 03:04:05")
+        self.assertIsNone(row["revoked_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

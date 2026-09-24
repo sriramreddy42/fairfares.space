@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -1253,6 +1254,26 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertFalse(options["googlePlacesEnabled"])
         self.assertTrue(options["selectedLocation"])
         self.assertFalse(cities.call_args.kwargs["include_google"])
+
+    def test_mobile_location_options_endpoint_single_flights_repeated_queries(self):
+        class ResponseRecorder:
+            def __init__(self):
+                self.responses = []
+
+            def send_json(self, payload, status=200, headers=None):
+                self.responses.append((payload, status, headers or {}))
+
+        handler = ResponseRecorder()
+        parsed = urllib.parse.urlparse("/api/mobile/location-options?city=Denver%2C%20CO&area=RiNo")
+        with app._MOBILE_SEARCH_CACHE_LOCK:
+            app._MOBILE_SEARCH_CACHE.clear()
+            app._MOBILE_SEARCH_KEY_LOCKS.clear()
+        with patch.object(app, "accommodation_location_options", return_value={"ok": True, "suggested": ["RiNo, Denver, CO"]}) as load:
+            app.FairFaresHandler.api_mobile_location_options(handler, parsed)
+            app.FairFaresHandler.api_mobile_location_options(handler, parsed)
+
+        self.assertEqual(load.call_count, 1)
+        self.assertEqual([response[2]["X-Cache"] for response in handler.responses], ["MISS", "HIT"])
 
     def test_mobile_housing_location_options_stay_local_when_google_fallback_is_disabled(self):
         self.insert_post("LOCATION-LIVE", "Live room", "Denver, CO", "Capitol Hill", 39.7392, -104.9903)

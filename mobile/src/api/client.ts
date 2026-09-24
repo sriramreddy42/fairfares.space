@@ -111,6 +111,8 @@ const encryptedUploadSessionControllers = new Set<AbortController>();
 let activeApiBase = API_URL;
 const activityReadCache = new Map<string, { expiresAt: number; value?: unknown; inFlight?: Promise<unknown> }>();
 const ACTIVITY_READ_CACHE_MS = 8_000;
+const chatDeviceRegistrationCache = new Map<string, { expiresAt: number; inFlight?: Promise<{ ok: boolean }> }>();
+const CHAT_DEVICE_REGISTRATION_CACHE_MS = 5 * 60_000;
 
 function cachedActivityRead<T>(key: string, load: () => Promise<T>): Promise<T> {
   const existing = activityReadCache.get(key);
@@ -168,6 +170,7 @@ export async function setAuthToken(token: string) {
     authTokenGeneration += 1;
     encryptedUploadSessionControllers.forEach((controller) => controller.abort());
     activityReadCache.clear();
+    chatDeviceRegistrationCache.clear();
   }
   authToken = token;
   const storage = browserStorage();
@@ -1593,7 +1596,11 @@ export async function getChatLinkPreview(url: string) {
 }
 
 export async function registerChatDeviceKey(deviceId: string, publicKey: string, signingPublicKey = "") {
-  return request<{ ok: boolean }>("/api/chat/e2ee/keys", {
+  const registrationKey = `${authTokenGeneration}:${deviceId}:${publicKey}:${signingPublicKey}`;
+  const cached = chatDeviceRegistrationCache.get(registrationKey);
+  if (cached?.inFlight) return cached.inFlight;
+  if (cached && cached.expiresAt > Date.now()) return { ok: true };
+  const inFlight = request<{ ok: boolean }>("/api/chat/e2ee/keys", {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: formBody({ deviceId, publicKey, signingPublicKey })
   }, {
     // Registration is an idempotent upsert and is retried by the Chitthi
@@ -1602,7 +1609,20 @@ export async function registerChatDeviceKey(deviceId: string, publicKey: string,
     attempts: 4,
     silentNetworkFailure: true,
     silentServerFailure: true
+  }).then((result) => {
+    chatDeviceRegistrationCache.set(registrationKey, { expiresAt: Date.now() + CHAT_DEVICE_REGISTRATION_CACHE_MS });
+    while (chatDeviceRegistrationCache.size > 16) {
+      const oldestKey = chatDeviceRegistrationCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      chatDeviceRegistrationCache.delete(oldestKey);
+    }
+    return result;
+  }).catch((error) => {
+    chatDeviceRegistrationCache.delete(registrationKey);
+    throw error;
   });
+  chatDeviceRegistrationCache.set(registrationKey, { expiresAt: 0, inFlight });
+  return inFlight;
 }
 
 export async function relayEncryptedChatMessage(bundle: Record<string, unknown>) {

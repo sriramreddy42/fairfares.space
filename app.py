@@ -21297,11 +21297,29 @@ def register_chat_device_key(user_id: int, device_id: str, public_key: str, sign
             return "A valid device signing key is required."
     with db() as con:
         existing = con.execute(
-            "SELECT public_key, signing_public_key FROM chat_device_keys WHERE user_id = ? AND device_id = ? LIMIT 1",
+            "SELECT public_key, signing_public_key, revoked_at FROM chat_device_keys WHERE user_id = ? AND device_id = ? LIMIT 1",
             (user_id, device_id),
         ).fetchone()
         if existing and str(row_value(existing, "public_key") or "") != public_key:
             return "This Chitthi device ID is already bound to a different encryption key."
+        signing_key_unchanged = (
+            not signing_public_key
+            or str(row_value(existing, "signing_public_key") or "") == signing_public_key
+        )
+        if existing and signing_key_unchanged and not row_value(existing, "revoked_at"):
+            # Several independently mounted mobile surfaces ensure Chitthi is
+            # ready. Once this exact key is active, registration is a read and
+            # must not compete with messages, rentals, or location searches for
+            # SQLite's single writer slot. Only keep the legacy push-token
+            # repair path when there is actually an unbound token to update.
+            unbound_push_token = con.execute(
+                """SELECT 1 FROM mobile_push_tokens
+                   WHERE user_id = ? AND enabled = 1 AND TRIM(COALESCE(device_id, '')) = ''
+                   LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+            if not unbound_push_token:
+                return ""
         # Legacy encrypted backups did not include the later notification/
         # relay signing pair. A restored backup therefore derives the same
         # immutable encryption public key but may legitimately mint a new
@@ -23305,6 +23323,10 @@ def send_mobile_push_for_users(
 
 def start_mobile_push_scheduler() -> None:
     def worker() -> None:
+        # Let the first health check and mobile bootstrap warm SQLite's page
+        # cache after a deploy. A newly queued notification sets this event and
+        # wakes the worker immediately, so live delivery is not delayed.
+        _PUSH_OUTBOX_WAKE_EVENT.wait(15)
         while True:
             _PUSH_OUTBOX_WAKE_EVENT.clear()
             try:
@@ -23515,6 +23537,9 @@ def start_promotional_push_scheduler() -> None:
         return
 
     def worker() -> None:
+        # Marketing is not latency-sensitive. Avoid making its initial scans
+        # and writes compete with the app's post-deploy startup burst.
+        threading.Event().wait(60)
         while True:
             try:
                 run_promotional_push_automation()
@@ -25622,6 +25647,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def handle_one_request(self) -> None:
         self.request_started_at = time.perf_counter()
+        self.response_ready_at = 0.0
         self.request_id = uuid.uuid4().hex[:12]
         self.response_status = 0
         self.client_disconnected = False
@@ -25711,7 +25737,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             status = int(getattr(self, "response_status", 0) or 0)
             path = urllib.parse.urlparse(str(getattr(self, "path", ""))).path
             if path and path != "/healthz":
-                duration_ms = round((time.perf_counter() - self.request_started_at) * 1000, 1)
+                finished_at = time.perf_counter()
+                response_ready_at = float(getattr(self, "response_ready_at", 0.0) or finished_at)
+                duration_ms = round((finished_at - self.request_started_at) * 1000, 1)
+                backend_duration_ms = round((response_ready_at - self.request_started_at) * 1000, 1)
+                response_transfer_ms = round(max(0.0, finished_at - response_ready_at) * 1000, 1)
                 method = str(getattr(self, "command", ""))
                 print(json.dumps({
                     "event": "http_request",
@@ -25720,6 +25750,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "path": path[:300],
                     "status": status,
                     "duration_ms": duration_ms,
+                    "backend_duration_ms": backend_duration_ms,
+                    "response_transfer_ms": response_transfer_ms,
                 }, separators=(",", ":")), flush=True)
                 alerts_enabled = (
                     not getattr(self, "suppress_operational_alerts", False)
@@ -25736,7 +25768,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             f"Duration: {duration_ms} ms",
                         ],
                     )
-                elif alerts_enabled and path not in {"/api/health", "/api/chat/events"} and duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+                elif alerts_enabled and path not in {"/api/health", "/api/chat/events"} and backend_duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
                     send_operational_alert(
                         f"slow-request:{method}:{path}",
                         "Slow backend request",
@@ -25745,11 +25777,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             f"Request ID: {self.request_id}",
                             f"{method} {path}",
                             f"HTTP status: {status}",
-                            f"Duration: {duration_ms} ms (threshold {SLOW_REQUEST_THRESHOLD_MS} ms)",
+                            f"Backend duration: {backend_duration_ms} ms (threshold {SLOW_REQUEST_THRESHOLD_MS} ms)",
+                            f"Total duration including response transfer: {duration_ms} ms",
                         ],
                     )
 
     def send_response(self, code: int, message: str | None = None) -> None:
+        if not float(getattr(self, "response_ready_at", 0.0) or 0.0):
+            self.response_ready_at = time.perf_counter()
         self.response_status = code
         super().send_response(code, message)
 
@@ -37536,6 +37571,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         with db() as con:
             for key, value in form.items():
                 con.execute("UPDATE site_content SET value = ? WHERE key = ?", (value, key))
+        invalidate_mobile_search_cache("site")
         self.redirect("/dashboard")
 
     def logout(self) -> None:
@@ -37552,10 +37588,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def api_site(self) -> None:
-        payload = {"content": get_content(), "services": [dict(row) for row in get_services()]}
+        payload, cache_status = cached_mobile_search(
+            ("site",),
+            lambda: {"content": get_content(), "services": [dict(row) for row in get_services()]},
+        )
         body = json.dumps(payload, indent=2).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("X-Cache", cache_status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -38766,7 +38806,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # Place autocomplete helps members enter a real city, neighborhood, or
         # landmark. The later housing results and rent graphs are still drawn
         # only from active FairFares property listings.
-        self.send_json(accommodation_location_options(query, area, limit=18, enrich=enrich))
+        normalized_query = normalize_accommodation_place_label(query)
+        normalized_area = normalize_accommodation_place_label(area)
+        options, cache_status = cached_mobile_search(
+            ("location-options", normalized_query.casefold(), normalized_area.casefold(), enrich),
+            lambda: accommodation_location_options(normalized_query, normalized_area, limit=18, enrich=enrich),
+        )
+        self.send_json(options, headers={"X-Cache": cache_status})
 
     def api_mobile_ride_places(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
