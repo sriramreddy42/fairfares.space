@@ -20,7 +20,7 @@ import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
 import { requestUserLocationPermission } from "../utils/locationPermission";
-import { deviceAddressCityLabel } from "../utils/locationRegion";
+import { readCachedDeviceCity, resolveCurrentDeviceCity } from "../utils/deviceCity";
 import { avatarInitials } from "../utils/text";
 import { readGasCache } from "../utils/gasPriceCache";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -278,6 +278,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [cityOptions, setCityOptions] = useState<string[]>([]);
   const [cityOptionsLoading, setCityOptionsLoading] = useState(false);
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
+  const [feedCityPreferenceReady, setFeedCityPreferenceReady] = useState(false);
+  const [locationResolving, setLocationResolving] = useState(false);
   const [lowestGasPrice, setLowestGasPrice] = useState<number | null>(null);
   const [gasPreviewCoordinates, setGasPreviewCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
   const [category, setCategory] = useState<string>("ALL");
@@ -293,7 +295,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") setActionNoticeRefreshKey((current) => current + 1);
+      if (state === "active") {
+        setActionNoticeRefreshKey((current) => current + 1);
+        setLocationRefreshKey((current) => current + 1);
+      }
     });
     return () => subscription.remove();
   }, []);
@@ -634,40 +639,47 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [gasIconScale, gasIconShake]);
   useEffect(() => {
     let cancelled = false;
+    manualFeedCity.current = false;
+    setFeedCityPreferenceReady(false);
     void AsyncStorage.getItem(feedCityStorageKey).then((storedCity) => {
+      if (cancelled) return;
       const normalized = normalizedLocationLabel(storedCity || "");
-      if (!cancelled && normalized && normalizedUsCityKey(normalized)) {
+      if (normalized && normalizedUsCityKey(normalized)) {
         manualFeedCity.current = true;
         setGroupSuggestionCity(normalized);
       }
-    }).catch(() => undefined);
+    }).catch(() => undefined).finally(() => {
+      if (!cancelled) setFeedCityPreferenceReady(true);
+    });
     return () => { cancelled = true; };
   }, [feedCityStorageKey]);
   useEffect(() => {
     let cancelled = false;
-    if (manualFeedCity.current) return () => { cancelled = true; };
-    setGroupSuggestionCity(normalizedLocationLabel(city));
+    if (!feedCityPreferenceReady || manualFeedCity.current) return () => { cancelled = true; };
+    const fallbackCity = normalizedLocationLabel(city);
+    if (fallbackCity) setGroupSuggestionCity(fallbackCity);
     if (Platform.OS === "web") return () => { cancelled = true; };
+    setLocationResolving(true);
     void (async () => {
       try {
-        const permission = await Location.getForegroundPermissionsAsync();
-        if (!permission.granted || cancelled) return;
-        // A live fix is authoritative for city selection. Last-known location is
-        // only a short-lived fallback; preferring it previously allowed a stale
-        // simulator/device coordinate to label Denver as another state.
-        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
-          .catch(() => Location.getLastKnownPositionAsync({ maxAge: 60 * 1000, requiredAccuracy: 1000 }));
-        if (!position || cancelled) return;
-        setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-        const [address] = await Location.reverseGeocodeAsync(position.coords);
-        const currentCity = normalizedLocationLabel(deviceAddressCityLabel(address));
-        if (currentCity && !cancelled && !manualFeedCity.current) setGroupSuggestionCity(currentCity);
+        if (!fallbackCity) {
+          const cached = await readCachedDeviceCity();
+          const cachedCity = normalizedLocationLabel(cached?.city || "");
+          if (cachedCity && !cancelled && !manualFeedCity.current) setGroupSuggestionCity(cachedCity);
+        }
+        const result = await resolveCurrentDeviceCity({ allowCachedFallback: true });
+        if (!result || cancelled || manualFeedCity.current) return;
+        setGasPreviewCoordinates({ latitude: result.latitude, longitude: result.longitude });
+        const currentCity = normalizedLocationLabel(result.city);
+        if (currentCity) setGroupSuggestionCity(currentCity);
       } catch {
         // The selected feed city remains the fallback when device location is unavailable.
+      } finally {
+        if (!cancelled) setLocationResolving(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [city, locationRefreshKey, user?.id]);
+  }, [city, feedCityPreferenceReady, locationRefreshKey, user?.id]);
   useEffect(() => {
     if (Platform.OS === "web" || gasPreviewCoordinates) return;
     let cancelled = false;
@@ -745,27 +757,28 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       settingsMessage: "Enable location for FairFares in Settings to show posts and groups near your current city.",
     });
     if (!granted) return;
+    setLocationResolving(true);
     try {
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
-        .catch(() => Location.getLastKnownPositionAsync({ maxAge: 60 * 1000, requiredAccuracy: 1000 }));
-      if (!position) {
+      const result = await resolveCurrentDeviceCity({ allowCachedFallback: true });
+      if (!result) {
         Alert.alert("Location unavailable", "We couldn't detect your current location. Try again or enter your city manually.");
         return;
       }
-      const [address] = await Location.reverseGeocodeAsync(position.coords);
-      const currentCity = normalizedLocationLabel(deviceAddressCityLabel(address));
+      const currentCity = normalizedLocationLabel(result.city);
       if (!currentCity) {
         Alert.alert("Location unavailable", "We couldn't detect your city. Try again or enter your city manually.");
         return;
       }
       manualFeedCity.current = false;
       setSelectedGroup("");
-      setGasPreviewCoordinates({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+      setGasPreviewCoordinates({ latitude: result.latitude, longitude: result.longitude });
       setGroupSuggestionCity(currentCity);
       setCityPickerOpen(false);
       void AsyncStorage.removeItem(feedCityStorageKey);
     } catch {
       Alert.alert("Location unavailable", "We couldn't detect your current location. Try again or enter your city manually.");
+    } finally {
+      setLocationResolving(false);
     }
   };
   useEffect(() => {
@@ -1350,7 +1363,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         <Text style={[styles.gasPreviewChevron, isLight && styles.gasPreviewChevronLight]}>›</Text>
       </TouchableOpacity>
       <View><View style={styles.sectionRow}><Text style={[styles.sectionTitle, isLight && styles.textPrimaryLight]}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TouchableOpacity>)}</View></View>
-      <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={`Change feed city. Currently ${groupSuggestionCity}`}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>Near {groupSuggestionCity.split(",", 1)[0] || "you"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category === "ALL" ? "Current-city posts and listings · Tap to change" : categoryLabels[category]}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
+      <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={groupSuggestionCity ? `Change feed city. Currently ${groupSuggestionCity}` : "Choose a feed city or use current location"}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>{groupSuggestionCity ? `Near ${groupSuggestionCity.split(",", 1)[0]}` : "Choose your location"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category !== "ALL" ? categoryLabels[category] : locationResolving && !groupSuggestionCity ? "Finding your current city…" : groupSuggestionCity ? "Current-city posts and listings · Tap to change" : "Use current location or choose a city"}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
       </>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
       ListFooterComponent={hasMore ? <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()}><Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : "Load more conversations"}</Text></TouchableOpacity> : null}
@@ -1395,7 +1408,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         {cityOptionsLoading ? <ActivityIndicator color={theme.colors.brand} style={styles.cityPickerLoader} /> : null}
         <ScrollView keyboardShouldPersistTaps="handled" style={styles.cityPickerResults}>{cityOptions.map((option) => <TouchableOpacity key={option} style={styles.cityPickerOption} onPress={() => chooseFeedCity(option)}><Text style={styles.cityPickerOptionText}>{option}</Text><Text style={styles.cityPickerOptionArrow}>›</Text></TouchableOpacity>)}</ScrollView>
         {cityDraft.trim().length >= 2 ? <TouchableOpacity style={styles.cityPickerUseTyped} onPress={() => chooseFeedCity(cityDraft)}><Text style={styles.cityPickerUseTypedText}>Use “{cityDraft.trim()}”</Text></TouchableOpacity> : null}
-        <TouchableOpacity style={styles.currentLocationButton} accessibilityRole="button" accessibilityLabel="Use my current location" onPress={() => { void useCurrentFeedLocation(); }}><Text style={styles.currentLocationText}>⌖ Use my current location</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.currentLocationButton} disabled={locationResolving} accessibilityRole="button" accessibilityLabel="Use my current location" onPress={() => { void useCurrentFeedLocation(); }}>{locationResolving ? <ActivityIndicator color={theme.colors.brand} /> : <Text style={styles.currentLocationText}>⌖ Use my current location</Text>}</TouchableOpacity>
       </View></View>
     </Modal>
 

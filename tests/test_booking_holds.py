@@ -52,6 +52,15 @@ class BookingHoldTest(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 con.execute("INSERT INTO sessions (token, user_id) VALUES ('orphan-session', 999999999)")
 
+    def test_public_inventory_schedules_hold_cleanup_off_response_path(self):
+        with patch.object(app, "schedule_stale_booking_hold_expiry") as schedule_cleanup, patch.object(
+            app, "expire_stale_booking_holds", side_effect=AssertionError("rental inventory read must not run synchronous cleanup")
+        ):
+            cars = app.get_cars()
+
+        self.assertTrue(cars)
+        schedule_cleanup.assert_called_once_with()
+
     def test_select_creates_pending_hold_with_daily_rate_pricing(self):
         cars = app.get_cars()
         car = cars[0]

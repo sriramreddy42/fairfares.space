@@ -467,7 +467,12 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
         if (status) throw error;
-        lastError = error instanceof Error ? error.message : String(error);
+        // React Native reports our intentional timeout abort as only
+        // "Aborted", which makes production diagnostics look like a user or
+        // navigation cancellation. Record the actual timeout and duration.
+        lastError = controller.signal.aborted
+          ? `Request timed out after ${timeoutMs} ms`
+          : error instanceof Error ? error.message : String(error);
         if (attempt + 1 < attempts) await wait([500, 1250, 2500][attempt] || 2500);
       } finally {
         clearTimeout(timeout);

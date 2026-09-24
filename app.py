@@ -688,7 +688,25 @@ ACCOMMODATION_STATIC_POINTS = {
     "university of denver": (39.6781, -104.9618),
     "du campus denver": (39.6781, -104.9618),
     "downtown denver": (39.7472, -104.9903),
+    "15th street": (39.7460, -104.9982),
+    "15th st": (39.7460, -104.9982),
+    "15th street denver": (39.7460, -104.9982),
+    "15th st denver": (39.7460, -104.9982),
+    "15th street, denver, co": (39.7460, -104.9982),
+    "16th": (39.7477, -104.9957),
+    "16th street": (39.7477, -104.9957),
+    "16th st": (39.7477, -104.9957),
+    "16th street mall": (39.7477, -104.9957),
+    "16th st mall": (39.7477, -104.9957),
+    "16th street denver": (39.7477, -104.9957),
+    "16th st denver": (39.7477, -104.9957),
     "16th street mall denver": (39.7477, -104.9957),
+    "16th street mall, denver, co": (39.7477, -104.9957),
+    "17th street": (39.7462, -104.9904),
+    "17th st": (39.7462, -104.9904),
+    "17th street denver": (39.7462, -104.9904),
+    "17th st denver": (39.7462, -104.9904),
+    "17th street, denver, co": (39.7462, -104.9904),
     "300 east seventeenth apartments": (39.7437, -104.9826),
     "300 e 17th ave denver": (39.7437, -104.9826),
     "larimer lounge": (39.7590, -104.9849),
@@ -8798,7 +8816,11 @@ def create_owner_car_listing(user_id: int, payload: dict[str, object]) -> sqlite
 
 
 def get_cars() -> list[sqlite3.Row]:
-    expire_stale_booking_holds()
+    # Public inventory is a high-traffic read. Expiring holds synchronously
+    # here turns it into a writer and can make an otherwise fast response wait
+    # for SQLite's full busy timeout. The availability query below already
+    # ignores expired pending holds, so perform physical cleanup off-path.
+    schedule_stale_booking_hold_expiry()
     ensure_default_car_inventory()
     with db() as con:
         return con.execute(
@@ -15689,6 +15711,65 @@ def static_accommodation_point(value: str) -> tuple[float, float]:
     return (0.0, 0.0)
 
 
+def static_location_suggestions(city: str, query: str, limit: int = 10) -> list[dict[str, object]]:
+    """Autocomplete high-use local landmarks that are absent from GeoNames."""
+    clean_query = normalize_location_catalog_search(query)
+    clean_city = normalize_location_catalog_search(city)
+    if len(clean_query) < 2:
+        return []
+    landmarks = (
+        {
+            "label": "15th Street, Denver, CO",
+            "name": "15th Street",
+            "city": "Denver",
+            "state": "CO",
+            "aliases": ("15th", "15th street", "15th st"),
+            "lat": 39.7460,
+            "lng": -104.9982,
+        },
+        {
+            "label": "16th Street Mall, Denver, CO",
+            "name": "16th Street Mall",
+            "city": "Denver",
+            "state": "CO",
+            "aliases": ("16th", "16th street", "16th st", "16th street mall", "16th st mall"),
+            "lat": 39.7477,
+            "lng": -104.9957,
+        },
+        {
+            "label": "17th Street, Denver, CO",
+            "name": "17th Street",
+            "city": "Denver",
+            "state": "CO",
+            "aliases": ("17th", "17th street", "17th st"),
+            "lat": 39.7462,
+            "lng": -104.9904,
+        },
+    )
+    results: list[dict[str, object]] = []
+    for landmark in landmarks:
+        landmark_city = normalize_location_catalog_search(f"{landmark['city']} {landmark['state']}")
+        if clean_city and landmark_city.split(" ", 1)[0] not in clean_city:
+            continue
+        aliases = tuple(normalize_location_catalog_search(str(alias)) for alias in landmark["aliases"])
+        if not any(alias.startswith(clean_query) or clean_query.startswith(alias) for alias in aliases):
+            continue
+        results.append({
+            "label": landmark["label"],
+            "name": landmark["name"],
+            "city": landmark["city"],
+            "state": landmark["state"],
+            "country": "US",
+            "type": "LANDMARK",
+            "lat": landmark["lat"],
+            "lng": landmark["lng"],
+            "source": "static-landmark",
+        })
+        if len(results) >= max(1, min(int(limit or 10), 20)):
+            break
+    return results
+
+
 def accommodation_metro_name_from_place(value: str) -> str:
     city, state = split_city_state(value)
     if city and state:
@@ -16399,6 +16480,12 @@ def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google
             suggestions.append(label)
         if len(suggestions) >= limit:
             return suggestions
+
+    # A partial local result is still a successful result. Do not call Places
+    # merely to fill unused suggestion slots; Google is reserved for a true
+    # catalogue/cache miss.
+    if suggestions:
+        return suggestions[:limit]
 
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     if include_google and api_key and google_location_fallback_enabled():
@@ -17466,6 +17553,70 @@ def ride_submission_point(label: str, city: str, latitude: float, longitude: flo
     return ride_point(label, city)
 
 
+def offline_reverse_city_label(lat: float, lng: float, max_distance_miles: float = 75) -> str:
+    """Resolve coordinates to the nearest catalogue city without a provider call."""
+    try:
+        latitude = float(lat)
+        longitude = float(lng)
+    except (TypeError, ValueError):
+        return ""
+    if not valid_ride_coordinate_pair(latitude, longitude):
+        return ""
+
+    candidates: list[sqlite3.Row] = []
+    try:
+        with db() as con:
+            # Query each launch country separately so SQLite can use the
+            # composite type/country/latitude index instead of scanning cities.
+            for country_code in ("US", "IN"):
+                candidates.extend(con.execute(
+                    """
+                    SELECT name, admin1_code, admin1_name, country_code, lat, lng, population
+                    FROM location_catalog INDEXED BY idx_location_catalog_type_location
+                    WHERE location_type = 'CITY' AND country_code = ?
+                      AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                    ORDER BY ((lat - ?) * (lat - ?)) + ((lng - ?) * (lng - ?)), population DESC
+                    LIMIT 40
+                    """,
+                    (
+                        country_code,
+                        latitude - 1.5, latitude + 1.5,
+                        longitude - 1.5, longitude + 1.5,
+                        latitude, latitude, longitude, longitude,
+                    ),
+                ).fetchall())
+    except sqlite3.Error:
+        return ""
+    if not candidates:
+        return ""
+
+    candidates.sort(key=lambda row: (
+        distance_miles_between(latitude, longitude, float(row_value(row, "lat") or 0), float(row_value(row, "lng") or 0)),
+        -int(row_value(row, "population") or 0),
+    ))
+    within_range = [row for row in candidates if distance_miles_between(
+        latitude, longitude, float(row_value(row, "lat") or 0), float(row_value(row, "lng") or 0)
+    ) <= max_distance_miles]
+    # GeoNames also classifies many neighborhood points as populated places.
+    # Prefer a real municipality when available so a Hyderabad coordinate does
+    # not become a zero-population neighborhood such as Kachiguda.
+    nearest = next((row for row in within_range if int(row_value(row, "population") or 0) >= 1_000), None)
+    if not nearest:
+        nearest = within_range[0] if within_range else None
+    if not nearest:
+        return ""
+    name = clean_text_value(row_value(nearest, "name"), 100)
+    country = clean_text_value(row_value(nearest, "country_code"), 4).upper()
+    region = clean_text_value(
+        row_value(nearest, "admin1_code") if country == "US" else row_value(nearest, "admin1_name") or row_value(nearest, "admin1_code"),
+        100,
+    )
+    parts = [name, region]
+    if country and country != "US":
+        parts.append(country)
+    return ", ".join(part for part in parts if part)
+
+
 def google_reverse_location_label(lat: float, lng: float) -> str:
     # The current-location label is cosmetic; coordinates remain exact in the
     # ride request. A roughly 11 m cell preserves the displayed address while
@@ -17477,6 +17628,8 @@ def google_reverse_location_label(lat: float, lng: float) -> str:
         if cached and cached[0] > now:
             _RIDE_REVERSE_GEOCODE_CACHE.move_to_end(cache_key)
             return cached[1]
+    if not google_location_fallback_enabled():
+        return ""
     maps_key = (
         os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
@@ -17512,6 +17665,14 @@ def google_reverse_location_label(lat: float, lng: float) -> str:
                     _RIDE_REVERSE_GEOCODE_CACHE.popitem(last=False)
             return label
     return ""
+
+
+def reverse_location_label(lat: float, lng: float) -> tuple[str, str]:
+    local_label = offline_reverse_city_label(lat, lng)
+    if local_label:
+        return local_label, "offline-catalogue"
+    google_label = google_reverse_location_label(lat, lng)
+    return (google_label, "google") if google_label else ("", "unresolved")
 
 
 def ride_display_label(raw_label: str, resolved_point: dict[str, object], city: str = "") -> str:
@@ -17731,6 +17892,10 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         point: dict[str, object] = {}
         if place_id:
             point = google_ride_place_details(place_id, session_token)
+        else:
+            # Suggestions from our catalogue already carry exact coordinates.
+            # Resolve those locally before considering a paid geocode.
+            point = ride_point(query, city, allow_refresh=False)
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and (known_cities := ride_known_popular_cities(query, city, limit=1, exact=True)):
             point = known_cities[0]
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and ride_query_should_geocode_directly(query, city):
@@ -17808,6 +17973,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             r"shopping centers?|hospitals?|medical centers?)$",
             normalize_location_catalog_search(google_query),
         ))
+        static_places = static_location_suggestions(city, google_query, limit=limit)
         local_places = location_catalog_suggestions(
             google_query,
             limit=limit,
@@ -17817,9 +17983,24 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             near_lat=float(city_point.get("lat") or 0) if generic_category else 0,
             near_lng=float(city_point.get("lng") or 0) if generic_category else 0,
         )
+        if static_places:
+            # A known landmark in the selected city outranks distant prefix
+            # matches such as Florida's "16th Street Shopping Center".
+            static_keys = {str(place.get("label") or "").casefold() for place in static_places}
+            local_places = static_places + [
+                place for place in local_places
+                if str(place.get("label") or "").casefold() not in static_keys
+                and (
+                    not city_point
+                    or distance_miles_between(
+                        float(city_point.get("lat") or 0), float(city_point.get("lng") or 0),
+                        float(place.get("lat") or 0), float(place.get("lng") or 0),
+                    ) <= 100
+                )
+            ]
         for place in local_places:
             label = str(place.get("label") or "")
-            add_label(label, "offline-catalogue")
+            add_label(label, str(place.get("source") or "offline-catalogue"))
             if label:
                 popular_points[label.lower()] = place
 
@@ -19924,19 +20105,37 @@ def accommodation_location_options(
         near_lat=float(city_point.get("lat") or 0) if area else 0,
         near_lng=float(city_point.get("lng") or 0) if area else 0,
     )
+    static_suggestions = static_location_suggestions(query, catalogue_query, limit=limit) if area else []
+    if static_suggestions:
+        static_keys = {str(place.get("label") or "").casefold() for place in static_suggestions}
+        catalogue_suggestions = static_suggestions + [
+            place for place in catalogue_suggestions
+            if str(place.get("label") or "").casefold() not in static_keys
+            and (
+                not city_point
+                or distance_miles_between(
+                    float(city_point.get("lat") or 0), float(city_point.get("lng") or 0),
+                    float(place.get("lat") or 0), float(place.get("lng") or 0),
+                ) <= 100
+            )
+        ]
+    local_point_available = bool(
+        (area and any(float(place.get("lat") or 0) and float(place.get("lng") or 0) for place in catalogue_suggestions))
+        or (not area and float(city_point.get("lat") or 0) and float(city_point.get("lng") or 0))
+    )
     # Typing must be cheap: the local catalogue is immediate, while Places is
     # used only for a meaningful area query. A committed search performs one
     # geocode to establish its exact center, without the former three broad
     # nearby Text Searches.
     autocomplete_suggestions = (
         google_accommodation_place_suggestions(query, area, limit=limit, use_city_bias=enrich)
-        if google_enabled and not backend_only and not enrich and len(area) >= 3
+        if google_enabled and not backend_only and not enrich and len(area) >= 3 and not catalogue_suggestions
         else []
     )
     enrichment_query = area or query
     google_refreshed_metro = (
         refresh_accommodation_location_cache(enrichment_query, force=True, include_nearby_areas=False)
-        if google_enabled and not backend_only and enrich
+        if google_enabled and not backend_only and enrich and not local_point_available
         else ""
     )
     metro_name = google_refreshed_metro or cached_accommodation_metro_for_place(enrichment_query)
@@ -38606,14 +38805,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if lat < -90 or lat > 90 or lng < -180 or lng > 180:
             self.send_json({"ok": False, "error": "Latitude or longitude is out of range."}, 400)
             return
-        label = google_reverse_location_label(lat, lng)
+        label, source = reverse_location_label(lat, lng)
         self.send_json(
             {
                 "ok": True,
                 "label": label,
                 "lat": lat,
                 "lng": lng,
-                "mapsEnabled": bool(
+                "source": source,
+                "mapsEnabled": google_location_fallback_enabled() and bool(
                     os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()

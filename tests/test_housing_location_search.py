@@ -551,50 +551,36 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertIn("Bengaluru Ride Share", names)
         self.assertIn("Bengaluru Community", names)
 
-    def test_city_autocomplete_combines_verified_places_and_cache(self):
+    def test_city_autocomplete_uses_cached_city_without_google(self):
         with app.db() as con:
             metro_id = app.upsert_accommodation_metro(con, "St. Louis Metro Area", country="US", state="MO", center_city="St. Louis")
             app.upsert_accommodation_local_area(con, metro_id, "St. Louis, MO", city="St. Louis", state="MO")
-        google_payload = {
-            "status": "OK",
-            "predictions": [{"description": "St. Petersburg, FL, USA", "types": ["locality", "political"]}],
-        }
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_api_get", return_value=google_payload
-        ):
+        with patch.object(app, "google_api_get", side_effect=AssertionError("known cities must not call Google")):
             suggestions = app.accommodation_city_suggestions("St", limit=8)
 
-        self.assertEqual(suggestions[0], "St. Petersburg, FL")
-        self.assertIn("St. Louis, MO", suggestions)
+        self.assertEqual(suggestions, ["St. Louis, MO"])
 
-    def test_city_and_carpool_autocomplete_are_not_restricted_to_us(self):
-        google_payload = {
-            "status": "OK",
-            "predictions": [
-                {
-                    "description": "Bengaluru, Karnataka, India",
-                    "types": ["locality", "political"],
-                }
-            ],
-        }
-        requested_urls = []
-
-        def google_response(url, *args, **kwargs):
-            requested_urls.append(url)
-            return google_payload
-
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_api_get", side_effect=google_response
-        ), patch.object(app, "google_accommodation_geocode", return_value=None):
+    def test_city_and_carpool_autocomplete_use_international_catalogue_without_google(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-bengaluru', 'IN', 'KA', 'Karnataka',
+                        'Bengaluru', 'Bengaluru', 'Bengaluru', 'PPLA', 'CITY',
+                        12.9716, 77.5946, 8443675, 'bengaluru karnataka india')
+                """
+            )
+        with patch.object(app, "google_api_get", side_effect=AssertionError("catalogue hits must not call Google")):
             cities = app.accommodation_city_suggestions("Beng", limit=8)
-            rides = app.google_accommodation_place_suggestions(
-                "Bengaluru, Karnataka, India", "Kempegowda International Airport", limit=8
+            rides = app.ride_place_suggestions(
+                "Bengaluru, Karnataka, India", "Beng", limit=8, cities_only=True
             )
 
-        self.assertEqual(cities, ["Bengaluru, Karnataka, India"])
-        self.assertEqual(rides, ["Bengaluru, Karnataka, India"])
-        self.assertTrue(requested_urls)
-        self.assertTrue(all("country%3Aus" not in url and "country:us" not in url for url in requested_urls))
+        self.assertTrue(cities and cities[0].startswith("Bengaluru, Karnataka"))
+        self.assertTrue(rides and str(rides[0]["label"]).startswith("Bengaluru, Karnataka"))
 
     def test_carpool_popular_places_follow_selected_country_without_google(self):
         with patch.object(app, "google_api_get", side_effect=AssertionError("Google must not be called")):
@@ -1002,31 +988,12 @@ class HousingLocationSearchTest(unittest.TestCase):
         }
         self.assertNotIn("MATRIX-DENVER-CO", invalid_region_ids)
 
-    def test_popular_ride_cities_stay_inside_selected_country(self):
-        origin = {
-            "address_components": [
-                {"long_name": "India", "short_name": "IN", "types": ["country"]}
-            ]
-        }
-        places = {
-            "status": "OK",
-            "results": [
-                {"name": "Pune", "formatted_address": "Pune, Maharashtra, India", "types": ["locality"], "geometry": {"location": {"lat": 18.5204, "lng": 73.8567}}, "photos": [{"photo_reference": "pune-photo-ref"}]},
-                {"name": "Dubai", "formatted_address": "Dubai, United Arab Emirates", "types": ["locality"], "geometry": {"location": {"lat": 25.2048, "lng": 55.2708}}},
-                {"name": "Gateway of India", "formatted_address": "Mumbai, India", "types": ["tourist_attraction"], "geometry": {"location": {"lat": 18.9219, "lng": 72.8347}}},
-            ],
-        }
-        def google_response(url, *args, **kwargs):
-            if "countriesnow.space" in url:
-                return {"error": False, "data": [{"city": "Pune"}, {"city": "Dubai"}]}
-            return places
-
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
-            app, "google_accommodation_geocode", return_value=origin
-        ), patch.object(app, "google_api_get", side_effect=google_response):
+    def test_popular_ride_cities_stay_inside_selected_country_without_google(self):
+        with patch.object(app, "google_api_get", side_effect=AssertionError("popular cities must be static")):
             results = app.google_ride_popular_cities("Mumbai, India")
-        self.assertEqual([item["label"] for item in results], ["Pune, Maharashtra, India"])
-        self.assertEqual(results[0]["imageUrl"], "")
+        self.assertEqual(len(results), 8)
+        self.assertTrue(all("India" in str(item["label"]) for item in results))
+        self.assertTrue(all(item["imageUrl"] == "" for item in results))
 
     def test_popular_ride_cities_cache_country_result(self):
         origin = {
@@ -1060,13 +1027,11 @@ class HousingLocationSearchTest(unittest.TestCase):
                 return denver
             return {"status": "ZERO_RESULTS", "results": []}
 
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test"}), patch.object(
-            app, "google_accommodation_geocode", return_value=origin
-        ), patch.object(app, "google_api_get", side_effect=google_response) as google_call:
+        with patch.object(app, "google_api_get", side_effect=AssertionError("popular cities must be static")) as google_call:
             results = app.google_ride_popular_cities("Denver, CO")
             first_call_count = google_call.call_count
             cached_results = app.google_ride_popular_cities("Denver, CO")
-        self.assertIn("Seattle, WA, USA", [item["label"] for item in results])
+        self.assertIn("Denver, CO, USA", [item["label"] for item in results])
         self.assertEqual(results, cached_results)
         self.assertEqual(google_call.call_count, first_call_count)
 
@@ -1109,7 +1074,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertGreaterEqual(len(results), 2)
         self.assertNotIn("New York, NY, USA", [item["label"] for item in results])
         self.assertEqual(results[0]["label"], "Bengaluru, Karnataka, India")
-        self.assertEqual(results[0]["source"], "country-fallback")
+        self.assertEqual(results[0]["source"], "static-popular")
         self.assertEqual(results[0]["imageUrl"], "")
 
     def test_popular_ride_cities_prefer_population_ranked_dynamic_source(self):
@@ -1289,36 +1254,38 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertTrue(options["selectedLocation"])
         self.assertFalse(cities.call_args.kwargs["include_google"])
 
-    def test_mobile_housing_location_autocomplete_uses_google_places(self):
+    def test_mobile_housing_location_options_stay_local_when_google_fallback_is_disabled(self):
         self.insert_post("LOCATION-LIVE", "Live room", "Denver, CO", "Capitol Hill", 39.7392, -104.9903)
         self.insert_filter_post("LOCATION-NEED", mode="NEED_PLACE", city="Denver, CO", rent_min=900)
         with app.db() as con:
             con.execute("UPDATE accommodation_posts SET primary_neighborhood = 'LoDo' WHERE public_id = 'LOCATION-LIVE'")
 
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_accommodation_place_suggestions", return_value=["RiNo, Denver, CO"]
-        ), patch.object(app, "refresh_accommodation_location_cache", return_value="Denver Metro Area"):
+            app, "google_accommodation_place_suggestions", side_effect=AssertionError("disabled fallback must not call Google")
+        ), patch.object(
+            app, "refresh_accommodation_location_cache", side_effect=AssertionError("disabled fallback must not refresh Google")
+        ):
             options = app.accommodation_location_options("Denver, CO")
-        self.assertTrue(options["googlePlacesEnabled"])
-        self.assertIn("RiNo, Denver, CO", options["suggested"])
+        self.assertFalse(options["googlePlacesEnabled"])
+        self.assertEqual(options["selectedLocation"], "Denver, CO")
+        self.assertIn("Denver, CO", options["suggested"])
 
-    def test_mobile_housing_typing_does_not_refresh_nearby_places(self):
+    def test_mobile_housing_typing_uses_static_options_without_google(self):
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_accommodation_place_suggestions", return_value=["RiNo, Denver, CO"]
-        ) as suggestions, patch.object(
+            app, "google_accommodation_place_suggestions", side_effect=AssertionError("disabled fallback must not autocomplete with Google")
+        ), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("typing must not refresh locations")
         ):
             options = app.accommodation_location_options("Denver, CO", "RiNo")
-        self.assertIn("RiNo, Denver, CO", options["suggested"])
-        suggestions.assert_called_once()
+        self.assertFalse(options["googlePlacesEnabled"])
+        self.assertIn("Denver, CO", options["suggested"])
 
-    def test_mobile_housing_committed_search_skips_nearby_text_searches(self):
+    def test_mobile_housing_committed_search_skips_google_when_local_point_exists(self):
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "refresh_accommodation_location_cache", return_value="Denver Metro Area"
+            app, "refresh_accommodation_location_cache", side_effect=AssertionError("local points must not refresh Google")
         ) as refresh:
             app.accommodation_location_options("Denver, CO", "RiNo", enrich=True)
-        self.assertEqual(refresh.call_count, 1)
-        self.assertFalse(refresh.call_args.kwargs["include_nearby_areas"])
+        refresh.assert_not_called()
 
     def test_offline_catalogue_supplies_housing_neighborhood_and_coordinates(self):
         with app.db() as con:
@@ -1340,6 +1307,139 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(options["source"], "offline-catalogue")
         self.assertEqual(point["source"], "offline-catalogue")
         self.assertAlmostEqual(point["lat"], 39.769)
+
+    def test_housing_catalogue_hit_never_calls_google_even_when_fallback_is_enabled(self):
+        with app.db() as con:
+            con.executemany(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', ?, 'US', 'CO', 'Colorado', 'Denver', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ("test-denver-db-first", "Denver", "Denver", "PPLA2", "CITY", 39.7392, -104.9903, 715522, "denver co us"),
+                    ("test-rino-db-first", "RiNo", "RiNo", "PPLX", "NEIGHBORHOOD", 39.769, -104.981, 0, "rino denver co us"),
+                ),
+            )
+        enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
+        with patch.dict(os.environ, enabled), patch.object(
+            app, "google_accommodation_place_suggestions", side_effect=AssertionError("Google autocomplete must not run")
+        ), patch.object(
+            app, "refresh_accommodation_location_cache", side_effect=AssertionError("Google geocode must not run")
+        ):
+            typing = app.accommodation_location_options("Denver, CO", "RiNo")
+            committed = app.accommodation_location_options("Denver, CO", "RiNo", enrich=True)
+        self.assertEqual(typing["source"], "offline-catalogue")
+        self.assertEqual(committed["source"], "offline-catalogue")
+        self.assertAlmostEqual(committed["lat"], 39.769)
+
+    def test_offline_reverse_city_precedes_google_fallback(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-denver-reverse', 'US', 'CO', 'Colorado',
+                        'Denver', 'Denver', 'Denver', 'PPLA2', 'CITY',
+                        39.7392, -104.9903, 715522, 'denver co us')
+                """
+            )
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1"}), patch.object(
+            app, "google_reverse_location_label", side_effect=AssertionError("Google reverse geocode must not run")
+        ):
+            label, source = app.reverse_location_label(39.7393, -104.9902)
+        self.assertEqual(label, "Denver, CO")
+        self.assertEqual(source, "offline-catalogue")
+
+    def test_google_location_fallback_runs_only_after_local_miss(self):
+        enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
+        with patch.dict(os.environ, enabled), patch.object(
+            app, "location_catalog_suggestions", return_value=[]
+        ), patch.object(
+            app, "accommodation_location_point", return_value={"label": "Unknown", "lat": 0, "lng": 0, "source": "needs_geocode"}
+        ), patch.object(
+            app, "google_accommodation_place_suggestions", return_value=["Unknown Place, Denver, CO"]
+        ) as google_suggestions:
+            options = app.accommodation_location_options("Denver, CO", "Unknown Place")
+        google_suggestions.assert_called_once()
+        self.assertIn("Unknown Place, Denver, CO", options["suggested"])
+
+        with patch.dict(os.environ, enabled), patch.object(
+            app, "offline_reverse_city_label", return_value=""
+        ), patch.object(
+            app, "google_reverse_location_label", return_value="Remote Place, CO"
+        ) as google_reverse:
+            label, source = app.reverse_location_label(39.0, -105.0)
+        google_reverse.assert_called_once()
+        self.assertEqual((label, source), ("Remote Place, CO", "google"))
+
+    def test_carpool_exact_catalogue_result_precedes_google_geocode(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-dallas-exact', 'US', 'TX', 'Texas',
+                        'Dallas', 'Dallas', 'Dallas', 'PPLA2', 'CITY',
+                        32.7767, -96.7970, 1300000, 'dallas tx us')
+                """
+            )
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1"}), patch.object(
+            app, "precise_accommodation_location_point", side_effect=AssertionError("Google geocode must not run")
+        ):
+            results = app.ride_place_suggestions("Denver, CO", "Dallas, TX", resolve_exact=True)
+        self.assertEqual(results[0]["source"], "geocoded")
+        self.assertAlmostEqual(results[0]["lat"], 32.7767)
+
+    def test_denver_16th_street_aliases_resolve_locally_for_housing_and_carpool(self):
+        enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
+        with patch.dict(os.environ, enabled), patch.object(
+            app, "google_accommodation_place_predictions", side_effect=AssertionError("Google autocomplete must not run")
+        ), patch.object(
+            app, "google_accommodation_place_suggestions", side_effect=AssertionError("Google suggestions must not run")
+        ), patch.object(
+            app, "google_accommodation_geocode", side_effect=AssertionError("Google geocode must not run")
+        ):
+            for query in ("16th", "16th Street", "16th St", "16th Street Mall", "16th St Mall"):
+                with self.subTest(query=query):
+                    housing = app.accommodation_location_options("Denver, CO", query)
+                    rides = app.ride_place_suggestions("Denver, CO", query, limit=5)
+                    self.assertEqual(housing["suggested"][0], "16th Street Mall, Denver, CO")
+                    self.assertEqual(rides[0]["label"], "16th Street Mall, Denver, CO")
+                    self.assertEqual(rides[0]["source"], "static-landmark")
+                    self.assertAlmostEqual(rides[0]["lat"], 39.7477)
+                    self.assertTrue(all("Florida" not in item["label"] and ", FL" not in item["label"] for item in rides))
+
+    def test_denver_15th_and_17th_street_aliases_resolve_locally(self):
+        enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
+        expected = {
+            "15th": "15th Street, Denver, CO",
+            "15th St": "15th Street, Denver, CO",
+            "15th Street": "15th Street, Denver, CO",
+            "17th": "17th Street, Denver, CO",
+            "17th St": "17th Street, Denver, CO",
+            "17th Street": "17th Street, Denver, CO",
+        }
+        with patch.dict(os.environ, enabled), patch.object(
+            app, "google_accommodation_place_predictions", side_effect=AssertionError("Google autocomplete must not run")
+        ), patch.object(
+            app, "google_accommodation_place_suggestions", side_effect=AssertionError("Google suggestions must not run")
+        ), patch.object(
+            app, "google_accommodation_geocode", side_effect=AssertionError("Google geocode must not run")
+        ):
+            for query, label in expected.items():
+                with self.subTest(query=query):
+                    housing = app.accommodation_location_options("Denver, CO", query)
+                    rides = app.ride_place_suggestions("Denver, CO", query, limit=5)
+                    self.assertEqual(housing["suggested"][0], label)
+                    self.assertEqual(rides[0]["label"], label)
+                    self.assertEqual(rides[0]["source"], "static-landmark")
 
     def test_housing_search_scopes_ambiguous_neighborhood_to_selected_city(self):
         with app.db() as con:

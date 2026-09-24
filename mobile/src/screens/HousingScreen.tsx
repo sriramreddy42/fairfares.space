@@ -257,6 +257,22 @@ const usRidePopularCities: RidePlaceSuggestion[] = [
   { label: "Denver, CO, USA", main: "Denver", secondary: "CO, USA", distanceMiles: null, lat: 39.7392, lng: -104.9903, source: "country-fallback" },
 ];
 
+function mergeRidePopularCities(
+  activeCities: RidePlaceSuggestion[],
+  countryFallback: RidePlaceSuggestion[],
+) {
+  const merged: RidePlaceSuggestion[] = [];
+  const seenCities = new Set<string>();
+  for (const place of [...activeCities, ...countryFallback]) {
+    const cityName = String(place.main || place.label.split(",", 1)[0] || "").trim().toLocaleLowerCase();
+    if (!cityName || seenCities.has(cityName)) continue;
+    seenCities.add(cityName);
+    merged.push(place);
+    if (merged.length >= 8) break;
+  }
+  return merged;
+}
+
 function bundledRideCityImage(place: Pick<RidePlaceSuggestion, "label" | "main">): ImageSourcePropType {
   const location = `${place.main} ${place.label}`.toLowerCase();
   if (location.includes("new york")) return appAssets.cityNewYork;
@@ -1365,7 +1381,10 @@ export function HousingScreen({
           return !selectedCountry || placeCountry === selectedCountry;
         });
         const countryFallback = selectedCountry === "IN" ? indiaRidePopularCities : selectedCountry === "US" ? usRidePopularCities : [];
-        setRidePopularPlaces(usablePlaces.length ? usablePlaces.slice(0, 8) : countryFallback);
+        // The API may only have one active listing city (for example Denver).
+        // Keep the full country discovery rail visible after that response by
+        // filling its remaining cards from the bundled, zero-cost city list.
+        setRidePopularPlaces(mergeRidePopularCities(usablePlaces, countryFallback));
       })
       .catch(() => undefined);
     return () => {

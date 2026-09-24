@@ -3,7 +3,6 @@ import Constants from "expo-constants";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Google from "expo-auth-session/providers/google";
 import * as Device from "expo-device";
-import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
@@ -30,7 +29,7 @@ import { UserAvatar } from "./src/components/UserAvatar";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
 import { avatarInitials } from "./src/utils/text";
 import { shareHousingListing } from "./src/utils/listingShare";
-import { deviceAddressCityLabel } from "./src/utils/locationRegion";
+import { readCachedDeviceCity, resolveCurrentDeviceCity } from "./src/utils/deviceCity";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
 import { HousingScreen } from "./src/screens/HousingScreen";
 import { MessengerScreen } from "./src/screens/MessengerScreen";
@@ -830,17 +829,10 @@ function FairFaresApp() {
   async function resolveInitialDeviceCity() {
     if (Platform.OS === "web") return "";
     try {
-      const permission = await Location.getForegroundPermissionsAsync();
-      if (!permission.granted) return "";
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const livePosition = await Promise.race([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-        new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 8_000); }),
-      ]).finally(() => { if (timeout) clearTimeout(timeout); });
-      const position = livePosition || await Location.getLastKnownPositionAsync({ maxAge: 2 * 60_000, requiredAccuracy: 1000 });
-      if (!position) return "";
-      const [address] = await Location.reverseGeocodeAsync(position.coords);
-      return deviceAddressCityLabel(address);
+      const cached = await readCachedDeviceCity();
+      if (cached?.city) return cached.city;
+      const result = await resolveCurrentDeviceCity({ allowCachedFallback: true });
+      return result?.city || "";
     } catch {
       return "";
     }

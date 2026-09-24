@@ -186,6 +186,10 @@ function prepareChitthiSentSound() {
 const CHAT_IMAGE_PREFETCH_LIMIT = 8;
 const ChatPhotoViewerContext = createContext(0);
 const CHAT_IMAGE_MEMORY_CACHE_LIMIT = 80;
+// Keep the limit independent from the swipe-to-reply wrapper. That wrapper
+// shrink-wraps its child, so a percentage max width here is measured against
+// the bubble's own intrinsic width and makes ordinary text wrap too early.
+const CHAT_TEXT_BUBBLE_MAX_WIDTH = Math.max(248, Math.min(340, Math.round(Dimensions.get("window").width * 0.82)));
 const CHAT_MEDIA_WIDTH = Math.max(248, Math.min(320, Math.round(Dimensions.get("window").width * 0.78)));
 // A reply needs one stable column for both the quoted message and its answer.
 // Letting either piece determine its own intrinsic width caused the quote to
@@ -195,7 +199,11 @@ const CHAT_MEDIA_MIN_HEIGHT = 160;
 const CHAT_MEDIA_MAX_HEIGHT = 430;
 const CHAT_MEDIA_FALLBACK_HEIGHT = Math.round(CHAT_MEDIA_WIDTH * 1.05);
 const CHAT_PREVIEW_SCREEN_WIDTH = Dimensions.get("window").width;
-const CHAT_EDGE_BACK_ZONE = 64;
+// Keep thread navigation in the actual screen-edge gutter. Incoming bubbles
+// begin around 24pt from the edge, so the old 64pt reservation swallowed their
+// swipe-to-reply gesture before the message responder could claim it.
+const CHAT_THREAD_EDGE_BACK_ZONE = 20;
+const CHAT_OVERLAY_EDGE_BACK_ZONE = 64;
 const CHAT_EDGE_BACK_DISTANCE = 36;
 const CHAT_PREVIEW_MEDIA_HEIGHT = Math.max(300, Math.min(560, Dimensions.get("window").height - (Platform.OS === "ios" ? 220 : 190)));
 const CHAT_COLLAGE_GAP = 3;
@@ -1042,21 +1050,15 @@ function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; 
   const replyBodyStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: interpolate(translateX.value, [0, 72], [0, 31], Extrapolation.CLAMP) }],
   }));
-  const replyActionStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, 6, 34], [0, 0.42, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(translateX.value, [0, 28, 58], [0.68, 0.94, 1], Extrapolation.CLAMP) }],
-  }));
   const resetReplySwipe = () => {
     translateX.value = withSpring(0, { damping: 22, stiffness: 360, mass: 0.5 });
   };
-  const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number; x0: number }) => {
-    // The leading edge belongs to the thread navigation gesture. Without this
-    // guard an incoming bubble can claim that gesture before its parent does.
-    if (gesture.x0 <= CHAT_EDGE_BACK_ZONE) return false;
+  const shouldClaimReplySwipe = (_event: unknown, gesture: { dx: number; dy: number }) => {
     return gesture.dx > (Platform.OS === "web" ? 11 : 7)
       && Math.abs(gesture.dx) > Math.abs(gesture.dy) * (Platform.OS === "web" ? 1.45 : 1.2);
   };
   const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: shouldClaimReplySwipe,
     onMoveShouldSetPanResponder: shouldClaimReplySwipe,
     onPanResponderGrant: () => cancelAnimation(translateX),
     onPanResponderMove: (_event, gesture) => { translateX.value = Math.max(0, Math.min(72, gesture.dx)); },
@@ -1070,7 +1072,6 @@ function SwipeToReply({ children, mine, onReply }: { children: React.ReactNode; 
     onPanResponderTerminate: resetReplySwipe
   }), [translateX]);
   return <View style={[styles.swipeReplyWrap, mine ? styles.swipeReplyWrapMine : styles.swipeReplyWrapTheirs]}>
-    <Reanimated.View pointerEvents="none" style={[styles.swipeReplyAction, replyActionStyle]} accessibilityElementsHidden><Text style={styles.swipeReplyActionIcon}>↩</Text></Reanimated.View>
     <Reanimated.View style={[styles.swipeReplyBody, replyBodyStyle]} {...panResponder.panHandlers}>{children}</Reanimated.View>
   </View>;
 }
@@ -7336,7 +7337,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Preserve message-level right swipes for reply. The screen-level back
       // gesture starts only at the leading edge, like native chat navigation.
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
-      return horizontalSwipe && gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0;
+      return horizontalSwipe && gesture.x0 <= CHAT_THREAD_EDGE_BACK_ZONE && gesture.dx > 0;
     },
     onPanResponderGrant: () => threadEdgeTranslateX.stopAnimation(),
     onPanResponderMove: (_event, gesture) => {
@@ -7350,7 +7351,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
-      const edgeSwipe = gesture.x0 <= CHAT_EDGE_BACK_ZONE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
+      const edgeSwipe = gesture.x0 <= CHAT_THREAD_EDGE_BACK_ZONE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
       const horizontalSwipe = edgeSwipe && (gesture.dx > Math.max(CHAT_EDGE_BACK_DISTANCE * 2, screenWidth * 0.22) || (gesture.dx > 18 && gesture.vx > 0.72));
       const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 360, mass: 0.62, velocity: gesture.vx }).start();
       if (!horizontalSwipe) {
@@ -7458,12 +7459,12 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
-      return horizontalSwipe && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
+      return horizontalSwipe && ((gesture.x0 <= CHAT_OVERLAY_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_OVERLAY_EDGE_BACK_ZONE && gesture.dx < 0));
     },
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
       const horizontalSwipe = Math.abs(gesture.dx) > CHAT_EDGE_BACK_DISTANCE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
-        && ((gesture.x0 <= CHAT_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_EDGE_BACK_ZONE && gesture.dx < 0));
+        && ((gesture.x0 <= CHAT_OVERLAY_EDGE_BACK_ZONE && gesture.dx > 0) || (gesture.x0 >= screenWidth - CHAT_OVERLAY_EDGE_BACK_ZONE && gesture.dx < 0));
       if (horizontalSwipe) setMessageInfo(null);
     },
     onPanResponderTerminationRequest: () => true
@@ -9052,8 +9053,6 @@ const styles = StyleSheet.create({
   swipeReplyWrapMine: { alignSelf: "flex-end" },
   swipeReplyWrapTheirs: { alignSelf: "flex-start" },
   swipeReplyBody: { overflow: "visible" },
-  swipeReplyAction: { position: "absolute", left: -43, top: "50%", width: 34, height: 34, marginTop: -17, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(33, 102, 79, 0.94)" },
-  swipeReplyActionIcon: { color: "#fff", fontSize: 19, lineHeight: 22, fontWeight: "800" },
   dateDivider: { alignSelf: "center", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5, marginVertical: 10, backgroundColor: "rgba(7,45,35,0.94)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(214,169,95,0.42)" },
   dateDividerLine: { display: "none" },
   dateDividerText: { color: "#E7D3A7", fontSize: 10, fontWeight: "600", letterSpacing: 0.8 },
@@ -9396,11 +9395,11 @@ const styles = StyleSheet.create({
   messages: { maxHeight: 260, backgroundColor: theme.colors.bg, borderRadius: theme.radius.md },
   messagesContent: { padding: theme.spacing.sm, gap: 8 },
   emptyText: { color: theme.colors.muted, textAlign: "center", padding: theme.spacing.md, fontWeight: "800" },
-  bubble: { maxWidth: "88%", minWidth: 70, borderRadius: 11, paddingLeft: 10, paddingRight: 13, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  replyBubble: { width: CHAT_REPLY_WIDTH, maxWidth: "88%", minWidth: 0 },
-  fairFaresShareBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "88%", padding: 0, overflow: "hidden", borderRadius: 14 },
+  bubble: { maxWidth: CHAT_TEXT_BUBBLE_MAX_WIDTH, minWidth: 70, borderRadius: 11, paddingLeft: 10, paddingRight: 13, paddingTop: 6, paddingBottom: 4, position: "relative", shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 1.5, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  replyBubble: { width: CHAT_REPLY_WIDTH, maxWidth: CHAT_REPLY_WIDTH, minWidth: 0 },
+  fairFaresShareBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: CHAT_MEDIA_WIDTH, padding: 0, overflow: "hidden", borderRadius: 14 },
   emojiOnlyBubble: { minWidth: 0, paddingHorizontal: 2, paddingTop: 0, paddingBottom: 0, borderWidth: 0, shadowOpacity: 0, elevation: 0 },
-  photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: "94%", padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
+  photoBubble: { width: CHAT_MEDIA_WIDTH, maxWidth: CHAT_MEDIA_WIDTH, padding: 0, borderRadius: 19, overflow: "visible", backgroundColor: "#202321" },
   myPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomRightRadius: 19 },
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
   borderlessMediaBubble: { borderWidth: 0, shadowOpacity: 0, elevation: 0 },
