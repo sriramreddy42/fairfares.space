@@ -1145,9 +1145,10 @@ function FairFaresApp() {
     if (handledNotificationResponseRef.current === responseKey) return;
     handledNotificationResponseRef.current = responseKey;
     const type = String(response?.notification.request.content.data?.type || "");
+    const diagnosticNotification = Boolean(response?.notification.request.content.data?.diagnosticId);
     if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
-      setNotificationConversationId(String(response?.notification.request.content.data?.conversationId || ""));
-      setNotificationMessageId(Number(response?.notification.request.content.data?.messageId || 0));
+      setNotificationConversationId(diagnosticNotification ? "" : String(response?.notification.request.content.data?.conversationId || ""));
+      setNotificationMessageId(diagnosticNotification ? 0 : Number(response?.notification.request.content.data?.messageId || 0));
       setPendingPost(null);
       setPendingRide(null);
       setActiveTab("messenger");
@@ -1169,7 +1170,7 @@ function FairFaresApp() {
         }).catch(() => Alert.alert("Ride unavailable", "Could not open this ride. Please try again."));
       }
     } else if (type === "CARPOOL_REQUEST" || type === "CARPOOL_STATUS" || type === "CARPOOL_RATING") {
-      const rideId = String(response?.notification.request.content.data?.rideId || "");
+      const rideId = diagnosticNotification ? "" : String(response?.notification.request.content.data?.rideId || "");
       setPendingPost(null);
       setPendingRide(null);
       setRideOwnerFocusId(rideId);
@@ -1182,12 +1183,27 @@ function FairFaresApp() {
       setActiveTab("housing");
       setRideOwnerOpenToken((value) => value + 1);
     } else if (type.startsWith("HOUSING_")) {
+      const listingId = String(response?.notification.request.content.data?.listingId || response?.notification.request.content.data?.postId || "");
+      const diagnosticId = String(response?.notification.request.content.data?.diagnosticId || "");
       setPendingPost(null);
       setPendingRide(null);
+      setRideOwnerOpenToken(0);
+      setRideOwnerReturnTab(null);
+      setSelectedNeed("need_place");
       setActiveTab("housing");
       setHousingWelcomeFocusKey((current) => current + 1);
+      if (listingId && !diagnosticId) {
+        void getHousingListing(listingId).then((post) => {
+          if (!post) {
+            Alert.alert("Listing unavailable", "This housing listing is no longer available.");
+            return;
+          }
+          setVisiblePosts((current) => [post, ...current.filter((item) => item.id !== post.id)]);
+          setLinkedHousingPost(post);
+        }).catch(() => Alert.alert("Listing unavailable", "This housing listing is no longer available."));
+      }
     } else if (type === "RENTAL_BOOKING") {
-      const bookingId = String(response?.notification.request.content.data?.bookingId || "");
+      const bookingId = diagnosticNotification ? "" : String(response?.notification.request.content.data?.bookingId || "");
       const event = String(response?.notification.request.content.data?.event || "").toUpperCase();
       const paymentStatus = String(response?.notification.request.content.data?.paymentStatus || "").toUpperCase();
       const depositStatus = String(response?.notification.request.content.data?.depositStatus || "").toUpperCase();
@@ -1210,11 +1226,15 @@ function FairFaresApp() {
       setPendingPost(null);
       setPendingRide(null);
       if (target === "rentals") {
-        setSelectedService("cars");
-        setActiveTab("services");
+        setSelectedNeed("rental_cars");
+        setRentalFocusKey((value) => value + 1);
+        setActiveTab("housing");
       } else if (target === "carpool") {
-        setActiveTab("activity");
+        setSelectedNeed("ride_need");
+        setCarpoolFocusKey((value) => value + 1);
+        setActiveTab("housing");
       } else {
+        setSelectedNeed("need_place");
         setActiveTab("home");
         setHousingWelcomeFocusKey((current) => current + 1);
       }
@@ -1763,7 +1783,8 @@ function FairFaresApp() {
   }
 
   async function selectNeed(need: string) {
-    if (need === "ride_need" || need === "ride_offer") {
+    if (need === "ride_need" || need === "ride_offer" || need === "rental_cars") {
+      setSelectedNeed(need);
       setActiveTab("housing");
       return;
     }
@@ -2913,12 +2934,14 @@ function FairFaresApp() {
         onEditHousing={openHousingListingEditor}
         onOpenServices={(bookingId = "") => {
           setRentalEditBookingId(bookingId);
+          setRentalEditBookingAction("manage");
           setSelectedService("cars");
           setActiveTab("services");
         }}
-        onOpenRideOwner={(target = "workspace") => {
+        onOpenRideOwner={(target = "workspace", rideId = "") => {
           setRideOwnerOpenTarget(target);
           setRideOwnerEditId("");
+          setRideOwnerFocusId(rideId);
           setRideOwnerReturnTab("activity");
           setSelectedNeed("ride_offer");
           setActiveTab("housing");
@@ -2942,9 +2965,10 @@ function FairFaresApp() {
           setHousingWelcomeFocusKey((value) => value + 1);
         }}
         onEditHousing={openHousingListingEditor}
-        onOpenRide={(target = "workspace", rideId = "") => {
+        onOpenRide={(target = "workspace", rideId = "", edit = false) => {
           setRideOwnerOpenTarget(target);
-          setRideOwnerEditId(rideId);
+          setRideOwnerEditId(edit ? rideId : "");
+          setRideOwnerFocusId(edit ? "" : rideId);
           setRideOwnerReturnTab("profile");
           setSelectedNeed("ride_offer");
           setActiveTab("housing");
@@ -2952,6 +2976,7 @@ function FairFaresApp() {
         }}
         onOpenServices={(bookingId = "") => {
           setRentalEditBookingId(bookingId);
+          setRentalEditBookingAction("manage");
           setSelectedService("cars");
           setActiveTab("services");
         }}

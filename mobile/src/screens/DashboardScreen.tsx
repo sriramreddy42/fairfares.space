@@ -16,8 +16,8 @@ type Props = {
   onRideMessage?: (ride: RidePost) => void;
   onOpenHousing?: (postId?: string) => void;
   onEditHousing?: (postId: string) => Promise<void> | void;
-  onOpenServices?: () => void;
-  onOpenRideOwner?: (target?: "workspace" | "requests" | "listings") => void;
+  onOpenServices?: (bookingId?: string) => void;
+  onOpenRideOwner?: (target?: "workspace" | "requests" | "listings", rideId?: string) => void;
   onRequireLogin?: () => void;
 };
 
@@ -680,7 +680,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       )}
 
       {upcomingBookings.slice(0, 2).map((booking) => (
-        <TouchableOpacity key={`booking-${booking.id}`} style={[styles.bookingCard, isLight && styles.flatLightCard]} onPress={onOpenServices}>
+        <TouchableOpacity key={`booking-${booking.id}`} style={[styles.bookingCard, isLight && styles.flatLightCard]} onPress={() => onOpenServices?.(booking.id)}>
           <Text style={styles.cardTitle}>{booking.carName || "Rental car booking"}</Text>
           <Text style={styles.cardMeta}>{compactDate(booking.pickupDate, booking.pickupTime)} · {booking.pickupLocation}</Text>
           <Text style={styles.moneyText}>{booking.totalLabel || money(booking.total)}</Text>
@@ -796,7 +796,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
               <View style={styles.requestSide}>
                 <View style={styles.requestDateRow}><ActivityIcon kind="calendar" color="#c2cada" /><Text style={styles.requestDateText}>{compactDate(ride.pickupDate || ride.startDate, ride.pickupTime)}</Text><Text style={styles.moreGlyph}>⋮</Text></View>
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => handleRideChat(ride)}><Image source={appAssets.chittiMascot} style={styles.chitthiButtonIcon} resizeMode="contain" /><Text style={styles.primarySmallPillText}>Chitthi</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.primarySmallPill} onPress={() => onOpenRideOwner?.("listings", ride.id)}><Text style={styles.primarySmallPillText}>Manage</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.detailsOutlinePill} onPress={handleListRide}><Text style={styles.secondaryPillText}>List another</Text></TouchableOpacity>
                 </View>
               </View>
@@ -852,7 +852,7 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
       ))}
 
       {pastBookings.slice(0, 4).map((booking) => (
-        <TouchableOpacity key={`past-booking-${booking.id}`} style={styles.historyRow} onPress={onOpenServices}>
+        <TouchableOpacity key={`past-booking-${booking.id}`} style={styles.historyRow} onPress={() => onOpenServices?.(booking.id)}>
           <View style={styles.rowIcon}><Text style={styles.rowIconText}>🚗</Text></View>
           <View style={styles.rowText}>
             <Text style={styles.rowTitle}>{booking.carName || "Rental car"}</Text>

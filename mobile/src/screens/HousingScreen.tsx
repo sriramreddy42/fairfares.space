@@ -1193,13 +1193,25 @@ export function HousingScreen({
       setRentalSearched(false);
       return;
     }
+    // Navigation away from rentals must also dismiss its native overlays.
+    // Otherwise a notification or bottom-tab change can update the selected
+    // destination while the previous quote remains above the new screen.
+    setRentalQuote(null);
+    setSelectedRentalCar(null);
+    setRentalPicker(null);
+    setRentalBusy(false);
     if (selectedNeed === "ride_need" || selectedNeed === "ride_offer") {
       setMode("ride");
       setRideForm((current) => ({
         ...current,
         rideType: selectedNeed === "ride_offer" ? "CARPOOL_OFFER" : "CARPOOL_REQUEST"
       }));
+      return;
     }
+    // The visible Housing tab and housing notification targets use the normal
+    // housing intents. Always restore the housing surface instead of retaining
+    // whichever carpool/rental mode happened to be open previously.
+    setMode("housing");
   }, [selectedNeed]);
 
   useEffect(() => {
@@ -1596,9 +1608,11 @@ export function HousingScreen({
 
   function openQuickLink(key: (typeof quickLinks)[number]["key"]) {
     if (key === "earn") {
+      onNeedSelect("ride_offer");
       startRideOfferListing();
       return;
     }
+    onNeedSelect("ride_need");
     openRidePlanner();
     setSelectedRideService("carpool");
     setRideForm((current) => ({ ...current, rideType: "CARPOOL_REQUEST" }));
@@ -4195,12 +4209,12 @@ export function HousingScreen({
           <Text style={styles.rentalSectionEyebrow}>FairFares car rentals</Text>
           <Text style={styles.rentalSectionTitle}>Cheap car rentals</Text>
         </View>
-        <TouchableOpacity style={styles.rentalSectionAction} onPress={() => setMode("cheapCars")} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="View rental cars">
+        <TouchableOpacity style={styles.rentalSectionAction} onPress={() => { onNeedSelect("rental_cars"); setMode("cheapCars"); }} activeOpacity={0.78} accessibilityRole="button" accessibilityLabel="View rental cars">
           <Text style={styles.rentalSectionActionText}>View cars</Text>
           <Text style={styles.rentalSectionArrow}>→</Text>
         </TouchableOpacity>
       </View>
-      <RentalPromoCarousel onPress={() => setMode("cheapCars")} />
+      <RentalPromoCarousel onPress={() => { onNeedSelect("rental_cars"); setMode("cheapCars"); }} />
       <SectionHeader title="Exports & Imports" />
       <View style={[styles.exportsImportsCard, isLight && styles.exportsImportsCardLight]}>
         <View style={styles.exportsImportsImageFrame}>

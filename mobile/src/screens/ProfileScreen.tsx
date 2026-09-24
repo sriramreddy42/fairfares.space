@@ -21,7 +21,7 @@ type Props = {
   onProfileUpdated: (user: BootstrapPayload["user"]) => void;
   onOpenHousing?: () => void;
   onEditHousing?: (postId: string) => Promise<void> | void;
-  onOpenRide?: (target?: "workspace" | "requests" | "listings", rideId?: string) => void;
+  onOpenRide?: (target?: "workspace" | "requests" | "listings", rideId?: string, edit?: boolean) => void;
   onOpenServices?: (bookingId?: string) => void;
   onOpenMessenger?: () => void;
   onOpenStaffPickup?: () => void;
@@ -248,7 +248,7 @@ export function ProfileScreen({
         status,
         current: !PAST_RIDE_STATUSES.has(status.toUpperCase()) && !ride.isExpired,
         kind: carpoolHistoryView === "listings" ? "Listing" : "Request",
-        editable: ride.activityRole === "MINE"
+        editable: ride.activityRole === "MINE" && ["LISTED", "PENDING", "REQUESTED", "MATCHING", "ACTIVE", "OPEN"].includes(status.toUpperCase())
       };
     });
     if (historySection === "rentals") return rentalActivity.map((booking) => {
@@ -688,7 +688,7 @@ export function ProfileScreen({
               {currentHistoryItems.length ? currentHistoryItems.map((item) => (
                 <View key={`current-${item.id}`} style={styles.historyRow}>
                   <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Current</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
-                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} disabled={Boolean(historyOpeningId)} onPress={() => void (async () => { setHistoryOpeningId(item.id); try { if (historySection === "housing") { await onEditHousing?.(item.sourceId); } else { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView, item.editable ? item.sourceId : undefined) : onOpenServices?.(item.sourceId); } setHistorySection(null); } finally { setHistoryOpeningId(""); } })()}>{historyOpeningId === item.id ? <ActivityIndicator size="small" color={theme.colors.brand} /> : <Text style={styles.historyEditText}>{item.editable ? "Edit" : "Manage"}</Text>}</TouchableOpacity></View>
+                  <View style={styles.historyRowActions}><Text style={styles.historyCurrentBadge}>{item.status}</Text><TouchableOpacity style={styles.historyEditButton} disabled={Boolean(historyOpeningId)} onPress={() => void (async () => { setHistoryOpeningId(item.id); try { if (historySection === "housing") { await onEditHousing?.(item.sourceId); } else { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())); historySection === "carpool" ? onOpenRide?.(carpoolHistoryView, item.sourceId, item.editable) : onOpenServices?.(item.sourceId); } setHistorySection(null); } finally { setHistoryOpeningId(""); } })()}>{historyOpeningId === item.id ? <ActivityIndicator size="small" color={theme.colors.brand} /> : <Text style={styles.historyEditText}>{item.editable ? "Edit" : "Manage"}</Text>}</TouchableOpacity></View>
                 </View>
               )) : <Text style={styles.historyEmpty}>No current records.</Text>}
               <Text style={styles.historySectionTitle}>Expired / completed · {previousHistoryItems.length}</Text>
