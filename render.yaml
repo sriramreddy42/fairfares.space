@@ -41,6 +41,8 @@ services:
       # use FairFares-backed data unless this is explicitly approved later.
       - key: FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH
         value: "0"
+      - key: FAIRFARES_ENABLE_EXPLORER
+        value: "0"
       # Google ID tokens created by the native apps use the server/Web OAuth
       # client as their audience. Keep every FairFares client in the backend
       # allow-list so Web, Android, and iOS tokens are accepted while tokens

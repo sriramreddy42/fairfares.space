@@ -14130,6 +14130,11 @@ def truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def explorer_feature_enabled() -> bool:
+    """Keep the retired public Explorer surface off until intentionally relaunched."""
+    return truthy_env(os.environ.get("FAIRFARES_ENABLE_EXPLORER"))
+
+
 def slugify_mcp_label(value: object, fallback: str) -> str:
     label = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
     return (label or fallback)[:64]
@@ -26379,7 +26384,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/carpool/open": self.carpool_open_landing,
             "/carpool": self.carpool_page,
             "/wiki": self.wiki_page,
-            "/explorer": self.explorer_page,
+            "/explorer": self.explorer_page if explorer_feature_enabled() else self.not_found,
             "/activate": self.activate_account,
             "/student-verify": self.verify_student_email,
             "/unsubscribe": self.unsubscribe_marketing,
@@ -30636,6 +30641,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(body)
 
     def api_explorer_place_photo(self, parsed: urllib.parse.ParseResult, head_only: bool = False) -> None:
+        if not explorer_feature_enabled():
+            self.not_found()
+            return
         api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         ref = (urllib.parse.parse_qs(parsed.query).get("ref") or [""])[0].strip()
         if not api_key or not ref or len(ref) > 2048 or not re.fullmatch(r"[A-Za-z0-9._~-]+", ref):
@@ -30738,6 +30746,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
 
     def create_explorer_quest(self) -> None:
+        if not explorer_feature_enabled():
+            self.send_json({"ok": False, "message": "Explorer is not available."}, 404)
+            return
         user = self.current_user()
         form = self.read_form()
         moods = [item.strip() for item in form.get("moods", "").split(",") if item.strip()]
@@ -30767,6 +30778,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.create_explorer_quest()
 
     def api_get_explorer_quest(self, raw_id: str) -> None:
+        if not explorer_feature_enabled():
+            self.send_json({"ok": False, "message": "Explorer is not available."}, 404)
+            return
         try:
             quest_id = int(raw_id)
         except ValueError:
