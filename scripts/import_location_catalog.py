@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 GEONAMES_BASE = "https://download.geonames.org/export/dump"
 SUPPORTED_COUNTRIES = {"US", "IN"}
-IMPORT_VERSION = 3
+IMPORT_VERSION = 4
 MIN_CITY_POPULATION = 100
 CITY_CODES = {
     "PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLA5", "PPLC",
@@ -39,6 +39,7 @@ POI_TYPES = {
     "TRANT": "TRANSIT",
     "UNIV": "UNIVERSITY",
     "SCHC": "UNIVERSITY",
+    "SCH": "UNIVERSITY",
     "MALL": "MALL",
     "HSP": "HOSPITAL",
     "CTRM": "HOSPITAL",
@@ -87,6 +88,20 @@ def import_country(con, country: str, archive: Path, states: dict[str, str]) -> 
                 if feature_code not in CITY_CODES | NEIGHBORHOOD_CODES | POI_TYPES.keys():
                     continue
                 geoname_id, name, ascii_name, aliases = fields[0], fields[1], fields[2], fields[3]
+                # GeoNames uses SCH for everything from elementary schools to
+                # universities. Keep higher-education campuses while excluding
+                # the much larger K-12 set from location autocomplete.
+                if feature_code == "SCH":
+                    school_name = f"{name} {ascii_name}"
+                    if not re.search(
+                        r"\b(?:university|college|institute of technology|polytechnic)\b",
+                        school_name,
+                        re.IGNORECASE,
+                    ) or (
+                        re.search(r"\b(?:academy|school)\b", school_name, re.IGNORECASE)
+                        and not re.search(r"\buniversity\b", school_name, re.IGNORECASE)
+                    ):
+                        continue
                 try:
                     lat, lng = float(fields[4]), float(fields[5])
                     population = max(0, int(fields[14] or 0))
