@@ -1320,6 +1320,92 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(refresh.call_count, 1)
         self.assertFalse(refresh.call_args.kwargs["include_nearby_areas"])
 
+    def test_offline_catalogue_supplies_housing_neighborhood_and_coordinates(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-rino', 'US', 'CO', 'Colorado',
+                        'Denver', 'RiNo', 'RiNo', 'PPLX', 'NEIGHBORHOOD',
+                        39.769, -104.981, 0, 'rino denver co us')
+                """
+            )
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}):
+            options = app.accommodation_location_options("Denver, CO", "RiNo", backend_only=True)
+            point = app.accommodation_location_point("RiNo, Denver, CO", allow_refresh=False)
+        self.assertIn("RiNo, Denver, CO", options["suggested"])
+        self.assertEqual(options["source"], "offline-catalogue")
+        self.assertEqual(point["source"], "offline-catalogue")
+        self.assertAlmostEqual(point["lat"], 39.769)
+
+    def test_offline_catalogue_supplies_city_autocomplete(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-bengaluru', 'IN', '19', 'Karnataka',
+                        'Bengaluru', 'Bengaluru', 'PPLA', 'CITY',
+                        12.9716, 77.5946, 8443675, 'bengaluru karnataka in')
+                """
+            )
+        suggestions = app.accommodation_city_suggestions("Beng", include_google=False)
+        self.assertIn("Bengaluru, Karnataka, IN", suggestions)
+
+    def test_carpool_city_autocomplete_uses_offline_catalogue(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-dallas', 'US', 'TX', 'Texas',
+                        'Dallas', 'Dallas', 'Dallas', 'PPLA2', 'CITY',
+                        32.7767, -96.7970, 1300000, 'dallas tx us')
+                """
+            )
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}), patch.object(
+            app, "google_accommodation_place_predictions", side_effect=AssertionError("Google must not be called")
+        ):
+            suggestions = app.ride_place_suggestions("Denver, CO", "Dallas", limit=5)
+        self.assertEqual(suggestions[0]["label"], "Dallas, TX")
+        self.assertEqual(suggestions[0]["source"], "offline-catalogue")
+        self.assertAlmostEqual(suggestions[0]["lat"], 32.7767)
+
+    def test_carpool_airport_name_and_code_use_offline_catalogue(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, alternate_names, feature_code,
+                     location_type, lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-dfw', 'US', 'TX', 'Texas', 'Dallas',
+                        'Dallas/Fort Worth International Airport',
+                        'Dallas/Fort Worth International Airport', 'DFW,KDFW',
+                        'AIRP', 'AIRPORT', 32.8998, -97.0403, 0,
+                        'dallas fort worth international airport tx us')
+                """
+            )
+            airport_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                "INSERT INTO location_catalog_aliases (location_id, alias_search, alias_label) VALUES (?, 'dfw', 'DFW')",
+                (airport_id,),
+            )
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}), patch.object(
+            app, "google_accommodation_place_predictions", side_effect=AssertionError("Google must not be called")
+        ):
+            code_results = app.ride_place_suggestions("Dallas, TX", "DFW", limit=5)
+            name_results = app.ride_place_suggestions("Dallas, TX", "Dallas airport", limit=5)
+        self.assertEqual(code_results[0]["label"], "Dallas/Fort Worth International Airport, Dallas, TX")
+        self.assertEqual(name_results[0]["source"], "offline-catalogue")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6995,6 +6995,61 @@ def init_db() -> None:
                 FOREIGN KEY(metro_id) REFERENCES accommodation_metros(id)
             );
 
+            CREATE TABLE IF NOT EXISTS location_catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                country_code TEXT NOT NULL DEFAULT '',
+                admin1_code TEXT NOT NULL DEFAULT '',
+                admin1_name TEXT NOT NULL DEFAULT '',
+                admin2_name TEXT NOT NULL DEFAULT '',
+                city_name TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                ascii_name TEXT NOT NULL DEFAULT '',
+                alternate_names TEXT NOT NULL DEFAULT '',
+                feature_code TEXT NOT NULL DEFAULT '',
+                location_type TEXT NOT NULL DEFAULT 'CITY',
+                lat REAL NOT NULL,
+                lng REAL NOT NULL,
+                population INTEGER NOT NULL DEFAULT 0,
+                search_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source, external_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_location_catalog_search
+            ON location_catalog(search_name, population DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_location_catalog_city
+            ON location_catalog(country_code, city_name, location_type, population DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_location_catalog_admin
+            ON location_catalog(country_code, admin1_code, location_type, population DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_location_catalog_type_location
+            ON location_catalog(location_type, country_code, lat, lng);
+
+            CREATE TABLE IF NOT EXISTS location_catalog_aliases (
+                location_id INTEGER NOT NULL,
+                alias_search TEXT NOT NULL,
+                alias_label TEXT NOT NULL,
+                PRIMARY KEY(location_id, alias_search),
+                FOREIGN KEY(location_id) REFERENCES location_catalog(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_location_catalog_alias_search
+            ON location_catalog_aliases(alias_search, location_id);
+
+            CREATE TABLE IF NOT EXISTS location_catalog_imports (
+                source TEXT NOT NULL,
+                country_code TEXT NOT NULL,
+                import_version INTEGER NOT NULL DEFAULT 1,
+                record_count INTEGER NOT NULL DEFAULT 0,
+                imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(source, country_code)
+            );
+
             CREATE TABLE IF NOT EXISTS cars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -16150,6 +16205,184 @@ def keep_mobile_accommodation_suggestion(label: str) -> bool:
     )
 
 
+def normalize_location_catalog_search(value: str) -> str:
+    """Normalize a human-entered place name for the offline catalogue."""
+    normalized = " ".join(re.sub(r"[^\w]+", " ", str(value or "").casefold(), flags=re.UNICODE).split())
+    normalized = re.sub(r"\b(?:united states of america|united states|usa)\b$", "us", normalized)
+    normalized = re.sub(r"\bindia\b$", "in", normalized)
+    return normalized
+
+
+def location_catalog_suggestions(
+    query: str,
+    limit: int = 18,
+    *,
+    country_code: str = "",
+    admin1_code: str = "",
+    cities_only: bool = False,
+    near_lat: float = 0,
+    near_lng: float = 0,
+) -> list[dict[str, object]]:
+    """Search the imported gazetteer without making a provider request."""
+    term = normalize_location_catalog_search(query)
+    if len(term) < 2:
+        return []
+    limit = max(1, min(int(limit or 18), 30))
+    catalogue_type = ""
+    type_patterns = (
+        (r"(?:airports?|air terminals?)", "AIRPORT"),
+        (r"(?:(?:train|railroad|rail|metro|bus|transit)\s+)?(?:stations?|terminals?)", "TRANSIT"),
+        (r"(?:universit(?:y|ies)|colleges?|campus)", "UNIVERSITY"),
+        (r"(?:malls?|shopping centers?)", "MALL"),
+        (r"(?:hospitals?|medical centers?)", "HOSPITAL"),
+    )
+    search_term = term
+    for pattern, location_type in type_patterns:
+        match = re.fullmatch(rf"(?:(.+?)\s+)?{pattern}", term)
+        if match:
+            catalogue_type = location_type
+            search_term = (match.group(1) or "").strip()
+            if catalogue_type == "TRANSIT" and search_term in {"train", "railroad", "rail", "metro", "bus", "transit"}:
+                search_term = ""
+            break
+    # search_name begins with the canonical place name. A bounded range lets
+    # SQLite use idx_location_catalog_search instead of scanning the entire
+    # US/India catalogue on every keystroke.
+    clauses: list[str] = []
+    values: list[object] = []
+    if search_term:
+        clauses.append("search_name >= ? AND search_name < ?")
+        values.extend((search_term, f"{search_term}\uffff"))
+    elif near_lat and near_lng:
+        clauses.extend(("lat BETWEEN ? AND ?", "lng BETWEEN ? AND ?"))
+        values.extend((near_lat - 3.0, near_lat + 3.0, near_lng - 3.0, near_lng + 3.0))
+    else:
+        return []
+    if country_code:
+        clauses.append("country_code = ?")
+        values.append(country_code.strip().upper())
+    if admin1_code:
+        clauses.append("admin1_code = ?")
+        values.append(admin1_code.strip().upper())
+    if cities_only:
+        clauses.append("location_type = 'CITY'")
+    elif catalogue_type:
+        clauses.append("location_type = ?")
+        values.append(catalogue_type)
+    proximity_order = ""
+    order_values: list[object] = []
+    if near_lat and near_lng:
+        proximity_order = "((lat - ?) * (lat - ?) + (lng - ?) * (lng - ?)) ASC,"
+        order_values.extend((near_lat, near_lat, near_lng, near_lng))
+    catalogue_index = "idx_location_catalog_search" if search_term else "idx_location_catalog_type_location"
+    fetch_limit = max(limit, 50) if catalogue_type and near_lat and near_lng else limit
+    try:
+        with db() as con:
+            rows = con.execute(
+                f"""
+                SELECT name, city_name, admin1_code, admin1_name, country_code,
+                       location_type, lat, lng, population, search_name
+                FROM location_catalog INDEXED BY {catalogue_index}
+                WHERE {' AND '.join(clauses)}
+                ORDER BY {proximity_order} CASE
+                           WHEN lower(name) = lower(?) OR lower(ascii_name) = lower(?) THEN 0
+                           ELSE 1
+                         END,
+                         population DESC, name ASC
+                LIMIT ?
+                """,
+                (*values, *order_values, query.strip(), query.strip(), fetch_limit),
+            ).fetchall()
+            alias_clauses = ["alias.alias_search >= ? AND alias.alias_search < ?"]
+            alias_values: list[object] = [search_term, f"{search_term}\uffff"]
+            if country_code:
+                alias_clauses.append("place.country_code = ?")
+                alias_values.append(country_code.strip().upper())
+            if admin1_code:
+                alias_clauses.append("place.admin1_code = ?")
+                alias_values.append(admin1_code.strip().upper())
+            if cities_only:
+                alias_clauses.append("place.location_type = 'CITY'")
+            elif catalogue_type:
+                alias_clauses.append("place.location_type = ?")
+                alias_values.append(catalogue_type)
+            alias_rows = con.execute(
+                f"""
+                SELECT place.name, place.city_name, place.admin1_code, place.admin1_name,
+                       place.country_code, place.location_type, place.lat, place.lng,
+                       place.population, place.search_name, alias.alias_search AS matched_alias
+                FROM location_catalog_aliases alias INDEXED BY idx_location_catalog_alias_search
+                JOIN location_catalog place ON place.id = alias.location_id
+                WHERE {' AND '.join(alias_clauses)}
+                ORDER BY {proximity_order} CASE WHEN alias.alias_search = ? THEN 0 ELSE 1 END,
+                         place.population DESC, place.name ASC
+                LIMIT ?
+                """,
+                (*alias_values, *order_values, search_term, fetch_limit),
+            ).fetchall() if search_term else []
+            exact_alias_rows = [row for row in alias_rows if row_value(row, "matched_alias") == search_term]
+            partial_alias_rows = [row for row in alias_rows if row_value(row, "matched_alias") != search_term]
+            if near_lat and near_lng:
+                rows = list(rows) + exact_alias_rows + partial_alias_rows
+
+                def nearby_catalogue_rank(row: sqlite3.Row) -> tuple[float, str]:
+                    name = str(row_value(row, "name") or "")
+                    distance = (float(row_value(row, "lat") or 0) - near_lat) ** 2 + (float(row_value(row, "lng") or 0) - near_lng) ** 2
+                    return (distance, name.casefold())
+
+                rows.sort(key=nearby_catalogue_rank)
+                if catalogue_type == "AIRPORT":
+                    # Put the nearest commercial international airport first,
+                    # then keep every other airport ordered by proximity.
+                    major_index = next((
+                        index for index, row in enumerate(rows)
+                        if re.search(r"\binternational airport\b", str(row_value(row, "name") or ""), re.I)
+                    ), None)
+                    if major_index is not None and major_index > 0:
+                        rows.insert(0, rows.pop(major_index))
+            else:
+                rows = exact_alias_rows + list(rows) + partial_alias_rows
+    except sqlite3.Error:
+        return []
+    results: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for row in rows:
+        name = str(row_value(row, "name") or "").strip()
+        if catalogue_type == "AIRPORT" and not re.search(r"\bairport\b", name, re.I):
+            continue
+        city = str(row_value(row, "city_name") or "").strip()
+        country = str(row_value(row, "country_code") or "").strip().upper()
+        state = str(
+            row_value(row, "admin1_code") if country == "US"
+            else row_value(row, "admin1_name") or row_value(row, "admin1_code") or ""
+        ).strip()
+        parts = [name]
+        if city and city.casefold() != name.casefold():
+            parts.append(city)
+        if state and state.casefold() not in {part.casefold() for part in parts}:
+            parts.append(state)
+        if country and country != "US":
+            parts.append(country)
+        label = ", ".join(parts)
+        key = label.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "label": label,
+            "name": name,
+            "city": city or name,
+            "state": state,
+            "country": country,
+            "type": str(row_value(row, "location_type") or "CITY"),
+            "lat": float(row_value(row, "lat") or 0),
+            "lng": float(row_value(row, "lng") or 0),
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
 def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google: bool = True) -> list[str]:
     """Return city labels from the location cache, optionally enriching with Places."""
     query = normalize_accommodation_place_label(query)
@@ -16159,8 +16392,16 @@ def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google
     suggestions: list[str] = []
     seen: set[str] = set()
 
+    for place in location_catalog_suggestions(query, limit=limit, cities_only=True):
+        label = str(place.get("label") or "").strip()
+        if label and label.casefold() not in seen:
+            seen.add(label.casefold())
+            suggestions.append(label)
+        if len(suggestions) >= limit:
+            return suggestions
+
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    if include_google and api_key:
+    if include_google and api_key and google_location_fallback_enabled():
         params = urllib.parse.urlencode({"input": query, "types": "(cities)", "key": api_key})
         try:
             payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{params}")
@@ -16629,6 +16870,23 @@ def accommodation_location_point(query: str, search_metro: str = "", allow_refre
     static_lat, static_lng = static_accommodation_point(query)
     if static_lat and static_lng:
         return {"label": query, "metro": search_metro, "lat": static_lat, "lng": static_lng, "source": "static"}
+    catalogue_matches = location_catalog_suggestions(query, limit=3)
+    normalized_query = normalize_location_catalog_search(query)
+    for place in catalogue_matches:
+        normalized_label = normalize_location_catalog_search(str(place.get("label") or ""))
+        normalized_name = normalize_location_catalog_search(str(place.get("name") or ""))
+        requested_name = normalize_location_catalog_search(query.split(",", 1)[0])
+        if normalized_label == normalized_query or normalized_label.startswith(f"{normalized_query} ") or normalized_name == requested_name:
+            lat = float(place.get("lat") or 0)
+            lng = float(place.get("lng") or 0)
+            if lat and lng:
+                return {
+                    "label": str(place.get("label") or query),
+                    "metro": search_metro,
+                    "lat": lat,
+                    "lng": lng,
+                    "source": "offline-catalogue",
+                }
     try:
         with db() as con:
             row = con.execute(
@@ -17542,7 +17800,34 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         labels.append((clean, source))
 
     google_query = query
-    if google_query and len(google_query) < 3:
+    if google_query and len(google_query) >= 2:
+        query_country = inferred_location_country(query) or inferred_location_country(city)
+        query_state = explicit_us_state_from_label(query) if query_country == "US" else ""
+        generic_category = bool(re.search(
+            r"(?:airports?|air terminals?|stations?|terminals?|universit(?:y|ies)|colleges?|campus|malls?|"
+            r"shopping centers?|hospitals?|medical centers?)$",
+            normalize_location_catalog_search(google_query),
+        ))
+        local_places = location_catalog_suggestions(
+            google_query,
+            limit=limit,
+            country_code=query_country,
+            admin1_code=query_state,
+            cities_only=cities_only,
+            near_lat=float(city_point.get("lat") or 0) if generic_category else 0,
+            near_lng=float(city_point.get("lng") or 0) if generic_category else 0,
+        )
+        for place in local_places:
+            label = str(place.get("label") or "")
+            add_label(label, "offline-catalogue")
+            if label:
+                popular_points[label.lower()] = place
+
+    if google_query and labels:
+        # Cities, towns, and known neighborhoods are complete route points in
+        # the offline catalogue. Do not spend Places quota for the same input.
+        pass
+    elif google_query and len(google_query) < 3:
         # Match the mobile threshold at the API boundary so direct callers
         # cannot spend Places quota on an input too short to identify a place.
         for place in ride_known_popular_cities(query, city, limit=limit):
@@ -19586,9 +19871,21 @@ def accommodation_location_options(
 ) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
     area = normalize_accommodation_place_label(area)
-    google_enabled = bool(
+    google_enabled = google_location_fallback_enabled() and bool(
         os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    )
+    catalogue_query = area or query
+    city_point = accommodation_location_point(query, allow_refresh=False)
+    catalogue_country = accommodation_country_code(query) if area else ""
+    catalogue_state = explicit_us_state_from_label(query) if area and catalogue_country == "US" else ""
+    catalogue_suggestions = location_catalog_suggestions(
+        catalogue_query,
+        limit=limit,
+        country_code=catalogue_country,
+        admin1_code=catalogue_state,
+        near_lat=float(city_point.get("lat") or 0) if area else 0,
+        near_lng=float(city_point.get("lng") or 0) if area else 0,
     )
     # Typing must be cheap: the local catalogue is immediate, while Places is
     # used only for a meaningful area query. A committed search performs one
@@ -19685,7 +19982,31 @@ def accommodation_location_options(
             if value and keep_mobile_accommodation_suggestion(value) and value not in merged:
                 merged.append(value)
         suggested = merged
-    point = accommodation_location_point(enrichment_query or metro_name, metro_name, allow_refresh=False)
+    if catalogue_suggestions:
+        merged = []
+        catalogue_labels = [str(place.get("label") or "").strip() for place in catalogue_suggestions]
+        catalogue_keys = {value.casefold() for value in catalogue_labels if value}
+        for value in catalogue_labels + suggested:
+            value = dedupe_repeated_location_label(value).strip()
+            if value and (value.casefold() in catalogue_keys or keep_mobile_accommodation_suggestion(value)) and value not in merged:
+                merged.append(value)
+        suggested = merged
+    point = city_point
+    if area:
+        city_name = query.split(",", 1)[0].strip()
+        contextual_lat, contextual_lng = static_accommodation_point(f"{area} {city_name}")
+        if contextual_lat and contextual_lng:
+            point = {"label": area, "lat": contextual_lat, "lng": contextual_lng, "source": "static"}
+        elif catalogue_suggestions:
+            best_place = catalogue_suggestions[0]
+            point = {
+                "label": str(best_place.get("label") or area),
+                "lat": float(best_place.get("lat") or 0),
+                "lng": float(best_place.get("lng") or 0),
+                "source": "offline-catalogue",
+            }
+    elif not point:
+        point = accommodation_location_point(enrichment_query or metro_name, metro_name, allow_refresh=False)
     return {
         "ok": True,
         "metro": metro_name,
@@ -19702,7 +20023,7 @@ def accommodation_location_options(
         "lat": float(point.get("lat") or 0),
         "lng": float(point.get("lng") or 0),
         "googlePlacesEnabled": google_enabled and not backend_only,
-        "source": "google" if google_refreshed_metro else "static" if fallback_from_group else str(point.get("source") or "cache"),
+        "source": "google" if google_refreshed_metro else "offline-catalogue" if catalogue_suggestions else "static" if fallback_from_group else str(point.get("source") or "cache"),
     }
 
 

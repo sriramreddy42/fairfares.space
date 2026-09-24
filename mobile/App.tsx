@@ -4168,10 +4168,13 @@ function FairFaresApp() {
                   ))}
                   {!searchSuggestions.length && !searchCity.toLowerCase().includes("denver") ? (
                     <Text style={styles.suggestionHint}>
-                      {searchSuggestionsLoading ? "Loading nearby areas..." : "No nearby suggestions loaded yet. Check Google Places keys or type a known city/area."}
+                      {searchSuggestionsLoading ? "Loading nearby areas..." : "No matching area is in the offline catalogue yet. You can still type the area and search listings."}
                     </Text>
                   ) : null}
                 </ScrollView>
+                <TouchableOpacity onPress={() => void Linking.openURL("https://www.geonames.org/")} accessibilityRole="link">
+                  <Text style={styles.suggestionHint}>Location data © GeoNames · CC BY 4.0</Text>
+                </TouchableOpacity>
               </View>
               <View style={styles.miniGroup}>
                 <Text style={styles.miniLabel}>Radius when searching near a place</Text>

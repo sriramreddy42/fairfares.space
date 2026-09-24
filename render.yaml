@@ -3,7 +3,7 @@ services:
     name: fairfares
     env: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "HOST=0.0.0.0 python3 app.py"
+    startCommand: "python3 scripts/import_location_catalog.py --countries US IN --if-needed || true; HOST=0.0.0.0 python3 app.py"
     healthCheckPath: /api/health
     disk:
       name: fairfares-data
