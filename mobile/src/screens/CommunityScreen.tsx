@@ -33,7 +33,7 @@ type Props = {
   onRequireLogin: () => void;
   onRequireSignup: () => void;
   onOpenHousing: (postId?: string) => void;
-  onOpenRides: (target?: "ride" | "requests", rideId?: string) => void;
+  onOpenRides: (target?: "ride" | "requests" | "activity", rideId?: string) => void;
   onOpenRentalCars: () => void;
   onOpenRentalBooking: (bookingId: string, action?: "balance" | "deposit" | "extension" | "manage") => void;
   onOpenGas: () => void;
@@ -1390,7 +1390,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
                 ? actionNotice.housingInquiryUserId
                   ? onOpenUserChat(actionNotice.housingInquiryUserId)
                   : onOpenHousing(actionNotice.housingPostId)
-                : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "ride", actionNotice.rideId)}
+                : onOpenRides(actionNotice.action === "ride-request" ? "requests" : "activity", actionNotice.rideId)}
             accessibilityRole="button"
             accessibilityLabel={actionNotice.actionLabel}
           >
