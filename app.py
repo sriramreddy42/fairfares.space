@@ -11055,6 +11055,11 @@ def explorer_duration_profile(duration: str) -> tuple[int, int, int]:
 
 
 def fetch_google_explorer_stops(city: str, moods: list[str], city_lat: float, city_lng: float, duration: str = "", budget: str = "", travel_with: str = "") -> list[dict[str, object]]:
+    # Text Search is the highest-cost Maps path in FairFares. Explorer has a
+    # complete local route catalogue, so it must stay local unless a deliberate
+    # production rollout opts in after its per-request budget is approved.
+    if not truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH")):
+        return []
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if not api_key:
         return []
@@ -16757,6 +16762,10 @@ def precise_accommodation_location_point(query: str) -> dict[str, object]:
 
 
 def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> list[dict[str, object]]:
+    # The housing catalogue supplies neighborhood choices locally. Do not let
+    # a broad background enrichment fan out into three paid Text Searches.
+    if not truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH")):
+        return []
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if not api_key or not query or not lat or not lng:
         return []
