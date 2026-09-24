@@ -19503,7 +19503,10 @@ def mobile_housing_posts(
         distance = None
         if center_lat and center_lng and lat and lng:
             distance = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
-            item["distanceMiles"] = distance
+            # City-center fallback coordinates are useful for inclusion and
+            # ranking, but they are not the listing's measured position. Do
+            # not publish a numeric distance that can appear as a false "0 mi".
+            item["distanceMiles"] = None if used_city_fallback else distance
         if area:
             area_match = row_matches_terms(row, area_terms)
             city_match = row_matches_terms(row, city_terms)

@@ -71,7 +71,11 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
           </View>
         ) : null}
         <View style={styles.pillRow}>
-          {post.distanceMiles !== null ? (
+          {post.locationApproximate ? (
+            <Text numberOfLines={1} style={[styles.distance, isLight && styles.distanceLight, compact && styles.distanceCompact]}>
+              ⌖ Approximate location{distanceLabel ? ` near ${distanceLabel}` : ""}
+            </Text>
+          ) : post.distanceMiles !== null ? (
             <Text numberOfLines={1} style={[styles.distance, isLight && styles.distanceLight, compact && styles.distanceCompact]}>
               ⌖ {post.distanceMiles} mi{distanceLabel ? ` from ${distanceLabel}` : " away"}
             </Text>

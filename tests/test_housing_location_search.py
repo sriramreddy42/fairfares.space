@@ -422,7 +422,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         listing = next(item for item in results if item["id"] == "STALE-DAYTON")
         self.assertTrue(listing["locationApproximate"])
         self.assertAlmostEqual(listing["lat"], 39.7589, places=4)
-        self.assertLessEqual(listing["distanceMiles"], 25)
+        self.assertIsNone(listing["distanceMiles"])
 
     @patch.object(
         app,
@@ -490,7 +490,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         listing = next(item for item in results if item["id"] == "FFH-B854C0F7")
         self.assertTrue(listing["locationApproximate"])
         self.assertAlmostEqual(listing["lat"], 39.5186, places=4)
-        self.assertLessEqual(listing["distanceMiles"], 25)
+        self.assertIsNone(listing["distanceMiles"])
 
     @patch.object(
         app,
@@ -522,7 +522,7 @@ class HousingLocationSearchTest(unittest.TestCase):
 
         listing = next(item for item in results if item["id"] == "PARKER-IN-DENVER-RADIUS")
         self.assertTrue(listing["locationApproximate"])
-        self.assertLessEqual(listing["distanceMiles"], 60)
+        self.assertIsNone(listing["distanceMiles"])
 
     def test_geocoded_us_city_dynamically_feeds_group_suggestions(self):
         geocode = {
