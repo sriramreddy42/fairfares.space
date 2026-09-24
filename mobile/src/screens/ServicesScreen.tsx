@@ -534,7 +534,7 @@ export function ServicesScreen({
                   <Text style={styles.bookingTitle} numberOfLines={1}>{bookingTitle(selectedBooking)}</Text>
                   <Text style={styles.bookingMeta} numberOfLines={1}>{selectedBookingCopy(selectedBooking, busy, user)}</Text>
                 </View>
-                <Text style={styles.chevron}>{bookingMenuOpen ? "Up" : "Down"}</Text>
+                <Text style={styles.chevron}>{bookingMenuOpen ? "⌃" : "⌄"}</Text>
               </TouchableOpacity>
               {bookingMenuOpen ? (
                 <View style={styles.bookingMenu}>
@@ -559,9 +559,9 @@ export function ServicesScreen({
 
             {selectedBooking ? (
               <View style={styles.nextStepCard}>
-                <Text style={styles.paymentEyebrow}>NEXT STEP</Text>
-                <Text style={styles.paymentTitle}>{primaryStep.title}</Text>
-                <Text style={styles.paymentCopy}>{primaryStep.copy}</Text>
+                <Text style={styles.nextStepEyebrow}>NEXT STEP</Text>
+                <Text style={styles.nextStepTitle}>{primaryStep.title}</Text>
+                <Text style={styles.nextStepCopy}>{primaryStep.copy}</Text>
                 <PrimaryButton label={busy ? "Please wait..." : primaryStep.label} onPress={primaryStep.onPress} disabled={busy} />
               </View>
             ) : null}
@@ -1269,7 +1269,10 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     padding: 14
   },
-  nextStepCard: { borderRadius: 22, borderWidth: 1, borderColor: "rgba(74,222,128,0.45)", backgroundColor: "rgba(34,197,94,0.10)", padding: 16, gap: 9, marginBottom: 16 },
+  nextStepCard: { borderRadius: 22, borderWidth: 1, borderColor: "rgba(24,184,132,0.48)", backgroundColor: "rgba(24,184,132,0.10)", padding: 16, gap: 9, marginBottom: 16 },
+  nextStepEyebrow: { color: theme.colors.brand, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7 },
+  nextStepTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900" },
+  nextStepCopy: { color: theme.colors.muted, fontSize: 13, fontWeight: "700", lineHeight: 19 },
   moreOptionsTitle: { color: theme.colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 10 },
   actionGrid: {
     flexDirection: "row",

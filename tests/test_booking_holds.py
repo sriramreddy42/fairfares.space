@@ -169,6 +169,27 @@ class BookingHoldTest(unittest.TestCase):
         with app.db() as con:
             self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "PICKUP_SUBMITTED")
 
+        unverified_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
+        app.FairFaresHandler.api_mobile_admin_handoff_review(unverified_review)
+        self.assertEqual(unverified_review.response[0], 409)
+        self.assertIn("Verified identity", unverified_review.response[1]["error"])
+        identity_start = Handler(admin, {"bookingId": booking["id"]})
+        with patch.object(app, "stripe_identity_enabled", return_value=True), patch.object(
+            app,
+            "resumable_stripe_identity_session",
+            return_value=({}, "No resumable session."),
+        ), patch.object(
+            app,
+            "create_stripe_identity_session_for",
+            return_value=({"id": "vs_mobile_start", "url": "https://verify.stripe.com/mobile-test"}, "ok"),
+        ):
+            app.FairFaresHandler.api_mobile_admin_stripe_identity_session(identity_start)
+        self.assertEqual(identity_start.response[0], 200)
+        self.assertEqual(identity_start.response[1]["url"], "https://verify.stripe.com/mobile-test")
+        app.save_identity_verification_from_session({
+            "id": "vs_handoff_unit", "status": "verified",
+            "metadata": {"user_id": str(self.user_id), "booking_id": str(booking["id"])},
+        })
         pickup_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
         app.FairFaresHandler.api_mobile_admin_handoff_review(pickup_review)
         self.assertEqual(pickup_review.response[0], 200)
@@ -247,6 +268,11 @@ class BookingHoldTest(unittest.TestCase):
             _, staff_pickups = request_json("/api/mobile/admin/pickups", "handoff-admin")
             queued_pickup = next(item for item in staff_pickups["pickups"] if item["id"] == booking["id"])
             self.assertTrue(queued_pickup["pickupEvidenceComplete"])
+            self.assertEqual(queued_pickup["identityStatus"], "NOT_STARTED")
+            app.save_identity_verification_from_session({
+                "id": "vs_handoff_http", "status": "verified",
+                "metadata": {"user_id": str(self.user_id), "booking_id": str(booking["id"])},
+            })
             status, pickup_review = request_json("/api/mobile/admin/handoff-review", "handoff-admin", {
                 "bookingId": booking["id"], "action": "APPROVE_PICKUP",
             })

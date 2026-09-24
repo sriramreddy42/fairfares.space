@@ -3470,7 +3470,7 @@ for _rate_limited_marketplace_path in (
     "/api/mobile/rentals/security-deposit-session", "/api/mobile/rentals/cancel-request",
     "/api/mobile/rentals/modify-request", "/api/mobile/rentals/documents-email",
     "/api/mobile/rentals/support-ticket", "/api/mobile/rentals/pickup-submit",
-    "/api/mobile/rentals/return-submit",
+    "/api/mobile/rentals/return-submit", "/api/mobile/admin/identity/stripe-session",
 ):
     API_WRITE_RATE_LIMITS[_rate_limited_marketplace_path] = ("marketplace-write", 30, 60)
 
@@ -26511,6 +26511,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/return-submit": self.api_mobile_rental_return_submit,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
             "/api/mobile/admin/security-deposit-session": self.api_mobile_security_deposit_checkout,
+            "/api/mobile/admin/identity/stripe-session": self.api_mobile_admin_stripe_identity_session,
             "/api/mobile/admin/handoff-review": self.api_mobile_admin_handoff_review,
             "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/profile/update": self.update_user_profile,
@@ -38793,6 +38794,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_status = str(row_value(row, "booking_status") or "")
             if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}:
                 continue
+            identity_row = latest_identity_verification(
+                int(row_value(row, "user_id") or 0),
+                int(row_value(row, "id") or 0),
+            )
+            identity_status = str(row_value(identity_row, "status") or "NOT_STARTED")
+            identity_title, identity_message = identity_status_copy(identity_status)
             pickups.append(
                 {
                     "id": int(row_value(row, "id") or 0),
@@ -38808,6 +38815,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                     "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
                     "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
+                    "identityStatus": identity_status,
+                    "identityTitle": identity_title,
+                    "identityMessage": identity_message,
                     "pickupEvidenceComplete": all(row_value(row, field) for field in (
                         "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
                         "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
@@ -38831,6 +38841,49 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def api_mobile_admin_stripe_identity_session(self) -> None:
+        if not self.require_mobile_admin():
+            return
+        payload = self.read_json_body()
+        try:
+            booking_id = int(payload.get("bookingId") or 0)
+        except (TypeError, ValueError):
+            booking_id = 0
+        booking = get_booking_by_id(booking_id) if booking_id else None
+        if not booking:
+            self.send_json({"ok": False, "error": "Booking not found."}, 404)
+            return
+        if str(row_value(booking, "booking_status") or "") not in {"CONFIRMED", "PICKUP_SUBMITTED"}:
+            self.send_json({"ok": False, "error": "Identity verification is available only before vehicle release."}, 409)
+            return
+        with db() as con:
+            customer = con.execute("SELECT * FROM users WHERE id = ?", (row_value(booking, "user_id"),)).fetchone()
+        if not customer:
+            self.send_json({"ok": False, "error": "Customer not found."}, 404)
+            return
+        if not stripe_identity_enabled():
+            self.send_json({"ok": False, "error": "Stripe Identity is not configured on this server."}, 503)
+            return
+        existing = latest_identity_verification(int(customer["id"]), int(row_value(booking, "id") or 0))
+        if existing and row_value(existing, "status") == "VERIFIED":
+            self.send_json({"ok": True, "verified": True, "message": "Customer identity is already verified."})
+            return
+        session, status = resumable_stripe_identity_session(int(customer["id"]), int(row_value(booking, "id") or 0))
+        if not session.get("url"):
+            origin = self.public_origin().rstrip("/")
+            session, status = create_stripe_identity_session_for(
+                customer,
+                booking,
+                f"{origin}/admin/pickup?identity=return",
+            )
+            if session.get("id"):
+                save_identity_verification_from_session(session, int(customer["id"]), int(row_value(booking, "id") or 0))
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "error": status}, 502)
+            return
+        self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity for the customer."})
+
     def api_mobile_admin_handoff_review(self) -> None:
         admin = self.require_mobile_admin()
         if not admin:
@@ -38848,6 +38901,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         status = str(row_value(booking, "booking_status") or "")
         if action == "APPROVE_PICKUP":
+            identity_row = latest_identity_verification(
+                int(row_value(booking, "user_id") or 0),
+                int(row_value(booking, "id") or 0),
+            )
+            identity_verified = str(row_value(identity_row, "status") or "") == "VERIFIED"
             pickup_evidence_complete = all(row_value(booking, field) for field in (
                 "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
                 "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
@@ -38857,9 +38915,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 status != "PICKUP_SUBMITTED"
                 or row_value(booking, "payment_status") != "PAID"
                 or row_value(booking, "security_deposit_status") != "AUTHORIZED"
+                or not identity_verified
                 or not pickup_evidence_complete
             ):
-                self.send_json({"ok": False, "error": "Pickup evidence, full payment, and deposit authorization are required."}, 409)
+                self.send_json({"ok": False, "error": "Verified identity, pickup evidence, full payment, and deposit authorization are required."}, 409)
                 return
             with db() as con:
                 con.execute(

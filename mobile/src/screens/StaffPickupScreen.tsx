@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff } from "../api/client";
+import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification } from "../api/client";
 import { theme } from "../theme";
 import { StaffPickupBooking } from "../types";
 
@@ -59,6 +59,24 @@ export function StaffPickupScreen({ onClose }: Props) {
     }
   }
 
+  async function openIdentityVerification(booking: StaffPickupBooking) {
+    setBusyBookingId(booking.id);
+    try {
+      const result = await startStaffIdentityVerification(booking.id);
+      if (result.verified) {
+        Alert.alert("Identity verified", result.message);
+        await refresh();
+        return;
+      }
+      if (!result.url || !(await Linking.canOpenURL(result.url))) throw new Error("Stripe did not return a valid identity verification link.");
+      await Linking.openURL(result.url);
+    } catch (error) {
+      Alert.alert("Identity verification unavailable", error instanceof Error ? error.message : "Could not open Stripe Identity.");
+    } finally {
+      setBusyBookingId(null);
+    }
+  }
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -71,11 +89,13 @@ export function StaffPickupScreen({ onClose }: Props) {
           <Text style={styles.body}>Review customer-submitted condition evidence before releasing a vehicle or accepting its return.</Text>
         </View>
         {pickups.map((booking) => {
+          const depositAmount = Number(booking.depositAmount || 250);
           const authorized = booking.depositStatus === "AUTHORIZED";
           const busy = busyBookingId === booking.id;
           const pickupSubmitted = booking.bookingStatus === "PICKUP_SUBMITTED";
           const returnSubmitted = booking.bookingStatus === "RETURN_SUBMITTED";
           const returnHeld = booking.returnReviewStatus === "CHARGES_PENDING";
+          const identityVerified = booking.identityStatus === "VERIFIED";
           return (
             <View key={booking.id} style={styles.card}>
               <View style={styles.rowBetween}>
@@ -84,10 +104,19 @@ export function StaffPickupScreen({ onClose }: Props) {
               </View>
               <Text style={styles.body}>{booking.customerName} · {booking.customerEmail}</Text>
               <Text style={styles.body}>{booking.pickupDate} · {booking.pickupTime}</Text>
-              <Text style={styles.amount}>${booking.depositAmount.toFixed(2)} refundable authorization hold</Text>
+              <Text style={styles.amount}>${depositAmount.toFixed(2)} refundable authorization hold</Text>
+              <View style={[styles.identityCard, identityVerified && styles.identityCardVerified]}>
+                <Text style={styles.identityTitle}>{booking.identityTitle || (identityVerified ? "Identity verified" : "Identity verification required")}</Text>
+                <Text style={styles.body}>{booking.identityMessage || "Verify the customer's driving license and selfie before vehicle release."}</Text>
+                {!identityVerified && booking.bookingStatus !== "PICKED_UP" && booking.bookingStatus !== "RETURN_SUBMITTED" ? (
+                  <TouchableOpacity style={[styles.identityButton, busy && styles.disabled]} disabled={busy} onPress={() => void openIdentityVerification(booking)}>
+                    <Text style={styles.identityButtonText}>Start Stripe Identity</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               {pickupSubmitted ? <>
                 <Text style={styles.body}>{booking.pickupEvidenceComplete ? "Pickup evidence complete" : "Pickup evidence incomplete"}</Text>
-                <TouchableOpacity style={[styles.payButton, (busy || !booking.pickupEvidenceComplete) && styles.disabled]} disabled={busy || !booking.pickupEvidenceComplete} onPress={() => void reviewHandoff(booking, "APPROVE_PICKUP")}>
+                <TouchableOpacity style={[styles.payButton, (busy || !booking.pickupEvidenceComplete || !identityVerified) && styles.disabled]} disabled={busy || !booking.pickupEvidenceComplete || !identityVerified} onPress={() => void reviewHandoff(booking, "APPROVE_PICKUP")}>
                   {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Approve vehicle release</Text>}
                 </TouchableOpacity>
               </> : returnSubmitted ? <>
@@ -98,7 +127,7 @@ export function StaffPickupScreen({ onClose }: Props) {
                 </View> : null}
               </> : booking.bookingStatus === "CONFIRMED" ? (
                 <TouchableOpacity style={[styles.payButton, (authorized || busy || !configured) && styles.disabled]} disabled={authorized || busy || !configured} onPress={() => void openDepositCheckout(booking)}>
-                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>{authorized ? "Waiting for customer pickup" : "Open secure deposit checkout"}</Text>}
+                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>{authorized ? "Deposit authorized" : "Open secure deposit checkout"}</Text>}
                 </TouchableOpacity>
               ) : <Text style={styles.body}>Rental active. Waiting for the customer to submit the return.</Text>}
             </View>
@@ -119,5 +148,10 @@ const styles = StyleSheet.create({
   bookingId: { color: "#4ade80", fontSize: 11, letterSpacing: 0.5, fontWeight: "700" }, cardTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" }, body: { color: theme.colors.muted, fontSize: 13, lineHeight: 18 }, amount: { color: theme.colors.text, fontSize: 14, fontWeight: "700", marginTop: 3 },
   badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5, backgroundColor: "rgba(245,158,11,0.18)", borderWidth: 1, borderColor: "rgba(245,158,11,0.45)" }, badgeReady: { backgroundColor: "rgba(34,197,94,0.18)", borderColor: "rgba(34,197,94,0.5)" }, badgeText: { color: theme.colors.text, fontSize: 10, fontWeight: "700" },
   payButton: { minHeight: 50, borderRadius: 999, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 4 }, payButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" }, disabled: { opacity: 0.5 },
+  identityCard: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(245,158,11,0.45)", backgroundColor: "rgba(245,158,11,0.10)", padding: 11, gap: 6 },
+  identityCardVerified: { borderColor: "rgba(34,197,94,0.45)", backgroundColor: "rgba(34,197,94,0.10)" },
+  identityTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
+  identityButton: { minHeight: 42, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.brand, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  identityButtonText: { color: theme.colors.brand, fontSize: 13, fontWeight: "800" },
   reviewActions: { flexDirection: "row", gap: 8 }, reviewButton: { flex: 1 }, holdButton: { minHeight: 50, borderRadius: 999, backgroundColor: "#a16207", alignItems: "center", justifyContent: "center", marginTop: 4 }
 });

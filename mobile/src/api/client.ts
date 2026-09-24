@@ -329,6 +329,19 @@ export async function createSecurityDepositCheckout(bookingId: number) {
   });
 }
 
+export async function startStaffIdentityVerification(bookingId: number) {
+  return request<{
+    ok: boolean;
+    url?: string;
+    verified?: boolean;
+    message: string;
+  }>("/api/mobile/admin/identity/stripe-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId })
+  });
+}
+
 export async function reviewRentalHandoff(bookingId: number, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN", staffSignature = "") {
   return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-review", {
     method: "POST",

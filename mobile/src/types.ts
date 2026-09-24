@@ -98,6 +98,9 @@ export type StaffPickupBooking = {
   depositStatus: string;
   depositAmount: number;
   returnReviewStatus?: string;
+  identityStatus?: string;
+  identityTitle?: string;
+  identityMessage?: string;
   pickupEvidenceComplete?: boolean;
   returnEvidenceComplete?: boolean;
 };

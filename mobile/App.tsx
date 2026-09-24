@@ -2978,6 +2978,7 @@ function FairFaresApp() {
       />
     ) : activeTab === "profile" ? (
       <ProfileScreen
+        key={`profile-${effectiveColorScheme}-${systemColorScheme || "unset"}`}
         data={data}
         openProfileDetails={profileCompletionEditRequested}
         onProfileDetailsOpened={() => setProfileCompletionEditRequested(false)}
@@ -3271,6 +3272,7 @@ function FairFaresApp() {
           </View>
         ) : null}
         <BottomTabs
+          key={`tabs-${effectiveColorScheme}-${systemColorScheme || "unset"}`}
           active={activeTab}
           unreadCount={data?.chat.unreadCount || 0}
           user={data?.user || null}
