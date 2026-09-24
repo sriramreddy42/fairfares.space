@@ -19276,7 +19276,35 @@ def mobile_housing_posts(
         values.extend([budget_value, budget_value])
     search_radius_miles = max(0.0, min(100.0, float_from_value(radius) or 0.0))
     focus_query = area or city
-    center = accommodation_location_point(focus_query, cached_accommodation_metro_for_place(focus_query), allow_refresh=False)
+    center = accommodation_location_point(city or focus_query, cached_accommodation_metro_for_place(city or focus_query), allow_refresh=False)
+    if area:
+        # Neighborhood names are often ambiguous across cities (for example,
+        # Capitol Hill exists in both Denver and Washington, DC). Resolve the
+        # area inside the selected city's country/state and rank it from that
+        # city's center instead of trusting a global area-only cache entry.
+        city_lat = float(center.get("lat") or 0)
+        city_lng = float(center.get("lng") or 0)
+        area_matches = location_catalog_suggestions(
+            area,
+            limit=3,
+            country_code=accommodation_country_code(city),
+            admin1_code=explicit_us_state_from_label(city),
+            near_lat=city_lat,
+            near_lng=city_lng,
+        )
+        if area_matches:
+            area_match = area_matches[0]
+            center = {
+                "label": str(area_match.get("label") or area),
+                "lat": float(area_match.get("lat") or 0),
+                "lng": float(area_match.get("lng") or 0),
+                "source": "offline-catalogue",
+            }
+        else:
+            city_name = city.split(",", 1)[0].strip()
+            contextual_lat, contextual_lng = static_accommodation_point(f"{area} {city_name}")
+            if contextual_lat and contextual_lng:
+                center = {"label": f"{area}, {city}", "lat": contextual_lat, "lng": contextual_lng, "source": "static"}
     center_lat = float(center_lat or center.get("lat") or 0)
     center_lng = float(center_lng or center.get("lng") or 0)
     radius_search = bool(search_radius_miles and center_lat and center_lng)

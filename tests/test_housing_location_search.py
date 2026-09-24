@@ -1341,6 +1341,32 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(point["source"], "offline-catalogue")
         self.assertAlmostEqual(point["lat"], 39.769)
 
+    def test_housing_search_scopes_ambiguous_neighborhood_to_selected_city(self):
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO location_catalog
+                    (source, external_id, country_code, admin1_code, admin1_name,
+                     city_name, name, ascii_name, feature_code, location_type,
+                     lat, lng, population, search_name)
+                VALUES ('GEONAMES', 'test-capitol-hill-denver', 'US', 'CO', 'Colorado',
+                        'Denver', 'Capitol Hill', 'Capitol Hill', 'PPLX', 'NEIGHBORHOOD',
+                        39.73435, -104.98162, 0, 'capitol hill denver co us')
+                """
+            )
+        original_location_point = app.accommodation_location_point
+
+        def ambiguous_location_point(value, *args, **kwargs):
+            if value == "Capitol Hill":
+                return {"label": "Capitol Hill, Washington, DC", "lat": 38.873, "lng": -77.00625, "source": "TEST"}
+            return original_location_point(value, *args, **kwargs)
+
+        with patch.object(app, "accommodation_location_point", side_effect=ambiguous_location_point):
+            results = app.mobile_housing_posts(city="Denver, CO", area="Capitol Hill", radius=60, limit=2)
+        self.assertTrue(results)
+        self.assertAlmostEqual(results[0]["lat"], 39.73435 - 0.016, places=4)
+        self.assertAlmostEqual(results[0]["lng"], -104.98162 - 0.006, places=4)
+
     def test_offline_catalogue_supplies_city_autocomplete(self):
         with app.db() as con:
             con.execute(
