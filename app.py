@@ -25920,6 +25920,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         try:
             with db() as con:
                 con.execute("SELECT 1").fetchone()
+                catalogue_countries = {
+                    str(row[0]): {"version": int(row[1]), "records": int(row[2])}
+                    for row in con.execute(
+                        "SELECT country_code, import_version, record_count FROM location_catalog_imports WHERE source = 'GEONAMES'"
+                    ).fetchall()
+                }
+                catalogue_count = sum(country["records"] for country in catalogue_countries.values())
         except Exception as exc:
             send_operational_alert(
                 "health:database-unavailable",
@@ -25934,6 +25941,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "service": "fairfares-api",
             }, 503)
             return
+        catalogue_ready = (
+            catalogue_count >= 1_000
+            and all(catalogue_countries.get(country, {}).get("records", 0) >= 1_000 for country in ("US", "IN"))
+        )
+        if truthy_env(os.environ.get("FAIRFARES_REQUIRE_LOCATION_CATALOG")) and not catalogue_ready:
+            self.send_json({
+                "ok": False,
+                "status": "starting",
+                "database": "available",
+                "locationCatalog": {"ready": False, "records": catalogue_count, "countries": catalogue_countries},
+                "service": "fairfares-api",
+            }, 503)
+            return
         # Keep transport writes outside the database exception boundary. A
         # health-check client that disconnects while receiving a valid response
         # raises BrokenPipeError, but that does not mean the database failed.
@@ -25941,6 +25961,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "ok": True,
             "status": "healthy",
             "database": "available",
+            "locationCatalog": {"ready": catalogue_ready, "records": catalogue_count, "countries": catalogue_countries},
             "service": "fairfares-api",
             "release": BACKEND_RELEASE,
             "time": datetime.now(UTC).isoformat(),
@@ -38530,7 +38551,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "city": city,
                 "query": query,
                 "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact, place_id=place_id if resolve_exact else "", session_token=session_token),
-                "placesEnabled": bool(
+                "placesEnabled": google_location_fallback_enabled() and bool(
                     os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
                 ),

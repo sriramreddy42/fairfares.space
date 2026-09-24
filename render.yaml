@@ -3,7 +3,7 @@ services:
     name: fairfares
     env: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python3 scripts/import_location_catalog.py --countries US IN --if-needed || true; HOST=0.0.0.0 python3 app.py"
+    startCommand: "python3 scripts/import_location_catalog.py --countries US IN --if-needed && HOST=0.0.0.0 python3 app.py"
     healthCheckPath: /api/health
     disk:
       name: fairfares-data
@@ -43,6 +43,8 @@ services:
         value: "0"
       - key: FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK
         value: "0"
+      - key: FAIRFARES_REQUIRE_LOCATION_CATALOG
+        value: "1"
       # Google ID tokens created by the native apps use the server/Web OAuth
       # client as their audience. Keep every FairFares client in the backend
       # allow-list so Web, Android, and iOS tokens are accepted while tokens

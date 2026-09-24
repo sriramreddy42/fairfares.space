@@ -21,7 +21,8 @@ sys.path.insert(0, str(ROOT))
 
 GEONAMES_BASE = "https://download.geonames.org/export/dump"
 SUPPORTED_COUNTRIES = {"US", "IN"}
-IMPORT_VERSION = 2
+IMPORT_VERSION = 3
+MIN_CITY_POPULATION = 100
 CITY_CODES = {
     "PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLA5", "PPLC",
     "PPLG", "PPLL", "PPLR", "PPLS",
@@ -90,6 +91,19 @@ def import_country(con, country: str, archive: Path, states: dict[str, str]) -> 
                     lat, lng = float(fields[4]), float(fields[5])
                     population = max(0, int(fields[14] or 0))
                 except ValueError:
+                    skipped += 1
+                    continue
+                # GeoNames country dumps contain hundreds of thousands of
+                # zero-population hamlets, especially for India. They make the
+                # SQLite file several hundred MB larger without improving the
+                # city/neighborhood/POI search experience. Keep administrative
+                # capitals regardless of population and retain ordinary
+                # settlements once GeoNames records at least 100 residents.
+                if (
+                    feature_code in CITY_CODES
+                    and feature_code not in {"PPLC", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLA5"}
+                    and population < MIN_CITY_POPULATION
+                ):
                     skipped += 1
                     continue
                 admin1_code = fields[10].strip()
@@ -224,9 +238,16 @@ def main() -> int:
             print("Location catalogue already populated; skipping import")
             return 0
     states = admin1_names(args.cache_dir)
-    with app.db() as con:
-        for country in countries:
+    for country in countries:
+        # Commit each country independently. This bounds SQLite rollback space
+        # on Render's 1 GB persistent disk and preserves the prior country
+        # catalogue if a download or import fails.
+        with app.db() as con:
             archive = download(f"{GEONAMES_BASE}/{country}.zip", args.cache_dir / f"{country}.zip")
+            con.execute(
+                "DELETE FROM location_catalog WHERE source = 'GEONAMES' AND country_code = ?",
+                (country,),
+            )
             inserted, skipped = import_country(con, country, archive, states)
             alias_count = rebuild_poi_aliases(con, country)
             record_count = int(con.execute(
@@ -245,6 +266,7 @@ def main() -> int:
                 (country, IMPORT_VERSION, record_count),
             )
             print(f"{country}: imported {inserted:,}; skipped {skipped:,}; POI aliases {alias_count:,}")
+    with app.db() as con:
         totals = con.execute(
             "SELECT country_code, location_type, COUNT(*) FROM location_catalog GROUP BY country_code, location_type ORDER BY country_code, location_type"
         ).fetchall()
