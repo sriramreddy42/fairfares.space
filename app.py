@@ -9853,6 +9853,86 @@ def release_security_deposit_after_clear_return(booking: sqlite3.Row | dict[str,
     return True, payment_intent_id
 
 
+def reconcile_offline_return_and_release_deposit(
+    booking: sqlite3.Row | dict[str, object],
+    admin: sqlite3.Row | dict[str, object],
+    reason: str,
+) -> tuple[bool, str]:
+    """Close a missed digital handoff without inventing inspection evidence."""
+    reason = clean_text_value(reason, 500)
+    if len(reason) < 20:
+        return False, "Add a clear reason for the offline return reconciliation."
+    if str(row_value(booking, "booking_status") or "") not in {
+        "CONFIRMED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED",
+    }:
+        return False, "This booking is not eligible for offline return reconciliation."
+    if row_value(booking, "security_deposit_status") != "AUTHORIZED":
+        return False, "The refundable deposit is not currently authorized."
+    scheduled_return = parse_booking_datetime(
+        str(row_value(booking, "dropoff_date") or ""),
+        str(row_value(booking, "dropoff_time") or ""),
+    )
+    if not scheduled_return:
+        return False, "The scheduled return time could not be verified."
+    if scheduled_return > fairfares_now().replace(tzinfo=None):
+        return False, "The scheduled return time has not passed."
+    payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
+    if not payment_intent_id.startswith("pi_"):
+        return False, "The Stripe deposit authorization reference is missing."
+    released, status = stripe_api_request(
+        f"payment_intents/{urllib.parse.quote(payment_intent_id)}/cancel",
+        {"cancellation_reason": "requested_by_customer"},
+        idempotency_key=f"admin-offline-return-{row_value(booking, 'id')}",
+    )
+    if status != "ok" or str(released.get("status") or "") != "canceled":
+        return False, status if status != "ok" else "Stripe did not confirm release of the authorization."
+
+    now_local = fairfares_now()
+    admin_name = clean_text_value(row_value(admin, "name") or "FairFares staff", 160)
+    audit_note = (
+        f"Offline return reconciled by {admin_name} on {now_local.strftime('%Y-%m-%d %I:%M %p')}. "
+        f"No digital pickup/return inspection was captured. Reason: {reason}"
+    )
+    with db() as con:
+        con.execute(
+            """
+            UPDATE bookings
+            SET booking_status = 'RETURNED', status = 'RETURNED',
+                actual_return_date = CASE WHEN actual_return_date = '' THEN ? ELSE actual_return_date END,
+                actual_return_time = CASE WHEN actual_return_time = '' THEN ? ELSE actual_return_time END,
+                return_staff_signature = ?, return_review_status = 'RELEASED',
+                security_deposit_status = 'RELEASED', post_return_charge_amount = 0,
+                post_return_charge_notes = CASE
+                    WHEN post_return_charge_notes = '' THEN ?
+                    ELSE post_return_charge_notes || ' | ' || ?
+                END
+            WHERE id = ? AND security_deposit_status = 'AUTHORIZED'
+            """,
+            (
+                now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"),
+                admin_name, audit_note, audit_note, row_value(booking, "id"),
+            ),
+        )
+        con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
+        con.execute(
+            """
+            UPDATE transactions
+            SET transaction_status = 'SECURITY_DEPOSIT_RELEASED',
+                billing_verification_status = 'RELEASED', billing_verification_notes = ?
+            WHERE booking_id = ? AND invoice_number = ?
+            """,
+            (audit_note, row_value(booking, "id"), payment_intent_id),
+        )
+    updated = get_booking_by_id(int(row_value(booking, "id") or 0))
+    send_rental_booking_push(
+        updated or booking,
+        "Security deposit released",
+        f"Your {format_money(SECURITY_DEPOSIT_AMOUNT)} authorization hold was released after staff recorded the offline return.",
+        "SECURITY_DEPOSIT_RELEASED",
+    )
+    return True, "Offline return recorded and the refundable deposit authorization was released."
+
+
 def release_security_deposit_after_cancellation(
     booking: sqlite3.Row | dict[str, object] | None,
 ) -> tuple[bool, str]:
@@ -38810,6 +38890,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "pickupDate": row_value(row, "pickup_date"),
                     "pickupTime": row_value(row, "pickup_time"),
                     "pickupLocation": row_value(row, "pickup_location"),
+                    "returnDate": row_value(row, "dropoff_date"),
+                    "returnTime": row_value(row, "dropoff_time"),
                     "bookingStatus": row_value(row, "booking_status"),
                     "paymentStatus": row_value(row, "payment_status"),
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
@@ -38900,6 +38982,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Booking not found."}, 404)
             return
         status = str(row_value(booking, "booking_status") or "")
+        if action == "RECONCILE_OFFLINE_RETURN":
+            reconciled, message = reconcile_offline_return_and_release_deposit(
+                booking,
+                admin,
+                clean_text_value(payload.get("reason"), 500),
+            )
+            if not reconciled:
+                self.send_json({"ok": False, "error": message}, 409)
+                return
+            self.send_json({"ok": True, "message": message})
+            return
         if action == "APPROVE_PICKUP":
             identity_row = latest_identity_verification(
                 int(row_value(booking, "user_id") or 0),

@@ -342,11 +342,11 @@ export async function startStaffIdentityVerification(bookingId: number) {
   });
 }
 
-export async function reviewRentalHandoff(bookingId: number, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN", staffSignature = "") {
+export async function reviewRentalHandoff(bookingId: number, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN" | "RECONCILE_OFFLINE_RETURN", staffSignature = "", reason = "") {
   return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-review", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId, action, staffSignature })
+    body: JSON.stringify({ bookingId, action, staffSignature, reason })
   });
 }
 

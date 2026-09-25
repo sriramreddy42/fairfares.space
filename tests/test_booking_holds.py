@@ -215,6 +215,45 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(completed["booking_status"], "RETURNED")
         self.assertEqual(completed["security_deposit_status"], "RELEASED")
 
+    def test_admin_can_reconcile_past_offline_return_without_fake_inspection(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                """UPDATE bookings
+                   SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID',
+                       pickup_date = '2026-09-15', pickup_time = '10:00 AM',
+                       dropoff_date = '2026-09-18', dropoff_time = '05:00 PM',
+                       security_deposit_status = 'AUTHORIZED', security_deposit_payment_intent_id = 'pi_offline_return'
+                   WHERE id = ?""",
+                (booking["id"],),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Return Admin', 'return-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            admin = con.execute("SELECT * FROM users WHERE id = ?", (admin_id,)).fetchone()
+            current = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+
+        reason = "Vehicle was returned outside the app; the digital inspection was not captured."
+        with patch.object(app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")), patch.object(
+            app, "send_rental_booking_push"
+        ):
+            reconciled, message = app.reconcile_offline_return_and_release_deposit(current, admin, reason)
+
+        self.assertTrue(reconciled, message)
+        with app.db() as con:
+            completed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(completed["booking_status"], "RETURNED")
+        self.assertEqual(completed["security_deposit_status"], "RELEASED")
+        self.assertEqual(completed["return_review_status"], "RELEASED")
+        self.assertIn("No digital pickup/return inspection was captured", completed["post_return_charge_notes"])
+        self.assertEqual(completed["return_customer_signature"], "")
+        self.assertEqual(completed["return_odometer"], 0)
+        self.assertEqual(completed["return_front_image"], "")
+        self.assertEqual(app.get_car(car["id"])["status"], "AVAILABLE")
+
     def test_mobile_pickup_to_return_http_end_to_end(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

@@ -93,6 +93,8 @@ export type StaffPickupBooking = {
   pickupDate: string;
   pickupTime: string;
   pickupLocation: string;
+  returnDate?: string;
+  returnTime?: string;
   bookingStatus: "CONFIRMED" | "PICKUP_SUBMITTED" | "PICKED_UP" | "RETURN_SUBMITTED";
   paymentStatus: "HOLD_PAID" | "PAID";
   depositStatus: string;
