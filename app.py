@@ -9868,6 +9868,10 @@ def reconcile_offline_return_and_release_deposit(
         return False, "This booking is not eligible for offline return reconciliation."
     if row_value(booking, "security_deposit_status") != "AUTHORIZED":
         return False, "The refundable deposit is not currently authorized."
+    if float(row_value(booking, "post_return_charge_amount") or 0) > 0 or str(
+        row_value(booking, "return_review_status") or ""
+    ) in {"CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW"}:
+        return False, "This return has charges pending review and cannot use offline reconciliation."
     scheduled_return = parse_booking_datetime(
         str(row_value(booking, "dropoff_date") or ""),
         str(row_value(booking, "dropoff_time") or ""),
@@ -9898,9 +9902,7 @@ def reconcile_offline_return_and_release_deposit(
             """
             UPDATE bookings
             SET booking_status = 'RETURNED', status = 'RETURNED',
-                actual_return_date = CASE WHEN actual_return_date = '' THEN ? ELSE actual_return_date END,
-                actual_return_time = CASE WHEN actual_return_time = '' THEN ? ELSE actual_return_time END,
-                return_staff_signature = ?, return_review_status = 'RELEASED',
+                return_review_status = 'RELEASED',
                 security_deposit_status = 'RELEASED', post_return_charge_amount = 0,
                 post_return_charge_notes = CASE
                     WHEN post_return_charge_notes = '' THEN ?
@@ -9909,8 +9911,7 @@ def reconcile_offline_return_and_release_deposit(
             WHERE id = ? AND security_deposit_status = 'AUTHORIZED'
             """,
             (
-                now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"),
-                admin_name, audit_note, audit_note, row_value(booking, "id"),
+                audit_note, audit_note, row_value(booking, "id"),
             ),
         )
         con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
@@ -10918,10 +10919,13 @@ def get_car_by_name(name: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def get_admin_bookings() -> list[sqlite3.Row]:
+def get_admin_bookings(booking_identifier: str = "") -> list[sqlite3.Row]:
+    booking_identifier = clean_text_value(booking_identifier, 40).strip()
+    where_clause = "WHERE bookings.booking_id = ?" if booking_identifier else ""
+    parameters = (booking_identifier,) if booking_identifier else ()
     with db() as con:
         return con.execute(
-            """
+            f"""
             SELECT bookings.*, users.name AS user_name, users.email AS user_email, users.phone,
                    users.address, users.date_of_birth,
                    cars.name AS car_name, cars.brand AS car_brand, cars.model AS car_model,
@@ -10931,9 +10935,11 @@ def get_admin_bookings() -> list[sqlite3.Row]:
             FROM bookings
             JOIN users ON users.id = bookings.user_id
             JOIN cars ON cars.id = bookings.car_id
+            {where_clause}
             ORDER BY bookings.id DESC
             LIMIT 50
-            """
+            """,
+            parameters,
         ).fetchall()
 
 
@@ -38869,8 +38875,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_admin_pickups(self) -> None:
         if not self.require_mobile_admin():
             return
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        booking_identifier = (params.get("bookingId", [""])[0] or "").strip()
         pickups = []
-        for row in get_admin_bookings():
+        for row in get_admin_bookings(booking_identifier):
             booking_status = str(row_value(row, "booking_status") or "")
             if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}:
                 continue

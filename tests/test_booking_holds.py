@@ -250,9 +250,18 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(completed["return_review_status"], "RELEASED")
         self.assertIn("No digital pickup/return inspection was captured", completed["post_return_charge_notes"])
         self.assertEqual(completed["return_customer_signature"], "")
+        self.assertEqual(completed["return_staff_signature"], "")
+        self.assertEqual(completed["actual_return_date"], "")
         self.assertEqual(completed["return_odometer"], 0)
         self.assertEqual(completed["return_front_image"], "")
         self.assertEqual(app.get_car(car["id"])["status"], "AVAILABLE")
+
+    def test_staff_can_find_booking_by_exact_number(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        matches = app.get_admin_bookings(booking["booking_id"])
+        self.assertEqual([row["booking_id"] for row in matches], [booking["booking_id"]])
+        self.assertEqual(app.get_admin_bookings("FF-NOT-A-BOOKING"), [])
 
     def test_mobile_pickup_to_return_http_end_to_end(self):
         car = app.get_cars()[0]

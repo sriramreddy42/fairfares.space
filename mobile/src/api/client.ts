@@ -308,12 +308,12 @@ export async function trackAppLaunch() {
   await trackProductEvent("app_open", { source: "native_launch" });
 }
 
-export async function getStaffPickupBookings() {
+export async function getStaffPickupBookings(bookingId = "") {
   return request<{
     ok: boolean;
     pickups: StaffPickupBooking[];
     deposit: { configured: boolean; amount: number };
-  }>("/api/mobile/admin/pickups");
+  }>(`/api/mobile/admin/pickups${bookingId ? `?bookingId=${encodeURIComponent(bookingId)}` : ""}`);
 }
 
 export async function createSecurityDepositCheckout(bookingId: number) {

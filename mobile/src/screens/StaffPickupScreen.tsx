@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification } from "../api/client";
 import { theme } from "../theme";
 import { StaffPickupBooking } from "../types";
@@ -11,11 +11,13 @@ export function StaffPickupScreen({ onClose }: Props) {
   const [configured, setConfigured] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [busyBookingId, setBusyBookingId] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const [bookingLookup, setBookingLookup] = useState("");
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const payload = await getStaffPickupBookings();
+      const payload = await getStaffPickupBookings(bookingLookup);
       setPickups(payload.pickups || []);
       setConfigured(Boolean(payload.deposit.configured));
     } catch (error) {
@@ -23,7 +25,7 @@ export function StaffPickupScreen({ onClose }: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [bookingLookup]);
 
   useEffect(() => {
     void refresh();
@@ -96,6 +98,10 @@ export function StaffPickupScreen({ onClose }: Props) {
         <View style={styles.flex}><Text style={styles.eyebrow}>STAFF WORKSPACE</Text><Text style={styles.title}>Rental handoffs</Text></View>
       </View>
       <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.colors.text} />}>
+        <View style={styles.searchRow}>
+          <TextInput style={styles.searchInput} value={searchText} onChangeText={setSearchText} placeholder="Booking number" placeholderTextColor={theme.colors.muted} autoCapitalize="characters" returnKeyType="search" onSubmitEditing={() => setBookingLookup(searchText.trim().toUpperCase())} />
+          <TouchableOpacity style={styles.searchButton} onPress={() => setBookingLookup(searchText.trim().toUpperCase())}><Text style={styles.searchButtonText}>Find</Text></TouchableOpacity>
+        </View>
         <View style={[styles.statusCard, configured ? styles.statusReady : styles.statusBlocked]}>
           <Text style={styles.statusTitle}>{configured ? "Pickup and return review" : "Stripe setup required"}</Text>
           <Text style={styles.body}>Review customer-submitted condition evidence before releasing a vehicle or accepting its return.</Text>
@@ -150,7 +156,7 @@ export function StaffPickupScreen({ onClose }: Props) {
             </View>
           );
         })}
-        {!refreshing && pickups.length === 0 ? <View style={styles.centerCard}><Text style={styles.cardTitle}>No handoffs awaiting action</Text><Text style={styles.body}>Paid pickups and active return reviews appear here.</Text></View> : null}
+        {!refreshing && pickups.length === 0 ? <View style={styles.centerCard}><Text style={styles.cardTitle}>{bookingLookup ? "Booking not found in handoffs" : "No handoffs awaiting action"}</Text><Text style={styles.body}>{bookingLookup ? "Check the booking number and status." : "Paid pickups and active return reviews appear here."}</Text></View> : null}
       </ScrollView>
     </View>
   );
@@ -158,6 +164,7 @@ export function StaffPickupScreen({ onClose }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.colors.bg }, header: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  searchRow: { flexDirection: "row", gap: 8 }, searchInput: { flex: 1, minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.line, color: theme.colors.text, paddingHorizontal: 14 }, searchButton: { minWidth: 68, borderRadius: 12, backgroundColor: theme.colors.brand, alignItems: "center", justifyContent: "center" }, searchButtonText: { color: "#fff", fontWeight: "700" },
   backButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 }, backText: { color: theme.colors.text, fontSize: 34, lineHeight: 38 },
   eyebrow: { color: "#4ade80", ...theme.typography.eyebrow }, title: { color: theme.colors.text, ...theme.typography.sectionTitle }, content: { padding: 14, paddingBottom: 48, gap: 12, width: "100%", maxWidth: 760, alignSelf: "center" },
   statusCard: { borderWidth: 1, borderRadius: 18, padding: 14, gap: 7 }, statusReady: { backgroundColor: "rgba(21,128,61,0.18)", borderColor: "rgba(74,222,128,0.5)" }, statusBlocked: { backgroundColor: "rgba(127,29,29,0.18)", borderColor: "rgba(248,113,113,0.5)" }, statusTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "700" },
