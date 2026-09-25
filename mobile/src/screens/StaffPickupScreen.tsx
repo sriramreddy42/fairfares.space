@@ -13,12 +13,14 @@ export function StaffPickupScreen({ onClose }: Props) {
   const [busyBookingId, setBusyBookingId] = useState<number | null>(null);
   const [searchText, setSearchText] = useState("");
   const [bookingLookup, setBookingLookup] = useState("");
+  const [lookupDetail, setLookupDetail] = useState("");
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
       const payload = await getStaffPickupBookings(bookingLookup);
       setPickups(payload.pickups || []);
+      setLookupDetail(payload.lookup ? `${payload.lookup.bookingId}: ${payload.lookup.found ? `${payload.lookup.status} / ${payload.lookup.paymentStatus}` : "No database record"}` : "");
       setConfigured(Boolean(payload.deposit.configured));
     } catch (error) {
       Alert.alert("Pickup list unavailable", error instanceof Error ? error.message : "Could not load confirmed pickups.");
@@ -156,7 +158,7 @@ export function StaffPickupScreen({ onClose }: Props) {
             </View>
           );
         })}
-        {!refreshing && pickups.length === 0 ? <View style={styles.centerCard}><Text style={styles.cardTitle}>{bookingLookup ? "Booking not found in handoffs" : "No handoffs awaiting action"}</Text><Text style={styles.body}>{bookingLookup ? "Check the booking number and status." : "Paid pickups and active return reviews appear here."}</Text></View> : null}
+        {!refreshing && pickups.length === 0 ? <View style={styles.centerCard}><Text style={styles.cardTitle}>{bookingLookup ? "Booking not found in handoffs" : "No handoffs awaiting action"}</Text><Text style={styles.body}>{bookingLookup ? lookupDetail || "Check the booking number and status." : "Paid pickups and active return reviews appear here."}</Text></View> : null}
       </ScrollView>
     </View>
   );

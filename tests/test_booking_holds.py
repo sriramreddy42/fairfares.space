@@ -317,6 +317,12 @@ class BookingHoldTest(unittest.TestCase):
             queued_pickup = next(item for item in staff_pickups["pickups"] if item["id"] == booking["id"])
             self.assertTrue(queued_pickup["pickupEvidenceComplete"])
             self.assertEqual(queued_pickup["identityStatus"], "NOT_STARTED")
+            _, exact_pickup = request_json(
+                f"/api/mobile/admin/pickups?bookingId={booking['booking_id']}", "handoff-admin"
+            )
+            self.assertEqual([item["bookingId"] for item in exact_pickup["pickups"]], [booking["booking_id"]])
+            self.assertEqual(exact_pickup["lookup"]["bookingId"], booking["booking_id"])
+            self.assertTrue(exact_pickup["lookup"]["found"])
             app.save_identity_verification_from_session({
                 "id": "vs_handoff_http", "status": "verified",
                 "metadata": {"user_id": str(self.user_id), "booking_id": str(booking["id"])},
