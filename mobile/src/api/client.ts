@@ -312,7 +312,7 @@ export async function getStaffPickupBookings(bookingId = "") {
   return request<{
     ok: boolean;
     pickups: StaffPickupBooking[];
-    lookup?: { bookingId: string; found: boolean; status: string; paymentStatus: string } | null;
+    lookup?: { bookingId: string; found: boolean; status: string; paymentStatus: string; depositStatus: string; returnReviewStatus: string } | null;
     deposit: { configured: boolean; amount: number };
   }>(`/api/mobile/admin/pickups${bookingId ? `?bookingId=${encodeURIComponent(bookingId)}` : ""}`);
 }

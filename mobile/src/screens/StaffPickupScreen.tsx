@@ -20,7 +20,7 @@ export function StaffPickupScreen({ onClose }: Props) {
     try {
       const payload = await getStaffPickupBookings(bookingLookup);
       setPickups(payload.pickups || []);
-      setLookupDetail(payload.lookup ? `${payload.lookup.bookingId}: ${payload.lookup.found ? `${payload.lookup.status} / ${payload.lookup.paymentStatus}` : "No database record"}` : "");
+      setLookupDetail(payload.lookup ? `${payload.lookup.bookingId}: ${payload.lookup.found ? `${payload.lookup.status} / ${payload.lookup.paymentStatus} · Deposit ${payload.lookup.depositStatus} · Return review ${payload.lookup.returnReviewStatus}` : "No database record"}` : "");
       setConfigured(Boolean(payload.deposit.configured));
     } catch (error) {
       Alert.alert("Pickup list unavailable", error instanceof Error ? error.message : "Could not load confirmed pickups.");

@@ -38881,7 +38881,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if booking_identifier:
             with db() as con:
                 lookup_row = con.execute(
-                    "SELECT booking_id, booking_status, payment_status FROM bookings WHERE UPPER(TRIM(booking_id)) = ? LIMIT 1",
+                    "SELECT booking_id, booking_status, payment_status, security_deposit_status, return_review_status FROM bookings WHERE UPPER(TRIM(booking_id)) = ? LIMIT 1",
                     (booking_identifier.upper(),),
                 ).fetchone()
         pickups = []
@@ -38936,6 +38936,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "found": bool(lookup_row),
                     "status": row_value(lookup_row, "booking_status") if lookup_row else "",
                     "paymentStatus": row_value(lookup_row, "payment_status") if lookup_row else "",
+                    "depositStatus": row_value(lookup_row, "security_deposit_status") if lookup_row else "",
+                    "returnReviewStatus": row_value(lookup_row, "return_review_status") if lookup_row else "",
                 } if booking_identifier else None,
                 "deposit": {
                     "configured": bool(stripe_secret_key() and stripe_webhook_secret()),
