@@ -34648,13 +34648,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
-        pickup_bookings = [row for row in get_admin_bookings() if booking_ready_for_pickup(row)]
+        pickup_bookings = [
+            row for row in get_admin_bookings()
+            if booking_ready_for_pickup(row)
+            or str(row_value(row, "booking_status") or "") in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}
+        ]
         records = "\n".join(self.render_pickup_record(row) for row in pickup_bookings)
         body = render_template(
             "admin_pickup.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "pickup"),
-            records=records or '<p class="admin-empty">No confirmed pickups yet.</p>',
+            records=records or '<p class="admin-empty">No pickups or returns awaiting staff review.</p>',
         )
         self.send_html(body)
 
