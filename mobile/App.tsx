@@ -854,7 +854,16 @@ function FairFaresApp() {
       setVisiblePosts(payload.housing);
       const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
       if (bootstrapGenerationRef.current !== generation) return;
-      setCars(carResult.status === "fulfilled" ? carResult.value : []);
+      if (carResult.status === "fulfilled") {
+        setCars(carResult.value);
+      } else {
+        // Inventory is independent of bootstrap. Keep the last usable list on
+        // a transient request failure and refresh it shortly instead of
+        // making rental cars disappear until the next app reload.
+        setTimeout(() => {
+          void getCars().then(setCars).catch(() => undefined);
+        }, 1_500);
+      }
       setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
     } catch (error) {
       if (bootstrapGenerationRef.current !== generation) return;
