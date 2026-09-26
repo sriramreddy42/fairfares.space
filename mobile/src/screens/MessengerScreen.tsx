@@ -8652,8 +8652,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         {tab === "Contacts" ? (
           <TouchableOpacity style={styles.letterEmptyCard} onPress={() => void findPeopleFromContacts()} disabled={contactsLoading}>
             <Text style={styles.letterEmptyIcon}>📇</Text>
-            <Text style={styles.letterEmptyTitle}>{contactsLoading ? "Checking your contacts…" : "Find your FairFares people"}</Text>
-            <Text style={styles.letterEmptyCopy}>Phone numbers stay private. Tap to find contacts who already use Chitthi.</Text>
+            <Text style={[styles.letterEmptyTitle, isLight && styles.letterEmptyTitleLight]}>{contactsLoading ? "Checking your contacts…" : "Find your FairFares people"}</Text>
+            <Text style={[styles.letterEmptyCopy, isLight && styles.letterEmptyCopyLight]}>Phone numbers stay private. Tap to find contacts who already use Chitthi.</Text>
           </TouchableOpacity>
         ) : null}
         </>}
