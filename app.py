@@ -253,7 +253,10 @@ ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
 VALID_USER_ROLES = {ROLE_CUSTOMER, ROLE_EMPLOYEE, ROLE_ADMIN}
 BOOKING_HOLD_MINUTES = 10
+# Paying in full earns 10% off, up to $10. A fixed $10 discount made low-cost
+# rentals cheaper than the vehicle itself (for example, a $5 daily rental).
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
+FULL_PAYMENT_DISCOUNT_RATE = 0.10
 SECURITY_DEPOSIT_AMOUNT = 250.00
 SECURITY_DEPOSIT_RELEASE_COPY = (
     "Refundable security deposit authorization. Release after vehicle return review for damage, tickets, tolls, "
@@ -9174,8 +9177,14 @@ DURATION_DISCOUNT_TIERS = (
 )
 
 
+def full_payment_discount(total: object) -> float:
+    amount = max(0.0, float(total or 0))
+    return round(min(FULL_PAYMENT_DISCOUNT_AMOUNT, amount * FULL_PAYMENT_DISCOUNT_RATE), 2)
+
+
 def full_payment_total(total: object) -> float:
-    return round(max(0.0, float(total or 0) - FULL_PAYMENT_DISCOUNT_AMOUNT), 2)
+    amount = max(0.0, float(total or 0))
+    return round(amount - full_payment_discount(amount), 2)
 
 
 def duration_discount_for_days(days: object) -> dict[str, object]:
@@ -9548,14 +9557,14 @@ def confirm_booking_hold_payment(
         next_due_at_pickup = float(breakdown["due_at_pickup"])
         if payment_option == "full":
             if current_payment_status != "HOLD_PAID":
-                next_discount = round(next_discount + FULL_PAYMENT_DISCOUNT_AMOUNT, 2)
+                next_discount = round(next_discount + full_payment_discount(next_total), 2)
                 next_total = full_payment_total(next_total)
             next_hold_amount = 0.0
             next_due_at_pickup = 0.0
             next_billing_note = (
                 "Remaining pickup balance paid by Stripe checkout."
                 if current_payment_status == "HOLD_PAID"
-                else "Full payment confirmed by Stripe checkout with $10 pickup discount."
+                else "Full payment confirmed by Stripe checkout with the eligible pay-in-full discount."
             )
         while con.execute("SELECT 1 FROM transactions WHERE invoice_number = ?", (invoice_number,)).fetchone():
             invoice_number = f"HOLD-{secrets.randbelow(900000) + 100000}"
