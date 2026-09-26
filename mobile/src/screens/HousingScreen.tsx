@@ -2965,10 +2965,15 @@ export function HousingScreen({
                 </View>
                 <View style={styles.reviewGrid}>
                   <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Trip: {rentalQuote.booking.days} days</Text>
-                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Daily: {dollars(rentalQuote.breakdown.effectiveDaily)}</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Published rate: {dollars(rentalQuote.breakdown.daily)}/day</Text>
+                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Rental: {dollars(rentalQuote.breakdown.base)}</Text>
                   <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Taxes/fees: {dollars(rentalQuote.breakdown.taxFeeAmount)}</Text>
-                  <Text style={[styles.reviewItem, isLight && styles.reviewItemLight]}>Due pickup: {dollars(rentalQuote.breakdown.dueAtPickup)}</Text>
                 </View>
+                {rentalQuote.breakdown.durationDiscountAmount > 0 ? (
+                  <Text style={[styles.reviewPolicy, isLight && styles.reviewPolicyLight]}>
+                    {rentalQuote.breakdown.durationDiscountLabel}: {dollars(rentalQuote.breakdown.effectiveDaily)}/day after {dollars(rentalQuote.breakdown.durationDiscountAmount)} savings.
+                  </Text>
+                ) : null}
                 <Text style={styles.reviewTotal}>Total {dollars(rentalQuote.breakdown.total)}</Text>
                 {rentalQuote.breakdown.savings > 0 ? <Text style={styles.reviewSavings}>You save {dollars(rentalQuote.breakdown.savings)} vs standard rental pricing.</Text> : null}
                 <View style={styles.reviewActions}>
