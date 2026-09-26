@@ -333,7 +333,7 @@ export async function createSecurityDepositCheckout(bookingId: number) {
 export async function startStaffIdentityVerification(bookingId: number) {
   return request<{
     ok: boolean;
-    url?: string;
+    requested?: boolean;
     verified?: boolean;
     message: string;
   }>("/api/mobile/admin/identity/stripe-session", {
@@ -1378,6 +1378,19 @@ export async function submitRentalHandoff(phase: "pickup" | "return", bookingId:
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bookingId, ...input })
+  });
+}
+
+export async function startRentalIdentityVerification(bookingId: string) {
+  return request<{
+    ok: boolean;
+    url?: string;
+    verified?: boolean;
+    message: string;
+  }>("/api/mobile/rentals/identity-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bookingId })
   });
 }
 

@@ -628,6 +628,9 @@ export type RentalServiceBooking = RentalBooking & {
     returnFuelLevel: string;
     returnReviewStatus: string;
     depositStatus: string;
+    identityStatus?: string;
+    identityTitle?: string;
+    identityMessage?: string;
     pickupSubmitted: boolean;
     returnSubmitted: boolean;
   };

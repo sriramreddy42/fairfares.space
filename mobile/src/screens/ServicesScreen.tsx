@@ -22,6 +22,7 @@ import {
   isAuthenticationRejection,
   requestRentalCancellation,
   requestRentalModification,
+  startRentalIdentityVerification,
   submitRentalHandoff,
   setAuthToken,
   startRentalCheckout,
@@ -351,7 +352,7 @@ export function ServicesScreen({
 
   async function submitHandoff() {
     if (!selectedBooking) return;
-    const phase = selectedBooking.handoff?.phase === "return" ? "return" : "pickup";
+    const phase = "return";
     const missingPhotos = HANDOFF_PHOTOS.filter(({ key }) => !handoffPhotos[key]);
     if (!handoffOdometer.trim() || !handoffSignature.trim() || missingPhotos.length || !handoffAcknowledged) {
       Alert.alert("Complete the checklist", "Mileage, signature, acknowledgement, and all eight current vehicle photos are required.");
@@ -369,7 +370,7 @@ export function ServicesScreen({
       });
       setBookings((rows) => mergeBooking(rows, result.booking));
       setPanelMode(null);
-      Alert.alert(phase === "pickup" ? "Pickup submitted" : "Return submitted", result.message);
+      Alert.alert("Return submitted", result.message);
     } catch (handoffError) {
       Alert.alert("Could not submit handoff", handoffError instanceof Error ? handoffError.message : "Try again.");
     } finally {
@@ -408,21 +409,48 @@ export function ServicesScreen({
     }
   }
 
+  async function completeRentalIdentityVerification() {
+    if (!selectedBooking) return;
+    setBusy(true);
+    try {
+      const result = await startRentalIdentityVerification(selectedBooking.id);
+      if (result.verified) {
+        Alert.alert("Identity verified", result.message);
+        await loadBookings();
+        return;
+      }
+      if (!result.url) throw new Error("Stripe did not return an identity verification link.");
+      const verification = await WebBrowser.openAuthSessionAsync(result.url, "fairfares://identity");
+      if (verification.type === "success") {
+        Alert.alert("Verification submitted", "Stripe is processing your identity verification. FairFares will update this booking when it is complete.");
+        await loadBookings();
+      }
+    } catch (identityError) {
+      Alert.alert("Identity verification unavailable", identityError instanceof Error ? identityError.message : "Ask FairFares staff for help.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const bookingIsPast = Boolean(selectedBooking && ["CANCELLED", "RETURNED", "EXPIRED_HOLD"].includes(selectedBooking.status));
   const bookingCanChange = Boolean(selectedBooking && ["CONFIRMED", "PICKED_UP"].includes(selectedBooking.status));
   const bookingCanCancel = Boolean(selectedBooking && ["CONFIRMED", "MODIFIED"].includes(selectedBooking.status));
   const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
   const inProgressRental = selectedBooking?.status === "PICKED_UP";
   const handoffPhase = selectedBooking?.handoff?.phase || (selectedBooking?.paymentStatus === "PAID" ? "deposit" : "payment");
-  const handoffReady = handoffPhase === "pickup" || handoffPhase === "return";
+  const handoffReady = handoffPhase === "return";
   const primaryStep = handoffPhase === "payment"
     ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
     : handoffPhase === "deposit"
       ? { title: "Authorize refundable deposit", copy: `Authorize the $${Number(selectedBooking?.depositAmount || 250).toFixed(2)} hold before vehicle release.`, label: "Authorize deposit", onPress: () => void openRentalPayment("deposit") }
       : handoffPhase === "pickup"
-        ? { title: "Vehicle ready for pickup", copy: `Meet at ${selectedBooking?.pickupLocation || "the pickup location"} and document the vehicle condition.`, label: "Start pickup", onPress: () => setPanelMode("handoff" as PanelMode) }
+        ? selectedBooking?.handoff?.identityStatus === "VERIFIED"
+          ? { title: "Ready for staff pickup", copy: `Meet FairFares staff at ${selectedBooking?.pickupLocation || "the pickup location"}. Staff will record the vehicle inspection and release the vehicle.`, label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+          : selectedBooking?.handoff?.identityStatus && selectedBooking.handoff.identityStatus !== "NOT_STARTED"
+            ? { title: "Complete identity verification", copy: selectedBooking.handoff.identityMessage || "Complete the secure driver license and selfie check on this phone before pickup.", label: "Verify identity", onPress: () => void completeRentalIdentityVerification() }
+            : { title: "Identity verification pending", copy: selectedBooking?.handoff?.identityMessage || "FairFares staff will request your secure driver license and selfie check before pickup.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
         : handoffPhase === "pickup_review"
-          ? { title: "Pickup awaiting staff approval", copy: "Your inspection is saved. Staff must approve the vehicle release.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+          ? { title: "Pickup awaiting staff approval", copy: "FairFares staff is reviewing the recorded pickup inspection before vehicle release.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
           : handoffPhase === "return"
             ? { title: "Rental active", copy: `Return by ${selectedBooking?.returnTime || "the scheduled time"} on ${selectedBooking?.returnDate || "the return date"}.`, label: "Start return", onPress: () => setPanelMode("handoff" as PanelMode) }
             : handoffPhase === "return_review"
@@ -778,6 +806,7 @@ export function ServicesScreen({
                     <Text style={styles.detailsLine}>{selectedBooking.returnLocation}</Text>
                     <Text style={styles.detailsLine}>Payment: {selectedBooking.paymentLabel}</Text>
                     <Text style={styles.detailsLine}>Deposit: {selectedBooking.depositLabel || selectedBooking.depositStatus}</Text>
+                    <Text style={styles.detailsLine}>Identity: {selectedBooking.handoff?.identityTitle || "Not requested"}</Text>
                     <Text style={styles.detailsLine}>{selectedBooking.liveStatus?.instructions}</Text>
                   </View>
                   <View style={styles.inlineActions}>
@@ -788,12 +817,12 @@ export function ServicesScreen({
 
               {selectedBooking && panelMode === "handoff" && handoffReady ? (
                 <>
-                  <Text style={styles.sectionTitle}>{handoffPhase === "pickup" ? "Pickup inspection" : "Return inspection"}</Text>
+                  <Text style={styles.sectionTitle}>Return inspection</Text>
                   <View style={styles.greenNote}>
-                    <Text style={styles.greenNoteTitle}>{handoffPhase === "pickup" ? selectedBooking.pickupLocation : selectedBooking.returnLocation}</Text>
+                    <Text style={styles.greenNoteTitle}>{selectedBooking.returnLocation}</Text>
                     <Text style={styles.greenNoteBody}>Take current photos at the handoff location. These images protect both the renter and vehicle provider.</Text>
                   </View>
-                  <SecondaryButton label={`Open ${handoffPhase === "pickup" ? "pickup" : "return"} map`} onPress={() => void openHandoffMap()} />
+                  <SecondaryButton label="Open return map" onPress={() => void openHandoffMap()} />
                   <InputField label="Odometer mileage" value={handoffOdometer} onChangeText={setHandoffOdometer} placeholder="Current mileage" />
                   <Text style={styles.modalFieldLabel}>Fuel or charge level</Text>
                   <View style={styles.chipWrap}>{["EMPTY", "1/4", "1/2", "3/4", "FULL"].map((level) => <TouchableOpacity key={level} style={[styles.choiceChip, handoffFuel === level && styles.activeChoiceChip]} onPress={() => setHandoffFuel(level)}><Text style={[styles.choiceChipText, handoffFuel === level && styles.activeChoiceChipText]}>{level}</Text></TouchableOpacity>)}</View>
@@ -803,8 +832,8 @@ export function ServicesScreen({
                   <Text style={styles.modalFieldLabel}>Required live photos</Text>
                   <View style={styles.photoGrid}>{HANDOFF_PHOTOS.map(({ key, label }) => <TouchableOpacity key={key} style={[styles.photoButton, handoffPhotos[key] && styles.photoButtonDone]} onPress={() => void captureHandoffPhoto(key)} disabled={busy}><Text style={styles.photoButtonIcon}>{handoffPhotos[key] ? "✓" : "+"}</Text><Text style={styles.photoButtonText}>{label}</Text></TouchableOpacity>)}</View>
                   <InputField label="Type your full name as signature" value={handoffSignature} onChangeText={setHandoffSignature} placeholder="Full legal name" />
-                  <ToggleRow label={handoffPhase === "pickup" ? "I confirm the mileage, fuel level, vehicle condition, photos, and key handoff are accurate." : "I confirm the vehicle is parked at the return location, secured, and the mileage, fuel, condition, photos, and key placement are accurate."} selected={handoffAcknowledged} onPress={() => setHandoffAcknowledged((value) => !value)} />
-                  <PrimaryButton label={busy ? "Submitting securely..." : handoffPhase === "pickup" ? "Submit pickup for approval" : "Submit vehicle return"} onPress={() => void submitHandoff()} disabled={busy} />
+                  <ToggleRow label="I confirm the vehicle is parked at the return location, secured, and the mileage, fuel, condition, photos, and key placement are accurate." selected={handoffAcknowledged} onPress={() => setHandoffAcknowledged((value) => !value)} />
+                  <PrimaryButton label={busy ? "Submitting securely..." : "Submit vehicle return"} onPress={() => void submitHandoff()} disabled={busy} />
                 </>
               ) : null}
 

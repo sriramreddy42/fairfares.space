@@ -1303,8 +1303,8 @@ document.querySelectorAll("[data-admin-stripe-identity-button]").forEach((button
     const payload = new URLSearchParams();
     payload.set("booking_id", bookingInput.value);
     button.disabled = true;
-    button.textContent = "Opening Stripe Identity...";
-    if (status) status.textContent = "Opening secure DL and selfie verification for pickup...";
+    button.textContent = "Requesting verification...";
+    if (status) status.textContent = "Preparing a secure DL and selfie check for the renter's own phone...";
     try {
       let response;
       let lastNetworkError;
@@ -1346,15 +1346,16 @@ document.querySelectorAll("[data-admin-stripe-identity-button]").forEach((button
         button.textContent = "Verified";
         return;
       }
-      if (result.url) {
-        window.location.href = result.url;
+      if (result.requested) {
+        if (status) status.textContent = result.message || "Identity verification is ready for the renter in the FairFares app.";
+        button.textContent = "Verification requested";
         return;
       }
-      throw new Error(result.message || "Stripe Identity could not be opened.");
+      throw new Error(result.message || "Stripe Identity could not be requested.");
     } catch (error) {
-      if (status) status.textContent = error.message || "Stripe Identity could not be opened.";
+      if (status) status.textContent = error.message || "Stripe Identity could not be requested.";
       button.disabled = false;
-      button.textContent = originalLabel || "Start Stripe Identity";
+      button.textContent = originalLabel || "Request Stripe Identity";
     }
   });
 });

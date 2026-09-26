@@ -84,8 +84,9 @@ export function StaffPickupScreen({ onClose }: Props) {
         await refresh();
         return;
       }
-      if (!result.url || !(await Linking.canOpenURL(result.url))) throw new Error("Stripe did not return a valid identity verification link.");
-      await Linking.openURL(result.url);
+      if (!result.requested) throw new Error(result.message || "Stripe could not prepare identity verification.");
+      Alert.alert("Identity verification requested", result.message);
+      await refresh();
     } catch (error) {
       Alert.alert("Identity verification unavailable", error instanceof Error ? error.message : "Could not open Stripe Identity.");
     } finally {
@@ -106,7 +107,7 @@ export function StaffPickupScreen({ onClose }: Props) {
         </View>
         <View style={[styles.statusCard, configured ? styles.statusReady : styles.statusBlocked]}>
           <Text style={styles.statusTitle}>{configured ? "Pickup and return review" : "Stripe setup required"}</Text>
-          <Text style={styles.body}>Review customer-submitted condition evidence before releasing a vehicle or accepting its return.</Text>
+          <Text style={styles.body}>Request renter identity verification, then record the staff pickup inspection before releasing a vehicle. Review customer return evidence at the end of the rental.</Text>
         </View>
         {pickups.map((booking) => {
           const depositAmount = Number(booking.depositAmount || 250);
@@ -130,7 +131,7 @@ export function StaffPickupScreen({ onClose }: Props) {
                 <Text style={styles.body}>{booking.identityMessage || "Verify the customer's driving license and selfie before vehicle release."}</Text>
                 {!identityVerified && booking.bookingStatus !== "PICKED_UP" && booking.bookingStatus !== "RETURN_SUBMITTED" ? (
                   <TouchableOpacity style={[styles.identityButton, busy && styles.disabled]} disabled={busy} onPress={() => void openIdentityVerification(booking)}>
-                    <Text style={styles.identityButtonText}>Start Stripe Identity</Text>
+                    <Text style={styles.identityButtonText}>Request Stripe Identity</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -147,10 +148,7 @@ export function StaffPickupScreen({ onClose }: Props) {
                 </View> : null}
               </> : booking.bookingStatus === "CONFIRMED" ? (
                 authorized ? <>
-                  <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for pickup inspection</Text><Text style={styles.body}>The renter has not submitted the digital vehicle handoff.</Text></View>
-                  <TouchableOpacity style={[styles.holdButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Record offline return</Text>}
-                  </TouchableOpacity>
+                  <View style={styles.waitingCard}><Text style={styles.identityTitle}>{identityVerified ? "Ready for staff pickup inspection" : "Waiting for renter identity verification"}</Text><Text style={styles.body}>{identityVerified ? "Record the inspection, signatures, and vehicle photos in the staff pickup workspace before releasing the vehicle." : "Request Stripe Identity, then have the renter complete the secure check on their own phone."}</Text></View>
                 </> : <TouchableOpacity style={[styles.payButton, (busy || !configured) && styles.disabled]} disabled={busy || !configured} onPress={() => void openDepositCheckout(booking)}>
                   {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Open secure deposit checkout</Text>}
                 </TouchableOpacity>

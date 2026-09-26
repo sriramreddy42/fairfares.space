@@ -3469,7 +3469,7 @@ for _rate_limited_marketplace_path in (
     "/api/mobile/rentals/listing", "/api/mobile/rentals/checkout-session",
     "/api/mobile/rentals/security-deposit-session", "/api/mobile/rentals/cancel-request",
     "/api/mobile/rentals/modify-request", "/api/mobile/rentals/documents-email",
-    "/api/mobile/rentals/support-ticket", "/api/mobile/rentals/pickup-submit",
+    "/api/mobile/rentals/support-ticket", "/api/mobile/rentals/identity-session", "/api/mobile/rentals/pickup-submit",
     "/api/mobile/rentals/return-submit", "/api/mobile/admin/identity/stripe-session",
 ):
     API_WRITE_RATE_LIMITS[_rate_limited_marketplace_path] = ("marketplace-write", 30, 60)
@@ -4243,6 +4243,39 @@ def booking_releasable_at_pickup(booking: sqlite3.Row | dict[str, object] | None
     )
 
 
+def complete_staff_pickup_if_ready(booking_id: int) -> tuple[bool, str]:
+    """Release a vehicle only after staff has recorded a complete pickup inspection."""
+    booking = get_booking_by_id(booking_id)
+    if not booking:
+        return False, "Booking not found."
+    if str(row_value(booking, "booking_status") or "") == "PICKED_UP":
+        return True, "Vehicle is already released."
+    identity_row = latest_identity_verification(
+        int(row_value(booking, "user_id") or 0),
+        int(row_value(booking, "id") or 0),
+    )
+    required_fields = (
+        "actual_pickup_date", "actual_pickup_time", "pickup_odometer", "pickup_fuel_level",
+        "pickup_customer_signature", "pickup_staff_signature", "pickup_front_image",
+        "pickup_back_image", "pickup_left_image", "pickup_right_image", "pickup_odometer_image",
+        "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
+    )
+    missing = [field for field in required_fields if not row_value(booking, field)]
+    if not booking_releasable_at_pickup(booking):
+        return False, "Full payment and the refundable deposit authorization are required before release."
+    if str(row_value(identity_row, "status") or "") != "VERIFIED":
+        return False, "Verified Stripe Identity is required before release."
+    if missing:
+        return False, "Complete the staff pickup inspection, vehicle photos, and both signatures before release."
+    with db() as con:
+        con.execute(
+            "UPDATE bookings SET booking_status = 'PICKED_UP', status = 'PICKED_UP' WHERE id = ?",
+            (booking_id,),
+        )
+        con.execute("UPDATE cars SET status = 'BOOKED' WHERE id = ?", (row_value(booking, "car_id"),))
+    return True, "Staff pickup inspection saved and vehicle released."
+
+
 def booking_visible_in_customer_history(booking: sqlite3.Row | dict[str, object] | None) -> bool:
     """Only a paid booking (or its later refund record) belongs in booking history."""
     return row_value(booking, "payment_status") in BOOKING_HISTORY_PAYMENT_STATUSES
@@ -4395,7 +4428,7 @@ def identity_status_copy(status: str) -> tuple[str, str]:
         return "Identity processing", "Stripe is still reviewing the document/selfie result."
     if normalized in {"ACTION_REQUIRED", "REVIEW_REQUIRED"}:
         return "Identity needs review", "Customer may need to retry or admin must review before release."
-    return "Identity not verified", "Start Stripe Identity during pickup before releasing the vehicle."
+    return "Identity not verified", "Request Stripe Identity for the renter to complete on their own phone before vehicle release."
 
 
 def identity_status_detail(row: sqlite3.Row | None) -> str:
@@ -19365,6 +19398,17 @@ def mobile_rental_service_booking_payload(
         "supportOpen": 0,
     }
     active_booking_id = int(row_value(row, "id") or 0)
+    identity_row = latest_identity_verification(user_id, active_booking_id) if user_id and active_booking_id else None
+    identity_status = str(row_value(identity_row, "status") or "NOT_STARTED")
+    if identity_status == "VERIFIED":
+        identity_title = "Identity verified"
+        identity_message = "FairFares staff can now complete the pickup inspection and release the vehicle."
+    elif identity_row:
+        identity_title = "Complete identity verification"
+        identity_message = "FairFares staff requested a secure driver license and selfie check. Complete it on this phone before pickup."
+    else:
+        identity_title = "Identity verification pending"
+        identity_message = "FairFares staff will start the secure driver license and selfie check before pickup."
     if user_id:
         user_bookings = get_bookings_for_user(user_id)
         stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
@@ -19442,6 +19486,9 @@ def mobile_rental_service_booking_payload(
                 "returnFuelLevel": row_value(row, "return_fuel_level"),
                 "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
                 "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
+                "identityStatus": identity_status,
+                "identityTitle": identity_title,
+                "identityMessage": identity_message,
                 "pickupSubmitted": row_value(row, "booking_status") in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"},
                 "returnSubmitted": row_value(row, "booking_status") in {"RETURN_SUBMITTED", "RETURNED"},
             },
@@ -26593,6 +26640,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/modify-request": self.api_mobile_rental_modify_request,
             "/api/mobile/rentals/documents-email": self.api_mobile_rental_documents_email,
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
+            "/api/mobile/rentals/identity-session": self.api_mobile_rental_identity_session,
             "/api/mobile/rentals/pickup-submit": self.api_mobile_rental_pickup_submit,
             "/api/mobile/rentals/return-submit": self.api_mobile_rental_return_submit,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
@@ -31748,16 +31796,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         session, status = resumable_stripe_identity_session(int(customer["id"]), int(booking["id"]))
         if session.get("url"):
-            self.send_json({"ok": True, "url": session["url"], "message": "Resuming Stripe Identity for pickup verification."})
+            self.send_json({"ok": True, "requested": True, "message": "Identity verification is already ready. Ask the renter to continue it from their FairFares app."})
             return
         origin = self.public_origin().rstrip("/")
-        session, status = create_stripe_identity_session_for(customer, booking, f"{origin}/admin/pickup?identity=return")
-        url = str(session.get("url") or "")
-        if not url:
+        session, status = create_stripe_identity_session_for(customer, booking, f"{origin}/manage-booking?identity=return")
+        if not str(session.get("url") or ""):
             self.send_json({"ok": False, "message": status}, 502)
             return
         save_identity_verification_from_session(session, int(customer["id"]), int(booking["id"]))
-        self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity for pickup verification."})
+        self.send_json({"ok": True, "requested": True, "message": "Identity verification is ready. Ask the renter to complete the secure check in the FairFares app on their own phone."})
 
     def create_admin_pickup_balance_payment(self) -> None:
         admin = self.require_admin()
@@ -35009,14 +35056,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <input type="hidden" name="user_id" value="{row["user_id"]}">
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
-                        <div><b>Stripe Identity at pickup</b><span>Start DL and selfie verification while the customer is present.</span></div>
+                        <div><b>Stripe Identity before pickup</b><span>Request a secure DL and selfie check for the renter to complete in their FairFares app.</span></div>
                     </div>
                     <div class="pickup-prefill-panel pickup-stripe-identity-panel" data-admin-stripe-identity>
                         <div>
                             <b>{escape(identity_title)}</b>
                             <span>{escape(identity_body)}</span>
                         </div>
-                        <button type="button" data-admin-stripe-identity-button {"disabled" if identity_verified else ""}>{"Verified" if identity_verified else "Start Stripe Identity"}</button>
+                        <button type="button" data-admin-stripe-identity-button {"disabled" if identity_verified else ""}>{"Verified" if identity_verified else "Request Stripe Identity"}</button>
                         <small data-admin-stripe-identity-status>{escape(identity_detail)}</small>
                     </div>
                 </section>
@@ -35114,7 +35161,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <button class="secondary-print-button" type="button" data-print-record>Print Agreement</button>
                 </div>
-                <button type="submit">Save User Pickup Data</button>
+                <button type="submit">Save staff pickup inspection</button>
             </form>
         </details>
         """
@@ -36840,6 +36887,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         except (TypeError, ValueError):
             saved_booking_id = 0
         saved_booking = get_booking_by_id(saved_booking_id) if saved_booking_id else None
+        if saved_booking and str(row_value(saved_booking, "booking_status") or "") == "CONFIRMED":
+            complete_staff_pickup_if_ready(saved_booking_id)
+            saved_booking = get_booking_by_id(saved_booking_id)
         if saved_booking and return_checks_clear_for_deposit_release(saved_booking):
             release_security_deposit_after_clear_return(saved_booking)
         self.redirect("/admin/pickup")
@@ -37165,8 +37215,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             identity_status = row_value(identity_row, "status") if identity_row else "PENDING"
             identity_title, identity_body = identity_status_copy(identity_status)
             if identity_status != "VERIFIED":
-                identity_title = "Identity checked at pickup"
-                identity_body = "Staff will start Stripe Identity during pickup before the vehicle is released."
+                identity_title = "Identity verification before pickup"
+                identity_body = "FairFares staff will request Stripe Identity. Complete the secure driver license and selfie check in the FairFares app before vehicle release."
             trip_identity_summary = f"""
                 <section class="trip-identity-summary {escape(str(identity_status).lower().replace("_", "-"))}" aria-label="Identity verification">
                     <div>
@@ -38979,15 +39029,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             session, status = create_stripe_identity_session_for(
                 customer,
                 booking,
-                f"{origin}/admin/pickup?identity=return",
+                f"{origin}/manage-booking?identity=return",
             )
             if session.get("id"):
                 save_identity_verification_from_session(session, int(customer["id"]), int(row_value(booking, "id") or 0))
-        url = str(session.get("url") or "")
-        if not url:
+        if not str(session.get("url") or ""):
             self.send_json({"ok": False, "error": status}, 502)
             return
-        self.send_json({"ok": True, "url": url, "message": "Opening Stripe Identity for the customer."})
+        self.send_json({"ok": True, "requested": True, "message": "Identity verification is ready. Ask the renter to open this booking in the FairFares app and complete the secure DL and selfie check on their own phone."})
 
     def api_mobile_admin_handoff_review(self) -> None:
         admin = self.require_mobile_admin()
@@ -40694,15 +40743,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         current_status = str(row_value(booking, "booking_status") or "")
         if phase == "pickup":
-            if current_status != "CONFIRMED":
-                self.send_json({"ok": False, "error": "Pickup can only be submitted for a confirmed booking."}, 409)
-                return
-            if row_value(booking, "payment_status") != "PAID":
-                self.send_json({"ok": False, "error": "Pay the rental balance before starting pickup."}, 409)
-                return
-            if row_value(booking, "security_deposit_status") != "AUTHORIZED":
-                self.send_json({"ok": False, "error": "Authorize the refundable deposit before starting pickup."}, 409)
-                return
+            self.send_json({"ok": False, "error": "FairFares staff completes the pickup inspection and vehicle release at handoff."}, 403)
+            return
         elif current_status != "PICKED_UP":
             self.send_json({"ok": False, "error": "Return can only be submitted after staff confirms pickup."}, 409)
             return
@@ -40735,7 +40777,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
         now_local = fairfares_now()
         booking_db_id = int(row_value(booking, "id") or 0)
-        prefix = "pickup" if phase == "pickup" else "return"
+        prefix = "return"
         column_by_photo = {
             "front": f"{prefix}_front_image",
             "back": f"{prefix}_back_image",
@@ -40759,48 +40801,63 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     user_id=user_id,
                     booking_id=booking_db_id,
                 )
-            if phase == "pickup":
-                con.execute(
-                    """
-                    UPDATE bookings SET booking_status = 'PICKUP_SUBMITTED', status = 'PICKUP_SUBMITTED',
-                        actual_pickup_date = ?, actual_pickup_time = ?, pickup_odometer = ?,
-                        pickup_fuel_level = ?, pickup_condition_status = ?, pickup_customer_signature = ?,
-                        pickup_front_image = ?, pickup_back_image = ?, pickup_left_image = ?, pickup_right_image = ?,
-                        pickup_odometer_image = ?, pickup_fuel_image = ?, pickup_interior_front_image = ?, pickup_interior_rear_image = ?
-                    WHERE id = ?
-                    """,
-                    (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
-                     fuel_level, condition, signature, stored_photos["pickup_front_image"],
-                     stored_photos["pickup_back_image"], stored_photos["pickup_left_image"],
-                     stored_photos["pickup_right_image"], stored_photos["pickup_odometer_image"],
-                     stored_photos["pickup_fuel_image"], stored_photos["pickup_interior_front_image"],
-                     stored_photos["pickup_interior_rear_image"], booking_db_id),
-                )
-            else:
-                new_damage = "YES" if condition == "DAMAGE_REPORTED" else "NO"
-                con.execute(
-                    """
-                    UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
-                        actual_return_date = ?, actual_return_time = ?, return_odometer = ?,
-                        return_fuel_level = ?, return_condition_status = ?, new_damage_found = ?,
-                        return_customer_signature = ?, return_review_status = 'PENDING',
-                        return_front_image = ?, return_back_image = ?, return_left_image = ?, return_right_image = ?,
-                        return_odometer_image = ?, return_fuel_image = ?, return_interior_front_image = ?, return_interior_rear_image = ?
-                    WHERE id = ?
-                    """,
-                    (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
-                     fuel_level, condition, new_damage, signature, stored_photos["return_front_image"],
-                     stored_photos["return_back_image"], stored_photos["return_left_image"],
-                     stored_photos["return_right_image"], stored_photos["return_odometer_image"],
-                     stored_photos["return_fuel_image"], stored_photos["return_interior_front_image"],
-                     stored_photos["return_interior_rear_image"], booking_db_id),
-                )
+            new_damage = "YES" if condition == "DAMAGE_REPORTED" else "NO"
+            con.execute(
+                """
+                UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
+                    actual_return_date = ?, actual_return_time = ?, return_odometer = ?,
+                    return_fuel_level = ?, return_condition_status = ?, new_damage_found = ?,
+                    return_customer_signature = ?, return_review_status = 'PENDING',
+                    return_front_image = ?, return_back_image = ?, return_left_image = ?, return_right_image = ?,
+                    return_odometer_image = ?, return_fuel_image = ?, return_interior_front_image = ?, return_interior_rear_image = ?
+                WHERE id = ?
+                """,
+                (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
+                 fuel_level, condition, new_damage, signature, stored_photos["return_front_image"],
+                 stored_photos["return_back_image"], stored_photos["return_left_image"],
+                 stored_photos["return_right_image"], stored_photos["return_odometer_image"],
+                 stored_photos["return_fuel_image"], stored_photos["return_interior_front_image"],
+                 stored_photos["return_interior_rear_image"], booking_db_id),
+            )
         updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
         self.send_json({
             "ok": True,
-            "message": "Pickup submitted for staff approval." if phase == "pickup" else "Return submitted for staff inspection.",
+            "message": "Return submitted for staff inspection.",
             "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), user_id) if updated else None,
         })
+
+    def api_mobile_rental_identity_session(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to complete identity verification."}, 401)
+            return
+        payload = self.read_json_body()
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Choose one of your rental bookings first."}, 404)
+            return
+        if str(row_value(booking, "booking_status") or "") != "CONFIRMED":
+            self.send_json({"ok": False, "error": "Identity verification is available only before vehicle release."}, 409)
+            return
+        booking_id = int(row_value(booking, "id") or 0)
+        user_id = int(row_value(user, "id") or 0)
+        existing = latest_identity_verification(user_id, booking_id)
+        if existing and str(row_value(existing, "status") or "") == "VERIFIED":
+            self.send_json({"ok": True, "verified": True, "message": "Your identity is already verified."})
+            return
+        if not existing:
+            self.send_json({"ok": False, "error": "FairFares staff has not started identity verification for this pickup yet."}, 409)
+            return
+        session, status = resumable_stripe_identity_session(user_id, booking_id)
+        refreshed = latest_identity_verification(user_id, booking_id)
+        if str(row_value(refreshed, "status") or "").upper() == "VERIFIED":
+            self.send_json({"ok": True, "verified": True, "message": "Your identity is already verified."})
+            return
+        url = str(session.get("url") or "")
+        if not url:
+            self.send_json({"ok": False, "error": status or "Stripe Identity cannot be resumed right now. Ask FairFares staff to start a new verification request."}, 409)
+            return
+        self.send_json({"ok": True, "url": url, "message": "Continue securely with Stripe Identity."})
 
     def api_mobile_rental_support_ticket(self) -> None:
         user = self.current_user()

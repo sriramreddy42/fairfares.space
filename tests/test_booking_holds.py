@@ -163,16 +163,11 @@ class BookingHoldTest(unittest.TestCase):
             "bookingId": booking["booking_id"], "odometer": "12000", "fuelLevel": "FULL",
             "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
         })
-        with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
-            app.FairFaresHandler.api_mobile_rental_handoff_submit(pickup, "pickup")
-        self.assertEqual(pickup.response[0], 200)
+        app.FairFaresHandler.api_mobile_rental_handoff_submit(pickup, "pickup")
+        self.assertEqual(pickup.response[0], 403)
+        self.assertIn("staff completes the pickup inspection", pickup.response[1]["error"])
         with app.db() as con:
-            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "PICKUP_SUBMITTED")
-
-        unverified_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
-        app.FairFaresHandler.api_mobile_admin_handoff_review(unverified_review)
-        self.assertEqual(unverified_review.response[0], 409)
-        self.assertIn("Verified identity", unverified_review.response[1]["error"])
+            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "CONFIRMED")
         identity_start = Handler(admin, {"bookingId": booking["id"]})
         with patch.object(app, "stripe_identity_enabled", return_value=True), patch.object(
             app,
@@ -185,14 +180,36 @@ class BookingHoldTest(unittest.TestCase):
         ):
             app.FairFaresHandler.api_mobile_admin_stripe_identity_session(identity_start)
         self.assertEqual(identity_start.response[0], 200)
-        self.assertEqual(identity_start.response[1]["url"], "https://verify.stripe.com/mobile-test")
+        self.assertTrue(identity_start.response[1]["requested"])
+        self.assertNotIn("url", identity_start.response[1])
+        renter_identity = Handler(customer, {"bookingId": booking["booking_id"]})
+        with patch.object(
+            app,
+            "resumable_stripe_identity_session",
+            return_value=({"id": "vs_mobile_start", "url": "https://verify.stripe.com/mobile-test", "status": "requires_input"}, "ok"),
+        ):
+            app.FairFaresHandler.api_mobile_rental_identity_session(renter_identity)
+        self.assertEqual(renter_identity.response[0], 200)
+        self.assertEqual(renter_identity.response[1]["url"], "https://verify.stripe.com/mobile-test")
+        with app.db() as con:
+            con.execute(
+                """UPDATE bookings SET actual_pickup_date = '2026-09-25', actual_pickup_time = '10:00 AM',
+                   pickup_odometer = 12000, pickup_fuel_level = 'FULL', pickup_customer_signature = 'Hold Tester',
+                   pickup_staff_signature = 'Handoff Admin', pickup_front_image = 'drive://front', pickup_back_image = 'drive://back',
+                   pickup_left_image = 'drive://left', pickup_right_image = 'drive://right', pickup_odometer_image = 'drive://odometer',
+                   pickup_fuel_image = 'drive://fuel', pickup_interior_front_image = 'drive://interior-front', pickup_interior_rear_image = 'drive://interior-rear'
+                   WHERE id = ?""",
+                (booking["id"],),
+            )
+        ready, message = app.complete_staff_pickup_if_ready(int(booking["id"]))
+        self.assertFalse(ready)
+        self.assertIn("Verified Stripe Identity", message)
         app.save_identity_verification_from_session({
             "id": "vs_handoff_unit", "status": "verified",
             "metadata": {"user_id": str(self.user_id), "booking_id": str(booking["id"])},
         })
-        pickup_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
-        app.FairFaresHandler.api_mobile_admin_handoff_review(pickup_review)
-        self.assertEqual(pickup_review.response[0], 200)
+        ready, message = app.complete_staff_pickup_if_ready(int(booking["id"]))
+        self.assertTrue(ready, message)
         with app.db() as con:
             self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "PICKED_UP")
 
@@ -296,8 +313,11 @@ class BookingHoldTest(unittest.TestCase):
                 f"{origin}{path}", data=body, method="POST" if payload is not None else "GET",
                 headers={"Accept": "application/json", "Content-Type": "application/json", "Authorization": f"Bearer {token}"},
             )
-            with urllib.request.urlopen(request, timeout=10) as response:
-                return response.status, json.loads(response.read().decode())
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.status, json.loads(response.read().decode())
+            except urllib.error.HTTPError as error:
+                return error.code, json.loads(error.read().decode())
 
         photo = "data:image/jpeg;base64,dGVzdA=="
         photos = {key: photo for key in ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")}
@@ -305,17 +325,16 @@ class BookingHoldTest(unittest.TestCase):
             _, initial = request_json("/api/mobile/rentals/bookings", "handoff-customer")
             self.assertEqual(initial["bookings"][0]["handoff"]["phase"], "pickup")
 
-            with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
-                status, pickup = request_json("/api/mobile/rentals/pickup-submit", "handoff-customer", {
-                    "bookingId": booking["booking_id"], "odometer": "22000", "fuelLevel": "FULL",
-                    "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
-                })
-            self.assertEqual(status, 200)
-            self.assertEqual(pickup["booking"]["handoff"]["phase"], "pickup_review")
+            status, pickup = request_json("/api/mobile/rentals/pickup-submit", "handoff-customer", {
+                "bookingId": booking["booking_id"], "odometer": "22000", "fuelLevel": "FULL",
+                "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+            })
+            self.assertEqual(status, 403)
+            self.assertIn("staff completes the pickup inspection", pickup["error"])
 
             _, staff_pickups = request_json("/api/mobile/admin/pickups", "handoff-admin")
             queued_pickup = next(item for item in staff_pickups["pickups"] if item["id"] == booking["id"])
-            self.assertTrue(queued_pickup["pickupEvidenceComplete"])
+            self.assertFalse(queued_pickup["pickupEvidenceComplete"])
             self.assertEqual(queued_pickup["identityStatus"], "NOT_STARTED")
             _, exact_pickup = request_json(
                 f"/api/mobile/admin/pickups?bookingId={booking['booking_id']}", "handoff-admin"
@@ -327,10 +346,18 @@ class BookingHoldTest(unittest.TestCase):
                 "id": "vs_handoff_http", "status": "verified",
                 "metadata": {"user_id": str(self.user_id), "booking_id": str(booking["id"])},
             })
-            status, pickup_review = request_json("/api/mobile/admin/handoff-review", "handoff-admin", {
-                "bookingId": booking["id"], "action": "APPROVE_PICKUP",
-            })
-            self.assertEqual((status, pickup_review["ok"]), (200, True))
+            with app.db() as con:
+                con.execute(
+                    """UPDATE bookings SET actual_pickup_date = '2026-09-25', actual_pickup_time = '10:00 AM',
+                       pickup_odometer = 22000, pickup_fuel_level = 'FULL', pickup_customer_signature = 'Hold Tester',
+                       pickup_staff_signature = 'HTTP Handoff Admin', pickup_front_image = 'drive://front', pickup_back_image = 'drive://back',
+                       pickup_left_image = 'drive://left', pickup_right_image = 'drive://right', pickup_odometer_image = 'drive://odometer',
+                       pickup_fuel_image = 'drive://fuel', pickup_interior_front_image = 'drive://interior-front', pickup_interior_rear_image = 'drive://interior-rear'
+                       WHERE id = ?""",
+                    (booking["id"],),
+                )
+            ready, message = app.complete_staff_pickup_if_ready(int(booking["id"]))
+            self.assertTrue(ready, message)
             _, active = request_json("/api/mobile/rentals/bookings", "handoff-customer")
             self.assertEqual(active["bookings"][0]["handoff"]["phase"], "return")
 

@@ -132,8 +132,8 @@ class IdentityVerificationTest(unittest.TestCase):
         booking = next(row for row in app.get_admin_bookings() if int(row["id"]) == int(self.booking["id"]))
         html = app.FairFaresHandler.render_pickup_record(None, booking)
 
-        self.assertIn("Stripe Identity at pickup", html)
-        self.assertIn("Start Stripe Identity", html)
+        self.assertIn("Stripe Identity before pickup", html)
+        self.assertIn("Request Stripe Identity", html)
         self.assertIn("Identity not verified", html)
 
     def test_identity_refresh_updates_pickup_status_from_stripe(self):
@@ -243,8 +243,8 @@ class IdentityVerificationTest(unittest.TestCase):
         self.assertIn("/admin/identity/stripe-session", js)
         self.assertIn("/admin/identity/stripe-session", py)
         self.assertIn("data-admin-stripe-identity-button", py)
-        self.assertIn("Stripe Identity at pickup", py)
-        self.assertIn("Staff will start Stripe Identity during pickup", py)
+        self.assertIn("Stripe Identity before pickup", py)
+        self.assertIn("Complete the secure driver license and selfie check in the FairFares app", py)
         self.assertIn("/admin/identity/idscan", js)
         self.assertIn("/admin/identity/idscan", py)
         self.assertIn("run_admin_idscan_check", py)
