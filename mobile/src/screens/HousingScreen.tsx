@@ -469,15 +469,11 @@ function rentalLengthText(days: number) {
   return `${days} days`;
 }
 
-function dailyPriceRange(price: number | string, days: number) {
-  const daily = Number(price || 0);
-  const average = Math.round(daily);
-  const baseLow = Math.max(25, average - 5);
-  const baseHigh = Math.max(baseLow, average + 5);
+function displayedRentalRate(price: number | string, days: number) {
+  const daily = Math.max(0, Number(price || 0));
   const tier = durationRateTier(days);
-  const low = Math.max(25, Math.round(baseLow * (1 - tier.rate)));
-  const high = Math.max(low, Math.round(baseHigh * (1 - tier.rate)));
-  return { low, high, tier };
+  const effective = Math.round(daily * (1 - tier.rate) * 100) / 100;
+  return { daily, effective, tier };
 }
 
 function durationSavingsText(price: number | string, days: number) {
@@ -2919,8 +2915,8 @@ export function HousingScreen({
             <Text style={styles.carRateNoteTitle}>{rentalTier.label}</Text>
             <Text style={styles.carRateNoteText}>
               {rentalTier.rate > 0
-                ? `${Math.round(rentalTier.rate * 100)}% duration savings are reflected in the daily ranges below.`
-                : "Daily ranges apply for 1-6 day rentals. Weekly starts at 7 days; monthly starts at 30 days."}
+                ? `${Math.round(rentalTier.rate * 100)}% duration savings are reflected in the displayed effective daily rate.`
+                : "The displayed daily rate is the published vehicle rate. Weekly starts at 7 days; monthly starts at 30 days."}
             </Text>
           </View>
           <Text style={styles.carFieldLabel}>Promo / referral / student code</Text>
@@ -2992,19 +2988,21 @@ export function HousingScreen({
               const image = absoluteAssetUrl(car.image_url);
               const carDailyPrice = Number(car.daily_price || 0);
               const isLowestDailyRate = lowestRentalDailyPrice !== null && carDailyPrice === lowestRentalDailyPrice;
+              const rate = displayedRentalRate(car.daily_price, rentalDayCount);
               return (
                 <TouchableOpacity
                   key={car.id}
                   style={[styles.carMiniCard, isLight && styles.carMiniCardLight, isLowestDailyRate && styles.carMiniCardLowest, selectedRentalCar?.id === car.id && styles.carMiniCardActive]}
                   onPress={() => reviewRentalCar(car)}
-                  accessibilityLabel={`${car.name}. ${isLowestDailyRate ? "Lowest daily rental rate. " : ""}${dailyPriceRange(car.daily_price, rentalDayCount).low} to ${dailyPriceRange(car.daily_price, rentalDayCount).high} dollars per day`}
+                  accessibilityLabel={`${car.name}. ${isLowestDailyRate ? "Lowest daily rental rate. " : ""}${dollars(rate.daily)} per day${rate.tier.rate ? `. ${rate.tier.label}: ${dollars(rate.effective)} per day` : ""}`}
                 >
                   <RentalCarImage uri={image} name={car.name} />
                   <View style={styles.carMiniBody}>
                     {isLowestDailyRate ? <Text style={styles.carMiniLowestLabel}>Lowest car rental</Text> : null}
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
-                    <Text style={styles.carMiniPrice}>${dailyPriceRange(car.daily_price, rentalDayCount).low}-${dailyPriceRange(car.daily_price, rentalDayCount).high}/day</Text>
+                    <Text style={styles.carMiniPrice}>{dollars(rate.daily)}/day</Text>
+                    {rate.tier.rate ? <Text style={styles.carMiniBasePrice}>{rate.tier.label}: {dollars(rate.effective)}/day</Text> : null}
                     {durationSavingsText(car.daily_price, rentalDayCount) ? (
                       <Text style={styles.carMiniSavings}>{durationSavingsText(car.daily_price, rentalDayCount)}</Text>
                     ) : null}
@@ -4891,6 +4889,7 @@ const styles = StyleSheet.create({
   carMiniTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
   carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  carMiniBasePrice: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", marginTop: -3 },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
   carMiniAction: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900", alignSelf: "flex-start", marginTop: 4 },
   checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
