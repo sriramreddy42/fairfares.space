@@ -1164,9 +1164,13 @@ export function HousingScreen({
   }, [quickLinkWordIndex]);
 
   useEffect(() => {
+    // A parent inventory refresh can finish after a renter has searched for a
+    // pickup location and date window. Do not replace that filtered result or
+    // clear the result state; doing so made cars disappear until the renter
+    // searched again.
+    if (rentalSearched) return;
     setRentalCars(cars);
-    setRentalSearched(false);
-  }, [cars]);
+  }, [cars, rentalSearched]);
 
   useEffect(() => {
     if (!rentalSearched || !rentalResultsY) return;
