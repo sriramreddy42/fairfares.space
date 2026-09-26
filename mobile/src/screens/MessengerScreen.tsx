@@ -8748,8 +8748,8 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         {signedIn && !loading && tab !== "Contacts" && !filteredConversations.length && !filteredCommunities.length && !searchedContacts.length && !messageSearchResults.length && (!searchingInbox || (!hasMoreConversations && !searchHistoryLoadFailed && !searchingMessages)) ? (
           <View style={styles.letterEmptyCard}>
             <Text style={styles.letterEmptyIcon}>📬</Text>
-            <Text style={styles.letterEmptyTitle}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
-            <Text style={styles.letterEmptyCopy}>{searchingInbox ? "No matching chats. Try another name or find someone in your contacts." : tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
+            <Text style={[styles.letterEmptyTitle, isLight && styles.letterEmptyTitleLight]}>{tab === "Unread" ? "No new letters today" : "No letters found"}</Text>
+            <Text style={[styles.letterEmptyCopy, isLight && styles.letterEmptyCopyLight]}>{searchingInbox ? "No matching chats. Try another name or find someone in your contacts." : tab === "Unread" ? "You are all caught up." : "Message a listing poster or create a community group."}</Text>
           </View>
         ) : null}
 
@@ -9733,10 +9733,12 @@ const styles = StyleSheet.create({
   leaveGroupText: { color: "#FF8C96", fontSize: 15, fontWeight: "800" },
   chevron: { color: theme.colors.muted, fontSize: 26, marginTop: -2 },
   emptyList: { color: theme.colors.muted, fontWeight: "500", textAlign: "center", padding: theme.spacing.lg },
-  letterEmptyCard: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 24, borderRadius: 22, borderWidth: 1, borderColor: "rgba(219,180,107,0.24)", backgroundColor: "rgba(7,24,22,0.78)", alignItems: "center" },
+  letterEmptyCard: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 24, alignItems: "center" },
   letterEmptyIcon: { fontSize: 30, marginBottom: 8 },
   letterEmptyTitle: { color: "#f5f3eb", fontSize: 17, fontWeight: "600", textAlign: "center" },
+  letterEmptyTitleLight: { color: "#173f34" },
   letterEmptyCopy: { color: "#aeb3ae", fontSize: 12.5, lineHeight: 18, textAlign: "center", marginTop: 5 },
+  letterEmptyCopyLight: { color: "#6c7d76" },
   groupSuggestionsSection: { marginBottom: 12, padding: 10, borderRadius: 20, borderWidth: 1, borderColor: "rgba(219,180,107,0.22)", backgroundColor: "rgba(7,24,22,0.74)", gap: 7 },
   groupSuggestionsSectionLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.07)", shadowColor: "#15251f", shadowOpacity: 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
   groupSuggestionsHeader: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 3 },
