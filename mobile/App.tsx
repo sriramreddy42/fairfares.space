@@ -1390,6 +1390,19 @@ function FairFaresApp() {
         return;
       }
       const communityPath = parsed.pathname.match(/^\/community\/([^/]+)$/i);
+      const opensChitthiThread = parsed.protocol === "fairfares:" && (host === "chitthi" || host === "fchat");
+      if (opensChitthiThread) {
+        const conversationId = parsed.searchParams.get("conversationId") || parsed.searchParams.get("conversation_id") || "";
+        const messageId = Number(parsed.searchParams.get("messageId") || parsed.searchParams.get("message_id") || 0);
+        if (conversationId) {
+          setNotificationConversationId(conversationId);
+          setNotificationMessageId(messageId);
+          setPendingPost(null);
+          setPendingRide(null);
+          setActiveTab("messenger");
+          return;
+        }
+      }
       const opensCommunity = (host === "fairfare.space" && (parsed.pathname === "/community" || parsed.pathname === "/community/open" || Boolean(communityPath))) || (parsed.protocol === "fairfares:" && host === "community");
       const opensHousing = (host === "fairfare.space" && (parsed.pathname === "/accommodations" || parsed.pathname === "/accommodations/open")) || (parsed.protocol === "fairfares:" && host === "housing");
       const opensCarpool = (host === "fairfare.space" && (parsed.pathname === "/carpool" || parsed.pathname === "/carpool/open")) || (parsed.protocol === "fairfares:" && host === "carpool");

@@ -23106,21 +23106,35 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
         badge_count = max(0, int(notification_data.get("badge") or 0))
     except (TypeError, ValueError):
         badge_count = 0
+    # Android displays a remote notification payload itself while the app is in
+    # the background.  Passing richContent there makes FCM use BigPictureStyle,
+    # which turns a Chitthi avatar into a full-card photo.  Send Chitthi Android
+    # pushes as high-priority data messages instead; the app's Firebase service
+    # renders a MessagingStyle notification with the avatar beside the letter.
+    android_chitthi = target_platform == "android" and is_chitthi_notification
+    if android_chitthi:
+        delivered_data = {
+            **delivered_data,
+            "notificationRenderer": "chitthi-v1",
+            "notificationTitle": title[:120],
+            "notificationBody": body[:240],
+            "notificationChannelId": channel_id,
+            "notificationImage": image_url,
+        }
     for offset in range(0, len(valid_tokens), 100):
         token_batch = valid_tokens[offset:offset + 100]
         messages = [
             {
                 "to": token,
-                "sound": "default",
-                "title": title[:120],
-                "body": rendered_body[:240],
-                **({"subtitle": subtitle[:120]} if subtitle else {}),
                 "data": delivered_data,
-                "channelId": channel_id,
+                **({"priority": "high"} if android_chitthi else {"sound": "default"}),
+                **({} if android_chitthi else {"title": title[:120], "body": rendered_body[:240]}),
+                **({"subtitle": subtitle[:120]} if subtitle and not android_chitthi else {}),
+                **({} if android_chitthi else {"channelId": channel_id}),
                 **({"badge": badge_count} if badge_count else {}),
-                **({"categoryId": "CHITTHI_MESSAGE"} if is_chitthi_notification else {}),
-                **({"mutableContent": True} if allow_native_enrichment or notification_type == "FAIRFARES_PROMO" else {}),
-                **({"richContent": {"image": image_url}} if rich_notification else {}),
+                **({"categoryId": "CHITTHI_MESSAGE"} if is_chitthi_notification and not android_chitthi else {}),
+                **({"mutableContent": True} if (allow_native_enrichment or notification_type == "FAIRFARES_PROMO") and not android_chitthi else {}),
+                **({"richContent": {"image": image_url}} if rich_notification and not android_chitthi else {}),
             }
             for token in token_batch
         ]

@@ -500,7 +500,7 @@ class PushNotificationTest(unittest.TestCase):
         self.assertTrue(message["mutableContent"])
         self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
 
-    def test_android_group_message_renders_person_group_and_message(self):
+    def test_android_group_message_uses_data_only_messaging_renderer(self):
         token = "ExpoPushToken[android-group-message]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-android-group"}]})
         data = {
@@ -517,12 +517,18 @@ class PushNotificationTest(unittest.TestCase):
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Marisa", "Are you available?", data)
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
-        self.assertEqual(message["title"], "Marisa")
-        self.assertEqual(message["body"], "DU Housing Board\nAre you available?")
-        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
+        self.assertNotIn("title", message)
+        self.assertNotIn("body", message)
+        self.assertNotIn("richContent", message)
+        self.assertEqual(message["priority"], "high")
+        self.assertEqual(message["data"]["notificationRenderer"], "chitthi-v1")
+        self.assertEqual(message["data"]["notificationTitle"], "Marisa")
+        self.assertEqual(message["data"]["notificationBody"], "Are you available?")
+        self.assertEqual(message["data"]["notificationImage"], "https://fairfare.space/group.jpg")
+        self.assertEqual(message["data"]["notificationChannelId"], "chitthi-messages-v2")
         self.assertNotIn("targetPlatform", message["data"])
 
-    def test_android_group_reaction_renders_person_group_and_reaction(self):
+    def test_android_group_reaction_uses_data_only_messaging_renderer(self):
         token = "ExpoPushToken[android-group-reaction]"
         response = FakeResponse({"data": [{"status": "ok", "id": "ticket-android-reaction"}]})
         data = {
@@ -539,9 +545,12 @@ class PushNotificationTest(unittest.TestCase):
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Marisa", "reacted 👍 to your message", data)
         message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
-        self.assertEqual(message["title"], "Marisa")
-        self.assertEqual(message["body"], "DU Housing Board\nreacted 👍 to your message")
-        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/group.jpg"})
+        self.assertNotIn("title", message)
+        self.assertNotIn("body", message)
+        self.assertNotIn("richContent", message)
+        self.assertEqual(message["priority"], "high")
+        self.assertEqual(message["data"]["notificationRenderer"], "chitthi-v1")
+        self.assertEqual(message["data"]["notificationBody"], "reacted 👍 to your message")
 
     def test_every_chitthi_push_type_requests_message_sound(self):
         token = "ExpoPushToken[chitthi-sound-device]"
