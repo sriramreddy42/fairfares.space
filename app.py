@@ -38759,7 +38759,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             # platform once. Historical Expo tokens may remain valid briefly
             # after rotation and would otherwise duplicate every test.
             newest_by_platform: dict[str, sqlite3.Row] = {}
-            for device in registered_devices:
+            # Preserve the requested platform filter before deduplicating a
+            # category test. A test from one phone must never alert the
+            # account's newest installation on another platform.
+            for device in devices:
                 device_platform = clean_text_value(row_value(device, "platform"), 30) or "unknown"
                 newest_by_platform.setdefault(device_platform, device)
             devices = list(newest_by_platform.values())
