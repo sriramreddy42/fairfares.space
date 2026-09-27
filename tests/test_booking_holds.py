@@ -207,9 +207,9 @@ class BookingHoldTest(unittest.TestCase):
             con.execute(
                 """UPDATE bookings SET actual_pickup_date = '2026-09-25', actual_pickup_time = '10:00 AM',
                    pickup_odometer = 12000, pickup_fuel_level = 'FULL', pickup_customer_signature = 'Hold Tester',
-                   pickup_staff_signature = 'Handoff Admin', pickup_front_image = 'drive://front', pickup_back_image = 'drive://back',
-                   pickup_left_image = 'drive://left', pickup_right_image = 'drive://right', pickup_odometer_image = 'drive://odometer',
-                   pickup_fuel_image = 'drive://fuel', pickup_interior_front_image = 'drive://interior-front', pickup_interior_rear_image = 'drive://interior-rear'
+                   pickup_staff_signature = 'Handoff Admin', pickup_front_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-front.jpg', pickup_back_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-back.jpg',
+                   pickup_left_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-left.jpg', pickup_right_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-right.jpg', pickup_odometer_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-odometer.jpg',
+                   pickup_fuel_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-fuel.jpg', pickup_interior_front_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-interior-front.jpg', pickup_interior_rear_image = 'r2://fairfares-attachments/fairfares/rental-handoff/pickup-interior-rear.jpg'
                    WHERE id = ?""",
                 (booking["id"],),
             )
@@ -237,11 +237,11 @@ class BookingHoldTest(unittest.TestCase):
                 """UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
                    actual_return_date = '2026-09-27', actual_return_time = '02:00 PM', return_odometer = 12150,
                    return_fuel_level = 'FULL', return_condition_status = 'ACCEPTABLE', new_damage_found = 'NO',
-                   return_customer_signature = 'Hold Tester', return_front_image = 'drive://return-front',
-                   return_back_image = 'drive://return-back', return_left_image = 'drive://return-left',
-                   return_right_image = 'drive://return-right', return_odometer_image = 'drive://return-odometer',
-                   return_fuel_image = 'drive://return-fuel', return_interior_front_image = 'drive://return-interior-front',
-                   return_interior_rear_image = 'drive://return-interior-rear' WHERE id = ?""",
+                   return_customer_signature = 'Hold Tester', return_front_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-front.jpg',
+                   return_back_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-back.jpg', return_left_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-left.jpg',
+                   return_right_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-right.jpg', return_odometer_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-odometer.jpg',
+                   return_fuel_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-fuel.jpg', return_interior_front_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-interior-front.jpg',
+                   return_interior_rear_image = 'r2://fairfares-attachments/fairfares/rental-handoff/return-interior-rear.jpg' WHERE id = ?""",
                 (booking["id"],),
             )
 
