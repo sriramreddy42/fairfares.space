@@ -446,12 +446,18 @@ export function ProfileScreen({
     if (!user?.id || notificationTestSending) return;
     setNotificationTestSending(true);
     try {
-      const result = await sendMobileNotificationTest("general", Platform.OS);
-      if (!result.queuedDevices) {
-        Alert.alert("No device registered", result.message || "Open the installed app again and allow phone notifications, then retry.");
+      const categories = ["general", "chitthi", "carpool", "housing", "rentals", "support", "marketing"];
+      const results = await Promise.all(categories.map((category) => sendMobileNotificationTest(category, Platform.OS)));
+      const queued = results.reduce((total, result) => total + Number(result.queuedDevices || 0), 0);
+      if (!queued) {
+        const firstFailure = results.find((result) => result.message)?.message;
+        Alert.alert("No device registered", firstFailure || "Open the installed app again and allow phone notifications, then retry.");
         return;
       }
-      Alert.alert("Test alert queued", `Check this ${Platform.OS === "android" ? "Android" : "iPhone"} device's notification shade now.`);
+      Alert.alert(
+        "Test alerts queued",
+        `${queued} ${queued === 1 ? "alert was" : "alerts were"} sent to this ${Platform.OS === "android" ? "Android" : "iPhone"} device. Check the notification shade now.`
+      );
     } catch (error) {
       Alert.alert("Test could not be sent", error instanceof Error ? error.message : "Please try again.");
     } finally {
@@ -643,7 +649,7 @@ export function ProfileScreen({
                   accessibilityRole="button"
                   accessibilityLabel="Send a test notification to this device"
                 >
-                  {notificationTestSending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.notificationTestButtonText}>Send test alert</Text>}
+                  {notificationTestSending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.notificationTestButtonText}>Send test alerts</Text>}
                 </TouchableOpacity>
               ) : null}
               {notificationPreferencesError ? <Text style={styles.cardCopy}>Could not load notification preferences. Close and reopen Account to try again.</Text> : null}

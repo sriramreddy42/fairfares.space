@@ -3595,7 +3595,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/mobile/student-verification": ("account-write", 20, 60),
     "/api/mobile/push-token": ("account-preference", 60, 60),
     "/api/mobile/notification-preferences": ("account-preference", 60, 60),
-    "/api/mobile/notification-test": ("account-preference", 5, 3600),
+    "/api/mobile/notification-test": ("account-preference", 10, 3600),
     "/api/mobile/rentals/quote": ("rental-quote", 60, 60),
     "/api/mobile/analytics/events": ("product-analytics", 120, 60),
 }
