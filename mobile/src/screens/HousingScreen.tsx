@@ -987,7 +987,12 @@ export function HousingScreen({
       return descending ? Number(b) - Number(a) : Number(a) - Number(b);
     };
     return [...locationScopedPosts].sort((a, b) => {
-      if (Boolean(a.sample) !== Boolean(b.sample)) return a.sample ? 1 : -1;
+      // Demo housing records are useful when a search has few live results,
+      // but must never displace an active member listing because of a lower
+      // distance or rent value. Existing demo records use a stable FFH-DEMO
+      // public id so this also covers older API responses.
+      const isDemo = (post: HousingPost) => Boolean(post.sample) || String(post.id || "").startsWith("FFH-DEMO-");
+      if (isDemo(a) !== isDemo(b)) return isDemo(a) ? 1 : -1;
       if (selectedSort === "distanceDesc") return compareOptionalNumber(a.distanceMiles, b.distanceMiles, true);
       if (selectedSort === "rentAsc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null);
       if (selectedSort === "rentDesc") return compareOptionalNumber(a.rentValue || null, b.rentValue || null, true);
