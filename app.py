@@ -39479,12 +39479,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         use_city_bias = str(params.get("cityBias", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
         cities_only = str(params.get("citiesOnly", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
         resolve_exact = str(params.get("resolve", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
+        suggestions = ride_place_suggestions(
+            city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only,
+            resolve_exact=resolve_exact, place_id=place_id if resolve_exact else "", session_token=session_token,
+        )
+        # Older mobile builds require choosing an autocomplete row before a
+        # housing address can be posted. Keep those builds usable after Maps
+        # is disabled by returning a clearly local, coordinate-free row for a
+        # conventional typed street address. Ride planners reject this row
+        # during their coordinate-resolution step, so it cannot create an
+        # approximate or incorrect carpool route.
+        if (
+            not suggestions
+            and not resolve_exact
+            and not cities_only
+            and city
+            and re.match(r"^\d{1,6}\s+[^,]{2,}", query)
+        ):
+            label = dedupe_repeated_location_label(
+                ", ".join(value for value in (query, city) if value)
+            )
+            suggestions = [{
+                "label": label,
+                "main": query,
+                "secondary": city,
+                "distanceMiles": None,
+                "lat": 0,
+                "lng": 0,
+                "source": "entered-address",
+                "placeId": "",
+                "icon": "pin",
+                "imageUrl": "",
+            }]
         self.send_json(
             {
                 "ok": True,
                 "city": city,
                 "query": query,
-                "suggestions": ride_place_suggestions(city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only, resolve_exact=resolve_exact, place_id=place_id if resolve_exact else "", session_token=session_token),
+                "suggestions": suggestions,
                 "placesEnabled": google_location_fallback_enabled() and bool(
                     os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
                     or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()

@@ -518,6 +518,35 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_legacy_housing_address_receives_typed_street_suggestion_without_google_maps(self):
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/ride-places?city=Denver%2C%20CO&q=123%20Example%20Street"
+            )
+            with mock.patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}, clear=False), \
+                 mock.patch.object(app, "google_api_get") as google_api_get:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+
+            self.assertEqual(result["suggestions"], [{
+                "label": "123 Example Street, Denver, CO",
+                "main": "123 Example Street",
+                "secondary": "Denver, CO",
+                "distanceMiles": None,
+                "lat": 0,
+                "lng": 0,
+                "source": "entered-address",
+                "placeId": "",
+                "icon": "pin",
+                "imageUrl": "",
+            }])
+            google_api_get.assert_not_called()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_owner_can_edit_housing_listing_without_creating_duplicate(self):
         with app.db() as con:
             con.execute(
