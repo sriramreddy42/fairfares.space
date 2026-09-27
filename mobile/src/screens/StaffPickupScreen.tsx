@@ -117,6 +117,7 @@ export function StaffPickupScreen({ onClose }: Props) {
           const returnSubmitted = booking.bookingStatus === "RETURN_SUBMITTED";
           const returnHeld = booking.returnReviewStatus === "CHARGES_PENDING";
           const identityVerified = booking.identityStatus === "VERIFIED";
+          const offlineReturnEligible = Boolean(booking.offlineReturnEligible);
           return (
             <View key={booking.id} style={styles.card}>
               <View style={styles.rowBetween}>
@@ -152,7 +153,10 @@ export function StaffPickupScreen({ onClose }: Props) {
                 </> : <TouchableOpacity style={[styles.payButton, (busy || !configured) && styles.disabled]} disabled={busy || !configured} onPress={() => void openDepositCheckout(booking)}>
                   {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Open secure deposit checkout</Text>}
                 </TouchableOpacity>
-              ) : <Text style={styles.body}>Rental active. Waiting for the customer to submit the return.</Text>}
+              ) : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
+              {offlineReturnEligible ? <TouchableOpacity style={[styles.offlineReturnButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>
+                <Text style={styles.offlineReturnButtonText}>Record past offline return</Text>
+              </TouchableOpacity> : null}
             </View>
           );
         })}
@@ -172,6 +176,7 @@ const styles = StyleSheet.create({
   bookingId: { color: "#4ade80", fontSize: 11, letterSpacing: 0.5, fontWeight: "700" }, cardTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "700" }, body: { color: theme.colors.muted, fontSize: 13, lineHeight: 18 }, amount: { color: theme.colors.text, fontSize: 14, fontWeight: "700", marginTop: 3 },
   badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5, backgroundColor: "rgba(245,158,11,0.18)", borderWidth: 1, borderColor: "rgba(245,158,11,0.45)" }, badgeReady: { backgroundColor: "rgba(34,197,94,0.18)", borderColor: "rgba(34,197,94,0.5)" }, badgeText: { color: theme.colors.text, fontSize: 10, fontWeight: "700" },
   payButton: { minHeight: 50, borderRadius: 999, backgroundColor: theme.colors.blue, alignItems: "center", justifyContent: "center", marginTop: 4 }, payButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" }, disabled: { opacity: 0.5 },
+  offlineReturnButton: { minHeight: 46, borderRadius: 999, borderWidth: 1, borderColor: "rgba(251, 146, 60, 0.8)", backgroundColor: "rgba(154, 52, 18, 0.18)", alignItems: "center", justifyContent: "center", marginTop: 4 }, offlineReturnButtonText: { color: "#fdba74", fontSize: 13, fontWeight: "800" },
   waitingCard: { borderRadius: 14, padding: 12, gap: 4, backgroundColor: "rgba(245,158,11,0.12)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)" },
   identityCard: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(245,158,11,0.45)", backgroundColor: "rgba(245,158,11,0.10)", padding: 11, gap: 6 },
   identityCardVerified: { borderColor: "rgba(34,197,94,0.45)", backgroundColor: "rgba(34,197,94,0.10)" },

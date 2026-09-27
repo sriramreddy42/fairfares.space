@@ -10050,27 +10050,10 @@ def reconcile_offline_return_and_release_deposit(
     reason = clean_text_value(reason, 500)
     if len(reason) < 20:
         return False, "Add a clear reason for the offline return reconciliation."
-    if str(row_value(booking, "booking_status") or "") not in {
-        "CONFIRMED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED",
-    }:
-        return False, "This booking is not eligible for offline return reconciliation."
-    if row_value(booking, "security_deposit_status") != "AUTHORIZED":
-        return False, "The refundable deposit is not currently authorized."
-    if float(row_value(booking, "post_return_charge_amount") or 0) > 0 or str(
-        row_value(booking, "return_review_status") or ""
-    ) in {"CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW"}:
-        return False, "This return has charges pending review and cannot use offline reconciliation."
-    scheduled_return = parse_booking_datetime(
-        str(row_value(booking, "dropoff_date") or ""),
-        str(row_value(booking, "dropoff_time") or ""),
-    )
-    if not scheduled_return:
-        return False, "The scheduled return time could not be verified."
-    if scheduled_return > fairfares_now().replace(tzinfo=None):
-        return False, "The scheduled return time has not passed."
+    eligible, message = offline_return_reconciliation_eligible(booking)
+    if not eligible:
+        return False, message
     payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
-    if not payment_intent_id.startswith("pi_"):
-        return False, "The Stripe deposit authorization reference is missing."
     released, status = stripe_api_request(
         f"payment_intents/{urllib.parse.quote(payment_intent_id)}/cancel",
         {"cancellation_reason": "requested_by_customer"},
@@ -10120,6 +10103,36 @@ def reconcile_offline_return_and_release_deposit(
         "SECURITY_DEPOSIT_RELEASED",
     )
     return True, "Offline return recorded and the refundable deposit authorization was released."
+
+
+def offline_return_reconciliation_eligible(
+    booking: sqlite3.Row | dict[str, object] | None,
+) -> tuple[bool, str]:
+    """Return whether staff may close an overdue rental missing digital evidence."""
+    if not booking:
+        return False, "Booking not found."
+    if str(row_value(booking, "booking_status") or "") not in {
+        "CONFIRMED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED",
+    }:
+        return False, "This booking is not eligible for offline return reconciliation."
+    if row_value(booking, "security_deposit_status") != "AUTHORIZED":
+        return False, "The refundable deposit is not currently authorized."
+    if float(row_value(booking, "post_return_charge_amount") or 0) > 0 or str(
+        row_value(booking, "return_review_status") or ""
+    ) in {"CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW"}:
+        return False, "This return has charges pending review and cannot use offline reconciliation."
+    scheduled_return = parse_booking_datetime(
+        str(row_value(booking, "dropoff_date") or ""),
+        str(row_value(booking, "dropoff_time") or ""),
+    )
+    if not scheduled_return:
+        return False, "The scheduled return time could not be verified."
+    if scheduled_return > fairfares_now().replace(tzinfo=None):
+        return False, "The scheduled return time has not passed."
+    payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
+    if not payment_intent_id.startswith("pi_"):
+        return False, "The Stripe deposit authorization reference is missing."
+    return True, ""
 
 
 def release_security_deposit_after_cancellation(
@@ -39184,6 +39197,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             identity_status = str(row_value(identity_row, "status") or "NOT_STARTED")
             identity_title, identity_message = identity_status_copy(identity_status)
+            offline_return_eligible, _offline_return_message = offline_return_reconciliation_eligible(row)
             pickups.append(
                 {
                     "id": int(row_value(row, "id") or 0),
@@ -39201,6 +39215,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                     "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
                     "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
+                    "offlineReturnEligible": offline_return_eligible,
                     "identityStatus": identity_status,
                     "identityTitle": identity_title,
                     "identityMessage": identity_message,
