@@ -25,6 +25,7 @@ import expo.modules.notifications.service.ExpoFirebaseMessagingService
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.max
+import org.json.JSONObject
 
 /**
  * Chitthi is delivered as a data-only FCM message on Android. Firebase otherwise
@@ -33,15 +34,38 @@ import kotlin.math.max
  */
 class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
-    if (remoteMessage.data["notificationRenderer"] == "chitthi-v1") {
-      showChitthiNotification(remoteMessage)
+    val chitthiData = extractChitthiData(remoteMessage)
+    if (chitthiData != null) {
+      showChitthiNotification(remoteMessage, chitthiData)
       return
     }
     super.onMessageReceived(remoteMessage)
   }
 
-  private fun showChitthiNotification(remoteMessage: RemoteMessage) {
-    val data = remoteMessage.data
+  /**
+   * Expo's FCM transport puts our application data in a JSON `body` value.
+   * Direct FCM sends use the map as-is, so support both transports.
+   */
+  private fun extractChitthiData(remoteMessage: RemoteMessage): Map<String, String>? {
+    val directData = remoteMessage.data
+    if (directData["notificationRenderer"] == "chitthi-v1") return directData
+    val encodedBody = directData["body"] ?: return null
+    return try {
+      val body = JSONObject(encodedBody)
+      if (body.optString("notificationRenderer") != "chitthi-v1") return null
+      val parsed = mutableMapOf<String, String>()
+      val keys = body.keys()
+      while (keys.hasNext()) {
+        val key = keys.next()
+        parsed[key] = body.opt(key)?.toString().orEmpty()
+      }
+      parsed
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun showChitthiNotification(remoteMessage: RemoteMessage, data: Map<String, String>) {
     val senderName = data["senderName"].orEmpty().ifBlank {
       data["notificationTitle"].orEmpty().ifBlank { "FairFares member" }
     }
