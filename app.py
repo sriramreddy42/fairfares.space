@@ -258,6 +258,7 @@ BOOKING_HOLD_MINUTES = 10
 FULL_PAYMENT_DISCOUNT_AMOUNT = 10.00
 FULL_PAYMENT_DISCOUNT_RATE = 0.10
 SECURITY_DEPOSIT_AMOUNT = 250.00
+RENTAL_HANDOFF_EVIDENCE_RETENTION_DAYS = 90
 SECURITY_DEPOSIT_RELEASE_COPY = (
     "Refundable security deposit authorization. Release after vehicle return review for damage, tickets, tolls, "
     "cleaning, fuel, keys, misuse, and other post-return charges."
@@ -1892,6 +1893,7 @@ def start_chitthi_housekeeping_scheduler() -> None:
             try:
                 cleanup_expired_chitthi_attachments(force=True, limit=250)
                 cleanup_deleted_chitthi_messages(force=True, limit=250)
+                cleanup_expired_rental_handoff_evidence(limit=100)
                 if r2_storage_configured():
                     cleanup_unfinalized_chitthi_uploads(limit=250)
                     migrate_legacy_avatar_storage(limit=100)
@@ -2153,8 +2155,62 @@ def stored_upload_parts(value: str) -> tuple[str, str, bytes] | None:
     return local_upload_parts(value)
 
 
+def google_drive_upload_parts(file_id: str, *, max_bytes: int = 2_000_000) -> tuple[str, str, bytes] | None:
+    """Read one private Drive image for an authenticated staff viewer."""
+    token_ok, token_or_error = google_drive_access_token()
+    if not token_ok or not file_id:
+        return None
+    request = urllib.request.Request(
+        f"https://www.googleapis.com/drive/v3/files/{urllib.parse.quote(file_id)}?alt=media&supportsAllDrives=true",
+        headers={"Authorization": f"Bearer {token_or_error}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            mime_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+            declared_size = int(response.headers.get("Content-Length") or 0)
+            if mime_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"} or declared_size > max_bytes:
+                return None
+            payload = response.read(max_bytes + 1)
+    except Exception:
+        return None
+    if not payload or len(payload) > max_bytes:
+        return None
+    signatures = {
+        "image/jpeg": payload.startswith(b"\xff\xd8\xff"),
+        "image/png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": len(payload) >= 12 and payload.startswith(b"RIFF") and payload[8:12] == b"WEBP",
+        "image/gif": payload.startswith((b"GIF87a", b"GIF89a")),
+    }
+    if not signatures.get(mime_type):
+        return None
+    return f"handoff-{file_id[:16]}", mime_type, payload
+
+
+def delete_google_drive_upload(file_id: str) -> bool:
+    """Delete one application-owned Google Drive object by its immutable file id."""
+    token_ok, token_or_error = google_drive_access_token()
+    if not token_ok or not file_id:
+        return False
+    request = urllib.request.Request(
+        f"https://www.googleapis.com/drive/v3/files/{urllib.parse.quote(file_id)}?supportsAllDrives=true",
+        headers={"Authorization": f"Bearer {token_or_error}"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            pass
+        return True
+    except urllib.error.HTTPError as exc:
+        # A missing file is already gone, which satisfies retention cleanup.
+        return exc.code == 404
+    except Exception:
+        return False
+
+
 def delete_stored_upload_reference(value: str) -> bool:
     """Delete one stored upload object without broad globs or folder deletion."""
+    if value.startswith("drive://"):
+        return delete_google_drive_upload(value.removeprefix("drive://").strip())
     if value.startswith("r2://"):
         if not r2_storage_configured():
             return False
@@ -2181,6 +2237,62 @@ def delete_stored_upload_reference(value: str) -> bool:
             target.unlink()
         return True
     return False
+
+
+RENTAL_HANDOFF_PHOTO_FIELDS = (
+    "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
+    "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
+    "return_front_image", "return_back_image", "return_left_image", "return_right_image",
+    "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
+    "damage_photo_image",
+)
+
+
+def cleanup_expired_rental_handoff_evidence(*, limit: int = 100) -> dict[str, int]:
+    """Purge clear-return inspection images after their evidence retention period.
+
+    Damage, charge, and claim-review records are intentionally excluded. Their
+    photos remain available until a staff member closes the case.
+    """
+    result = {"bookings": 0, "deleted": 0, "failed": 0}
+    cutoff = (datetime.utcnow().date() - timedelta(days=RENTAL_HANDOFF_EVIDENCE_RETENTION_DAYS)).isoformat()
+    with db() as con:
+        rows = con.execute(
+            f"""
+            SELECT id, {', '.join(RENTAL_HANDOFF_PHOTO_FIELDS)}
+            FROM bookings
+            WHERE booking_status = 'RETURNED'
+              AND return_review_status IN ('RELEASED', 'CLOSED')
+              AND COALESCE(new_damage_found, 'NO') = 'NO'
+              AND COALESCE(post_return_charge_amount, 0) = 0
+              AND COALESCE(actual_return_date, '') != ''
+              AND actual_return_date <= ?
+            ORDER BY id
+            LIMIT ?
+            """,
+            (cutoff, max(1, min(int(limit or 100), 500))),
+        ).fetchall()
+        for row in rows:
+            updates: dict[str, str] = {}
+            for field in RENTAL_HANDOFF_PHOTO_FIELDS:
+                reference = str(row_value(row, field) or "").strip()
+                if not reference:
+                    continue
+                if reference.startswith("data:image/") or delete_stored_upload_reference(reference):
+                    updates[field] = ""
+                    result["deleted"] += 1
+                else:
+                    result["failed"] += 1
+            if updates:
+                assignments = ", ".join(f"{field} = ?" for field in updates)
+                con.execute(f"UPDATE bookings SET {assignments} WHERE id = ?", [*updates.values(), row_value(row, "id")])
+                placeholders = ", ".join("?" for _ in updates)
+                con.execute(
+                    f"DELETE FROM drive_files WHERE booking_id = ? AND file_scope IN ({placeholders})",
+                    [row_value(row, "id"), *updates.keys()],
+                )
+                result["bookings"] += 1
+    return result
 
 
 def migrate_legacy_avatar_storage(limit: int = 100) -> dict[str, int]:
@@ -7857,6 +7969,7 @@ def init_db() -> None:
         ensure_column(con, "bookings", "pickup_condition_status", "pickup_condition_status TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_condition_status", "return_condition_status TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "new_damage_found", "new_damage_found TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "damage_resolution", "damage_resolution TEXT NOT NULL DEFAULT 'NOT_APPLICABLE'")
         ensure_column(con, "bookings", "pickup_customer_signature", "pickup_customer_signature TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_staff_signature", "pickup_staff_signature TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_customer_signature", "return_customer_signature TEXT NOT NULL DEFAULT ''")
@@ -26151,6 +26264,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/share-card":
             self.share_card_image(parsed)
             return
+        if parsed.path == "/admin/pickup-photo":
+            self.admin_pickup_photo(parsed)
+            return
         if parsed.path == "/api/health":
             self.api_health()
             return
@@ -34657,10 +34773,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
+        retention_cutoff = (datetime.utcnow().date() - timedelta(days=RENTAL_HANDOFF_EVIDENCE_RETENTION_DAYS)).isoformat()
         pickup_bookings = [
             row for row in get_admin_bookings()
             if booking_ready_for_pickup(row)
             or str(row_value(row, "booking_status") or "") in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}
+            or (
+                str(row_value(row, "booking_status") or "") == "RETURNED"
+                and (
+                    str(row_value(row, "new_damage_found") or "").upper() == "YES"
+                    or str(row_value(row, "actual_return_date") or "") >= retention_cutoff
+                )
+            )
         ]
         records = "\n".join(self.render_pickup_record(row) for row in pickup_bookings)
         body = render_template(
@@ -34670,6 +34794,48 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             records=records or '<p class="admin-empty">No pickups or returns awaiting staff review.</p>',
         )
         self.send_html(body)
+
+    def admin_pickup_photo(self, parsed: urllib.parse.ParseResult) -> None:
+        if not self.require_admin():
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            booking_id = int(params.get("booking_id", [""])[0])
+        except (TypeError, ValueError):
+            self.send_text("Photo not found.", 404)
+            return
+        field = str(params.get("field", [""])[0] or "")
+        if field not in RENTAL_HANDOFF_PHOTO_FIELDS:
+            self.send_text("Photo not found.", 404)
+            return
+        booking = get_booking_by_id(booking_id)
+        reference = str(row_value(booking, field) or "") if booking else ""
+        if reference.startswith("data:image/"):
+            image = data_url_upload_parts(
+                reference,
+                f"handoff-{booking_id}-{field}",
+                allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+                max_bytes=2_000_000,
+            )
+        elif reference.startswith("drive://"):
+            image = google_drive_upload_parts(reference.removeprefix("drive://").strip())
+        else:
+            image = stored_upload_parts(reference)
+        if not image:
+            self.send_text("Photo is not available.", 404)
+            return
+        filename, mime_type, payload = image
+        if mime_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"} or len(payload) > 2_000_000:
+            self.send_text("Photo is not available.", 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Disposition", f'inline; filename="{re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "handoff-photo"}"')
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def render_admin_car_row(self, row: sqlite3.Row) -> str:
         status_options = "".join(
@@ -34898,6 +35064,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         pickup_condition_status = row_value(row, "pickup_condition_status") or "ACCEPTABLE"
         return_condition_status = row_value(row, "return_condition_status") or "PENDING"
         new_damage_found = row_value(row, "new_damage_found") or "NO"
+        damage_resolution = row_value(row, "damage_resolution") or "NOT_APPLICABLE"
         return_review_status = row_value(row, "return_review_status") or "PENDING"
         security_deposit_status = row_value(row, "security_deposit_status") or "NOT_AUTHORIZED"
         security_deposit_amount = float(row_value(row, "security_deposit_amount") or 0)
@@ -34906,6 +35073,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         fuel_options = ("Full", "3/4", "1/2", "1/4", "Empty", "Electric 100%", "Electric 75%", "Electric 50%", "Electric 25%")
         condition_options = ("ACCEPTABLE", "ISSUES_NOTED", "DAMAGE_NOTED", "PENDING")
         damage_options = ("NO", "YES", "PENDING")
+        damage_resolution_options = ("NOT_APPLICABLE", "INSURANCE_REVIEW", "RENTER_REVIEW", "WAIVED")
         review_options = ("PENDING", "CLEAR_TO_RELEASE", "CHARGES_PENDING", "PARTIAL_CAPTURE_REVIEW", "CAPTURE_REVIEW", "RELEASED", "CLOSED")
 
         def compact_select_options(options: tuple[str, ...], selected: str) -> str:
@@ -35003,11 +35171,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 legacy_dl_attr = ' data-dl-camera="front"'
             elif name == "back_image_url":
                 legacy_dl_attr = ' data-dl-camera="back"'
+            stored_value = str(value or "")
+            booking_id = int(row_value(row, "id") or 0)
+            view_href = (
+                f"/admin/pickup-photo?booking_id={booking_id}&field={urllib.parse.quote(name)}"
+                if stored_value and name in RENTAL_HANDOFF_PHOTO_FIELDS and booking_id else ""
+            )
+            saved_link = (
+                f'<a class="admin-text-link" href="{escape(view_href)}" target="_blank" rel="noopener">View saved photo</a>'
+                if view_href else ""
+            )
             return (
                 f'<label class="dl-capture-field"><span>{escape(label)}</span>'
                 f'<input type="file" accept="image/*" capture="environment" data-photo-capture="{escape(name)}"{legacy_dl_attr}>'
-                f'<input type="hidden" name="{escape(name)}" value="{escape(value or "")}">'
-                f'<small>{escape(saved_copy if value else "Take picture or choose photo")}</small></label>'
+                f'<input type="hidden" name="{escape(name)}" value="{escape(stored_value)}">'
+                f'<small>{escape(saved_copy if stored_value else "Take picture or choose photo")}</small>{saved_link}</label>'
             )
 
         document_photo_fields = "".join(
@@ -35062,6 +35240,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <span><b>Late fee</b>{escape(format_money(row["late_fee_amount"])) if row["late_fee_amount"] else "None"}</span>
                 <span><b>Deposit</b>{escape(deposit_status_copy)}<small>{escape(SECURITY_DEPOSIT_RELEASE_COPY)}</small></span>
                 <span><b>Return review</b>{escape(return_review_copy)}</span>
+                <span><b>Damage responsibility</b>{escape(damage_resolution.replace("_", " ").title())}</span>
                 <span><b>Agreement</b>{escape("Signed" if agreement and agreement["signature_text"] else "Pending")}</span>
             </div>
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
@@ -35132,6 +35311,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         <label><span>Pickup Condition</span><select name="pickup_condition_status">{compact_select_options(condition_options, pickup_condition_status)}</select></label>
                         <label><span>Return Condition</span><select name="return_condition_status">{compact_select_options(condition_options, return_condition_status)}</select></label>
                         <label><span>New Damage Found</span><select name="new_damage_found">{compact_select_options(damage_options, new_damage_found)}</select></label>
+                        <label><span>Damage Responsibility</span><select name="damage_resolution">{compact_select_options(damage_resolution_options, damage_resolution)}</select></label>
                         <label><span>Return Review Status</span><select name="return_review_status">{compact_select_options(review_options, return_review_status)}</select></label>
                         <label><span>Deposit Status</span><input value="{escape(security_deposit_status.replace('_', ' ').title())}" readonly></label>
                         <label><span>Post-return Charges</span><input name="post_return_charge_amount" type="number" step="0.01" min="0" value="{escape(f'{post_return_charge_amount:.2f}' if post_return_charge_amount else '')}" placeholder="0.00"></label>
@@ -36719,6 +36899,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return_review_status = (form.get("return_review_status") or "PENDING").strip().upper()
             if return_review_status not in allowed_return_reviews:
                 return_review_status = "PENDING"
+            allowed_damage_resolutions = {"NOT_APPLICABLE", "INSURANCE_REVIEW", "RENTER_REVIEW", "WAIVED"}
+            damage_resolution = (form.get("damage_resolution") or "NOT_APPLICABLE").strip().upper()
+            if damage_resolution not in allowed_damage_resolutions:
+                damage_resolution = "NOT_APPLICABLE"
+            if (form.get("new_damage_found") or "NO").strip().upper() == "YES" and damage_resolution == "NOT_APPLICABLE":
+                damage_resolution = "INSURANCE_REVIEW"
+            if (form.get("new_damage_found") or "NO").strip().upper() == "YES" and return_review_status in {"CLEAR_TO_RELEASE", "RELEASED"}:
+                return_review_status = "CHARGES_PENDING"
             security_deposit_status = str(row_value(booking_for_fees, "security_deposit_status") or "NOT_AUTHORIZED")
             con.execute(
                 """
@@ -36741,6 +36929,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     pickup_condition_status = ?,
                     return_condition_status = ?,
                     new_damage_found = ?,
+                    damage_resolution = ?,
                     pickup_customer_signature = ?,
                     pickup_staff_signature = ?,
                     return_customer_signature = ?,
@@ -36787,6 +36976,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     form.get("pickup_condition_status", "ACCEPTABLE"),
                     form.get("return_condition_status", "PENDING"),
                     form.get("new_damage_found", "NO"),
+                    damage_resolution,
                     form.get("pickup_customer_signature", ""),
                     form.get("pickup_staff_signature", ""),
                     form.get("return_customer_signature", ""),
@@ -36904,6 +37094,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             complete_staff_pickup_if_ready(saved_booking_id)
             saved_booking = get_booking_by_id(saved_booking_id)
         if saved_booking and return_checks_clear_for_deposit_release(saved_booking):
+            with db() as con:
+                con.execute(
+                    "UPDATE bookings SET booking_status = 'RETURNED', status = 'RETURNED' WHERE id = ? AND booking_status IN ('PICKED_UP', 'RETURN_SUBMITTED')",
+                    (saved_booking_id,),
+                )
+                con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(saved_booking, "car_id"),))
+            saved_booking = get_booking_by_id(saved_booking_id)
             release_security_deposit_after_clear_return(saved_booking)
         self.redirect("/admin/pickup")
 
@@ -40748,96 +40945,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Login is required to submit a vehicle handoff."}, 401)
             return
-        payload = self.read_json_body()
-        user_id = int(row_value(user, "id") or 0)
-        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
-        if not booking:
-            self.send_json({"ok": False, "error": "Choose a rental booking first."}, 404)
-            return
-        current_status = str(row_value(booking, "booking_status") or "")
         if phase == "pickup":
             self.send_json({"ok": False, "error": "FairFares staff completes the pickup inspection and vehicle release at handoff."}, 403)
             return
-        elif current_status != "PICKED_UP":
-            self.send_json({"ok": False, "error": "Return can only be submitted after staff confirms pickup."}, 409)
-            return
-
-        try:
-            odometer = max(1, int(float(payload.get("odometer") or 0)))
-        except (TypeError, ValueError):
-            odometer = 0
-        fuel_level = clean_text_value(payload.get("fuelLevel"), 40).upper()
-        signature = clean_text_value(payload.get("signature"), 160)
-        condition = clean_text_value(payload.get("conditionStatus"), 40).upper()
-        acknowledgement = bool(payload.get("acknowledged"))
-        if not odometer or not fuel_level or not signature or not acknowledgement:
-            self.send_json({"ok": False, "error": "Mileage, fuel level, signature, and acknowledgement are required."}, 400)
-            return
-        allowed_fuel = {"EMPTY", "1/4", "1/2", "3/4", "FULL", "25%", "50%", "75%", "100%"}
-        if fuel_level not in allowed_fuel:
-            self.send_json({"ok": False, "error": "Choose the vehicle fuel or charge level."}, 400)
-            return
-        if condition not in {"ACCEPTABLE", "DAMAGE_REPORTED"}:
-            self.send_json({"ok": False, "error": "Confirm the vehicle condition or report damage."}, 400)
-            return
-
-        photo_names = ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")
-        raw_photos = payload.get("photos") if isinstance(payload.get("photos"), dict) else {}
-        missing = [name for name in photo_names if not str(raw_photos.get(name) or "").startswith("data:image/")]
-        if missing:
-            self.send_json({"ok": False, "error": f"Add all required vehicle photos: {', '.join(missing)}."}, 400)
-            return
-
-        now_local = fairfares_now()
-        booking_db_id = int(row_value(booking, "id") or 0)
-        prefix = "return"
-        column_by_photo = {
-            "front": f"{prefix}_front_image",
-            "back": f"{prefix}_back_image",
-            "left": f"{prefix}_left_image",
-            "right": f"{prefix}_right_image",
-            "odometer": f"{prefix}_odometer_image",
-            "fuel": f"{prefix}_fuel_image",
-            "interiorFront": f"{prefix}_interior_front_image",
-            "interiorRear": f"{prefix}_interior_rear_image",
-        }
-        stored_photos: dict[str, str] = {}
-        with db() as con:
-            for photo_name, column in column_by_photo.items():
-                stored_photos[column] = upload_data_url_to_drive(
-                    con,
-                    folder_key="pickup_return",
-                    file_scope=column,
-                    data_url=str(raw_photos.get(photo_name) or ""),
-                    fallback_name=f"{row_value(booking, 'booking_id') or booking_db_id}-{column}",
-                    uploaded_by=user_id,
-                    user_id=user_id,
-                    booking_id=booking_db_id,
-                )
-            new_damage = "YES" if condition == "DAMAGE_REPORTED" else "NO"
-            con.execute(
-                """
-                UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
-                    actual_return_date = ?, actual_return_time = ?, return_odometer = ?,
-                    return_fuel_level = ?, return_condition_status = ?, new_damage_found = ?,
-                    return_customer_signature = ?, return_review_status = 'PENDING',
-                    return_front_image = ?, return_back_image = ?, return_left_image = ?, return_right_image = ?,
-                    return_odometer_image = ?, return_fuel_image = ?, return_interior_front_image = ?, return_interior_rear_image = ?
-                WHERE id = ?
-                """,
-                (now_local.strftime("%Y-%m-%d"), now_local.strftime("%I:%M %p"), odometer,
-                 fuel_level, condition, new_damage, signature, stored_photos["return_front_image"],
-                 stored_photos["return_back_image"], stored_photos["return_left_image"],
-                 stored_photos["return_right_image"], stored_photos["return_odometer_image"],
-                 stored_photos["return_fuel_image"], stored_photos["return_interior_front_image"],
-                 stored_photos["return_interior_rear_image"], booking_db_id),
-            )
-        updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
-        self.send_json({
-            "ok": True,
-            "message": "Return submitted for staff inspection.",
-            "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), user_id) if updated else None,
-        })
+        self.send_json({"ok": False, "error": "FairFares staff completes the return inspection, photos, and deposit review at handoff."}, 403)
 
     def api_mobile_rental_identity_session(self) -> None:
         user = self.current_user()

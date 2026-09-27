@@ -438,7 +438,6 @@ export function ServicesScreen({
   const bookingCanPay = Boolean(selectedBooking && selectedBooking.status === "CONFIRMED");
   const inProgressRental = selectedBooking?.status === "PICKED_UP";
   const handoffPhase = selectedBooking?.handoff?.phase || (selectedBooking?.paymentStatus === "PAID" ? "deposit" : "payment");
-  const handoffReady = handoffPhase === "return";
   const primaryStep = handoffPhase === "payment"
     ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
     : handoffPhase === "deposit"
@@ -452,9 +451,9 @@ export function ServicesScreen({
         : handoffPhase === "pickup_review"
           ? { title: "Pickup awaiting staff approval", copy: "FairFares staff is reviewing the recorded pickup inspection before vehicle release.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
           : handoffPhase === "return"
-            ? { title: "Rental active", copy: `Return by ${selectedBooking?.returnTime || "the scheduled time"} on ${selectedBooking?.returnDate || "the return date"}.`, label: "Start return", onPress: () => setPanelMode("handoff" as PanelMode) }
+            ? { title: "Return with FairFares staff", copy: `Meet staff by ${selectedBooking?.returnTime || "the scheduled time"} on ${selectedBooking?.returnDate || "the return date"}. Staff records the return inspection, photos, and deposit review.`, label: "View return instructions", onPress: () => setPanelMode("details" as PanelMode) }
             : handoffPhase === "return_review"
-              ? { title: "Return awaiting inspection", copy: "Your return evidence is saved. Deposit review begins after staff inspection.", label: "View return status", onPress: () => setPanelMode("details" as PanelMode) }
+              ? { title: "Return awaiting staff review", copy: "FairFares staff is reviewing the return inspection and deposit outcome.", label: "View return status", onPress: () => setPanelMode("details" as PanelMode) }
               : handoffPhase === "change_review"
                 ? { title: "Modification awaiting review", copy: "FairFares will notify you after availability and pricing are confirmed.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
                 : handoffPhase === "cancellation_review"
@@ -812,28 +811,6 @@ export function ServicesScreen({
                   <View style={styles.inlineActions}>
                     <SecondaryButton label="Support Center" onPress={() => setPanelMode("support")} />
                   </View>
-                </>
-              ) : null}
-
-              {selectedBooking && panelMode === "handoff" && handoffReady ? (
-                <>
-                  <Text style={styles.sectionTitle}>Return inspection</Text>
-                  <View style={styles.greenNote}>
-                    <Text style={styles.greenNoteTitle}>{selectedBooking.returnLocation}</Text>
-                    <Text style={styles.greenNoteBody}>Take current photos at the handoff location. These images protect both the renter and vehicle provider.</Text>
-                  </View>
-                  <SecondaryButton label="Open return map" onPress={() => void openHandoffMap()} />
-                  <InputField label="Odometer mileage" value={handoffOdometer} onChangeText={setHandoffOdometer} placeholder="Current mileage" />
-                  <Text style={styles.modalFieldLabel}>Fuel or charge level</Text>
-                  <View style={styles.chipWrap}>{["EMPTY", "1/4", "1/2", "3/4", "FULL"].map((level) => <TouchableOpacity key={level} style={[styles.choiceChip, handoffFuel === level && styles.activeChoiceChip]} onPress={() => setHandoffFuel(level)}><Text style={[styles.choiceChipText, handoffFuel === level && styles.activeChoiceChipText]}>{level}</Text></TouchableOpacity>)}</View>
-                  <Text style={styles.modalFieldLabel}>Vehicle condition</Text>
-                  <ChoiceRow label="Condition matches the reservation" detail="No new visible damage" selected={handoffCondition === "ACCEPTABLE"} onPress={() => setHandoffCondition("ACCEPTABLE")} />
-                  <ChoiceRow label="Damage or condition issue found" detail="Staff will review before the trip continues or closes" selected={handoffCondition === "DAMAGE_REPORTED"} onPress={() => setHandoffCondition("DAMAGE_REPORTED")} />
-                  <Text style={styles.modalFieldLabel}>Required live photos</Text>
-                  <View style={styles.photoGrid}>{HANDOFF_PHOTOS.map(({ key, label }) => <TouchableOpacity key={key} style={[styles.photoButton, handoffPhotos[key] && styles.photoButtonDone]} onPress={() => void captureHandoffPhoto(key)} disabled={busy}><Text style={styles.photoButtonIcon}>{handoffPhotos[key] ? "✓" : "+"}</Text><Text style={styles.photoButtonText}>{label}</Text></TouchableOpacity>)}</View>
-                  <InputField label="Type your full name as signature" value={handoffSignature} onChangeText={setHandoffSignature} placeholder="Full legal name" />
-                  <ToggleRow label="I confirm the vehicle is parked at the return location, secured, and the mileage, fuel, condition, photos, and key placement are accurate." selected={handoffAcknowledged} onPress={() => setHandoffAcknowledged((value) => !value)} />
-                  <PrimaryButton label={busy ? "Submitting securely..." : "Submit vehicle return"} onPress={() => void submitHandoff()} disabled={busy} />
                 </>
               ) : null}
 

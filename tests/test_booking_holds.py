@@ -217,11 +217,21 @@ class BookingHoldTest(unittest.TestCase):
             "bookingId": booking["booking_id"], "odometer": "12150", "fuelLevel": "FULL",
             "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
         })
-        with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
-            app.FairFaresHandler.api_mobile_rental_handoff_submit(returned, "return")
-        self.assertEqual(returned.response[0], 200)
+        app.FairFaresHandler.api_mobile_rental_handoff_submit(returned, "return")
+        self.assertEqual(returned.response[0], 403)
+        self.assertIn("staff completes the return inspection", returned.response[1]["error"])
         with app.db() as con:
-            self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "RETURN_SUBMITTED")
+            con.execute(
+                """UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
+                   actual_return_date = '2026-09-27', actual_return_time = '02:00 PM', return_odometer = 12150,
+                   return_fuel_level = 'FULL', return_condition_status = 'ACCEPTABLE', new_damage_found = 'NO',
+                   return_customer_signature = 'Hold Tester', return_front_image = 'drive://return-front',
+                   return_back_image = 'drive://return-back', return_left_image = 'drive://return-left',
+                   return_right_image = 'drive://return-right', return_odometer_image = 'drive://return-odometer',
+                   return_fuel_image = 'drive://return-fuel', return_interior_front_image = 'drive://return-interior-front',
+                   return_interior_rear_image = 'drive://return-interior-rear' WHERE id = ?""",
+                (booking["id"],),
+            )
 
         return_review = Handler(admin, {"bookingId": booking["id"], "action": "APPROVE_RETURN"})
         with patch.object(app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")):
@@ -231,6 +241,29 @@ class BookingHoldTest(unittest.TestCase):
             completed = con.execute("SELECT * FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
         self.assertEqual(completed["booking_status"], "RETURNED")
         self.assertEqual(completed["security_deposit_status"], "RELEASED")
+
+    def test_clear_return_evidence_is_purged_after_retention_but_damage_evidence_is_kept(self):
+        car = app.get_cars()[0]
+        clear_booking = app.create_booking_for_user(self.user_id, car["id"], days=1)
+        damaged_booking = app.create_booking_for_user(self.user_id, app.get_cars()[1]["id"], days=1)
+        old_date = (date.today() - timedelta(days=app.RENTAL_HANDOFF_EVIDENCE_RETENTION_DAYS + 1)).isoformat()
+        with app.db() as con:
+            for booking, damage in ((clear_booking, "NO"), (damaged_booking, "YES")):
+                con.execute(
+                    """UPDATE bookings SET booking_status = 'RETURNED', status = 'RETURNED',
+                       return_review_status = 'RELEASED', actual_return_date = ?, new_damage_found = ?,
+                       post_return_charge_amount = 0, pickup_front_image = ?, return_front_image = ? WHERE id = ?""",
+                    (old_date, damage, "data:image/jpeg;base64,cGlja3Vw", "data:image/jpeg;base64,cmV0dXJu", booking["id"]),
+                )
+
+        result = app.cleanup_expired_rental_handoff_evidence()
+        self.assertEqual(result["bookings"], 1)
+        with app.db() as con:
+            clear = con.execute("SELECT pickup_front_image, return_front_image FROM bookings WHERE id = ?", (clear_booking["id"],)).fetchone()
+            damaged = con.execute("SELECT pickup_front_image, return_front_image FROM bookings WHERE id = ?", (damaged_booking["id"],)).fetchone()
+        self.assertEqual((clear["pickup_front_image"], clear["return_front_image"]), ("", ""))
+        self.assertTrue(damaged["pickup_front_image"])
+        self.assertTrue(damaged["return_front_image"])
 
     def test_admin_can_reconcile_past_offline_return_without_fake_inspection(self):
         car = app.get_cars()[0]
@@ -361,13 +394,24 @@ class BookingHoldTest(unittest.TestCase):
             _, active = request_json("/api/mobile/rentals/bookings", "handoff-customer")
             self.assertEqual(active["bookings"][0]["handoff"]["phase"], "return")
 
-            with patch.object(app, "upload_data_url_to_drive", side_effect=lambda _con, **kwargs: f"drive://{kwargs['file_scope']}"):
-                status, returned = request_json("/api/mobile/rentals/return-submit", "handoff-customer", {
-                    "bookingId": booking["booking_id"], "odometer": "22175", "fuelLevel": "FULL",
-                    "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
-                })
-            self.assertEqual(status, 200)
-            self.assertEqual(returned["booking"]["handoff"]["phase"], "return_review")
+            status, returned = request_json("/api/mobile/rentals/return-submit", "handoff-customer", {
+                "bookingId": booking["booking_id"], "odometer": "22175", "fuelLevel": "FULL",
+                "conditionStatus": "ACCEPTABLE", "signature": "Hold Tester", "acknowledged": True, "photos": photos,
+            })
+            self.assertEqual(status, 403)
+            self.assertIn("staff completes the return inspection", returned["error"])
+            with app.db() as con:
+                con.execute(
+                    """UPDATE bookings SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED',
+                       actual_return_date = '2026-09-27', actual_return_time = '02:00 PM', return_odometer = 22175,
+                       return_fuel_level = 'FULL', return_condition_status = 'ACCEPTABLE', new_damage_found = 'NO',
+                       return_customer_signature = 'Hold Tester', return_front_image = 'drive://return-front',
+                       return_back_image = 'drive://return-back', return_left_image = 'drive://return-left',
+                       return_right_image = 'drive://return-right', return_odometer_image = 'drive://return-odometer',
+                       return_fuel_image = 'drive://return-fuel', return_interior_front_image = 'drive://return-interior-front',
+                       return_interior_rear_image = 'drive://return-interior-rear' WHERE id = ?""",
+                    (booking["id"],),
+                )
 
             _, staff_returns = request_json("/api/mobile/admin/pickups", "handoff-admin")
             queued_return = next(item for item in staff_returns["pickups"] if item["id"] == booking["id"])
