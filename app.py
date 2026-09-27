@@ -1170,6 +1170,39 @@ def upload_data_url_to_drive(
     return f"drive://{result.get('id')}"
 
 
+def store_rental_handoff_photo(*, data_url: str, fallback_name: str) -> str:
+    """Store staff pickup/return evidence privately in R2, with local development fallback."""
+    parts = data_url_upload_parts(
+        data_url,
+        fallback_name,
+        allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+        max_bytes=2_000_000,
+    )
+    if not parts:
+        # Existing R2/local references are retained when a staff member edits
+        # other handoff fields without replacing that particular photo.
+        return data_url
+    filename, mime_type, payload = parts
+    file_data = {"filename": filename, "mime_type": mime_type, "payload": payload}
+    if r2_storage_configured():
+        stored = save_file_payload_to_r2(
+            folder_name="rental-handoff",
+            file_data=file_data,
+            fallback_name=fallback_name,
+            allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+            max_bytes=2_000_000,
+        )
+        if stored:
+            return stored
+    return save_file_payload_locally(
+        folder_name="rental-handoff",
+        file_data=file_data,
+        fallback_name=fallback_name,
+        allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+        max_bytes=2_000_000,
+    )
+
+
 def upload_file_payload_to_drive(
     con: sqlite3.Connection,
     *,
@@ -34819,8 +34852,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         elif reference.startswith("drive://"):
             image = google_drive_upload_parts(reference.removeprefix("drive://").strip())
+        elif reference.startswith("r2://"):
+            image = r2_upload_parts(reference, max_bytes=2_000_000)
         else:
-            image = stored_upload_parts(reference)
+            image = local_upload_parts(reference)
         if not image:
             self.send_text("Photo is not available.", 404)
             return
@@ -36774,15 +36809,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "return_interior_rear_image",
                 "damage_photo_image",
             ):
-                drive_field_values[photo_field] = upload_data_url_to_drive(
-                    con,
-                    folder_key="pickup_return",
-                    file_scope=photo_field,
+                drive_field_values[photo_field] = store_rental_handoff_photo(
                     data_url=form.get(photo_field, ""),
                     fallback_name=f"{booking_public_id or booking_id}-{photo_field}",
-                    uploaded_by=row_value(user, "id"),
-                    user_id=user_id,
-                    booking_id=booking_id,
                 )
             con.execute(
                 """

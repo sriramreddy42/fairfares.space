@@ -104,6 +104,18 @@ class BookingHoldTest(unittest.TestCase):
         self.assertTrue(app.booking_customer_tools_unlocked({"payment_status": "PAID"}))
         self.assertFalse(app.booking_customer_tools_unlocked({"payment_status": "REFUNDED"}))
 
+    def test_rental_handoff_photos_use_private_r2_storage(self):
+        photo = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+        with patch.object(app, "r2_storage_configured", return_value=True), patch.object(
+            app, "save_file_payload_to_r2", return_value="r2://fairfares-attachments/fairfares/rental-handoff/test.gif"
+        ) as save_to_r2, patch.object(app, "save_file_payload_locally") as save_locally:
+            stored = app.store_rental_handoff_photo(data_url=photo, fallback_name="FF1-pickup-front")
+
+        self.assertTrue(stored.startswith("r2://fairfares-attachments/fairfares/rental-handoff/"))
+        save_to_r2.assert_called_once()
+        self.assertEqual(save_to_r2.call_args.kwargs["folder_name"], "rental-handoff")
+        save_locally.assert_not_called()
+
     def test_vehicle_release_requires_confirmed_payment_and_authorized_deposit(self):
         booking = {
             "booking_status": "CONFIRMED",
