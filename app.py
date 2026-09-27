@@ -29029,6 +29029,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             ][:8],
                         } if is_group else {}),
                     },
+                    # A Chitthi letter is a person-to-person alert. Hand it to
+                    # Expo in the send request rather than waiting for the
+                    # best-effort outbox worker, which can be delayed after a
+                    # service restart. Other product notifications stay async.
+                    dispatch_immediately=True,
                 )
 
     def api_create_chat_conversation(self) -> None:
