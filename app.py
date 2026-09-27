@@ -23397,6 +23397,7 @@ def enqueue_mobile_pushes(
     title: str,
     body: str,
     data: dict[str, object] | None = None,
+    dispatch_immediately: bool = False,
 ) -> int:
     notification_data = data or {}
     event_key = push_idempotency_key(notification_data, title, body)
@@ -23419,6 +23420,13 @@ def enqueue_mobile_pushes(
         )
         inserted = con.total_changes - before
     if inserted:
+        # The account notification test is an explicit diagnostic action. Send
+        # it in the request so the caller can tell that Expo was contacted;
+        # ordinary product events remain asynchronous and never make chat or
+        # booking requests wait on a third-party push provider.
+        if dispatch_immediately:
+            process_mobile_push_outbox(limit=max(1, len(rows)))
+            return inserted
         # Wake the long-lived worker as well as making a best-effort immediate
         # delivery.  An immediate worker can lose the lock to another push
         # that already took its snapshot; without this wake-up the newly
@@ -38792,6 +38800,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             title,
             body,
             notification_data,
+            dispatch_immediately=True,
         )
         response = {
             "ok": bool(queued),
