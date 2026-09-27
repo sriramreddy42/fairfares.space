@@ -79,9 +79,15 @@ class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
 
     val identityName = if (isGroup) conversationName.ifBlank { "Chitthi group" } else senderName
     val avatar = downloadAvatar(data["notificationImage"].orEmpty()) ?: initialsAvatar(identityName)
+    // Match the native messaging treatment people recognize from iOS: keep
+    // the sender as the main photo and place the actual FairFares app mark on
+    // its lower edge. The small notification icon is intentionally
+    // monochrome on Android, so this badge is where the full-color mark is
+    // visible in a Chitthi alert.
+    val avatarWithAppBadge = avatar?.let(::addFairFaresBadge)
     val sender = Person.Builder().setName(senderName)
       .apply { data["senderId"]?.takeIf { it.isNotBlank() }?.let { setKey("fairfares-user-$it") } }
-      .apply { avatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+      .apply { avatarWithAppBadge?.let { setIcon(IconCompat.createWithBitmap(it)) } }
       .build()
     val style = NotificationCompat.MessagingStyle(
       Person.Builder().setName("You").setKey("fairfares-current-user").build()
@@ -118,7 +124,7 @@ class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
       .setContentText(letter)
       .setStyle(style)
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-      .setLargeIcon(avatar)
+      .setLargeIcon(avatarWithAppBadge)
       .setContentIntent(tapIntent)
       .setAutoCancel(true)
       .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -184,6 +190,33 @@ class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
       val baseline = size / 2f - (paint.ascent() + paint.descent()) / 2f
       canvas.drawText(initials, size / 2f, baseline, paint)
     }
+  }
+
+  private fun addFairFaresBadge(source: Bitmap): Bitmap {
+    val size = 192
+    val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(output)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    val photo = if (source.width == size && source.height == size) source else Bitmap.createScaledBitmap(source, size, size, true)
+    val photoPath = android.graphics.Path().apply { addCircle(size / 2f, size / 2f, size / 2f, android.graphics.Path.Direction.CW) }
+    canvas.save()
+    canvas.clipPath(photoPath)
+    canvas.drawBitmap(photo, 0f, 0f, paint)
+    canvas.restore()
+    if (photo !== source) photo.recycle()
+
+    val badgeRadius = 36f
+    val centerX = size - badgeRadius - 2f
+    val centerY = size - badgeRadius - 2f
+    paint.color = Color.WHITE
+    canvas.drawCircle(centerX, centerY, badgeRadius + 3f, paint)
+    val badgePath = android.graphics.Path().apply { addCircle(centerX, centerY, badgeRadius, android.graphics.Path.Direction.CW) }
+    val mark = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+    canvas.save()
+    canvas.clipPath(badgePath)
+    canvas.drawBitmap(mark, null, android.graphics.RectF(centerX - badgeRadius, centerY - badgeRadius, centerX + badgeRadius, centerY + badgeRadius), paint)
+    canvas.restore()
+    return output
   }
 
   private companion object {
