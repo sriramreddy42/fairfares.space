@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!--
+      The compact FairFares road-F mark.  A notification small icon is
+      intentionally a single opaque color: Android supplies the color and
+      masks the transparent area in the system notification surface.
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M15,81C17,57 19,35 31,24C40,16 49,14 76,14C80,14 82,17 81,21C78,39 68,47 51,47L42,47L39,60C49,51 61,47 76,47C79,47 81,50 80,53C77,68 67,76 52,76L48,76C44,84 35,88 20,87C16,87 14,85 15,81ZM28,78C34,78 38,76 41,71L45,58C47,51 50,45 57,41L66,36L48,36C37,36 32,40 30,50L25,77C25,78 26,78 28,78Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M37,68L42,68L39,78L34,78ZM45,57L50,57L47,65L42,65ZM53,50L58,50L55,55L50,55Z" />
+</vector>

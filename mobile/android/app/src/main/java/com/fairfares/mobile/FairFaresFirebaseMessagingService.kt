@@ -109,10 +109,10 @@ class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     val notification = NotificationCompat.Builder(this, channelId)
-      // Use the same FairFares mark people see on the launcher. The old
-      // monochrome fallback was only a generic "F", so it looked like a
-      // different app in the notification shade.
-      .setSmallIcon(R.mipmap.ic_launcher)
+      // Android notification small icons must be a transparent, monochrome
+      // drawable. Using the adaptive launcher icon made Android crop it into
+      // the blue ring seen in the notification shade.
+      .setSmallIcon(R.drawable.notification_fairfares_road)
       .setColor(ContextCompat.getColor(this, R.color.notification_icon_color))
       .setContentTitle(senderName)
       .setContentText(letter)
