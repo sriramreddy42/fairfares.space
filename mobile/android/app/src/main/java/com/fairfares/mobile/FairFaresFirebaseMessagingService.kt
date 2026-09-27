@@ -208,10 +208,13 @@ class FairFaresFirebaseMessagingService : ExpoFirebaseMessagingService() {
     val badgeRadius = 36f
     val centerX = size - badgeRadius - 2f
     val centerY = size - badgeRadius - 2f
+    // `ic_launcher` is an adaptive XML resource and cannot be decoded as a
+    // bitmap in Firebase's background service. This is the same full-color
+    // FairFares mark packaged as a PNG specifically for the avatar badge.
+    val mark = BitmapFactory.decodeResource(resources, R.drawable.fairfares_app_badge) ?: return output
     paint.color = Color.WHITE
     canvas.drawCircle(centerX, centerY, badgeRadius + 3f, paint)
     val badgePath = android.graphics.Path().apply { addCircle(centerX, centerY, badgeRadius, android.graphics.Path.Direction.CW) }
-    val mark = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
     canvas.save()
     canvas.clipPath(badgePath)
     canvas.drawBitmap(mark, null, android.graphics.RectF(centerX - badgeRadius, centerY - badgeRadius, centerX + badgeRadius, centerY + badgeRadius), paint)
