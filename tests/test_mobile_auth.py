@@ -472,6 +472,52 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_housing_listing_with_typed_street_uses_city_fallback_without_google_maps(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Typed Address Owner", "typed-address@example.com", "+13035550111", app.hash_password("TypedAddressPassword123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('typed-address-token', ?)", (user_id,))
+        server, thread = self.start_server()
+        try:
+            payload = {
+                "postMode": "HAVE_PLACE", "category": "single_room",
+                "title": "Quiet furnished room", "description": "A furnished private room near downtown is available now.",
+                "streetAddress": "123 Example Street", "city": "Denver, CO", "zipCode": "80203",
+                "primaryNeighborhood": "Capitol Hill", "moveInDate": "2099-09-15", "rentMin": "900",
+                "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Typed Address Owner",
+                "contactEmail": "typed-address@example.com", "contactPhone": "+13035550111",
+                "images": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="],
+            }
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/housing",
+                data=json.dumps(payload).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer typed-address-token"},
+            )
+            with mock.patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}, clear=False), \
+                 mock.patch.object(app, "google_api_get") as google_api_get:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    status = response.status
+                    result = json.loads(response.read().decode("utf-8"))
+
+            self.assertEqual(status, 201)
+            self.assertEqual(result["post"]["streetAddress"], "123 Example Street")
+            google_api_get.assert_not_called()
+            with app.db() as con:
+                stored = con.execute(
+                    "SELECT street_address, lat, lng FROM accommodation_posts WHERE public_id = ?",
+                    (result["post"]["id"],),
+                ).fetchone()
+            self.assertEqual(stored["street_address"], "123 Example Street")
+            self.assertAlmostEqual(float(stored["lat"]), 39.7392, places=3)
+            self.assertAlmostEqual(float(stored["lng"]), -104.9903, places=3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_owner_can_edit_housing_listing_without_creating_duplicate(self):
         with app.db() as con:
             con.execute(

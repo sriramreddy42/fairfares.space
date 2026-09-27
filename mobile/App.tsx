@@ -2162,6 +2162,23 @@ function FairFaresApp() {
     setListingValidatedLabel(suggestion.label);
   }
 
+  function useEnteredListingLocation() {
+    const location = listingLocationInput.trim();
+    const normalizedCity = normalizeCityInput(listingForm.city).trim();
+    const zipCode = listingForm.zipCode.trim();
+    if (!location || !normalizedCity || !zipCode) {
+      Alert.alert(
+        "Add the location details",
+        "Enter the address or preferred area together with its city and ZIP code."
+      );
+      return;
+    }
+    setListingForm((current) => ({ ...current, city: normalizedCity }));
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(true);
+    setListingValidatedLabel(`${location}, ${normalizedCity} ${zipCode}`);
+  }
+
   useEffect(() => {
     if (!listingOpen || listingAddressValidated) {
       setListingAddressSuggestions([]);
@@ -2217,12 +2234,17 @@ function FairFaresApp() {
       Alert.alert("Missing details", `Please add: ${requiredFields.join(", ")}.`);
       return;
     }
-    if (!listingAddressValidated) {
+    const canUseEnteredLocation = Boolean(
+      listingLocationInput.trim().length >= 3
+      && normalizeCityInput(listingForm.city).trim()
+      && listingForm.zipCode.trim()
+    );
+    if (!listingAddressValidated && !canUseEnteredLocation) {
       Alert.alert(
-        listingHasPropertyDetails ? "Validate the address" : "Validate the preferred location",
+        listingHasPropertyDetails ? "Add the address" : "Add the preferred location",
         listingHasPropertyDetails
-          ? "Enter the property address and select the correct suggested address before posting."
-          : "Enter your preferred area, campus, building, or landmark and select the correct suggestion before posting."
+          ? "Enter the property address together with its city and ZIP code before posting."
+          : "Enter your preferred area, campus, building, or landmark together with its city and ZIP code before posting."
       );
       return;
     }
@@ -3985,7 +4007,8 @@ function FairFaresApp() {
                         ))}
                       </View>
                     ) : null}
-                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Validated: {listingValidatedLabel}</Text></View> : null}
+                    {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use entered address</Text></TouchableOpacity> : null}
+                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
                     <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingForm("primaryNeighborhood", text)} placeholder="Neighborhood / locality* eg Capitol Hill" placeholderTextColor={theme.colors.muted} style={styles.input} />
                     <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} />
                   </>
@@ -4007,7 +4030,8 @@ function FairFaresApp() {
                         ))}
                       </View>
                     ) : null}
-                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Validated: {listingValidatedLabel}</Text></View> : null}
+                    {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use entered location</Text></TouchableOpacity> : null}
+                    {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
                     <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Work / school / commute target optional" placeholderTextColor={theme.colors.muted} style={styles.input} />
                   </>
                 )}
@@ -4468,6 +4492,8 @@ const styles = StyleSheet.create({
   addressSuggestionCopy: { flex: 1, gap: 2 },
   addressSuggestionMain: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
   addressSuggestionSecondary: { color: theme.colors.muted, fontSize: 12, lineHeight: 16 },
+  addressManualAction: { minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.blue, backgroundColor: "rgba(59,130,246,0.1)", paddingHorizontal: 12 },
+  addressManualActionText: { color: theme.colors.blue, fontSize: 13, fontWeight: "900" },
   addressValidated: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: theme.radius.md, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "rgba(34,197,94,0.12)", borderWidth: 1, borderColor: "rgba(34,197,94,0.5)" },
   addressValidatedIcon: { color: "#4ade80", fontSize: 15, fontWeight: "900" },
   addressValidatedText: { color: "#86efac", flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "700" },

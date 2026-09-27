@@ -42600,6 +42600,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if street_address
             else accommodation_location_point(location_query)
         )
+        # Exact street geocoding is optional. When it is unavailable, retain
+        # the member's entered address and place the listing at its known city
+        # center for local discovery. This keeps publishing independent of an
+        # external Maps provider while never pretending to know an exact
+        # street coordinate.
+        if street_address and not (float(location_point.get("lat") or 0) and float(location_point.get("lng") or 0)):
+            city_point = accommodation_location_point(city or zip_code, allow_refresh=False)
+            if float(city_point.get("lat") or 0) and float(city_point.get("lng") or 0):
+                location_point = {
+                    "label": str(city_point.get("label") or city),
+                    "lat": float(city_point.get("lat") or 0),
+                    "lng": float(city_point.get("lng") or 0),
+                    "source": "city-fallback",
+                }
         post_lat = float(location_point.get("lat") or 0)
         post_lng = float(location_point.get("lng") or 0)
         resolved_location_label = dedupe_repeated_location_label(str(location_point.get("label") or ""))
