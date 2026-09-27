@@ -1547,7 +1547,7 @@ export async function getChatConversationsPage(cursor = "", offset = 0, query = 
   }
 }
 
-export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "", notificationSchema = 3) {
+export async function registerMobilePushToken(token: string, platform: string, deviceLabel: string, enabled = true, deviceId = "", notificationSchema = 4) {
   return request<{ ok: boolean; enabled: boolean }>("/api/mobile/push-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

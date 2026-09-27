@@ -23111,7 +23111,11 @@ def send_expo_push(tokens: list[str], title: str, body: str, data: dict[str, obj
     # which turns a Chitthi avatar into a full-card photo.  Send Chitthi Android
     # pushes as high-priority data messages instead; the app's Firebase service
     # renders a MessagingStyle notification with the avatar beside the letter.
-    android_chitthi = target_platform == "android" and is_chitthi_notification
+    android_chitthi = (
+        target_platform == "android"
+        and is_chitthi_notification
+        and int(float_from_value(notification_data.get("notificationSchema")) or 0) >= 4
+    )
     if android_chitthi:
         delivered_data = {
             **delivered_data,
@@ -23338,7 +23342,7 @@ def refresh_queued_chitthi_notification(
             refreshed["senderAvatarUrl"] = chat_notification_avatar_url_if_present(
                 con, schema_origin(), user_id=sender_id,
             )
-    refreshed["notificationSchema"] = 2
+    refreshed["notificationSchema"] = max(2, int(float_from_value(refreshed.get("notificationSchema")) or 0))
     canonical_title, canonical_body, _subtitle = chitthi_notification_copy(
         refreshed.get("senderName") or title,
         body,
@@ -23673,6 +23677,7 @@ def send_mobile_push_for_users(
     for row in rows:
         token_data = dict(data or {})
         token_data["targetPlatform"] = str(row_value(row, "platform") or "").strip().lower()
+        token_data["notificationSchema"] = int(row_value(row, "notification_schema") or 0)
         if bool(token_data.get("isGroup")) or str(token_data.get("conversationName") or "").strip():
             token_data["nativeGroupEnrichment"] = True
         enqueue_mobile_pushes(
@@ -28948,6 +28953,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     ).fetchone() if device_id else None
                     push_jobs.append((str(row_value(token_row, "token") or ""), {
                         "targetPlatform": str(row_value(token_row, "platform") or "").strip().lower(),
+                        "notificationSchema": int(row_value(token_row, "notification_schema") or 0),
                         "recipientUserId": recipient_id,
                         "recipientDeviceId": device_id,
                         "senderPublicKey": str(row_value(envelope, "sender_public_key") or "") if envelope else "",

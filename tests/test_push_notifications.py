@@ -513,6 +513,7 @@ class PushNotificationTest(unittest.TestCase):
             "isGroup": True,
             "subtitle": "DU Housing Board",
             "targetPlatform": "android",
+            "notificationSchema": 4,
         }
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Marisa", "Are you available?", data)
@@ -541,6 +542,7 @@ class PushNotificationTest(unittest.TestCase):
             "subtitle": "DU Housing Board",
             "reaction": "👍",
             "targetPlatform": "android",
+            "notificationSchema": 4,
         }
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push([token], "Marisa", "reacted 👍 to your message", data)
@@ -551,6 +553,24 @@ class PushNotificationTest(unittest.TestCase):
         self.assertEqual(message["priority"], "high")
         self.assertEqual(message["data"]["notificationRenderer"], "chitthi-v1")
         self.assertEqual(message["data"]["notificationBody"], "reacted 👍 to your message")
+
+    def test_android_chitthi_keeps_remote_layout_until_schema_four(self):
+        token = "ExpoPushToken[android-schema-three-device]"
+        response = FakeResponse({"data": [{"status": "ok", "id": "ticket-android-schema-three"}]})
+        data = {
+            "type": "CHITTHI_MESSAGE",
+            "senderName": "Marisa",
+            "senderAvatarUrl": "https://fairfare.space/sender.jpg",
+            "targetPlatform": "android",
+            "notificationSchema": 3,
+        }
+        with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
+            app.send_expo_push([token], "Marisa", "Hello", data)
+        message = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))[0]
+        self.assertEqual(message["title"], "Marisa")
+        self.assertEqual(message["body"], "Hello")
+        self.assertEqual(message["richContent"], {"image": "https://fairfare.space/sender.jpg"})
+        self.assertNotIn("notificationRenderer", message["data"])
 
     def test_every_chitthi_push_type_requests_message_sound(self):
         token = "ExpoPushToken[chitthi-sound-device]"
