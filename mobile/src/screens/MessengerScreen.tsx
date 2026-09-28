@@ -315,13 +315,26 @@ function recentChatMessages(messages: ChatMessage[]) {
     .slice(-(Platform.OS === "web" ? WEB_CHAT_MESSAGE_CACHE_LIMIT : CHAT_MESSAGE_CACHE_LIMIT));
 }
 
+function reconcileOptimisticChatMessages(messages: ChatMessage[]) {
+  // A sent message starts with a negative local ID. Polling can receive its
+  // accepted server row before the relay request resolves. Both rows share
+  // localClientMessageId, so discard the temporary row as soon as the server
+  // row is available instead of briefly rendering the message twice.
+  const acceptedClientMessageIds = new Set(
+    messages
+      .filter((message) => Number(message.id) > 0 && Boolean(message.localClientMessageId))
+      .map((message) => String(message.localClientMessageId))
+  );
+  return messages.filter((message) => !(
+    Number(message.id) < 0
+    && Boolean(message.localClientMessageId)
+    && acceptedClientMessageIds.has(String(message.localClientMessageId))
+  ));
+}
+
 function mergeChatMessages(existingMessages: ChatMessage[], incomingMessages: ChatMessage[]) {
   const byId = new Map<number, ChatMessage>();
-  existingMessages.forEach((message) => {
-    const id = Number(message.id);
-    if (Number.isFinite(id)) byId.set(id, message);
-  });
-  incomingMessages.forEach((message) => {
+  reconcileOptimisticChatMessages([...existingMessages, ...incomingMessages]).forEach((message) => {
     const id = Number(message.id);
     if (Number.isFinite(id)) byId.set(id, message);
   });
@@ -335,11 +348,7 @@ function mergeChatMessages(existingMessages: ChatMessage[], incomingMessages: Ch
 // thread stable; the disk writer independently stores only recentChatMessages.
 function mergeThreadHistoryMessages(existingMessages: ChatMessage[], incomingMessages: ChatMessage[]) {
   const byId = new Map<number, ChatMessage>();
-  existingMessages.forEach((message) => {
-    const id = Number(message.id);
-    if (Number.isFinite(id)) byId.set(id, message);
-  });
-  incomingMessages.forEach((message) => {
+  reconcileOptimisticChatMessages([...existingMessages, ...incomingMessages]).forEach((message) => {
     const id = Number(message.id);
     if (Number.isFinite(id)) byId.set(id, message);
   });
