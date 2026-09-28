@@ -274,6 +274,44 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(transaction["amount"], 12.50)
         self.assertEqual(transaction["transaction_status"], "REFUNDED")
 
+    def test_refund_already_refunded_state_is_verified_against_stripe(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CANCELLED', status = 'CANCELLED', payment_status = 'REFUND_REVIEW' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute(
+                """
+                INSERT INTO transactions
+                (booking_id, payment_method, amount, transaction_status, invoice_number)
+                VALUES (?, 'Stripe Checkout', 12.50, 'REFUNDED', 'pi_verified_refund')
+                """,
+                (booking["id"],),
+            )
+        intent = {
+            "id": "pi_verified_refund",
+            "status": "succeeded",
+            "amount_received": 1250,
+            "metadata": {
+                "booking_id": str(booking["id"]),
+                "public_booking_id": booking["booking_id"],
+                "user_id": str(self.user_id),
+                "payment_option": "full",
+            },
+        }
+        with patch.object(
+            app,
+            "stripe_api_get",
+            side_effect=[({"data": [intent]}, "ok"), ({"data": [{"amount": 1250, "status": "succeeded"}]}, "ok")],
+        ), patch.object(app, "stripe_api_request") as refund_request:
+            status, message = app.auto_refund_booking_payments(booking["id"])
+
+        self.assertEqual(status, "REFUNDED")
+        self.assertIn("Stripe confirms", message)
+        refund_request.assert_not_called()
+
     def test_refund_is_not_final_until_stripe_confirms_success(self):
         with patch.object(app, "stripe_api_request", return_value=({"id": "re_pending", "status": "pending"}, "ok")):
             pending, pending_message, _ = app.stripe_refund_payment_reference("pi_refund_test", 123, 12.50, "refund-test")
