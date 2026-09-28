@@ -8301,12 +8301,15 @@ def init_db() -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_conversation_user ON chat_participants(conversation_id, user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_activity ON chat_conversations(status, last_message_at DESC, updated_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_visible_conversation ON chat_messages(conversation_id, id DESC) WHERE deleted_at IS NULL")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_sender_context ON chat_messages(sender_id, context_type, context_public_id) WHERE deleted_at IS NULL AND context_public_id != ''")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_key ON chat_messages(conversation_id, sender_id, client_message_id) WHERE client_message_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_user ON chat_community_members(user_id, community_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_community_members_community_user ON chat_community_members(community_id, user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_communities_discovery ON chat_communities(visibility, area_label COLLATE NOCASE, kind, name)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_group_invites_community ON chat_group_invites(community_id, revoked_at, expires_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_user ON chat_device_keys(user_id, revoked_at)")
@@ -8349,10 +8352,13 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_images_post_sort ON accommodation_post_images(post_id, sort_order, id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_status_type_created ON ride_posts(status, ride_type, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_user_status_created ON ride_posts(user_id, status, created_at DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_user_created ON ride_posts(user_id, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_posts_city_status_created ON ride_posts(city_label COLLATE NOCASE, status, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_instances_post_date ON ride_instances(ride_post_id, instance_date, pickup_time)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_status ON ride_dispatch_notifications(driver_user_id, status, notified_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_notified ON ride_dispatch_notifications(driver_user_id, notified_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request ON ride_dispatch_notifications(request_ride_post_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rater_dispatch ON ride_ratings(rater_user_id, dispatch_notification_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rated_user ON ride_ratings(rated_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_user_ratings_reviewed_status ON user_ratings(reviewed_user_id, status)")
@@ -14284,7 +14290,10 @@ def get_booking_for_user(user_id: int) -> sqlite3.Row | None:
 
 
 def get_bookings_for_user(user_id: int) -> list[sqlite3.Row]:
-    expire_stale_booking_holds()
+    # A booking-history read must never wait behind expiry housekeeping. The
+    # availability predicates below already ignore expired holds; cleanup runs
+    # separately so mobile opening a trip history stays a read-only operation.
+    schedule_stale_booking_hold_expiry()
     with db() as con:
         rows = con.execute(
             """
@@ -14930,7 +14939,7 @@ def parse_booking_datetime(date_value: str, time_value: str) -> datetime | None:
 
 
 def active_booking_for_car(car_id: int) -> sqlite3.Row | None:
-    expire_stale_booking_holds()
+    schedule_stale_booking_hold_expiry()
     with db() as con:
         return con.execute(
             """
@@ -14963,7 +14972,9 @@ def active_booking_conflict_for_car(
 ) -> sqlite3.Row | None:
     if not requested_start or not requested_end:
         return active_booking_for_car(car_id)
-    expire_stale_booking_holds()
+    # Conflict detection has its own expiry predicate. Scheduling physical
+    # cleanup here avoids one write transaction per car shown as an upgrade.
+    schedule_stale_booking_hold_expiry()
     with db() as con:
         return active_booking_conflict_for_car_in_connection(
             con, car_id, requested_start, requested_end, exclude_booking_id,
@@ -19752,17 +19763,36 @@ def mobile_booking_payload(row: sqlite3.Row | dict[str, object]) -> dict[str, ob
     }
 
 
-def mobile_rental_upgrade_options(row: sqlite3.Row | dict[str, object]) -> list[dict[str, object]]:
+def mobile_rental_upgrade_options(
+    row: sqlite3.Row | dict[str, object],
+    *,
+    inventory: list[sqlite3.Row] | None = None,
+    active_bookings_by_car: dict[int, list[sqlite3.Row]] | None = None,
+) -> list[dict[str, object]]:
     current_car_id = int(row_value(row, "car_id") or 0)
     requested_start = parse_booking_datetime(row_value(row, "pickup_date"), row_value(row, "pickup_time"))
     requested_end = parse_booking_datetime(row_value(row, "dropoff_date"), row_value(row, "dropoff_time"))
     days = int(row_value(row, "days") or 1)
     options: list[dict[str, object]] = []
-    for car in get_cars():
+    for car in (inventory if inventory is not None else get_cars()):
         car_id = int(row_value(car, "id") or 0)
         if not car_id or car_id == current_car_id:
             continue
-        if active_booking_conflict_for_car(car_id, requested_start, requested_end, int(row_value(row, "id") or 0)):
+        active_rows = (active_bookings_by_car or {}).get(car_id)
+        if active_rows is None:
+            has_conflict = bool(active_booking_conflict_for_car(car_id, requested_start, requested_end, int(row_value(row, "id") or 0)))
+        else:
+            has_conflict = any(
+                int(row_value(active, "id") or 0) != int(row_value(row, "id") or 0)
+                and requested_start
+                and requested_end
+                and (active_start := parse_booking_datetime(row_value(active, "pickup_date"), row_value(active, "pickup_time")))
+                and (active_end := parse_booking_datetime(row_value(active, "dropoff_date"), row_value(active, "dropoff_time")))
+                and requested_start < active_end
+                and requested_end > active_start
+                for active in active_rows
+            )
+        if has_conflict:
             continue
         daily = float(row_value(car, "daily_price") or 0)
         low, high = daily_price_range(daily)
@@ -19867,6 +19897,7 @@ def mobile_rental_service_booking_payload(
     user_id: int | None = None,
     *,
     include_document_bodies: bool = False,
+    service_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     payload = mobile_booking_payload(row)
     breakdown = booking_price_breakdown(row)
@@ -19892,15 +19923,20 @@ def mobile_rental_service_booking_payload(
         identity_title = "Identity verification pending"
         identity_message = "FairFares staff will start the secure driver license and selfie check before pickup."
     if user_id:
-        user_bookings = get_bookings_for_user(user_id)
-        stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
-        stats["past"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
-        document_sets = get_user_document_sets(user_id, active_booking_id, include_docs=include_document_bodies)
+        if service_context is not None and not include_document_bodies:
+            stats = dict(service_context.get("stats") or stats)
+            document_sets = list(service_context.get("documents") or [])
+            support_tickets = list(service_context.get("supportTickets") or [])
+        else:
+            user_bookings = get_bookings_for_user(user_id)
+            stats["upcoming"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+            stats["past"] = sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"})
+            document_sets = get_user_document_sets(user_id, active_booking_id, include_docs=include_document_bodies)
+            support_rows = get_support_tickets_for_user(user_id)
+            support_tickets = [mobile_support_ticket_summary(ticket) for ticket in support_rows]
+            stats["supportOpen"] = sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"})
         if not include_document_bodies:
             document_sets = [item for item in document_sets if int(item.get("id") or 0) == active_booking_id]
-        support_rows = get_support_tickets_for_user(user_id)
-        support_tickets = [mobile_support_ticket_summary(ticket) for ticket in support_rows]
-        stats["supportOpen"] = sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"})
     with db() as con:
         latest_transaction = con.execute(
             """
@@ -19932,8 +19968,12 @@ def mobile_rental_service_booking_payload(
             "invoiceNumber": row_value(latest_transaction, "invoice_number") if latest_transaction else "",
             "invoiceUrl": row_value(latest_transaction, "invoice_pdf_url") if latest_transaction else "",
             "manageUrl": manage_url,
-            "locations": get_inventory_locations(),
-            "upgradeOptions": mobile_rental_upgrade_options(row),
+            "locations": list(service_context.get("locations") or []) if service_context is not None else get_inventory_locations(),
+            "upgradeOptions": mobile_rental_upgrade_options(
+                row,
+                inventory=list(service_context.get("inventory") or []) if service_context is not None else None,
+                active_bookings_by_car=dict(service_context.get("activeBookingsByCar") or {}) if service_context is not None else None,
+            ),
             "refund": {
                 "amount": refund_amount,
                 "amountLabel": format_money(refund_amount),
@@ -24365,8 +24405,23 @@ def get_chat_conversations_for_user(
                    COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                    COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                    COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
-                   MAX(other_sessions.last_seen_at) AS other_last_seen_at,
-                   MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
+                   (
+                       SELECT MAX(presence.last_seen_at)
+                       FROM sessions presence
+                       WHERE presence.user_id = COALESCE(
+                           other_user.id,
+                           CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END
+                       )
+                   ) AS other_last_seen_at,
+                   EXISTS (
+                       SELECT 1
+                       FROM sessions presence
+                       WHERE presence.user_id = COALESCE(
+                           other_user.id,
+                           CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.id END
+                       )
+                         AND datetime(presence.last_seen_at) >= datetime('now', '-2 minutes')
+                   ) AS other_online
             FROM chat_conversations conversations
             JOIN chat_participants participant ON participant.conversation_id = conversations.id AND participant.user_id = ?
             LEFT JOIN accommodation_posts posts ON posts.id = conversations.accommodation_post_id
@@ -24377,10 +24432,13 @@ def get_chat_conversations_for_user(
                   AND id >= participant.visible_from_message_id
                 ORDER BY id DESC LIMIT 1
             )
-            LEFT JOIN chat_participants other_participant ON other_participant.conversation_id = conversations.id AND other_participant.user_id != ?
+            LEFT JOIN chat_participants other_participant
+              ON other_participant.conversation_id = conversations.id
+             AND other_participant.user_id != ?
+             AND conversations.community_id IS NULL
+             AND conversations.conversation_type != 'GROUP'
             LEFT JOIN users other_user ON other_user.id = other_participant.user_id
             LEFT JOIN users participant_user ON participant_user.id = participant.user_id
-            LEFT JOIN sessions other_sessions ON other_sessions.user_id = other_user.id
             LEFT JOIN chat_communities communities ON communities.id = conversations.community_id
             WHERE conversations.status = 'ACTIVE'
               AND (
@@ -24416,13 +24474,51 @@ def get_chat_conversations_for_user(
                   )
               )
               {search_clause}
-            GROUP BY conversations.id
             ORDER BY datetime(COALESCE(last_message.created_at, conversations.updated_at)) DESC, conversations.id DESC
             LIMIT ? OFFSET ?
             """.format(search_clause=search_clause),
             (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, *search_values, limit, offset),
         ).fetchall()
     return [chat_row_payload(row, user_id) for row in rows]
+
+
+def chat_unread_count_for_user(user_id: int) -> int:
+    """Return the inbox badge without materialising the conversation list.
+
+    Bootstrap runs on every authenticated cold start.  The Chitthi screen
+    separately loads and decrypts its own list, so doing that large query a
+    second time in bootstrap doubled the expensive work for no user benefit.
+    """
+    if user_id <= 0:
+        return 0
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT COUNT(*) AS unread_count
+            FROM chat_participants participant
+            JOIN chat_conversations conversations
+              ON conversations.id = participant.conversation_id
+             AND conversations.status = 'ACTIVE'
+            JOIN chat_messages messages
+              ON messages.conversation_id = conversations.id
+             AND messages.id > participant.last_read_message_id
+             AND messages.id >= participant.visible_from_message_id
+             AND messages.sender_id != participant.user_id
+             AND messages.deleted_at IS NULL
+            WHERE participant.user_id = ?
+              AND (
+                  conversations.community_id IS NULL
+                  OR EXISTS (
+                      SELECT 1
+                      FROM chat_community_members membership
+                      WHERE membership.community_id = conversations.community_id
+                        AND membership.user_id = participant.user_id
+                  )
+              )
+            """,
+            (user_id,),
+        ).fetchone()
+    return int(row_value(row, "unread_count") or 0)
 
 
 def render_dashboard_chat_rows(conversations: list[dict[str, object]]) -> str:
@@ -25599,11 +25695,12 @@ def get_user_document_sets(
     active_booking_id: int | None = None,
     *,
     include_docs: bool = True,
+    bookings: list[sqlite3.Row] | None = None,
 ) -> list[dict[str, object]]:
     if not user_id:
         return []
     document_sets: list[dict[str, object]] = []
-    for booking in get_bookings_for_user(user_id):
+    for booking in (bookings if bookings is not None else get_bookings_for_user(user_id)):
         status = row_value(booking, "booking_status")
         payment_status = row_value(booking, "payment_status")
         locked = status not in {"PICKED_UP", "RETURNED", "CANCELLED"}
@@ -25628,6 +25725,42 @@ def get_user_document_sets(
         )
     document_sets.sort(key=lambda item: (0 if item["id"] == active_booking_id else 1, str(item["bookingId"])))
     return document_sets
+
+
+def mobile_rental_service_context(user_id: int, bookings: list[sqlite3.Row]) -> dict[str, object]:
+    """Fetch account-wide rental data once for a booking-list response."""
+    user_bookings = list(bookings)
+    support_rows = get_support_tickets_for_user(user_id)
+    with db() as con:
+        active_rows = con.execute(
+            """
+            SELECT *
+            FROM bookings
+            WHERE booking_status IN ('CONFIRMED', 'MODIFIED', 'CANCELLATION_REQUESTED', 'PICKUP_SUBMITTED', 'PICKED_UP', 'RETURN_SUBMITTED')
+               OR (
+                   booking_status = 'PENDING_HOLD'
+                   AND payment_status = 'HOLD_PENDING'
+                   AND hold_expires_at IS NOT NULL
+                   AND datetime(hold_expires_at) > datetime('now')
+               )
+            """
+        ).fetchall()
+    active_by_car: dict[int, list[sqlite3.Row]] = {}
+    for active in active_rows:
+        active_by_car.setdefault(int(row_value(active, "car_id") or 0), []).append(active)
+    return {
+        "userBookings": user_bookings,
+        "documents": get_user_document_sets(user_id, include_docs=False, bookings=user_bookings),
+        "supportTickets": [mobile_support_ticket_summary(ticket) for ticket in support_rows],
+        "stats": {
+            "upcoming": sum(1 for booking in user_bookings if row_value(booking, "booking_status") not in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}),
+            "past": sum(1 for booking in user_bookings if row_value(booking, "booking_status") in {"CANCELLED", "RETURNED", "EXPIRED_HOLD"}),
+            "supportOpen": sum(1 for ticket in support_rows if row_value(ticket, "status") not in {"RESOLVED", "CLOSED"}),
+        },
+        "locations": get_inventory_locations(),
+        "inventory": get_cars(),
+        "activeBookingsByCar": active_by_car,
+    }
 
 
 def render_template(template_name: str, **context: object) -> bytes:
@@ -39860,13 +39993,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "suggested_areas": [],
         }
         user_id = int(row_value(user, "id") or 0) if user else 0
-        chats = get_chat_conversations_for_user(user_id) if user_id else []
-        for chat in chats:
-            community_record_id = int(chat.pop("_communityRecordId", 0) or 0)
-            if community_record_id > 0:
-                chat["otherPhotoUrl"] = group_avatar_delivery_path(chat.get("otherPhotoUrl"), community_record_id)
-            else:
-                chat["otherPhotoUrl"] = avatar_delivery_path(chat.get("otherPhotoUrl"), int(chat.get("otherUserId") or 0))
+        # The mounted Chitthi screen fetches the paginated conversation list
+        # immediately after bootstrap.  Bootstrap needs only the badge count;
+        # loading the same list here was a duplicate, high-cost SQL query.
+        unread_count = chat_unread_count_for_user(user_id) if user_id else 0
         messaged_listing_ids = messaged_listing_ids_for_user(user_id)
         housing_posts = mobile_housing_posts_for_viewer(
             mobile_housing_posts(city=city, area=area, limit=12),
@@ -39885,15 +40015,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "housing": housing_posts,
                 "communities": get_chat_communities_for_user(user_id if user_id else None, city),
                 "chat": {
-                    "unreadCount": sum(int(item.get("unread") or 0) for item in chats),
-                    "conversations": chats[:10],
+                    "unreadCount": unread_count,
+                    "conversations": [],
                     "messagedPostIds": messaged_listing_ids["postIds"],
                     "messagedRideIds": messaged_listing_ids["rideIds"],
                 },
                 "features": {"chitthi": chitthi_transfer_features(user_id)},
                 "dashboard": {
                     "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
-                    "messages": sum(int(item.get("unread") or 0) for item in chats),
+                    "messages": unread_count,
                 },
                 "hasSubmittedHousingExperience": has_submitted_housing_experience(user_id),
                 "hasSubmittedMobileReview": has_submitted_mobile_review(user_id),
@@ -40386,6 +40516,47 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             headers={"Cache-Control": "private, no-store"},
         )
 
+    def send_mobile_gas_map_fallback(self, station_count: int) -> None:
+        """Serve a local bitmap when Static Maps is disabled or unavailable.
+
+        Fuel prices remain useful without a paid basemap.  Android's Image
+        component needs a bitmap, so this deliberately uses PNG rather than
+        an SVG placeholder.
+        """
+        if Image is not None and ImageDraw is not None:
+            canvas = Image.new("RGB", (640, 360), "#e8f4ee")
+            draw = ImageDraw.Draw(canvas)
+            for x in range(-80, 720, 80):
+                draw.line((x, 0, x + 170, 360), fill="#c9e2d4", width=3)
+            for y in range(20, 390, 70):
+                draw.line((0, y, 640, y - 36), fill="#c9e2d4", width=2)
+            draw.rounded_rectangle((22, 20, 312, 76), radius=18, fill="#ffffff", outline="#b7d8c6", width=2)
+            draw.text((42, 38), "Nearby fuel stations", fill="#173f31")
+            draw.ellipse((294, 144, 346, 196), fill="#117a55", outline="#ffffff", width=4)
+            draw.text((311, 158), "Y", fill="#ffffff")
+            marker_positions = ((120, 118), (450, 100), (470, 252), (146, 264), (350, 286), (264, 94))
+            for x, y in marker_positions[:max(0, min(station_count, len(marker_positions)))]:
+                draw.ellipse((x - 15, y - 15, x + 15, y + 15), fill="#22a06b", outline="#ffffff", width=3)
+            output = io.BytesIO()
+            canvas.save(output, format="PNG", optimize=True)
+            data = output.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-FairFares-Map-Source", "local-fallback")
+            self.send_header("Cache-Control", "private, max-age=600")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        # Pillow is installed in production, but retain a valid response for
+        # stripped-down environments rather than turning a visual enhancement
+        # into a failing API request.
+        data = b""
+        self.send_response(204)
+        self.send_header("X-FairFares-Map-Source", "local-fallback-empty")
+        self.send_header("Cache-Control", "private, max-age=300")
+        self.end_headers()
+
     def api_mobile_gas_map(self, parsed: urllib.parse.ParseResult) -> None:
         identity = self.request_rate_limit_identity()
         retry_after = max(
@@ -40414,8 +40585,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if -90 <= point_lat <= 90 and -180 <= point_lng <= 180:
                 station_points.append(f"{point_lat:.5f},{point_lng:.5f}")
         maps_key = os.environ.get("GOOGLE_STATIC_MAPS_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-        if not maps_key:
-            self.send_json({"ok": False, "error": "Google map is not configured."}, 503)
+        # Static Maps creates a billable external request for each unique map.
+        # It is opt-in; the local preview keeps the fuel screen functional
+        # while Maps is disabled for cost control.
+        static_maps_enabled = os.environ.get("FAIRFARES_ENABLE_GOOGLE_STATIC_MAPS", "").strip().lower() in {"1", "true", "yes"}
+        if not maps_key or not static_maps_enabled:
+            self.send_mobile_gas_map_fallback(len(station_points))
             return
         map_params: list[tuple[str, str]] = [
             ("size", "640x360"),
@@ -40447,7 +40622,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.wfile.write(image)
         except Exception as exc:
             print(f"Google gas map error: {type(exc).__name__}: {exc}")
-            self.send_json({"ok": False, "error": "Google map is temporarily unavailable."}, 502)
+            self.send_mobile_gas_map_fallback(len(station_points))
 
     def api_mobile_ride_map(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)
@@ -40744,14 +40919,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             own_rows = con.execute(
                 """
                 SELECT ride_posts.*, users.name AS owner_name, users.profile_photo_url AS owner_photo,
-                       COUNT(notifications.id) AS dispatch_notified_count,
-                       MIN(notifications.radius_miles) AS dispatch_nearest_radius
+                       (
+                           SELECT COUNT(*)
+                           FROM ride_dispatch_notifications notifications
+                           WHERE notifications.request_ride_post_id = ride_posts.id
+                       ) AS dispatch_notified_count,
+                       (
+                           SELECT MIN(notifications.radius_miles)
+                           FROM ride_dispatch_notifications notifications
+                           WHERE notifications.request_ride_post_id = ride_posts.id
+                       ) AS dispatch_nearest_radius
                 FROM ride_posts
                 JOIN users ON users.id = ride_posts.user_id
-                LEFT JOIN ride_dispatch_notifications notifications
-                    ON notifications.request_ride_post_id = ride_posts.id
                 WHERE ride_posts.user_id = ?
-                GROUP BY ride_posts.id
                 ORDER BY datetime(ride_posts.created_at) DESC
                 LIMIT 80
                 """,
@@ -41472,10 +41652,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         bookings = get_mobile_rental_bookings_for_user(user)
         origin = self.public_origin()
+        user_id = int(row_value(user, "id") or 0)
+        service_context = mobile_rental_service_context(user_id, bookings)
         self.send_json(
             {
                 "ok": True,
-                "bookings": [mobile_rental_service_booking_payload(booking, origin, int(row_value(user, "id") or 0)) for booking in bookings],
+                "bookings": [
+                    mobile_rental_service_booking_payload(
+                        booking,
+                        origin,
+                        user_id,
+                        service_context=service_context,
+                    )
+                    for booking in bookings
+                ],
             }
         )
 
