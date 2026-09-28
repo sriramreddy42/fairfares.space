@@ -102,6 +102,7 @@ export type StaffPickupBooking = {
   depositAmount: number;
   returnReviewStatus?: string;
   offlineReturnEligible?: boolean;
+  canReconcileOfflineReturn?: boolean;
   identityStatus?: string;
   identityTitle?: string;
   identityMessage?: string;

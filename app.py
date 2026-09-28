@@ -26846,7 +26846,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/pickup-submit": self.api_mobile_rental_pickup_submit,
             "/api/mobile/rentals/return-submit": self.api_mobile_rental_return_submit,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
-            "/api/mobile/admin/security-deposit-session": self.api_mobile_security_deposit_checkout,
             "/api/mobile/admin/identity/stripe-session": self.api_mobile_admin_stripe_identity_session,
             "/api/mobile/admin/handoff-inspection": self.api_mobile_admin_handoff_inspection,
             "/api/mobile/admin/handoff-review": self.api_mobile_admin_handoff_review,
@@ -32054,7 +32053,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
 
     def create_admin_security_deposit_payment(self) -> None:
-        admin = self.require_admin()
+        # This is a narrowly scoped fallback for an owner assisting a renter;
+        # the normal deposit authorization is created by the renter themselves.
+        admin = self.require_owner_admin()
         if not admin:
             return
         form = self.read_form()
@@ -34870,7 +34871,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
             )
         ]
-        records = "\n".join(self.render_pickup_record(row) for row in pickup_bookings)
+        records = "\n".join(self.render_pickup_record(row, user) for row in pickup_bookings)
         body = render_template(
             "admin_pickup.html",
             admin_name=escape(user["name"]),
@@ -35081,6 +35082,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<br>{escape(str(modification.get('pickupLocation') or row['pickup_location']))} → "
                 f"{escape(str(modification.get('returnLocation') or row['dropoff_location']))}</div>"
             )
+        status_control = f"""
+                <form method="post" action="/admin/bookings/status" class="admin-stack-form">
+                    <input type="hidden" name="booking_id" value="{row["id"]}">
+                    <select name="booking_status">{status_options}</select>
+                    <select name="payment_status">{payment_options}</select>
+                    <input name="reason" value="{escape(row["cancellation_reason"])}" placeholder="Reason / notes">
+                    {request_note}
+                    <button type="submit">Save</button>
+                </form>
+        """ if is_admin_user(user) else """
+                <small class="approval-note"><b>Owner-admin control</b>Payment and booking-status corrections are restricted. Complete pickup and return in the handoff workspace.</small>
+        """
         return f"""
         <tr class="{'admin-request-row' if is_request else ''}">
             <td data-label="Booking"><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
@@ -35098,21 +35111,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <td data-label="Status">
                 {f'<div class="admin-request-summary">{escape(row["cancellation_reason"] or "No request details saved.")}</div>' if is_request else ''}
                 {requested_trip}
-                <form method="post" action="/admin/bookings/status" class="admin-stack-form">
-                    <input type="hidden" name="booking_id" value="{row["id"]}">
-                    <select name="booking_status">{status_options}</select>
-                    <select name="payment_status">{payment_options}</select>
-                    <input name="reason" value="{escape(row["cancellation_reason"])}" placeholder="Reason / notes">
-                    {request_note}
-                    <button type="submit">Save</button>
-                </form>
+                {status_control}
                 {refund_action}
             </td>
             <td data-label="Pickup"><a class="admin-text-link" href="/admin/pickup">Open Pickup</a></td>
         </tr>
         """
 
-    def render_pickup_record(self, row: sqlite3.Row) -> str:
+    def render_pickup_record(self, row: sqlite3.Row, user: sqlite3.Row | None = None) -> str:
         with db() as con:
             license_row = con.execute(
                 "SELECT * FROM driver_licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1",
@@ -35197,12 +35203,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             pickup_balance_action_copy = "Collect the 10% hold first; then this section can create the pickup balance payment."
         pickup_balance_button_attrs = "" if can_collect_pickup_balance else " disabled"
         pickup_balance_button_label = "Create in-person payment" if can_collect_pickup_balance else "Not eligible yet"
-        can_authorize_deposit = booking_ready_for_pickup(row)
+        can_authorize_deposit = booking_ready_for_pickup(row) and (user is None or is_admin_user(user))
         deposit_button_attrs = "" if can_authorize_deposit else " disabled"
-        deposit_button_label = "Create deposit authorization" if can_authorize_deposit else "Available after payment"
+        deposit_button_label = "Create staff-assisted checkout" if can_authorize_deposit else ("Owner admin only" if booking_ready_for_pickup(row) else "Available after payment")
         deposit_action_copy = (
-            f"Authorize {format_money(SECURITY_DEPOSIT_AMOUNT)} at pickup. Release it after return review if there are no tickets, damage, tolls, cleaning, fuel, key, or other charges."
-            if can_authorize_deposit
+            f"Optional renter authorization. Create a secure checkout only when the renter needs owner-admin assistance; release it after a clear return review."
+            if booking_ready_for_pickup(row)
             else f"{format_money(SECURITY_DEPOSIT_AMOUNT)} refundable security deposit becomes available after the 10% hold or full payment is recorded."
         )
         deposit_status_copy = (
@@ -35210,10 +35216,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if security_deposit_status != "NOT_AUTHORIZED"
             else "Not authorized"
         )
+        if booking_status == "CONFIRMED":
+            handoff_stage_title = "Active stage: pickup inspection"
+            handoff_stage_copy = "Only pickup fields are saved. Return fields are ignored until the vehicle has been released."
+            handoff_save_label = "Save pickup inspection"
+        elif booking_status in {"PICKED_UP", "RETURN_SUBMITTED"}:
+            handoff_stage_title = "Active stage: return inspection"
+            handoff_stage_copy = "Only return fields are saved. The completed pickup evidence is preserved."
+            handoff_save_label = "Save return inspection"
+        else:
+            handoff_stage_title = "Handoff record"
+            handoff_stage_copy = "This booking is not in an active pickup or return stage; inspection fields are preserved."
+            handoff_save_label = "Save non-handoff details"
         pickup_balance_panel = f"""
             <section class="pickup-form-section wide-field">
                 <div class="pickup-section-head">
-                    <div><b>Payment, deposit, insurance, and price match</b><span>{escape(format_money(pickup_balance_due))} pickup balance plus {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable security deposit authorization.</span></div>
+                    <div><b>Payment, optional deposit, insurance, and price match</b><span>{escape(format_money(pickup_balance_due))} pickup balance. A {escape(format_money(SECURITY_DEPOSIT_AMOUNT))} refundable authorization is optional.</span></div>
                 </div>
                 <div class="pickup-prefill-panel pickup-payment-panel" data-admin-pickup-payment>
                     <div>
@@ -35332,6 +35350,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             <form method="post" action="/admin/pickup-documents" class="pickup-form">
                 <input type="hidden" name="booking_id" value="{row["id"]}">
                 <input type="hidden" name="user_id" value="{row["user_id"]}">
+                <div class="pickup-prefill-panel">
+                    <div><b>{escape(handoff_stage_title)}</b><span>{escape(handoff_stage_copy)}</span></div>
+                </div>
                 <section class="pickup-form-section wide-field">
                     <div class="pickup-section-head">
                         <div><b>Stripe Identity before pickup</b><span>Request a secure DL and selfie check for the renter to complete in their FairFares app.</span></div>
@@ -35440,7 +35461,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     </div>
                     <button class="secondary-print-button" type="button" data-print-record>Print Agreement</button>
                 </div>
-                <button type="submit">Save staff pickup inspection</button>
+                <button type="submit">{escape(handoff_save_label)}</button>
             </form>
         </details>
         """
@@ -36046,7 +36067,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.redirect("/admin/bookings")
 
     def update_admin_booking_status(self) -> None:
-        user = self.require_admin()
+        # Direct lifecycle or payment edits can bypass checkout and the handoff
+        # evidence flow. Employees use the constrained handoff workspace.
+        user = self.require_owner_admin()
         if not user:
             return
         form = self.read_form()
@@ -36792,6 +36815,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_id = form.get("booking_id")
         user_id = form.get("user_id")
         pricing_update_booking_id = 0
+        handoff_stage_before_save = ""
         def safe_int_field(name: str) -> int:
             try:
                 return max(0, int(float(form.get(name, "") or 0)))
@@ -36936,6 +36960,45 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (booking_id,),
             ).fetchone()
+            handoff_stage_before_save = str(row_value(booking_for_fees, "booking_status") or "")
+
+            # The older web record is a single form, but its save action must
+            # never turn one visit into both pickup and return.  The active
+            # booking state determines which half of the handoff can change;
+            # the other half is preserved exactly as it was.
+            pickup_fields = (
+                "actual_pickup_date", "actual_pickup_time", "pickup_odometer", "pickup_fuel_level",
+                "pickup_condition_status", "pickup_customer_signature", "pickup_staff_signature",
+                "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
+                "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
+            )
+            return_fields = (
+                "actual_return_date", "actual_return_time", "return_odometer", "return_fuel_level",
+                "return_condition_status", "new_damage_found", "damage_resolution", "return_customer_signature",
+                "return_staff_signature", "return_review_status", "post_return_charge_amount", "post_return_charge_notes",
+                "return_front_image", "return_back_image", "return_left_image", "return_right_image",
+                "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
+                "damage_photo_image",
+            )
+
+            def preserve_inactive_handoff_fields(fields: tuple[str, ...], active: bool) -> None:
+                if active:
+                    return
+                for field in fields:
+                    saved_value = row_value(booking_for_fees, field) or ""
+                    form[field] = str(saved_value)
+                    if field in drive_field_values:
+                        drive_field_values[field] = str(saved_value)
+
+            preserve_inactive_handoff_fields(pickup_fields, handoff_stage_before_save == "CONFIRMED")
+            preserve_inactive_handoff_fields(return_fields, handoff_stage_before_save in {"PICKED_UP", "RETURN_SUBMITTED"})
+
+            # Price changes and manual payment records are owner-only financial
+            # operations. Staff can collect the dedicated Stripe pickup payment
+            # but cannot alter totals by saving an inspection form.
+            if not is_admin_user(user):
+                for field in ("price_match_agency", "price_match_amount"):
+                    form[field] = str(row_value(booking_for_fees, field) or "")
             previous_price_match_state = (
                 row_value(booking_for_fees, "price_match_agency"),
                 float(row_value(booking_for_fees, "price_match_amount") or 0),
@@ -37085,33 +37148,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     booking_id,
                 ),
             )
-            if form.get("payment_method"):
-                invoice_number = f"INV-{secrets.randbelow(900000) + 100000}"
-                amount = con.execute("SELECT total_price FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-                billing_status, billing_notes = evaluate_billing_name(
-                    form.get("payment_method", ""),
-                    form.get("cardholder_name", ""),
-                    form.get("customer_name", ""),
-                    form.get("signer_name", ""),
-                )
-                transaction_status = "PAID" if billing_status in {"MATCHED", "NOT_REQUIRED"} else "BILLING_REVIEW"
-                con.execute(
-                    """
-                    INSERT INTO transactions
-                    (booking_id, payment_method, cardholder_name, amount, transaction_status, billing_verification_status, billing_verification_notes, invoice_number)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        booking_id,
-                        form.get("payment_method"),
-                        form.get("cardholder_name", ""),
-                        float(amount["total_price"] if amount else 0),
-                        transaction_status,
-                        billing_status,
-                        billing_notes,
-                        invoice_number,
-                    ),
-                )
+            # Payment collection has its own Stripe-backed endpoint. Never
+            # manufacture a paid transaction merely because an inspection form
+            # retains a payment-method label from an earlier checkout.
             latest_agreement = con.execute(
                 "SELECT * FROM rental_agreements WHERE booking_id = ? ORDER BY id DESC LIMIT 1",
                 (booking_id,),
@@ -37173,7 +37212,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if saved_booking and str(row_value(saved_booking, "booking_status") or "") == "CONFIRMED":
             complete_staff_pickup_if_ready(saved_booking_id)
             saved_booking = get_booking_by_id(saved_booking_id)
-        if saved_booking and return_checks_clear_for_deposit_release(saved_booking):
+        if (
+            saved_booking
+            and handoff_stage_before_save in {"PICKED_UP", "RETURN_SUBMITTED"}
+            and return_checks_clear_for_deposit_release(saved_booking)
+        ):
             with db() as con:
                 con.execute(
                     "UPDATE bookings SET booking_status = 'RETURNED', status = 'RETURNED' WHERE id = ? AND booking_status IN ('PICKED_UP', 'RETURN_SUBMITTED')",
@@ -37748,10 +37791,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             <small>Stripe places an authorization hold. FairFares releases it after return when condition, fuel, mileage, photos, signatures, and charge review are clear.</small>
                         </form>
                     """
-            payment_panel_eyebrow = "Pickup requirement" if (hold_paid or full_paid) else ("Action needed" if hold_expired else "Payment window")
+            payment_panel_eyebrow = "Payment and pickup" if (hold_paid or full_paid) else ("Action needed" if hold_expired else "Payment window")
             if hold_paid:
                 payment_panel_heading = f"Pay {format_money(active_breakdown['due_at_pickup'])} remaining balance"
-                payment_panel_copy = f"Step 1 of 2: finish the rental payment. After Stripe confirms it, Step 2 will authorize the separate refundable {format_money(SECURITY_DEPOSIT_AMOUNT)} hold."
+                payment_panel_copy = f"Finish the rental payment. After Stripe confirms it, you may optionally authorize the separate refundable {format_money(SECURITY_DEPOSIT_AMOUNT)} hold."
             elif full_paid:
                 if deposit_status == "AUTHORIZED":
                     payment_panel_heading = "Security deposit authorized"
@@ -37760,8 +37803,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     payment_panel_heading = "Security deposit released"
                     payment_panel_copy = "Stripe released the authorization after the completed return review."
                 else:
-                    payment_panel_heading = f"Authorize {format_money(SECURITY_DEPOSIT_AMOUNT)} refundable deposit"
-                    payment_panel_copy = "Your rental payment is confirmed. Authorize the separate refundable card hold before pickup."
+                    payment_panel_heading = f"Optional {format_money(SECURITY_DEPOSIT_AMOUNT)} refundable deposit"
+                    payment_panel_copy = "Your rental payment is confirmed. You may authorize this separate refundable card hold; complete the remaining identity and pickup checks before vehicle release."
             else:
                 payment_panel_heading = "Window expired" if hold_expired else "Choose payment option"
                 payment_panel_copy = "Restart checkout or remove this vehicle." if hold_expired else "Pay in full for pickup savings, or hold the booking with 10% due now."
@@ -39217,7 +39260,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         return user
 
     def api_mobile_admin_pickups(self) -> None:
-        if not self.require_mobile_admin():
+        staff_user = self.require_mobile_admin()
+        if not staff_user:
             return
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         booking_identifier = (params.get("bookingId", [""])[0] or "").strip()
@@ -39257,7 +39301,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                     "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
                     "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
-                    "offlineReturnEligible": offline_return_eligible,
+                    # This cancels a Stripe authorization without inspection
+                    # evidence, so it is an owner-admin exception.
+                    "offlineReturnEligible": offline_return_eligible and is_admin_user(staff_user),
+                    "canReconcileOfflineReturn": offline_return_eligible and is_admin_user(staff_user),
                     "identityStatus": identity_status,
                     "identityTitle": identity_title,
                     "identityMessage": identity_message,
@@ -39441,6 +39488,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         status = str(row_value(booking, "booking_status") or "")
         if action == "RECONCILE_OFFLINE_RETURN":
+            if not is_admin_user(admin):
+                self.send_json({"ok": False, "error": "Only an owner admin can reconcile an offline return and release a deposit."}, 403)
+                return
             reconciled, message = reconcile_offline_return_and_release_deposit(
                 booking,
                 admin,
@@ -39510,36 +39560,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "message": "Return held for damage or charge review."})
             return
         self.send_json({"ok": False, "error": "Choose a valid pickup or return review action."}, 400)
-
-    def api_mobile_security_deposit_checkout(self) -> None:
-        admin = self.require_mobile_admin()
-        if not admin:
-            return
-        payload = self.read_json_body()
-        try:
-            booking_id = int(payload.get("bookingId") or 0)
-        except (TypeError, ValueError):
-            booking_id = 0
-        booking = get_booking_by_id(booking_id) if booking_id else None
-        if not booking:
-            self.send_json({"ok": False, "error": "Booking not found."}, 404)
-            return
-        if not booking_ready_for_pickup(booking):
-            self.send_json({"ok": False, "error": "Only paid, confirmed bookings can authorize a pickup deposit."}, 409)
-            return
-        session, status = create_security_deposit_checkout_session(booking, admin, self.public_origin())
-        checkout_url = str(session.get("url") or "")
-        if status != "ok" or not checkout_url:
-            self.send_json({"ok": False, "error": status}, 502)
-            return
-        self.send_json(
-            {
-                "ok": True,
-                "bookingId": booking_id,
-                "url": checkout_url,
-                "amount": SECURITY_DEPOSIT_AMOUNT,
-            }
-        )
 
     def api_mobile_location_options(self, parsed: urllib.parse.ParseResult) -> None:
         params = urllib.parse.parse_qs(parsed.query)

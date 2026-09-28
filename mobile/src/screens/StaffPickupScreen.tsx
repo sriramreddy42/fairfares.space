@@ -114,7 +114,7 @@ export function StaffPickupScreen({ onClose }: Props) {
           const returnSubmitted = booking.bookingStatus === "RETURN_SUBMITTED";
           const returnHeld = booking.returnReviewStatus === "CHARGES_PENDING";
           const identityVerified = booking.identityStatus === "VERIFIED";
-          const offlineReturnEligible = Boolean(booking.offlineReturnEligible);
+          const canReconcileOfflineReturn = Boolean(booking.canReconcileOfflineReturn);
           return (
             <View key={booking.id} style={styles.card}>
               <View style={styles.rowBetween}>
@@ -123,7 +123,7 @@ export function StaffPickupScreen({ onClose }: Props) {
               </View>
               <Text style={styles.body}>{booking.customerName} · {booking.customerEmail}</Text>
               <Text style={styles.body}>{booking.pickupDate} · {booking.pickupTime}</Text>
-              <Text style={styles.amount}>${depositAmount.toFixed(2)} refundable authorization hold</Text>
+              <Text style={styles.amount}>{authorized ? `$${depositAmount.toFixed(2)} refundable authorization: authorized` : `$${depositAmount.toFixed(2)} optional refundable authorization`}</Text>
               <View style={[styles.identityCard, identityVerified && styles.identityCardVerified]}>
                 <Text style={styles.identityTitle}>{booking.identityTitle || (identityVerified ? "Identity verified" : "Identity verification required")}</Text>
                 <Text style={styles.body}>{booking.identityMessage || "Verify the customer's driving license and selfie before vehicle release."}</Text>
@@ -149,7 +149,7 @@ export function StaffPickupScreen({ onClose }: Props) {
                   : identityVerified ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "pickup")}><Text style={styles.payButtonText}>Start pickup inspection</Text></TouchableOpacity>
                     : <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for renter identity verification</Text><Text style={styles.body}>Request Stripe Identity, then have the renter complete the secure check on their phone.</Text></View>
               ) : booking.bookingStatus === "PICKED_UP" ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "return")}><Text style={styles.payButtonText}>Start return inspection</Text></TouchableOpacity> : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
-              {offlineReturnEligible ? <TouchableOpacity style={[styles.offlineReturnButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>
+              {canReconcileOfflineReturn ? <TouchableOpacity style={[styles.offlineReturnButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>
                 <Text style={styles.offlineReturnButtonText}>Record past offline return</Text>
               </TouchableOpacity> : null}
             </View>

@@ -317,19 +317,6 @@ export async function getStaffPickupBookings(bookingId = "") {
   }>(`/api/mobile/admin/pickups${bookingId ? `?bookingId=${encodeURIComponent(bookingId)}` : ""}`);
 }
 
-export async function createSecurityDepositCheckout(bookingId: number) {
-  return request<{
-    ok: boolean;
-    bookingId: number;
-    url: string;
-    amount: number;
-  }>("/api/mobile/admin/security-deposit-session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId })
-  });
-}
-
 export async function startStaffIdentityVerification(bookingId: number) {
   return request<{
     ok: boolean;
@@ -400,9 +387,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     && path !== "/api/chat/e2ee/attachments/forward";
   const isAvatarUpload = path === "/api/chat/groups/photo"
     || path === "/api/chat/communities"
-    || path === "/api/mobile/profile"
-    || path === "/api/mobile/rentals/pickup-submit"
-    || path === "/api/mobile/rentals/return-submit";
+    || path === "/api/mobile/profile";
   const isMediaUpload = isAttachmentUpload || isAvatarUpload;
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
