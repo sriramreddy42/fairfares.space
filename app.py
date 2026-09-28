@@ -26847,6 +26847,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/student-verification": self.api_mobile_student_verification,
             "/api/mobile/admin/security-deposit-session": self.api_mobile_security_deposit_checkout,
             "/api/mobile/admin/identity/stripe-session": self.api_mobile_admin_stripe_identity_session,
+            "/api/mobile/admin/handoff-inspection": self.api_mobile_admin_handoff_inspection,
             "/api/mobile/admin/handoff-review": self.api_mobile_admin_handoff_review,
             "/admin/email-automation/run": self.run_email_automation_endpoint,
             "/profile/update": self.update_user_profile,
@@ -39331,6 +39332,96 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": status}, 502)
             return
         self.send_json({"ok": True, "requested": True, "message": "Identity verification is ready. Ask the renter to open this booking in the FairFares app and complete the secure DL and selfie check on their own phone."})
+
+    def api_mobile_admin_handoff_inspection(self) -> None:
+        """Save the staff-only, in-person pickup or return checklist."""
+        admin = self.require_mobile_admin()
+        if not admin:
+            return
+        payload = self.read_json_body()
+        try:
+            booking_id = int(payload.get("bookingId") or 0)
+        except (TypeError, ValueError):
+            booking_id = 0
+        phase = clean_text_value(payload.get("phase"), 12).lower()
+        booking = get_booking_by_id(booking_id) if booking_id else None
+        if not booking or phase not in {"pickup", "return"}:
+            self.send_json({"ok": False, "error": "Choose a valid booking and inspection stage."}, 400)
+            return
+        try:
+            odometer = max(0, int(float(payload.get("odometer") or 0)))
+        except (TypeError, ValueError):
+            odometer = 0
+        actual_date = clean_text_value(payload.get("actualDate"), 30)
+        actual_time = clean_text_value(payload.get("actualTime"), 30)
+        fuel_level = clean_text_value(payload.get("fuelLevel"), 40)
+        customer_signature = clean_text_value(payload.get("customerSignature"), 160)
+        staff_signature = clean_text_value(payload.get("staffSignature") or row_value(admin, "name"), 160)
+        photos = payload.get("photos") if isinstance(payload.get("photos"), dict) else {}
+        photo_keys = ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")
+        if not all((actual_date, actual_time, odometer > 0, fuel_level, customer_signature, staff_signature)) or any(not photos.get(key) for key in photo_keys):
+            self.send_json({"ok": False, "error": "Date, time, mileage, fuel, both signatures, and all eight vehicle photos are required."}, 400)
+            return
+        if phase == "pickup":
+            if row_value(booking, "booking_status") != "CONFIRMED" or row_value(booking, "payment_status") != "PAID":
+                self.send_json({"ok": False, "error": "Only a fully paid confirmed booking can be picked up."}, 409)
+                return
+            identity = latest_identity_verification(int(row_value(booking, "user_id") or 0), booking_id)
+            if row_value(identity, "status") != "VERIFIED":
+                self.send_json({"ok": False, "error": "The renter must complete Stripe Identity before pickup."}, 409)
+                return
+        elif row_value(booking, "booking_status") != "PICKED_UP":
+            self.send_json({"ok": False, "error": "Only a picked-up vehicle can be returned."}, 409)
+            return
+        stored = {
+            key: store_rental_handoff_photo(
+                data_url=str(photos.get(key) or ""),
+                fallback_name=f"{row_value(booking, 'booking_id')}-{phase}-{key}",
+            ) for key in photo_keys
+        }
+        if not all(stored.values()):
+            self.send_json({"ok": False, "error": "A vehicle photo could not be saved. Retake that photo and try again."}, 502)
+            return
+        if phase == "pickup":
+            with db() as con:
+                con.execute(
+                    """UPDATE bookings SET actual_pickup_date=?, actual_pickup_time=?, pickup_odometer=?, pickup_fuel_level=?,
+                    pickup_condition_status='ACCEPTABLE', pickup_customer_signature=?, pickup_staff_signature=?,
+                    pickup_front_image=?, pickup_back_image=?, pickup_left_image=?, pickup_right_image=?, pickup_odometer_image=?,
+                    pickup_fuel_image=?, pickup_interior_front_image=?, pickup_interior_rear_image=?, booking_status='PICKED_UP', status='PICKED_UP'
+                    WHERE id=?""",
+                    (actual_date, actual_time, odometer, fuel_level, customer_signature, staff_signature, stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"], booking_id),
+                )
+                con.execute("UPDATE cars SET status='BOOKED' WHERE id=?", (row_value(booking, "car_id"),))
+            self.send_json({"ok": True, "message": "Pickup inspection saved and vehicle released."})
+            return
+        condition = clean_text_value(payload.get("conditionStatus"), 40).upper() or "ACCEPTABLE"
+        damage = clean_text_value(payload.get("newDamageFound"), 10).upper() or "NO"
+        try:
+            charges = max(0, round(float(payload.get("chargeAmount") or 0), 2))
+        except (TypeError, ValueError):
+            charges = 0
+        notes = clean_text_value(payload.get("chargeNotes"), 1000)
+        clear = condition == "ACCEPTABLE" and damage == "NO" and charges == 0
+        with db() as con:
+            con.execute(
+                """UPDATE bookings SET actual_return_date=?, actual_return_time=?, return_odometer=?, return_fuel_level=?,
+                    return_condition_status=?, new_damage_found=?, damage_resolution=?, return_customer_signature=?, return_staff_signature=?,
+                    return_front_image=?, return_back_image=?, return_left_image=?, return_right_image=?, return_odometer_image=?,
+                    return_fuel_image=?, return_interior_front_image=?, return_interior_rear_image=?, post_return_charge_amount=?, post_return_charge_notes=?,
+                    return_review_status=?, booking_status=?, status=? WHERE id=?""",
+                (actual_date, actual_time, odometer, fuel_level, condition, damage, "NOT_APPLICABLE" if clear else "INSURANCE_REVIEW", customer_signature, staff_signature,
+                 stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"],
+                 charges, notes, "CLEAR_TO_RELEASE" if clear else "CHARGES_PENDING", "RETURNED" if clear else "RETURN_SUBMITTED", "RETURNED" if clear else "RETURN_SUBMITTED", booking_id),
+            )
+            if clear:
+                con.execute("UPDATE cars SET status='AVAILABLE' WHERE id=?", (row_value(booking, "car_id"),))
+        updated = get_booking_by_id(booking_id)
+        if clear and row_value(updated, "security_deposit_status") == "AUTHORIZED":
+            released, message = release_security_deposit_after_clear_return(updated)
+            self.send_json({"ok": True, "message": "Return saved. " + ("Deposit released." if released else "Deposit needs review: " + message)})
+            return
+        self.send_json({"ok": True, "message": "Return inspection saved." if clear else "Return saved; deposit is held for damage or charge review."})
 
     def api_mobile_admin_handoff_review(self) -> None:
         admin = self.require_mobile_admin()

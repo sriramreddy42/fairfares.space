@@ -343,6 +343,26 @@ export async function startStaffIdentityVerification(bookingId: number) {
   });
 }
 
+export async function submitStaffHandoffInspection(input: {
+  bookingId: number;
+  phase: "pickup" | "return";
+  actualDate: string;
+  actualTime: string;
+  odometer: string;
+  fuelLevel: string;
+  customerSignature: string;
+  staffSignature: string;
+  photos: Record<"front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear", string>;
+  conditionStatus?: string;
+  newDamageFound?: string;
+  chargeAmount?: string;
+  chargeNotes?: string;
+}) {
+  return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-inspection", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input)
+  });
+}
+
 export async function reviewRentalHandoff(bookingId: number, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN" | "RECONCILE_OFFLINE_RETURN", staffSignature = "", reason = "") {
   return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-review", {
     method: "POST",

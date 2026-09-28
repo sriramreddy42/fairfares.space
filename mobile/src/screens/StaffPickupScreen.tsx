@@ -1,10 +1,15 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification } from "../api/client";
+import * as ImageManipulator from "expo-image-manipulator";
+import { ActivityIndicator, Alert, AppState, Linking, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification, submitStaffHandoffInspection } from "../api/client";
 import { theme } from "../theme";
 import { StaffPickupBooking } from "../types";
+import { takeChatPhoto } from "../utils/imageUpload";
 
 type Props = { onClose: () => void };
+type PhotoKey = "front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear";
+const photoSteps: Array<{ key: PhotoKey; label: string }> = [{ key: "front", label: "Front" }, { key: "back", label: "Rear" }, { key: "left", label: "Driver" }, { key: "right", label: "Passenger" }, { key: "odometer", label: "Odometer" }, { key: "fuel", label: "Fuel" }, { key: "interiorFront", label: "Front interior" }, { key: "interiorRear", label: "Rear / cargo" }];
+const emptyPhotos = (): Record<PhotoKey, string> => ({ front: "", back: "", left: "", right: "", odometer: "", fuel: "", interiorFront: "", interiorRear: "" });
 
 export function StaffPickupScreen({ onClose }: Props) {
   const [pickups, setPickups] = useState<StaffPickupBooking[]>([]);
@@ -14,6 +19,7 @@ export function StaffPickupScreen({ onClose }: Props) {
   const [searchText, setSearchText] = useState("");
   const [bookingLookup, setBookingLookup] = useState("");
   const [lookupDetail, setLookupDetail] = useState("");
+  const [inspection, setInspection] = useState<{ booking: StaffPickupBooking; phase: "pickup" | "return" } | null>(null);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -73,6 +79,10 @@ export function StaffPickupScreen({ onClose }: Props) {
         { text: "Record and release", style: "destructive", onPress: () => void reviewHandoff(booking, "RECONCILE_OFFLINE_RETURN", reason) },
       ],
     );
+  }
+
+  function openInspection(booking: StaffPickupBooking, phase: "pickup" | "return") {
+    setInspection({ booking, phase });
   }
 
   async function openIdentityVerification(booking: StaffPickupBooking) {
@@ -148,12 +158,10 @@ export function StaffPickupScreen({ onClose }: Props) {
                   <TouchableOpacity style={[styles.holdButton, styles.reviewButton, busy && styles.disabled]} disabled={busy} onPress={() => void reviewHandoff(booking, "HOLD_RETURN")}><Text style={styles.payButtonText}>Hold for review</Text></TouchableOpacity>
                 </View> : null}
               </> : booking.bookingStatus === "CONFIRMED" ? (
-                authorized ? <>
-                  <View style={styles.waitingCard}><Text style={styles.identityTitle}>{identityVerified ? "Ready for staff pickup inspection" : "Waiting for renter identity verification"}</Text><Text style={styles.body}>{identityVerified ? "Record the inspection, signatures, and vehicle photos in the staff pickup workspace before releasing the vehicle." : "Request Stripe Identity, then have the renter complete the secure check on their own phone."}</Text></View>
-                </> : <TouchableOpacity style={[styles.payButton, (busy || !configured) && styles.disabled]} disabled={busy || !configured} onPress={() => void openDepositCheckout(booking)}>
-                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Open secure deposit checkout</Text>}
-                </TouchableOpacity>
-              ) : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
+                booking.paymentStatus !== "PAID" ? <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for full rental payment</Text><Text style={styles.body}>The reservation hold does not permit vehicle release.</Text></View>
+                  : identityVerified ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "pickup")}><Text style={styles.payButtonText}>Start pickup inspection</Text></TouchableOpacity>
+                    : <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for renter identity verification</Text><Text style={styles.body}>Request Stripe Identity, then have the renter complete the secure check on their phone.</Text></View>
+              ) : booking.bookingStatus === "PICKED_UP" ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "return")}><Text style={styles.payButtonText}>Start return inspection</Text></TouchableOpacity> : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
               {offlineReturnEligible ? <TouchableOpacity style={[styles.offlineReturnButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>
                 <Text style={styles.offlineReturnButtonText}>Record past offline return</Text>
               </TouchableOpacity> : null}
@@ -162,8 +170,30 @@ export function StaffPickupScreen({ onClose }: Props) {
         })}
         {!refreshing && pickups.length === 0 ? <View style={styles.centerCard}><Text style={styles.cardTitle}>{bookingLookup ? "Booking not found in handoffs" : "No handoffs awaiting action"}</Text><Text style={styles.body}>{bookingLookup ? lookupDetail || "Check the booking number and status." : "Paid pickups and active return reviews appear here."}</Text></View> : null}
       </ScrollView>
+      <InspectionModal inspection={inspection} onClose={() => setInspection(null)} onSaved={async () => { setInspection(null); await refresh(); }} />
     </View>
   );
+}
+
+function InspectionModal({ inspection, onClose, onSaved }: { inspection: { booking: StaffPickupBooking; phase: "pickup" | "return" } | null; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+  const [odometer, setOdometer] = useState(""); const [fuel, setFuel] = useState("FULL"); const [customer, setCustomer] = useState(""); const [staff, setStaff] = useState("");
+  const [condition, setCondition] = useState("ACCEPTABLE"); const [damage, setDamage] = useState("NO"); const [notes, setNotes] = useState(""); const [photos, setPhotos] = useState<Record<PhotoKey, string>>(emptyPhotos()); const [busy, setBusy] = useState(false);
+  async function capture(key: PhotoKey) {
+    const selected = await takeChatPhoto(1280, 0.62, 500_000); if (!selected) return;
+    const source = await selected.preparation; const image = await ImageManipulator.manipulateAsync(source.uri, [{ resize: { width: 1280 } }], { compress: 0.62, format: ImageManipulator.SaveFormat.JPEG, base64: true });
+    if (image.base64) setPhotos((value) => ({ ...value, [key]: "data:image/jpeg;base64," + image.base64 }));
+  }
+  async function save() {
+    if (!inspection) return;
+    if (!date || !time || !odometer || !fuel || !customer || !staff || photoSteps.some(({ key }) => !photos[key])) { Alert.alert("Complete the inspection", "Date, time, odometer, fuel, both signatures, and all eight photos are required."); return; }
+    if (inspection.phase === "return" && (condition !== "ACCEPTABLE" || damage !== "NO") && !notes) { Alert.alert("Add notes", "Add damage or issue notes before saving this return."); return; }
+    setBusy(true);
+    try { const result = await submitStaffHandoffInspection({ bookingId: inspection.booking.id, phase: inspection.phase, actualDate: date, actualTime: time, odometer, fuelLevel: fuel, customerSignature: customer, staffSignature: staff, photos, conditionStatus: condition, newDamageFound: damage, chargeNotes: notes }); Alert.alert("Inspection saved", result.message); await onSaved(); }
+    catch (error) { Alert.alert("Could not save inspection", error instanceof Error ? error.message : "Try again."); } finally { setBusy(false); }
+  }
+  return <Modal visible={Boolean(inspection)} animationType="slide" onRequestClose={onClose}><View style={styles.screen}><View style={styles.header}><TouchableOpacity onPress={onClose} style={styles.backButton}><Text style={styles.backText}>‹</Text></TouchableOpacity><View style={styles.flex}><Text style={styles.eyebrow}>STAFF INSPECTION</Text><Text style={styles.title}>{inspection?.phase === "pickup" ? "Pickup and release" : "Return inspection"}</Text></View></View><ScrollView contentContainerStyle={styles.content}><TextInput style={styles.formInput} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" /><TextInput style={styles.formInput} value={time} onChangeText={setTime} placeholder="Time" /><TextInput style={styles.formInput} value={odometer} onChangeText={setOdometer} placeholder="Odometer" keyboardType="number-pad" /><TextInput style={styles.formInput} value={fuel} onChangeText={setFuel} placeholder="Fuel / charge level" /><TextInput style={styles.formInput} value={customer} onChangeText={setCustomer} placeholder="Renter signature" /><TextInput style={styles.formInput} value={staff} onChangeText={setStaff} placeholder="Staff signature" />{inspection?.phase === "return" ? <><TextInput style={styles.formInput} value={condition} onChangeText={setCondition} placeholder="Condition: ACCEPTABLE / DAMAGE_NOTED" /><TextInput style={styles.formInput} value={damage} onChangeText={setDamage} placeholder="New damage: NO / YES" /><TextInput style={[styles.formInput, styles.notes]} value={notes} onChangeText={setNotes} multiline placeholder="Damage or issue notes" /></> : null}<Text style={styles.sectionTitle}>Required vehicle photos</Text><View style={styles.photoGrid}>{photoSteps.map(({ key, label }) => <TouchableOpacity key={key} style={[styles.photoButton, photos[key] && styles.photoSaved]} onPress={() => void capture(key)}><Text style={styles.photoText}>{photos[key] ? "✓ " + label : label}</Text></TouchableOpacity>)}</View><TouchableOpacity style={styles.payButton} disabled={busy} onPress={() => void save()}>{busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.payButtonText}>Save {inspection?.phase} inspection</Text>}</TouchableOpacity></ScrollView></View></Modal>;
 }
 
 const styles = StyleSheet.create({
@@ -181,7 +211,14 @@ const styles = StyleSheet.create({
   identityCard: { borderRadius: 14, borderWidth: 1, borderColor: "rgba(245,158,11,0.45)", backgroundColor: "rgba(245,158,11,0.10)", padding: 11, gap: 6 },
   identityCardVerified: { borderColor: "rgba(34,197,94,0.45)", backgroundColor: "rgba(34,197,94,0.10)" },
   identityTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
+  sectionTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "800" },
   identityButton: { minHeight: 42, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.brand, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
   identityButtonText: { color: theme.colors.brand, fontSize: 13, fontWeight: "800" },
   reviewActions: { flexDirection: "row", gap: 8 }, reviewButton: { flex: 1 }, holdButton: { minHeight: 50, borderRadius: 999, backgroundColor: "#a16207", alignItems: "center", justifyContent: "center", marginTop: 4 }
+  ,formInput: { minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 12, color: theme.colors.text, paddingHorizontal: 12, backgroundColor: theme.colors.panel2 }
+  ,notes: { minHeight: 88, textAlignVertical: "top", paddingTop: 12 }
+  ,photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 }
+  ,photoButton: { width: "48%", minHeight: 48, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 12, alignItems: "center", justifyContent: "center" }
+  ,photoSaved: { borderColor: "#4ade80", backgroundColor: "rgba(34,197,94,0.12)" }
+  ,photoText: { color: theme.colors.text, fontSize: 12, fontWeight: "700" }
 });
