@@ -17637,6 +17637,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "dateOfBirth": row_value(user, "date_of_birth"),
         "role": row_value(user, "role") or "CUSTOMER",
         "isAdmin": bool(int(row_value(user, "is_admin") or 0)),
+        "isStaff": is_staff_user(user),
         "isVerified": bool(int(row_value(user, "is_verified") or 0)),
         "phoneVerified": bool(row_value(user, "phone_verified_at")),
         "phonePending": not bool(canonical_e164_phone(row_value(user, "phone"))),
@@ -39210,7 +39211,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not user:
             self.send_json({"ok": False, "error": "Staff login required."}, 401)
             return None
-        if not int(row_value(user, "is_admin") or 0):
+        if not is_staff_user(user):
             self.send_json({"ok": False, "error": "FairFares staff access required."}, 403)
             return None
         return user

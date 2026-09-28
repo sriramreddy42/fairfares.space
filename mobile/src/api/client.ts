@@ -1384,23 +1384,6 @@ export async function getRentalBookings() {
   });
 }
 
-export type RentalHandoffInput = {
-  odometer: string;
-  fuelLevel: string;
-  conditionStatus: "ACCEPTABLE" | "DAMAGE_REPORTED";
-  signature: string;
-  acknowledged: boolean;
-  photos: Record<"front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear", string>;
-};
-
-export async function submitRentalHandoff(phase: "pickup" | "return", bookingId: string, input: RentalHandoffInput) {
-  return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>(`/api/mobile/rentals/${phase}-submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId, ...input })
-  });
-}
-
 export async function startRentalIdentityVerification(bookingId: string) {
   return request<{
     ok: boolean;

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import * as ImageManipulator from "expo-image-manipulator";
-import { ActivityIndicator, Alert, AppState, Linking, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { createSecurityDepositCheckout, getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification, submitStaffHandoffInspection } from "../api/client";
+import { ActivityIndicator, Alert, AppState, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { getStaffPickupBookings, reviewRentalHandoff, startStaffIdentityVerification, submitStaffHandoffInspection } from "../api/client";
 import { theme } from "../theme";
 import { StaffPickupBooking } from "../types";
 import { takeChatPhoto } from "../utils/imageUpload";
@@ -42,19 +42,6 @@ export function StaffPickupScreen({ onClose }: Props) {
     });
     return () => subscription.remove();
   }, [refresh]);
-
-  async function openDepositCheckout(booking: StaffPickupBooking) {
-    setBusyBookingId(booking.id);
-    try {
-      const checkout = await createSecurityDepositCheckout(booking.id);
-      if (!checkout.url || !(await Linking.canOpenURL(checkout.url))) throw new Error("Stripe did not return a valid checkout link.");
-      await Linking.openURL(checkout.url);
-    } catch (error) {
-      Alert.alert("Deposit checkout unavailable", error instanceof Error ? error.message : "Could not open Stripe checkout.");
-    } finally {
-      setBusyBookingId(null);
-    }
-  }
 
   async function reviewHandoff(booking: StaffPickupBooking, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN" | "RECONCILE_OFFLINE_RETURN", reason = "") {
     setBusyBookingId(booking.id);

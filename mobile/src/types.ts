@@ -77,6 +77,7 @@ export type FairFaresUser = {
   dateOfBirth?: string;
   role: string;
   isAdmin: boolean;
+  isStaff?: boolean;
   isVerified: boolean;
   phonePending?: boolean;
   consentPending?: boolean;

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as WebBrowser from "expo-web-browser";
-import * as ImageManipulator from "expo-image-manipulator";
 import {
   Alert,
   Image,
@@ -23,7 +22,6 @@ import {
   requestRentalCancellation,
   requestRentalModification,
   startRentalIdentityVerification,
-  submitRentalHandoff,
   setAuthToken,
   startRentalCheckout,
   startRentalSecurityDeposit,
@@ -33,7 +31,6 @@ import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { UserAvatar } from "../components/UserAvatar";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
-import { takeChatPhoto } from "../utils/imageUpload";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
 export type ServiceKey = "cars" | "deals" | "housing" | "local";
@@ -63,15 +60,7 @@ type ServiceAction = {
   onPress: () => void;
 };
 
-type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | "handoff" | null;
-type HandoffPhotoKey = "front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear";
-const HANDOFF_PHOTOS: Array<{ key: HandoffPhotoKey; label: string }> = [
-  { key: "front", label: "Front" }, { key: "back", label: "Back" },
-  { key: "left", label: "Driver side" }, { key: "right", label: "Passenger side" },
-  { key: "odometer", label: "Odometer" }, { key: "fuel", label: "Fuel / charge" },
-  { key: "interiorFront", label: "Front interior" }, { key: "interiorRear", label: "Rear interior" },
-];
-const EMPTY_HANDOFF_PHOTOS = (): Record<HandoffPhotoKey, string> => ({ front: "", back: "", left: "", right: "", odometer: "", fuel: "", interiorFront: "", interiorRear: "" });
+type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | null;
 type ServicesView = "grid" | "rental";
 type ServiceTile = {
   label: string;
@@ -135,12 +124,6 @@ export function ServicesScreen({
   const [documentEmail, setDocumentEmail] = useState("");
   const [selectedDocumentSetId, setSelectedDocumentSetId] = useState<number | null>(null);
   const [selectedDocName, setSelectedDocName] = useState("Invoice / Receipt");
-  const [handoffOdometer, setHandoffOdometer] = useState("");
-  const [handoffFuel, setHandoffFuel] = useState("FULL");
-  const [handoffCondition, setHandoffCondition] = useState<"ACCEPTABLE" | "DAMAGE_REPORTED">("ACCEPTABLE");
-  const [handoffSignature, setHandoffSignature] = useState("");
-  const [handoffAcknowledged, setHandoffAcknowledged] = useState(false);
-  const [handoffPhotos, setHandoffPhotos] = useState<Record<HandoffPhotoKey, string>>(EMPTY_HANDOFF_PHOTOS);
   const [supportTopic, setSupportTopic] = useState("Rental support");
   const [supportMessage, setSupportMessage] = useState("");
   const [exportsInfoOpen, setExportsInfoOpen] = useState(false);
@@ -212,12 +195,6 @@ export function ServicesScreen({
     setDocumentEmail("");
     setSelectedDocumentSetId(selectedBooking.documents?.[0]?.id ?? null);
     setSelectedDocName("Invoice / Receipt");
-    setHandoffOdometer("");
-    setHandoffFuel("FULL");
-    setHandoffCondition("ACCEPTABLE");
-    setHandoffSignature(user?.name || "");
-    setHandoffAcknowledged(false);
-    setHandoffPhotos(EMPTY_HANDOFF_PHOTOS());
     setModifyNote("");
     setSupportTopic("Rental support");
     setSupportMessage("");
@@ -331,57 +308,6 @@ export function ServicesScreen({
     } finally {
       setBusy(false);
     }
-  }
-
-  async function captureHandoffPhoto(key: HandoffPhotoKey) {
-    try {
-      const selected = await takeChatPhoto(1280, 0.62, 500_000);
-      if (!selected) return;
-      const prepared = await selected.preparation;
-      const image = await ImageManipulator.manipulateAsync(
-        prepared.uri,
-        [{ resize: { width: 1280 } }],
-        { compress: 0.62, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-      if (!image.base64) throw new Error("The vehicle photo could not be prepared.");
-      setHandoffPhotos((current) => ({ ...current, [key]: `data:image/jpeg;base64,${image.base64}` }));
-    } catch (photoError) {
-      Alert.alert("Photo unavailable", photoError instanceof Error ? photoError.message : "Try taking this photo again.");
-    }
-  }
-
-  async function submitHandoff() {
-    if (!selectedBooking) return;
-    const phase = "return";
-    const missingPhotos = HANDOFF_PHOTOS.filter(({ key }) => !handoffPhotos[key]);
-    if (!handoffOdometer.trim() || !handoffSignature.trim() || missingPhotos.length || !handoffAcknowledged) {
-      Alert.alert("Complete the checklist", "Mileage, signature, acknowledgement, and all eight current vehicle photos are required.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await submitRentalHandoff(phase, selectedBooking.id, {
-        odometer: handoffOdometer,
-        fuelLevel: handoffFuel,
-        conditionStatus: handoffCondition,
-        signature: handoffSignature.trim(),
-        acknowledged: handoffAcknowledged,
-        photos: handoffPhotos,
-      });
-      setBookings((rows) => mergeBooking(rows, result.booking));
-      setPanelMode(null);
-      Alert.alert("Return submitted", result.message);
-    } catch (handoffError) {
-      Alert.alert("Could not submit handoff", handoffError instanceof Error ? handoffError.message : "Try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function openHandoffMap() {
-    if (!selectedBooking) return;
-    const location = handoffPhase === "return" ? selectedBooking.returnLocation : selectedBooking.pickupLocation;
-    await Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`);
   }
 
   async function openRentalPayment(kind: "balance" | "deposit" | "extension") {
