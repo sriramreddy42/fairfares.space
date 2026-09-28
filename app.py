@@ -34532,6 +34532,55 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<small>{escape(description)}</small><em class="analytics-delta {comparison_copy(key, int(stages.get(key, 0)))[1]}">{escape(comparison_copy(key, int(stages.get(key, 0)))[0])}</em></article>'
             for key, label, description in overview_definitions
         )
+        journey_definitions = [
+            (
+                "housing",
+                "Housing",
+                "From a local search to a confirmed match",
+                [
+                    ("housing_searches", "Search"),
+                    ("housing_listing_views", "View"),
+                    ("housing_messages", "Message"),
+                    ("housing_connections", "Match"),
+                ],
+            ),
+            (
+                "community",
+                "Chitthi",
+                "Conversation and return signals",
+                [
+                    ("messages", "Message"),
+                    ("community_joins", "Join"),
+                    ("activated_users", "Activate"),
+                    ("d7_authenticated_returns", "Return D7"),
+                ],
+            ),
+            (
+                "mobility",
+                "Travel & rentals",
+                "Demand across carpool and rental cars",
+                [
+                    ("carpool_searches", "Carpool"),
+                    ("rental_searches", "Rental search"),
+                    ("rental_car_views", "Car view"),
+                    ("rental_bookings", "Book"),
+                ],
+            ),
+        ]
+        def journey_stage(key: str, label: str) -> str:
+            value = int(stages.get(key, 0))
+            share = value / active_users * 100 if active_users else 0
+            comparison, tone = comparison_copy(key, value)
+            detail = f"{share:.0f}% of active" if active_users and key != "d7_authenticated_returns" else ("Cohort metric" if key == "d7_authenticated_returns" else "No active users yet")
+            return (
+                f'<div class="analytics-journey-stage"><span>{escape(label)}</span><b>{value:,}</b>'
+                f'<small>{escape(detail)}</small><em class="analytics-delta {tone}">{escape(comparison)}</em></div>'
+            )
+        journey_cards = "".join(
+            f'<article class="analytics-journey-card {escape(card_class)}"><header><div><span class="analytics-journey-kicker">{escape(title)}</span><h3>{escape(description)}</h3></div></header>'
+            f'<div class="analytics-journey-flow">{journey_stage(*steps[0])}<i aria-hidden="true">→</i>{journey_stage(*steps[1])}<i aria-hidden="true">→</i>{journey_stage(*steps[2])}<i aria-hidden="true">→</i>{journey_stage(*steps[3])}</div></article>'
+            for card_class, title, description, steps in journey_definitions
+        )
         def rate(numerator_key: str, denominator_key: str) -> float | None:
             denominator = int(stages.get(denominator_key, 0))
             return int(stages.get(numerator_key, 0)) / denominator * 100 if denominator else None
@@ -34584,6 +34633,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             admin_nav=self.render_admin_nav(user, "analytics"),
             period_links=period_links,
             overview_cards=overview_cards,
+            journey_cards=journey_cards,
             insight_cards=insight_cards,
             daily_chart=daily_chart,
             funnel_rows="".join(funnel_rows),

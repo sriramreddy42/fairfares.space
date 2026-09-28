@@ -498,6 +498,21 @@
 .analytics-overview-card span { color:var(--muted); font-size:.8rem; font-weight:850; text-transform:uppercase; }
 .analytics-overview-card b { color:var(--navy); font-size:2rem; line-height:1; }
 .analytics-overview-card small { color:var(--muted); font-weight:650; line-height:1.35; }
+.analytics-journeys-card { overflow:hidden; }
+.analytics-journey-grid { display:grid; gap:14px; margin-top:18px; }
+.analytics-journey-card { border:1px solid var(--line); border-left:5px solid #23a675; border-radius:16px; overflow:hidden; }
+.analytics-journey-card.community { border-left-color:#4f80e1; }
+.analytics-journey-card.mobility { border-left-color:#e6903f; }
+.analytics-journey-card header { align-items:center; background:#f8fafc; display:flex; justify-content:space-between; padding:14px 16px; }
+.analytics-journey-card h3 { color:var(--navy); font-size:1rem; margin:3px 0 0; }
+.analytics-journey-kicker { color:var(--muted); font-size:.75rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+.analytics-journey-flow { align-items:stretch; display:flex; gap:8px; overflow-x:auto; padding:14px 16px; }
+.analytics-journey-flow > i { align-self:center; color:var(--muted); flex:0 0 auto; font-size:1.25rem; font-style:normal; font-weight:900; }
+.analytics-journey-stage { background:#fff; border:1px solid #dce5ef; border-radius:12px; display:grid; flex:1 0 145px; gap:3px; min-height:112px; padding:12px; }
+.analytics-journey-stage > span { color:var(--muted); font-size:.75rem; font-weight:850; }
+.analytics-journey-stage b { color:var(--navy); font-size:1.5rem; line-height:1.1; }
+.analytics-journey-stage small { color:var(--muted); font-size:.72rem; font-weight:700; }
+.analytics-journey-stage .analytics-delta { margin-top:auto; }
 .analytics-insights { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin-top:16px; }
 .analytics-insight-card { border:1px solid var(--line); border-radius:14px; display:grid; gap:7px; padding:15px; }
 .analytics-insight-card span { font-size:.75rem; font-weight:900; letter-spacing:.06em; text-transform:uppercase; }
@@ -514,6 +529,18 @@
 .analytics-activity-chart i { align-self:end; background:linear-gradient(180deg,#3ecf8e,#119a67); border-radius:7px 7px 2px 2px; display:block; height:var(--activity-height); min-height:2px; width:100%; }
 .analytics-activity-chart small { color:var(--muted); font-size:.62rem; text-align:center; white-space:nowrap; }
 .analytics-empty-state { color:var(--muted); font-weight:700; }
+.analytics-details { padding:0; }
+.analytics-details > summary { align-items:center; cursor:pointer; display:flex; justify-content:space-between; list-style:none; padding:18px 20px; }
+.analytics-details > summary::-webkit-details-marker { display:none; }
+.analytics-details > summary span { display:grid; gap:3px; }
+.analytics-details > summary b { color:var(--navy); font-size:1rem; }
+.analytics-details > summary small { color:var(--muted); font-weight:650; }
+.analytics-details > summary i { color:var(--navy); font-size:1.25rem; font-style:normal; transition:transform .18s ease; }
+.analytics-details[open] > summary { border-bottom:1px solid var(--line); }
+.analytics-details[open] > summary i { transform:rotate(180deg); }
+.analytics-details > .admin-card-head { padding:18px 20px 0; }
+.analytics-details > .analytics-funnel { margin:18px 20px 20px; }
+.analytics-details > .admin-table-wrap { margin:0 20px 20px; }
 .analytics-admin-screen { overflow-x:hidden; }
 .analytics-admin-screen .app-feedback-widget,
 .analytics-admin-screen .fairfares-fixed-footer,
@@ -529,6 +556,8 @@
   .analytics-funnel-row div { align-items:start; grid-template-columns:1fr auto; }
   .analytics-funnel-row small { grid-column:1 / -1; min-width:0; text-align:left; }
   .analytics-overview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .analytics-journey-flow { padding-bottom:16px; }
+  .analytics-journey-stage { flex-basis:132px; }
   .analytics-admin-screen .admin-table thead { display:none !important; }
   .analytics-admin-screen .admin-table tbody,
   .analytics-admin-screen .admin-table tr { display:grid !important; width:100% !important; }

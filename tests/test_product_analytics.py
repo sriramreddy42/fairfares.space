@@ -249,9 +249,12 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertIn("never collected", template)
         self.assertIn("$funnel_rows", template)
         self.assertIn("$overview_cards", template)
+        self.assertIn("$journey_cards", template)
         self.assertIn("$insight_cards", template)
         self.assertIn("$daily_chart", template)
         self.assertIn("immediately preceding equal period", template)
+        self.assertIn("Full activity breakdown", template)
+        self.assertIn("What people are doing", template)
 
 
 if __name__ == "__main__":

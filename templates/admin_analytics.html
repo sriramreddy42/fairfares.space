@@ -24,19 +24,14 @@
 
     <section class="analytics-overview-grid">$overview_cards</section>
 
-    <section class="admin-card">
-      <div class="admin-card-head"><div><h2>What needs attention</h2><p>These are on-page operational signals, not customer notifications. They compare the selected period with the immediately preceding equal period and wait for enough volume before flagging a drop.</p></div></div>
-      <div class="analytics-insights">$insight_cards</div>
+    <section class="admin-card analytics-journeys-card">
+      <div class="admin-card-head"><div><h2>What people are doing</h2><p>Three simple product views. The numbers show unique people who reached each stage during this period; they are not a forced step-by-step conversion path.</p></div></div>
+      <div class="analytics-journey-grid">$journey_cards</div>
     </section>
 
     <section class="admin-card">
-      <div class="admin-card-head">
-        <div>
-          <h2>First opens → accounts → housing → Chitthi → carpool → rentals → return</h2>
-          <p>Stage reach counts unique people independently; it is not a forced sequence. This shows where people actually engage after installing. “Activated” means a person posted housing, sent a message, joined a Chitthi community, or started/completed a rental booking. A confirmed housing connection is counted only when the listing owner explicitly marks their own request as found or their own place as filled. D7 return counts signed-in people whose first app open was 7–90 days ago and who opened the app again on day 7–14. Search text, locations, listing details, and message contents are never collected. First installs are measured by the first successful app open; historical activity is not backfilled.</p>
-        </div>
-      </div>
-      <div class="analytics-funnel">$funnel_rows</div>
+      <div class="admin-card-head"><div><h2>What needs attention</h2><p>These are on-page operational signals, not customer notifications. They compare the selected period with the immediately preceding equal period and wait for enough volume before flagging a drop.</p></div></div>
+      <div class="analytics-insights">$insight_cards</div>
     </section>
 
     <section class="admin-card">
@@ -44,20 +39,31 @@
       <div class="analytics-activity-chart">$daily_chart</div>
     </section>
 
+    <details class="admin-card analytics-details">
+      <summary><span><b>Full activity breakdown</b><small>Open for every measured stage and its period comparison.</small></span><i aria-hidden="true">⌄</i></summary>
+      <div class="admin-card-head">
+        <div>
+          <h2>First opens → accounts → housing → Chitthi → carpool → rentals → return</h2>
+          <p>Stage reach counts unique people independently; it is not a forced sequence. This shows where people actually engage after installing. “Activated” means a person posted housing, sent a message, joined a Chitthi community, or started/completed a rental booking. A confirmed housing connection is counted only when the listing owner explicitly marks their own request as found or their own place as filled. D7 return counts signed-in people whose first app open was 7–90 days ago and who opened the app again on day 7–14. Search text, locations, listing details, and message contents are never collected. First installs are measured by the first successful app open; historical activity is not backfilled.</p>
+        </div>
+      </div>
+      <div class="analytics-funnel">$funnel_rows</div>
+    </details>
+
     <section class="admin-card">
       <div class="admin-card-head"><div><h2>Active users by platform</h2><p>Unique installations or signed-in users with activity during the selected period.</p></div></div>
       <div class="admin-metrics analytics-platforms">$platform_cards</div>
     </section>
 
-    <section class="admin-card">
-      <div class="admin-card-head"><div><h2>Daily product activity</h2><p>Unique users per day. Message contents, names, emails, phone numbers, and precise addresses are never collected here.</p></div></div>
+    <details class="admin-card analytics-details">
+      <summary><span><b>Daily product activity</b><small>Open for the full daily table. Personal content and precise locations are never collected.</small></span><i aria-hidden="true">⌄</i></summary>
       <div class="admin-table-wrap">
         <table class="admin-table">
           <thead><tr><th>Day</th><th>Opens</th><th>Housing searches</th><th>Housing views</th><th>Housing messages</th><th>Housing connections</th><th>Messages</th><th>Carpool searches</th><th>Rental searches</th></tr></thead>
           <tbody>$daily_rows</tbody>
         </table>
       </div>
-    </section>
+    </details>
   </main>
 </body>
 </html>
