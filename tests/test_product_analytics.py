@@ -263,6 +263,38 @@ class ProductAnalyticsTest(unittest.TestCase):
         )
         self.assertTrue(Path("static/css/sections/analytics-dashboard.css").is_file())
 
+    def test_dashboard_stylesheet_is_linked_and_served_as_css(self):
+        page = app.render_template(
+            "admin_analytics.html",
+            admin_name="Admin",
+            admin_nav="",
+            period_links="",
+            overview_cards="",
+            journey_cards="",
+            insight_cards="",
+            daily_chart="",
+            funnel_rows="",
+            platform_cards="",
+            daily_rows="",
+            selected_period="30 days",
+        ).decode("utf-8")
+        stylesheet = f"/static/css/sections/analytics-dashboard.css?v={app.ASSET_VERSION}-v1"
+        self.assertIn(f'href="{stylesheet}"', page)
+
+        server, thread = self.start_server()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}{stylesheet}", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("text/css", response.headers.get_content_type())
+                css = response.read().decode("utf-8")
+            self.assertIn(".analytics-journey-flow", css)
+            self.assertIn(".analytics-activity-chart", css)
+            self.assertIn(".analytics-overview-grid", css)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()
