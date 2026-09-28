@@ -215,6 +215,9 @@ _OPERATIONAL_ALERTS: dict[str, float] = {}
 _OPERATIONAL_ALERTS_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LOCK = threading.Lock()
 _ACCOMMODATION_EXPIRY_LAST_RUN: dict[str, float] = {}
+_ACCOMMODATION_EXPIRY_SCHEDULE_LOCK = threading.Lock()
+_ACCOMMODATION_EXPIRY_SCHEDULED = False
+_ACCOMMODATION_EXPIRY_LAST_SCHEDULED = 0.0
 _ACCOMMODATION_CITY_REPAIR_LOCK = threading.Lock()
 _ACCOMMODATION_CITY_REPAIR_LAST_RUN: dict[str, float] = {}
 _CHITTHI_MEDIA_CLEANUP_LOCK = threading.Lock()
@@ -15946,6 +15949,35 @@ def expire_accommodation_posts(*, force: bool = True) -> None:
     delete_local_accommodation_images(image_references)
 
 
+def schedule_accommodation_post_expiry() -> None:
+    """Keep expiry maintenance off housing read requests.
+
+    Search filters already exclude expired records.  Running the physical
+    update/delete in a coalesced background task prevents one browser page
+    load from acquiring SQLite's writer lock and delaying unrelated mobile
+    reads for its busy timeout.
+    """
+    global _ACCOMMODATION_EXPIRY_SCHEDULED, _ACCOMMODATION_EXPIRY_LAST_SCHEDULED
+    now = time.monotonic()
+    with _ACCOMMODATION_EXPIRY_SCHEDULE_LOCK:
+        if _ACCOMMODATION_EXPIRY_SCHEDULED or now - _ACCOMMODATION_EXPIRY_LAST_SCHEDULED < 60:
+            return
+        _ACCOMMODATION_EXPIRY_SCHEDULED = True
+        _ACCOMMODATION_EXPIRY_LAST_SCHEDULED = now
+
+    def run() -> None:
+        global _ACCOMMODATION_EXPIRY_SCHEDULED
+        try:
+            expire_accommodation_posts(force=True)
+        except sqlite3.Error:
+            pass
+        finally:
+            with _ACCOMMODATION_EXPIRY_SCHEDULE_LOCK:
+                _ACCOMMODATION_EXPIRY_SCHEDULED = False
+
+    threading.Thread(target=run, name="accommodation-expiry", daemon=True).start()
+
+
 def seed_sample_accommodation_posts(con: sqlite3.Connection) -> None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     expires_at = accommodation_expiry_timestamp(now)
@@ -20081,7 +20113,7 @@ def mobile_housing_posts(
     offset: int = 0,
     post_public_id: str = "",
 ) -> list[dict[str, object]]:
-    expire_accommodation_posts(force=False)
+    schedule_accommodation_post_expiry()
     repair_active_housing_city_labels()
     typed_city_region = re.search(
         r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$",
@@ -24549,7 +24581,7 @@ def render_dashboard_chat_rows(conversations: list[dict[str, object]]) -> str:
 def get_accommodation_posts_for_user(user_id: int) -> list[sqlite3.Row]:
     # Account/activity loads are latency-sensitive reads. Expiry housekeeping
     # is throttled so concurrent mobile refreshes do not each open a writer.
-    expire_accommodation_posts(force=False)
+    schedule_accommodation_post_expiry()
     with db() as con:
         return con.execute(
             """
@@ -28449,7 +28481,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def accommodations_page(self) -> None:
         user = self.current_user()
-        expire_accommodation_posts(force=False)
+        schedule_accommodation_post_expiry()
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         raw_search_need = (params.get("need", [""])[0] or "").strip()
