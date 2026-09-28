@@ -35246,7 +35246,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("PAID", "Paid in full"),
             ("PAY_AT_PICKUP", "Payment pending"),
             ("REFUND_REVIEW", "Refund review"),
-            ("REFUNDED", "Refunded"),
         )
         payment_options = "".join(
             f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{escape(label)}</option>'
@@ -36261,9 +36260,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         form = self.read_form()
         booking_status = form.get("booking_status", "CONFIRMED")
-        payment_status = form.get("payment_status", "PAY_AT_PICKUP")
+        requested_payment_status = form.get("payment_status", "PAY_AT_PICKUP")
+        payment_status = requested_payment_status
         if booking_status not in {"PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"}:
             booking_status = "CONFIRMED"
+        # A booking can become REFUNDED only after the protected refund action
+        # receives a confirmed result from Stripe. Treat a value posted by the
+        # status dropdown as a review request, never as evidence that money was
+        # returned. This also protects old clients that still render that option.
         if payment_status not in {"HOLD_PENDING", "HOLD_EXPIRED", "HOLD_PAID", "PAID", "PAY_AT_PICKUP", "REFUND_REVIEW", "REFUNDED"}:
             payment_status = "PAY_AT_PICKUP"
         reason = form.get("reason", "")
@@ -36285,6 +36289,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not previous_booking:
             self.send_error(404, "Booking not found.")
             return
+        manual_refund_status_attempt = (
+            requested_payment_status == "REFUNDED"
+            and row_value(previous_booking, "payment_status") != "REFUNDED"
+        )
+        if manual_refund_status_attempt:
+            payment_status = "REFUND_REVIEW"
         approved_modification = (
             row_value(previous_booking, "booking_status") == "MODIFIED"
             and booking_status == "CONFIRMED"
@@ -36331,6 +36341,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             deposit_released, cancellation_deposit_message = release_security_deposit_after_cancellation(previous_booking)
             if not deposit_released:
                 cancellation_deposit_message = f"Deposit release requires review: {cancellation_deposit_message}"
+        if manual_refund_status_attempt:
+            review_note = "Manual refund status was blocked; Stripe refund requires the refund passcode."
+            reason = f"{reason} | {review_note}" if reason else review_note
+            cancellation_refund_message = review_note
         with db() as con:
             if approved_modification:
                 # Recheck while holding the write lock: a vehicle can be booked between

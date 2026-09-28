@@ -131,6 +131,49 @@ class BookingHoldTest(unittest.TestCase):
         booking["booking_status"] = "MODIFIED"
         self.assertFalse(app.booking_releasable_at_pickup(booking))
 
+    def test_admin_status_save_cannot_mark_booking_refunded_without_stripe_refund(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Owner', 'owner@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            owner = con.execute("SELECT * FROM users WHERE email = 'owner@example.com'").fetchone()
+
+        class Handler:
+            def require_owner_admin(self):
+                return owner
+
+            def read_form(self):
+                return {
+                    "booking_id": str(booking["id"]),
+                    "booking_status": "CONFIRMED",
+                    "payment_status": "REFUNDED",
+                    "reason": "",
+                }
+
+            def send_error(self, status, message):
+                raise AssertionError(f"Unexpected {status}: {message}")
+
+            def public_origin(self):
+                return "https://fairfare.space"
+
+            def redirect(self, _location):
+                return
+
+        with patch.object(app, "notify_slack_payment"), patch.object(app, "send_rental_booking_push"):
+            app.FairFaresHandler.update_admin_booking_status(Handler())
+
+        with app.db() as con:
+            updated = con.execute("SELECT payment_status, cancellation_reason FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(updated["payment_status"], "REFUND_REVIEW")
+        self.assertIn("Stripe refund requires the refund passcode", updated["cancellation_reason"])
+
     def test_mobile_customer_pickup_and_return_require_staff_approval(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
