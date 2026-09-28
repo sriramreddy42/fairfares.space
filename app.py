@@ -10282,8 +10282,13 @@ def stripe_refund_payment_reference(
     refund, status = stripe_api_request("refunds", refund_params, idempotency_key=idempotency_key)
     refund_id = str(refund.get("id") or "")
     refund_status = str(refund.get("status") or "")
+    if refund_id and refund_status == "succeeded":
+        return True, f"Stripe refund {refund_id} succeeded.", refund_id
     if refund_id:
-        return True, f"Stripe refund {refund_id} created{(' (' + refund_status + ')') if refund_status else ''}.", refund_id
+        # A refund can be pending, require customer action, fail, or be
+        # cancelled after creation.  Keep the booking in review until the
+        # Stripe webhook (or a subsequent operator check) confirms success.
+        return False, f"Stripe refund {refund_id} is {refund_status or 'pending'}; awaiting confirmation.", refund_id
     return False, status, ""
 
 
@@ -10341,6 +10346,50 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
     if refunded_count:
         return "REFUND_REVIEW", f"Refunded {refunded_count} of {len(transactions)} Stripe payments. Admin review needed: {' '.join(details)}"
     return "REFUND_REVIEW", f"Automatic refund could not be completed. Admin review needed: {' '.join(details)}"
+
+
+def record_stripe_refund_final_status(data_object: dict[str, object]) -> None:
+    """Reflect Stripe's final refund state without trusting a local status edit."""
+    metadata = data_object.get("metadata") if isinstance(data_object.get("metadata"), dict) else {}
+    try:
+        booking_id = int(metadata.get("booking_id") or 0)
+    except (TypeError, ValueError):
+        booking_id = 0
+    refund_status = str(data_object.get("status") or "").lower()
+    payment_reference = str(data_object.get("payment_intent") or data_object.get("charge") or "").strip()
+    refund_id = str(data_object.get("id") or "").strip()
+    if not booking_id or refund_status not in {"succeeded", "failed", "canceled"} or not payment_reference:
+        return
+
+    transaction_status = "REFUNDED" if refund_status == "succeeded" else "REFUND_REVIEW"
+    verification_status = "REFUNDED" if refund_status == "succeeded" else "REVIEW_REQUIRED"
+    note = f"Stripe refund {refund_id or 'update'} {refund_status}."
+    with db() as con:
+        con.execute(
+            """
+            UPDATE transactions
+            SET transaction_status = ?, billing_verification_status = ?, billing_verification_notes = ?
+            WHERE booking_id = ? AND invoice_number = ?
+            """,
+            (transaction_status, verification_status, note, booking_id, payment_reference),
+        )
+        transactions = con.execute(
+            """
+            SELECT transaction_status
+            FROM transactions
+            WHERE booking_id = ?
+              AND payment_method = 'Stripe Checkout'
+              AND amount > 0
+              AND substr(invoice_number, 1, 3) IN ('pi_', 'ch_', 'cs_')
+            """,
+            (booking_id,),
+        ).fetchall()
+        if not transactions:
+            return
+        booking_status = "REFUNDED" if all(
+            row_value(transaction, "transaction_status") == "REFUNDED" for transaction in transactions
+        ) else "REFUND_REVIEW"
+        con.execute("UPDATE bookings SET payment_status = ? WHERE id = ?", (booking_status, booking_id))
 
 
 def refund_passcode_configured() -> bool:
@@ -32403,6 +32452,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             record_security_deposit_authorization(data_object)
         if event_type == "payment_intent.canceled":
             record_security_deposit_final_status(data_object, event_type)
+        if event_type in {"refund.created", "refund.updated", "refund.failed"}:
+            record_stripe_refund_final_status(data_object)
         if event_type.startswith("identity.verification_session."):
             save_identity_verification_from_session(data_object)
         self.send_json({"received": True})

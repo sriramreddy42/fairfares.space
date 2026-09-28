@@ -174,6 +174,34 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(updated["payment_status"], "REFUND_REVIEW")
         self.assertIn("Stripe refund requires the refund passcode", updated["cancellation_reason"])
 
+    def test_refund_is_not_final_until_stripe_confirms_success(self):
+        with patch.object(app, "stripe_api_request", return_value=({"id": "re_pending", "status": "pending"}, "ok")):
+            pending, pending_message, _ = app.stripe_refund_payment_reference("pi_refund_test", 123, 12.50, "refund-test")
+        with patch.object(app, "stripe_api_request", return_value=({"id": "re_succeeded", "status": "succeeded"}, "ok")):
+            succeeded, success_message, _ = app.stripe_refund_payment_reference("pi_refund_test", 123, 12.50, "refund-test")
+        self.assertFalse(pending)
+        self.assertIn("awaiting confirmation", pending_message)
+        self.assertTrue(succeeded)
+        self.assertIn("succeeded", success_message)
+
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute("UPDATE bookings SET booking_status = 'CANCELLED', status = 'CANCELLED', payment_status = 'REFUND_REVIEW' WHERE id = ?", (booking["id"],))
+            con.execute(
+                "INSERT INTO transactions (booking_id, payment_method, amount, transaction_status, invoice_number) VALUES (?, 'Stripe Checkout', 12.50, 'REFUND_REVIEW', 'pi_refund_test')",
+                (booking["id"],),
+            )
+        app.record_stripe_refund_final_status({
+            "id": "re_succeeded", "status": "succeeded", "payment_intent": "pi_refund_test",
+            "metadata": {"booking_id": str(booking["id"])},
+        })
+        with app.db() as con:
+            updated_booking = con.execute("SELECT payment_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+            transaction = con.execute("SELECT transaction_status FROM transactions WHERE booking_id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(updated_booking["payment_status"], "REFUNDED")
+        self.assertEqual(transaction["transaction_status"], "REFUNDED")
+
     def test_mobile_customer_pickup_and_return_require_staff_approval(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
