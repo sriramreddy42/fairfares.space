@@ -1837,6 +1837,24 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(released["security_deposit_status"], "RELEASED")
         self.assertEqual(released["return_review_status"], "RELEASED")
 
+    def test_admin_bookings_page_renders_refund_feedback(self):
+        handler = object.__new__(app.FairFaresHandler)
+        handler.path = "/admin/bookings?refund_message=Refund%20submitted%20to%20Stripe"
+        rendered_pages = []
+        handler.require_admin = lambda: {"name": "Owner"}
+        handler.render_admin_nav = lambda _user, _section: ""
+        handler.render_admin_booking_calendar = lambda _rows, _calendar, _status: ""
+        handler.render_booking_status_filter_options = lambda _status: ""
+        handler.send_html = rendered_pages.append
+
+        with patch.object(app, "get_admin_bookings", return_value=[]):
+            handler.admin_bookings_page()
+
+        self.assertEqual(len(rendered_pages), 1)
+        rendered_html = rendered_pages[0].decode("utf-8")
+        self.assertIn("Refund result", rendered_html)
+        self.assertIn("Refund submitted to Stripe", rendered_html)
+
     def test_checkout_timer_frontend_hook_exists(self):
         js = Path("static/js/app.js").read_text()
         self.assertIn("startBookingCountdown", js)

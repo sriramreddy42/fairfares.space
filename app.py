@@ -30301,7 +30301,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_chat_notification_avatar(self, parsed: urllib.parse.ParseResult) -> None:
         query = urllib.parse.parse_qs(parsed.query)
-        refund_feedback = clean_text_value(query.get("refund_message", [""])[0], 500)
         try:
             user_id = int((query.get("user") or ["0"])[0])
             community_id = int((query.get("community") or ["0"])[0])
@@ -33765,6 +33764,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
+        refund_feedback = clean_text_value(query.get("refund_message", [""])[0], 500)
         selected_status = query.get("status", ["ALL"])[0].upper()
         selected_calendar = query.get("calendar", ["today"])[0].lower()
         allowed_statuses = {"ALL", "PENDING_HOLD", "EXPIRED_HOLD", "CONFIRMED", "MODIFIED", "CANCELLATION_REQUESTED", "CANCELLED", "PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"}
