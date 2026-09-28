@@ -116,7 +116,7 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(save_to_r2.call_args.kwargs["folder_name"], "rental-handoff")
         save_locally.assert_not_called()
 
-    def test_vehicle_release_requires_confirmed_payment_and_authorized_deposit(self):
+    def test_vehicle_release_requires_full_payment_but_not_optional_deposit(self):
         booking = {
             "booking_status": "CONFIRMED",
             "payment_status": "HOLD_PAID",
@@ -125,7 +125,7 @@ class BookingHoldTest(unittest.TestCase):
         self.assertTrue(app.booking_ready_for_pickup(booking))
         self.assertFalse(app.booking_releasable_at_pickup(booking))
 
-        booking["security_deposit_status"] = "AUTHORIZED"
+        booking["payment_status"] = "PAID"
         self.assertTrue(app.booking_releasable_at_pickup(booking))
 
         booking["booking_status"] = "MODIFIED"

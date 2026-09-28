@@ -4384,10 +4384,14 @@ def booking_ready_for_pickup(booking: sqlite3.Row | dict[str, object] | None) ->
 
 
 def booking_releasable_at_pickup(booking: sqlite3.Row | dict[str, object] | None) -> bool:
-    """A vehicle cannot leave until payment and the refundable deposit hold are verified."""
+    """A vehicle cannot leave until the rental itself is paid in full.
+
+    A refundable authorization is optional protection.  It is never a gate on
+    a customer's booking, staff pickup, or return.
+    """
     return (
-        booking_ready_for_pickup(booking)
-        and row_value(booking, "security_deposit_status") == "AUTHORIZED"
+        row_value(booking, "booking_status") == "CONFIRMED"
+        and row_value(booking, "payment_status") == "PAID"
     )
 
 
@@ -4410,7 +4414,7 @@ def complete_staff_pickup_if_ready(booking_id: int) -> tuple[bool, str]:
     )
     missing = [field for field in required_fields if not row_value(booking, field)]
     if not booking_releasable_at_pickup(booking):
-        return False, "Full payment and the refundable deposit authorization are required before release."
+        return False, "Full rental payment is required before release."
     if str(row_value(identity_row, "status") or "") != "VERIFIED":
         return False, "Verified Stripe Identity is required before release."
     if missing:
@@ -19640,8 +19644,7 @@ def mobile_rental_service_booking_payload(
                     else "return_review" if row_value(row, "booking_status") == "RETURN_SUBMITTED"
                     else "return" if row_value(row, "booking_status") == "PICKED_UP"
                     else "pickup_review" if row_value(row, "booking_status") == "PICKUP_SUBMITTED"
-                    else "pickup" if row_value(row, "booking_status") == "CONFIRMED" and row_value(row, "payment_status") == "PAID" and row_value(row, "security_deposit_status") == "AUTHORIZED"
-                    else "deposit" if row_value(row, "booking_status") == "CONFIRMED" and row_value(row, "payment_status") == "PAID"
+                    else "pickup" if row_value(row, "booking_status") == "CONFIRMED" and row_value(row, "payment_status") == "PAID"
                     else "payment"
                 ),
                 "actualPickupDate": row_value(row, "actual_pickup_date"),
@@ -36103,7 +36106,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         ):
             self.send_error(
                 409,
-                "Pickup blocked: confirm payment and authorize the refundable security deposit first.",
+                "Pickup blocked: confirm the rental is paid in full first.",
             )
             return
         cancellation_refund_message = ""
@@ -39370,11 +39373,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if (
                 status != "PICKUP_SUBMITTED"
                 or row_value(booking, "payment_status") != "PAID"
-                or row_value(booking, "security_deposit_status") != "AUTHORIZED"
                 or not identity_verified
                 or not pickup_evidence_complete
             ):
-                self.send_json({"ok": False, "error": "Verified identity, pickup evidence, full payment, and deposit authorization are required."}, 409)
+                self.send_json({"ok": False, "error": "Verified identity, pickup evidence, and full payment are required."}, 409)
                 return
             with db() as con:
                 con.execute(
