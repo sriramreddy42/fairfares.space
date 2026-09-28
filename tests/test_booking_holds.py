@@ -193,6 +193,45 @@ class BookingHoldTest(unittest.TestCase):
             transaction = con.execute("SELECT transaction_status FROM transactions WHERE booking_id = ?", (booking["id"],)).fetchone()
         self.assertEqual(transaction["transaction_status"], "REFUNDED")
 
+    def test_refund_recovers_only_exact_stripe_checkout_payment_metadata(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CANCELLED', status = 'CANCELLED', payment_status = 'PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+        matching_intent = {
+            "id": "pi_recovered_checkout",
+            "status": "succeeded",
+            "amount_received": 1250,
+            "metadata": {
+                "booking_id": str(booking["id"]),
+                "public_booking_id": booking["booking_id"],
+                "user_id": str(self.user_id),
+                "payment_option": "full",
+            },
+        }
+        wrong_user_intent = {
+            **matching_intent,
+            "id": "pi_wrong_user",
+            "metadata": {**matching_intent["metadata"], "user_id": "999999"},
+        }
+        with patch.object(app, "stripe_api_get", return_value=({"data": [matching_intent, wrong_user_intent]}, "ok")) as stripe_get, patch.object(
+            app, "stripe_api_request", return_value=({"id": "re_recovered", "status": "succeeded"}, "ok")
+        ) as refund_request:
+            status, message = app.auto_refund_booking_payments(booking["id"])
+
+        self.assertEqual(status, "REFUNDED")
+        self.assertIn("Refunded 1 Stripe payment", message)
+        self.assertIn("payment_intents/search?", stripe_get.call_args.args[0])
+        self.assertEqual(refund_request.call_args.args[1]["payment_intent"], "pi_recovered_checkout")
+        with app.db() as con:
+            rows = con.execute(
+                "SELECT invoice_number, transaction_status FROM transactions WHERE booking_id = ?", (booking["id"],)
+            ).fetchall()
+        self.assertEqual([(row["invoice_number"], row["transaction_status"]) for row in rows], [("pi_recovered_checkout", "REFUNDED")])
+
     def test_refund_is_not_final_until_stripe_confirms_success(self):
         with patch.object(app, "stripe_api_request", return_value=({"id": "re_pending", "status": "pending"}, "ok")):
             pending, pending_message, _ = app.stripe_refund_payment_reference("pi_refund_test", 123, 12.50, "refund-test")
