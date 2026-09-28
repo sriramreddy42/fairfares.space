@@ -367,7 +367,7 @@ export function ServicesScreen({
   const primaryStep = handoffPhase === "payment"
     ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
     : handoffPhase === "deposit"
-      ? { title: "Authorize refundable deposit", copy: `Authorize the $${Number(selectedBooking?.depositAmount || 250).toFixed(2)} hold before vehicle release.`, label: "Authorize deposit", onPress: () => void openRentalPayment("deposit") }
+      ? { title: "Optional refundable deposit", copy: `You may authorize the $${Number(selectedBooking?.depositAmount || 250).toFixed(2)} card hold. It does not replace rental payment, identity verification, or the staff pickup inspection.`, label: "Authorize optional deposit", onPress: () => void openRentalPayment("deposit") }
       : handoffPhase === "pickup"
         ? selectedBooking?.handoff?.identityStatus === "VERIFIED"
           ? { title: "Ready for staff pickup", copy: `Meet FairFares staff at ${selectedBooking?.pickupLocation || "the pickup location"}. Staff will record the vehicle inspection and release the vehicle.`, label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }

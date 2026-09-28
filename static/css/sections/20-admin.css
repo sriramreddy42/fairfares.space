@@ -3484,12 +3484,21 @@
   min-width: 160px;
 }
 .staff-password-reset-form {
+  align-items: center;
   display: flex;
   flex-wrap: nowrap;
   gap: 8px;
+  min-width: 0;
 }
 .staff-password-reset-form input {
+  flex: 1 1 150px;
   min-width: 150px;
+}
+.staff-password-reset-form button {
+  flex: 0 0 auto;
+  min-width: 52px;
+  overflow: visible;
+  white-space: nowrap;
 }
 .admin-user-card {
   background: #fff;
@@ -3839,6 +3848,62 @@
 
   .admin-social-rail {
     grid-template-columns: 1fr;
+  }
+
+  .admin-rules-table {
+    min-width: 0;
+  }
+
+  .admin-rules-table,
+  .admin-rules-table tbody,
+  .admin-rules-table tr,
+  .admin-rules-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .admin-rules-table thead {
+    display: none;
+  }
+
+  .admin-rules-table tr {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 0;
+  }
+
+  .admin-rules-table td {
+    align-items: center;
+    border: 0;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    padding: 6px 0;
+    text-align: right;
+  }
+
+  .admin-rules-table td::before {
+    color: var(--muted);
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.76rem;
+    font-weight: 800;
+    text-align: left;
+    text-transform: uppercase;
+  }
+
+  .admin-rules-table td:first-child {
+    align-items: flex-start;
+    display: grid;
+    justify-content: start;
+    text-align: left;
+  }
+
+  .admin-rules-table td:first-child::before {
+    display: none;
+  }
+
+  .admin-rules-table td:last-child .inline-form {
+    justify-content: flex-end;
   }
 
   .admin-feed-composer,

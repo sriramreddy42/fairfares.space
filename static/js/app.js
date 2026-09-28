@@ -1024,15 +1024,6 @@ document.getElementById("textStatus")?.addEventListener("click", () => {
   document.getElementById("statusMessage").textContent = "Text updates enabled for this booking.";
 });
 
-if (detailTabs.length) {
-  if (window.location.hash === "#housing" && document.querySelector('[data-detail-tab="housing"]')) {
-    showManagePanel("details", { centerAction: false });
-    showDetailPanel("housing");
-    syncManageDetailJumpState(document.querySelector('[data-detail-jump="housing"]'));
-  } else {
-    showDetailPanel("student");
-  }
-}
 if (tripFilterButtons.length) filterTrips("upcoming");
 
 const supportSummary = document.getElementById("supportSummary");

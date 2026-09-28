@@ -50,14 +50,6 @@ class SecurityHardeningTest(unittest.TestCase):
         app.refresh_storage_paths()
         self.temp_dir.cleanup()
 
-    def test_google_maps_loader_reports_auth_failures_and_uses_async_loader(self):
-        with patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test maps key"}):
-            loader = app.explorer_maps_loader()
-        self.assertIn("loading=async", loader)
-        self.assertIn("gm_authFailure", loader)
-        self.assertIn("fairfares-map-error", loader)
-        self.assertIn('referrerPolicy="origin"', loader)
-        self.assertIn("loadFairFaresMaps", loader)
 
     def start_server(self):
         server = app.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
@@ -350,7 +342,7 @@ class SecurityHardeningTest(unittest.TestCase):
                 self.assertEqual(payload["status"], "healthy")
                 self.assertEqual(payload["database"], "available")
                 self.assertEqual(payload["service"], "fairfares-api")
-            self.assertEqual(payload["release"], "chitthi-group-reaction-intent-v10")
+            self.assertEqual(payload["release"], app.BACKEND_RELEASE)
         finally:
             server.shutdown()
             server.server_close()

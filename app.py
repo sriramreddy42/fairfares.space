@@ -8615,13 +8615,6 @@ def init_db() -> None:
                 "PUBLIC",
             ),
             (
-                "Explorer FAQ",
-                "Quests, stop selection, XP, badges, cities, uploads, reels, and rewards.",
-                "Q: What is FairFares Explorer? A: Explorer is a personal travel guide that turns a rental into routes, timed stops, memories, XP, and badges. Q: How does Explorer work? A: Choose vibes, city, timing, and trip context; Explorer generates stops with weather and timing guidance. Q: How do I start a quest? A: Open Explorer, choose preferences, and generate a quest. Q: How are quest locations selected? A: Stops are selected from vibe, timing, travel style, available place data, and local context. Q: Can I create my own quest? A: Custom quest options can be supported through Explorer preferences and future tools. Q: How do I earn XP? A: Complete stops, check in, upload memories, and finish challenges. Q: What are Explorer badges? A: Badges mark achievements such as first quest, hidden gems, or repeat exploring. Q: How do I unlock new cities? A: Progress, XP, and future city availability can unlock more areas. Q: Can I upload photos? A: Yes, memory uploads can attach trip proof and profile photos. Q: Can I upload reels? A: Reels/video proof can be part of memory challenges when supported. Q: How do Explorer rewards work? A: Rewards are tied to XP, badges, memory challenges, and FairFares campaigns.",
-                "Explorer, FairFares Explorer, quest, quest locations, create quest, XP, badges, unlock cities, upload photos, upload reels, Explorer rewards, memories",
-                "PUBLIC",
-            ),
-            (
                 "Price match FAQ",
                 "Competitor quotes, screenshots, eligibility, and the additional 10% discount.",
                 "Q: How does price matching work? A: Bring a comparable lower quote for the same rental period, location, vehicle class, and terms before pickup. FairFares reviews it and can match eligible quotes. Q: Which competitors qualify? A: Major rental companies such as Avis, Enterprise, Hertz, and comparable providers may qualify when terms match. Q: How do I submit a quote? A: Upload or send the quote through support/admin review before pickup. Q: When do I receive the additional 10% discount? A: After FairFares verifies the comparable quote and approves the match. Q: Can I submit a screenshot? A: Yes, screenshots can help, but they must clearly show provider, dates, vehicle class, price, fees, and terms.",
@@ -35471,13 +35464,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         usage = f'{row["used_count"]}/{row["max_uses"]}' if row["max_uses"] else f'{row["used_count"]}/Unlimited'
         return f"""
         <tr>
-            <td><b>{escape(row["code"])}</b><span>{escape(row["description"])}</span></td>
-            <td>{escape(row["discount_type"])}</td>
-            <td>{value}</td>
-            <td>{usage}</td>
-            <td>{escape(row["valid_through"])}</td>
-            <td>{escape(row["status"])}</td>
-            <td>
+            <td data-label="Code"><b>{escape(row["code"])}</b><span>{escape(row["description"])}</span></td>
+            <td data-label="Type">{escape(row["discount_type"])}</td>
+            <td data-label="Value">{value}</td>
+            <td data-label="Usage">{usage}</td>
+            <td data-label="Valid through">{escape(row["valid_through"])}</td>
+            <td data-label="Status">{escape(row["status"])}</td>
+            <td data-label="Action">
                 <form method="post" action="/admin/discounts/delete" class="inline-form">
                     <input type="hidden" name="discount_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
@@ -35496,12 +35489,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         }.get(rule_type, "Per rental day")
         return f"""
         <tr>
-            <td><b>{escape(row["label"])}</b><span>{escape(basis)}</span></td>
-            <td>{escape(rule_type)}</td>
-            <td>{escape(value)}</td>
-            <td>{escape(str(row["sort_order"]))}</td>
-            <td>{escape(row["status"])}</td>
-            <td>
+            <td data-label="Rule"><b>{escape(row["label"])}</b><span>{escape(basis)}</span></td>
+            <td data-label="Type">{escape(rule_type)}</td>
+            <td data-label="Value">{escape(value)}</td>
+            <td data-label="Order">{escape(str(row["sort_order"]))}</td>
+            <td data-label="Status">{escape(row["status"])}</td>
+            <td data-label="Action">
                 <form method="post" action="/admin/tax-fees/delete" class="inline-form">
                     <input type="hidden" name="rule_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
@@ -35523,12 +35516,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             basis = "Per reviewed incident"
         return f"""
         <tr>
-            <td><b>{escape(row["label"])}</b><span>{escape(row["description"] or basis)}</span></td>
-            <td>{escape(rule_type)}</td>
-            <td>{escape(value)}</td>
-            <td>{escape(str(row["sort_order"]))}</td>
-            <td>{escape(row["status"])}</td>
-            <td>
+            <td data-label="Rule"><b>{escape(row["label"])}</b><span>{escape(row["description"] or basis)}</span></td>
+            <td data-label="Type">{escape(rule_type)}</td>
+            <td data-label="Value">{escape(value)}</td>
+            <td data-label="Order">{escape(str(row["sort_order"]))}</td>
+            <td data-label="Status">{escape(row["status"])}</td>
+            <td data-label="Action">
                 <form method="post" action="/admin/post-return-fees/delete" class="inline-form">
                     <input type="hidden" name="rule_id" value="{row["id"]}">
                     <button class="danger-button" type="submit">Delete</button>
