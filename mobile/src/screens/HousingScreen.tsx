@@ -1005,7 +1005,11 @@ export function HousingScreen({
       key={post.id}
       post={post}
       onMessage={onMessage}
-      onOpen={setDetailPost}
+      onOpen={(selectedPost) => {
+        // Listing IDs and housing details are deliberately excluded.
+        void trackProductEvent("housing_listing_view", { source: "housing_card" });
+        setDetailPost(selectedPost);
+      }}
       distanceLabel={distanceReference}
       width={housingCardWidth}
       height={housingCardHeight}
@@ -2055,6 +2059,9 @@ export function HousingScreen({
         destinationLng: nextRideForm.destinationLng,
         pickupDate: nextRideForm.pickupDate
       });
+      // A successful route match is a carpool search. Never send the route,
+      // addresses, coordinates, or date to product analytics.
+      void trackProductEvent("carpool_search", { resultCount: rides.length, source: "route_planner" });
       setRideRows(rides);
       setSelectedRideChoice("");
       setRidePlannerStage("choices");
@@ -3079,6 +3086,7 @@ export function HousingScreen({
         destinationLng: rideForm.destinationLng,
         pickupDate: rideForm.pickupDate
       });
+      void trackProductEvent("carpool_search", { resultCount: rides.length, source: "ride_search" });
       setRideRows(rides);
     } catch (error) {
       Alert.alert("Ride search failed", error instanceof Error ? error.message : "Unable to search rides.");

@@ -26254,9 +26254,14 @@ def guest_offer_modal() -> str:
 PRODUCT_ANALYTICS_EVENTS = {
     "app_first_open",
     "app_open",
+    "signup_completed",
+    "housing_search",
+    "housing_listing_view",
+    "housing_need_place_posted",
+    "chitthi_community_joined",
+    "carpool_search",
     "rental_search",
     "rental_car_view",
-    "signup_completed",
     "message_sent",
     "rental_booking_started",
     "rental_booking_completed",
@@ -26270,10 +26275,15 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
         "installs": "app_first_open",
         "opens": "app_open",
         "signups": "signup_completed",
-        "searches": "rental_search",
-        "car_views": "rental_car_view",
+        "housing_searches": "housing_search",
+        "housing_listing_views": "housing_listing_view",
+        "housing_need_place_posts": "housing_need_place_posted",
         "messages": "message_sent",
-        "bookings": "rental_booking_completed",
+        "community_joins": "chitthi_community_joined",
+        "carpool_searches": "carpool_search",
+        "rental_searches": "rental_search",
+        "rental_car_views": "rental_car_view",
+        "rental_bookings": "rental_booking_completed",
     }
     with db() as con:
         stage_counts: dict[str, int] = {}
@@ -26285,16 +26295,40 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
                 (event_name, window),
             ).fetchone()
             stage_counts[stage] = int(row_value(row, "total") or 0)
-        repeat_row = con.execute(
-            """SELECT COUNT(*) AS total FROM (
-                   SELECT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END AS actor
-                   FROM product_analytics_events
-                   WHERE event_name = 'app_open' AND datetime(occurred_at) >= datetime('now', ?)
-                   GROUP BY actor HAVING COUNT(DISTINCT date(occurred_at)) >= 2
-               )""",
+        activation_row = con.execute(
+            """SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
+               FROM product_analytics_events
+               WHERE event_name IN ('housing_need_place_posted', 'message_sent', 'chitthi_community_joined',
+                                    'rental_booking_started', 'rental_booking_completed')
+                 AND datetime(occurred_at) >= datetime('now', ?)""",
             (window,),
         ).fetchone()
-        stage_counts["repeat_users"] = int(row_value(repeat_row, "total") or 0)
+        stage_counts["activated_users"] = int(row_value(activation_row, "total") or 0)
+        # D7 is deliberately authenticated-only. An eligible cohort member has
+        # a first app open 7–90 days ago; a return is an app open on day 7–14.
+        # This separates a retained signed-in person from Apple re-downloads
+        # and from anonymous installs that never created an account.
+        retention_row = con.execute(
+            """WITH first_authenticated_opens AS (
+                   SELECT user_id, MIN(date(occurred_at)) AS cohort_day
+                   FROM product_analytics_events
+                   WHERE event_name = 'app_first_open' AND user_id IS NOT NULL
+                     AND date(occurred_at) BETWEEN date('now', '-90 days') AND date('now', '-7 days')
+                   GROUP BY user_id
+               ), d7_returns AS (
+                   SELECT DISTINCT first_authenticated_opens.user_id
+                   FROM first_authenticated_opens
+                   JOIN product_analytics_events AS opens
+                     ON opens.user_id = first_authenticated_opens.user_id
+                    AND opens.event_name = 'app_open'
+                    AND date(opens.occurred_at) BETWEEN date(first_authenticated_opens.cohort_day, '+7 days')
+                                                    AND date(first_authenticated_opens.cohort_day, '+14 days')
+               )
+               SELECT (SELECT COUNT(*) FROM first_authenticated_opens) AS eligible,
+                      (SELECT COUNT(*) FROM d7_returns) AS returned"""
+        ).fetchone()
+        stage_counts["d7_eligible"] = int(row_value(retention_row, "eligible") or 0)
+        stage_counts["d7_authenticated_returns"] = int(row_value(retention_row, "returned") or 0)
         platform_rows = con.execute(
             """SELECT COALESCE(NULLIF(platform, ''), 'unknown') AS platform,
                       COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS users
@@ -26306,10 +26340,11 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
         daily_rows = con.execute(
             """SELECT date(occurred_at) AS day,
                       COUNT(DISTINCT CASE WHEN event_name = 'app_open' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS opens,
-                      COUNT(DISTINCT CASE WHEN event_name = 'rental_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS searches,
-                      COUNT(DISTINCT CASE WHEN event_name = 'rental_car_view' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS views,
+                      COUNT(DISTINCT CASE WHEN event_name = 'housing_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_searches,
+                      COUNT(DISTINCT CASE WHEN event_name = 'housing_listing_view' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_views,
                       COUNT(DISTINCT CASE WHEN event_name = 'message_sent' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS messages,
-                      COUNT(DISTINCT CASE WHEN event_name = 'rental_booking_completed' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS bookings
+                      COUNT(DISTINCT CASE WHEN event_name = 'carpool_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS carpool_searches,
+                      COUNT(DISTINCT CASE WHEN event_name = 'rental_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS rental_searches
                FROM product_analytics_events
                WHERE datetime(occurred_at) >= datetime('now', ?)
                GROUP BY date(occurred_at) ORDER BY day""",
@@ -34406,14 +34441,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         summary = product_analytics_summary(days)
         stages = summary["stages"]
         stage_definitions = [
-            ("installs", "Downloads / first installs"),
+            ("installs", "First app opens / installs"),
             ("opens", "Active users"),
-            ("signups", "Signups"),
-            ("searches", "Rental searches"),
-            ("car_views", "Car views"),
-            ("messages", "Message senders"),
-            ("bookings", "Bookers"),
-            ("repeat_users", "Repeat users"),
+            ("signups", "New accounts"),
+            ("housing_searches", "Housing searches"),
+            ("housing_listing_views", "Housing listing viewers"),
+            ("housing_need_place_posts", "“I need a place” posts"),
+            ("messages", "People who messaged"),
+            ("community_joins", "Chitthi community joins"),
+            ("carpool_searches", "Carpool searches"),
+            ("rental_searches", "Rental car searches"),
+            ("activated_users", "Activated users"),
+            ("d7_authenticated_returns", "D7 authenticated returns"),
         ]
         maximum = max([int(stages.get(key, 0)) for key, _label in stage_definitions] + [1])
         funnel_rows: list[str] = []
@@ -34424,6 +34463,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 conversion_copy = "New installations in this period"
             elif key == "opens":
                 conversion_copy = "Unique active users in this period"
+            elif key == "d7_authenticated_returns":
+                eligible = int(stages.get("d7_eligible", 0))
+                conversion_copy = f"{value / eligible * 100:.1f}% of {eligible:,} eligible signed-in first opens" if eligible else "No eligible signed-in first-open cohort yet"
             elif active_users:
                 conversion_copy = f"{value / active_users * 100:.1f}% of active users"
             else:
@@ -34440,10 +34482,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         ) or '<article><span>Platforms</span><b>0</b></article>'
         daily_rows = "".join(
             f'<tr><td data-label="Day">{escape(str(row.get("day") or ""))}</td><td data-label="Opens">{int(row.get("opens") or 0):,}</td>'
-            f'<td data-label="Rental searches">{int(row.get("searches") or 0):,}</td><td data-label="Car views">{int(row.get("views") or 0):,}</td>'
-            f'<td data-label="Messages">{int(row.get("messages") or 0):,}</td><td data-label="Bookings">{int(row.get("bookings") or 0):,}</td></tr>'
+            f'<td data-label="Housing searches">{int(row.get("housing_searches") or 0):,}</td><td data-label="Housing views">{int(row.get("housing_views") or 0):,}</td>'
+            f'<td data-label="Messages">{int(row.get("messages") or 0):,}</td><td data-label="Carpool searches">{int(row.get("carpool_searches") or 0):,}</td><td data-label="Rental searches">{int(row.get("rental_searches") or 0):,}</td></tr>'
             for row in reversed(summary["daily"])
-        ) or '<tr><td colspan="6">No analytics events received for this period.</td></tr>'
+        ) or '<tr><td colspan="7">No analytics events received for this period.</td></tr>'
         period_links = "".join(
             f'<a class="{"active" if option == summary["days"] else ""}" href="/admin/analytics?days={option}">{"24 hours" if option == 1 else str(option) + " days"}</a>'
             for option in (1, 7, 30, 90)

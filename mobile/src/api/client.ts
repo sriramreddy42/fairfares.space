@@ -253,7 +253,7 @@ async function productAnalyticsInstallationId() {
 }
 
 type QueuedProductAnalyticsEvent = {
-  eventName: "app_first_open" | "app_open" | "rental_search" | "rental_car_view" | "signup_completed" | "message_sent" | "rental_booking_started" | "rental_booking_completed";
+  eventName: ProductAnalyticsEventName;
   anonymousId: string;
   platform: string;
   appVersion: string;
@@ -261,7 +261,28 @@ type QueuedProductAnalyticsEvent = {
   sessionId: string;
   eventId: string;
   occurredAt: string;
-  metadata: { carId?: string | number; resultCount?: number; source?: string };
+  metadata: ProductAnalyticsMetadata;
+};
+
+export type ProductAnalyticsEventName =
+  | "app_first_open"
+  | "app_open"
+  | "signup_completed"
+  | "housing_search"
+  | "housing_listing_view"
+  | "housing_need_place_posted"
+  | "chitthi_community_joined"
+  | "carpool_search"
+  | "rental_search"
+  | "rental_car_view"
+  | "message_sent"
+  | "rental_booking_started"
+  | "rental_booking_completed";
+
+export type ProductAnalyticsMetadata = {
+  carId?: string | number;
+  resultCount?: number;
+  source?: string;
 };
 
 let productAnalyticsQueueOperation: Promise<unknown> = Promise.resolve();
@@ -284,8 +305,8 @@ async function readProductAnalyticsQueue() {
 }
 
 export async function trackProductEvent(
-  eventName: "app_first_open" | "app_open" | "rental_search" | "rental_car_view" | "signup_completed" | "message_sent" | "rental_booking_started" | "rental_booking_completed",
-  metadata: { carId?: string | number; resultCount?: number; source?: string } = {}
+  eventName: ProductAnalyticsEventName,
+  metadata: ProductAnalyticsMetadata = {}
 ) {
   if (Platform.OS !== "ios" && Platform.OS !== "android") return;
   const anonymousId = await productAnalyticsInstallationId();
@@ -2944,11 +2965,15 @@ export async function updateChatGroupDetails(communityId: string, name: string, 
 }
 
 export async function joinChatCommunity(communityId: string, suggestionCity = "", suggestionPurpose = "") {
-  return request<{ ok: boolean; community: Community }>("/api/chat/communities/join", {
+  const result = await request<{ ok: boolean; community: Community }>("/api/chat/communities/join", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody({ community_id: communityId, suggestion_city: suggestionCity, suggestion_purpose: suggestionPurpose })
   });
+  // Do not attach a community name, city, or member data to product analytics.
+  // The event only records that a member completed a Chitthi community join.
+  void trackProductEvent("chitthi_community_joined", { source: "community_join" });
+  return result;
 }
 
 export async function createChatGroupInvite(communityId: string) {

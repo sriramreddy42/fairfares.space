@@ -63,7 +63,7 @@ class ProductAnalyticsTest(unittest.TestCase):
         server, thread = self.start_server()
         try:
             payload = {
-                "eventName": "rental_search",
+                "eventName": "housing_search",
                 "anonymousId": "install-1",
                 "platform": "ios",
                 "appVersion": "0.1.11",
@@ -73,7 +73,7 @@ class ProductAnalyticsTest(unittest.TestCase):
                 "occurredAt": "2026-08-30T12:34:56.000Z",
                 "metadata": {
                     "resultCount": 4,
-                    "source": "rental_search",
+                    "source": "housing_search",
                     "address": "123 Private Street",
                     "message": "private message",
                 },
@@ -84,7 +84,7 @@ class ProductAnalyticsTest(unittest.TestCase):
                 rows = con.execute("SELECT * FROM product_analytics_events").fetchall()
             self.assertEqual(len(rows), 1)
             metadata = json.loads(rows[0]["metadata_json"])
-            self.assertEqual(metadata, {"resultCount": "4", "source": "rental_search"})
+            self.assertEqual(metadata, {"resultCount": "4", "source": "housing_search"})
             self.assertNotIn("Private", rows[0]["metadata_json"])
             self.assertEqual(rows[0]["occurred_at"], "2026-08-30 12:34:56")
         finally:
@@ -103,7 +103,7 @@ class ProductAnalyticsTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    def test_summary_counts_unique_actors_repeat_users_and_event_signups(self):
+    def test_summary_counts_unique_actors_and_new_funnel_stages(self):
         day_one = datetime.utcnow() - timedelta(days=1)
         day_two = datetime.utcnow()
         with app.db() as con:
@@ -117,21 +117,53 @@ class ProductAnalyticsTest(unittest.TestCase):
                     ("app_open", "s1", "e2", day_one.replace(hour=10, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                     ("app_open", "s2", "e3", day_two.replace(hour=10, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                     ("signup_completed", "s2", "e-signup", day_two.replace(hour=10, minute=0, second=30, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("rental_search", "s2", "e4", day_two.replace(hour=10, minute=1, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("rental_car_view", "s2", "e5", day_two.replace(hour=10, minute=2, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("message_sent", "s2", "e6", day_two.replace(hour=10, minute=3, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("rental_booking_completed", "s2", "e7", day_two.replace(hour=10, minute=4, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_search", "s2", "e4", day_two.replace(hour=10, minute=1, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_listing_view", "s2", "e5", day_two.replace(hour=10, minute=2, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_need_place_posted", "s2", "e6", day_two.replace(hour=10, minute=3, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("message_sent", "s2", "e7", day_two.replace(hour=10, minute=4, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("chitthi_community_joined", "s2", "e8", day_two.replace(hour=10, minute=5, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("carpool_search", "s2", "e9", day_two.replace(hour=10, minute=6, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("rental_search", "s2", "e10", day_two.replace(hour=10, minute=7, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                 ],
             )
         summary = app.product_analytics_summary(7)
         self.assertEqual(summary["stages"]["installs"], 1)
         self.assertEqual(summary["stages"]["opens"], 1)
-        self.assertEqual(summary["stages"]["searches"], 1)
-        self.assertEqual(summary["stages"]["car_views"], 1)
         self.assertEqual(summary["stages"]["signups"], 1)
+        self.assertEqual(summary["stages"]["housing_searches"], 1)
+        self.assertEqual(summary["stages"]["housing_listing_views"], 1)
+        self.assertEqual(summary["stages"]["housing_need_place_posts"], 1)
         self.assertEqual(summary["stages"]["messages"], 1)
-        self.assertEqual(summary["stages"]["bookings"], 1)
-        self.assertEqual(summary["stages"]["repeat_users"], 1)
+        self.assertEqual(summary["stages"]["community_joins"], 1)
+        self.assertEqual(summary["stages"]["carpool_searches"], 1)
+        self.assertEqual(summary["stages"]["rental_searches"], 1)
+        self.assertEqual(summary["stages"]["activated_users"], 1)
+
+    def test_d7_retention_requires_authenticated_return_in_cohort_window(self):
+        first_open = datetime.utcnow() - timedelta(days=10)
+        return_open = first_open + timedelta(days=8)
+        with app.db() as con:
+            retained_user_id = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Retained', 'retained@example.com', 'x', 'CUSTOMER', 0)"
+            ).lastrowid
+            unreturned_user_id = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Unreturned', 'unreturned@example.com', 'x', 'CUSTOMER', 0)"
+            ).lastrowid
+            con.executemany(
+                """INSERT INTO product_analytics_events
+                   (event_name, anonymous_id, user_id, platform, session_id, dedupe_key, occurred_at)
+                   VALUES (?, ?, ?, 'ios', 'session', ?, ?)""",
+                [
+                    ("app_first_open", "retained-install", retained_user_id, "retained-first", first_open.strftime("%Y-%m-%d %H:%M:%S")),
+                    ("app_open", "retained-install", retained_user_id, "retained-return", return_open.strftime("%Y-%m-%d %H:%M:%S")),
+                    ("app_first_open", "unreturned-install", unreturned_user_id, "unreturned-first", first_open.strftime("%Y-%m-%d %H:%M:%S")),
+                    # An anonymous return must not count as authenticated D7 retention.
+                    ("app_open", "anonymous-install", None, "anonymous-return", return_open.strftime("%Y-%m-%d %H:%M:%S")),
+                ],
+            )
+        summary = app.product_analytics_summary(30)
+        self.assertEqual(summary["stages"]["d7_eligible"], 2)
+        self.assertEqual(summary["stages"]["d7_authenticated_returns"], 1)
 
     def test_sign_in_merges_prior_anonymous_events_into_one_actor(self):
         with app.db() as con:
@@ -160,7 +192,8 @@ class ProductAnalyticsTest(unittest.TestCase):
     def test_dashboard_template_explains_first_open_and_privacy(self):
         template = Path("templates/admin_analytics.html").read_text(encoding="utf-8")
         self.assertIn("first successful app open", template)
-        self.assertIn("common baseline", template)
+        self.assertIn("D7 return", template)
+        self.assertIn("Stage reach", template)
         self.assertIn("never collected", template)
         self.assertIn("$funnel_rows", template)
 

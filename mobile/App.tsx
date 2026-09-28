@@ -1926,6 +1926,9 @@ function FairFaresApp() {
       setSearchOpen(false);
       const posts = await getHousing(resolvedCity, resolvedArea, nextNeed, selectedCategory, selectedGender, selectedBudget, cleanRadius, nextCoordinates);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
+      // Product analytics intentionally records only the completed search and
+      // result count. It never stores the city, area, address, or search text.
+      void trackProductEvent("housing_search", { resultCount: posts.length, source: "housing_search" });
       setVisiblePosts(posts);
       setHasSearchedHousingLocation(true);
       setActiveTab("housing");
@@ -2286,6 +2289,9 @@ function FairFaresApp() {
     setListingSubmitting(true);
     try {
       const payload = await createMobileHousingPost(listingPayload);
+      if (!listingPayload.listingId && payload.post.mode === "NEED_PLACE" && !listingPayload.roommateIntent) {
+        void trackProductEvent("housing_need_place_posted", { source: "housing_post" });
+      }
       setListingOpen(false);
       setHousingListingSuccess(payload.post);
       setVisiblePosts((current) => current.map((post) => post.id === payload.post.id ? payload.post : post));
