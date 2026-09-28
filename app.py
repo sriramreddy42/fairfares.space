@@ -10292,7 +10292,7 @@ def stripe_refund_payment_reference(
     return False, status, ""
 
 
-def recover_missing_stripe_checkout_transactions(booking_id: int) -> tuple[int, str]:
+def recover_missing_stripe_checkout_transactions(booking_id: int) -> tuple[int, int, str]:
     """Restore legacy Checkout transaction references only after an exact Stripe match.
 
     Older booking records can retain their paid state while losing the Checkout
@@ -10304,18 +10304,18 @@ def recover_missing_stripe_checkout_transactions(booking_id: int) -> tuple[int, 
     with db() as con:
         booking = con.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
     if not booking:
-        return 0, "Booking not found."
+        return 0, 0, "Booking not found."
 
     public_booking_id = row_value(booking, "booking_id")
     user_id = str(row_value(booking, "user_id"))
     if not public_booking_id or not user_id:
-        return 0, "Booking identifiers are incomplete; no Stripe refund was sent."
+        return 0, 0, "Booking identifiers are incomplete; no Stripe refund was sent."
 
     query = f"metadata['booking_id']:'{booking_id}'"
     path = "payment_intents/search?" + urllib.parse.urlencode({"query": query, "limit": 100})
     result, status = stripe_api_get(path)
     if not result:
-        return 0, f"Stripe payment lookup failed: {status}"
+        return 0, 0, f"Stripe payment lookup failed: {status}"
 
     candidates = result.get("data") if isinstance(result.get("data"), list) else []
     recovered: list[tuple[str, float, str]] = []
@@ -10339,15 +10339,42 @@ def recover_missing_stripe_checkout_transactions(booking_id: int) -> tuple[int, 
         recovered.append((payment_intent_id, round(amount_cents / 100, 2), payment_option))
 
     if not recovered:
-        return 0, "Stripe found no completed FairFares Checkout payment that exactly matches this booking. No refund was sent."
+        return 0, 0, "Stripe found no completed FairFares Checkout payment that exactly matches this booking. No refund was sent."
 
-    added = 0
+    eligible = 0
+    already_refunded = 0
     with db() as con:
         for payment_intent_id, amount, payment_option in recovered:
             existing = con.execute(
-                "SELECT id FROM transactions WHERE invoice_number = ?", (payment_intent_id,)
+                "SELECT * FROM transactions WHERE invoice_number = ?", (payment_intent_id,)
             ).fetchone()
             if existing:
+                if row_value(existing, "transaction_status") == "REFUNDED":
+                    already_refunded += 1
+                    continue
+                # This exact Stripe PaymentIntent may have been recorded by an
+                # older path as a generic card payment.  Normalize the local
+                # bookkeeping only after the triple metadata match above, so
+                # the existing real Stripe payment can enter the protected
+                # refund flow.
+                con.execute(
+                    """
+                    UPDATE transactions
+                    SET booking_id = ?, payment_method = 'Stripe Checkout',
+                        cardholder_name = 'Stripe customer', amount = ?,
+                        transaction_status = ?, billing_verification_status = 'MATCHED',
+                        billing_verification_notes = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        booking_id,
+                        amount,
+                        "PAID" if payment_option == "full" else "HOLD_PAID",
+                        "Normalized from an exact Stripe Checkout metadata match for a protected refund.",
+                        row_value(existing, "id"),
+                    ),
+                )
+                eligible += 1
                 continue
             con.execute(
                 """
@@ -10364,12 +10391,10 @@ def recover_missing_stripe_checkout_transactions(booking_id: int) -> tuple[int, 
                     payment_intent_id,
                 ),
             )
-            added += 1
-    return added, (
-        f"Recovered {added} verified Stripe Checkout payment{'s' if added != 1 else ''}."
-        if added
-        else "The matching Stripe Checkout payment was already recorded."
-    )
+            eligible += 1
+    if eligible:
+        return eligible, already_refunded, f"Recovered {eligible} verified Stripe Checkout payment{'s' if eligible != 1 else ''}."
+    return 0, already_refunded, "The verified Stripe Checkout payment was already refunded."
 
 
 def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
@@ -10389,7 +10414,7 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
             (booking_id,),
         ).fetchall()
     if not transactions:
-        recovered_count, recovery_message = recover_missing_stripe_checkout_transactions(booking_id)
+        recovered_count, already_refunded_count, recovery_message = recover_missing_stripe_checkout_transactions(booking_id)
         if recovered_count:
             with db() as con:
                 transactions = con.execute(
@@ -10407,6 +10432,8 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
                     (booking_id,),
                 ).fetchall()
         if not transactions:
+            if already_refunded_count:
+                return "REFUNDED", recovery_message
             return "REFUND_REVIEW", recovery_message
 
     refunded_count = 0
