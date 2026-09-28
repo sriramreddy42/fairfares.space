@@ -26277,6 +26277,7 @@ PRODUCT_ANALYTICS_EVENTS = {
 def product_analytics_summary(days: int = 30) -> dict[str, object]:
     days = days if days in {1, 7, 30, 90} else 30
     window = f"-{days} days"
+    previous_window = f"-{days * 2} days"
     event_stages = {
         "installs": "app_first_open",
         "opens": "app_open",
@@ -26295,26 +26296,36 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
         "rental_car_views": "rental_car_view",
         "rental_bookings": "rental_booking_completed",
     }
+    def unique_actor_count(
+        con: sqlite3.Connection,
+        event_names: tuple[str, ...],
+        start_window: str,
+        end_window: str | None = None,
+    ) -> int:
+        placeholders = ",".join("?" for _ in event_names)
+        query = f"""SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
+                     FROM product_analytics_events
+                     WHERE event_name IN ({placeholders}) AND datetime(occurred_at) >= datetime('now', ?)"""
+        values: list[object] = [*event_names, start_window]
+        if end_window:
+            query += " AND datetime(occurred_at) < datetime('now', ?)"
+            values.append(end_window)
+        row = con.execute(query, values).fetchone()
+        return int(row_value(row, "total") or 0)
+
+    activation_events = (
+        "housing_need_place_posted", "housing_need_roommates_posted", "housing_have_place_listed",
+        "housing_message_sent", "housing_connection_confirmed", "message_sent", "chitthi_community_joined",
+        "rental_booking_started", "rental_booking_completed",
+    )
     with db() as con:
         stage_counts: dict[str, int] = {}
+        previous_stage_counts: dict[str, int] = {}
         for stage, event_name in event_stages.items():
-            row = con.execute(
-                """SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
-                   FROM product_analytics_events
-                   WHERE event_name = ? AND datetime(occurred_at) >= datetime('now', ?)""",
-                (event_name, window),
-            ).fetchone()
-            stage_counts[stage] = int(row_value(row, "total") or 0)
-        activation_row = con.execute(
-            """SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
-               FROM product_analytics_events
-               WHERE event_name IN ('housing_need_place_posted', 'housing_need_roommates_posted', 'housing_have_place_listed',
-                                    'housing_message_sent', 'housing_connection_confirmed', 'message_sent', 'chitthi_community_joined',
-                                    'rental_booking_started', 'rental_booking_completed')
-                 AND datetime(occurred_at) >= datetime('now', ?)""",
-            (window,),
-        ).fetchone()
-        stage_counts["activated_users"] = int(row_value(activation_row, "total") or 0)
+            stage_counts[stage] = unique_actor_count(con, (event_name,), window)
+            previous_stage_counts[stage] = unique_actor_count(con, (event_name,), previous_window, window)
+        stage_counts["activated_users"] = unique_actor_count(con, activation_events, window)
+        previous_stage_counts["activated_users"] = unique_actor_count(con, activation_events, previous_window, window)
         # D7 is deliberately authenticated-only. An eligible cohort member has
         # a first app open 7–90 days ago; a return is an app open on day 7–14.
         # This separates a retained signed-in person from Apple re-downloads
@@ -26366,6 +26377,7 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
     return {
         "days": days,
         "stages": stage_counts,
+        "previous_stages": previous_stage_counts,
         "platforms": [dict(row) for row in platform_rows],
         "daily": [dict(row) for row in daily_rows],
     }
@@ -34454,6 +34466,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             days = 30
         summary = product_analytics_summary(days)
         stages = summary["stages"]
+        previous_stages = summary["previous_stages"]
         stage_definitions = [
             ("installs", "First app opens / installs"),
             ("opens", "Active users"),
@@ -34475,6 +34488,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         maximum = max([int(stages.get(key, 0)) for key, _label in stage_definitions] + [1])
         funnel_rows: list[str] = []
         active_users = int(stages.get("opens", 0))
+        def comparison_copy(key: str, value: int) -> tuple[str, str]:
+            if key == "d7_authenticated_returns":
+                return "", "cohort"
+            previous_value = int(previous_stages.get(key, 0))
+            if previous_value <= 0:
+                return ("New signal this period", "positive") if value else ("No prior activity", "neutral")
+            difference = value - previous_value
+            percent = abs(difference) / previous_value * 100
+            if difference > 0:
+                return f"↑ {percent:.0f}% vs prior {days} days", "positive"
+            if difference < 0:
+                return f"↓ {percent:.0f}% vs prior {days} days", "negative"
+            return f"No change vs prior {days} days", "neutral"
         for key, label in stage_definitions:
             value = int(stages.get(key, 0))
             if key == "installs":
@@ -34489,11 +34515,55 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             else:
                 conversion_copy = "Awaiting active-user data"
             width = max(3, value / maximum * 100) if value else 0
+            comparison, comparison_tone = comparison_copy(key, value)
             funnel_rows.append(
                 f'<article class="analytics-funnel-row"><div><span>{escape(label)}</span><b>{value:,}</b>'
-                f'<small>{conversion_copy}</small></div>'
+                f'<small>{conversion_copy}</small></div><em class="analytics-delta {comparison_tone}">{escape(comparison)}</em>'
                 f'<i style="--analytics-width:{width:.2f}%"></i></article>'
             )
+        overview_definitions = [
+            ("opens", "Active users", "Unique people who opened FairFares"),
+            ("activated_users", "Activated users", "Posted, messaged, joined, or booked"),
+            ("housing_connections", "Housing connections", "Owner-confirmed found or filled"),
+            ("rental_bookings", "Rental bookings", "Completed rental bookings"),
+        ]
+        overview_cards = "".join(
+            f'<article class="analytics-overview-card"><span>{escape(label)}</span><b>{int(stages.get(key, 0)):,}</b>'
+            f'<small>{escape(description)}</small><em class="analytics-delta {comparison_copy(key, int(stages.get(key, 0)))[1]}">{escape(comparison_copy(key, int(stages.get(key, 0)))[0])}</em></article>'
+            for key, label, description in overview_definitions
+        )
+        def rate(numerator_key: str, denominator_key: str) -> float | None:
+            denominator = int(stages.get(denominator_key, 0))
+            return int(stages.get(numerator_key, 0)) / denominator * 100 if denominator else None
+
+        insight_items: list[tuple[str, str, str]] = []
+        if int(stages.get("opens", 0)) >= 20 and int(previous_stages.get("opens", 0)) >= 20 and int(stages.get("opens", 0)) < int(previous_stages.get("opens", 0)) * 0.8:
+            insight_items.append(("Priority", "Active users are down", "Review the acquisition source, onboarding errors, and current app stability before adding new features."))
+        signup_rate = rate("signups", "installs")
+        if int(stages.get("installs", 0)) >= 20 and signup_rate is not None and signup_rate < 35:
+            insight_items.append(("Priority", f"Only {signup_rate:.0f}% of first opens created an account", "Simplify the first screen and account setup; test whether people can see useful housing before signup."))
+        housing_view_rate = rate("housing_listing_views", "housing_searches")
+        if int(stages.get("housing_searches", 0)) >= 20 and housing_view_rate is not None and housing_view_rate < 35:
+            insight_items.append(("Watch", f"Only {housing_view_rate:.0f}% of housing searchers opened a listing", "Review search relevance, available inventory, photo quality, and the first few result cards."))
+        housing_message_rate = rate("housing_messages", "housing_listing_views")
+        if int(stages.get("housing_listing_views", 0)) >= 20 and housing_message_rate is not None and housing_message_rate < 12:
+            insight_items.append(("Watch", f"Only {housing_message_rate:.0f}% of housing viewers started a message", "Improve listing trust: clearer availability, photos, pricing, and an obvious Chitthi call to action."))
+        d7_eligible = int(stages.get("d7_eligible", 0))
+        d7_returns = int(stages.get("d7_authenticated_returns", 0))
+        if d7_eligible >= 20 and d7_returns / d7_eligible * 100 < 15:
+            insight_items.append(("Watch", f"D7 authenticated return is {d7_returns / d7_eligible * 100:.0f}%", "Give new members a reason to return: saved searches, reply notifications, and local community activity."))
+        if not insight_items:
+            insight_items.append(("Ready", "No low-volume priority signal yet", "Keep collecting a larger sample. Signals appear only when at least 20 relevant people reached a stage."))
+        insight_cards = "".join(
+            f'<article class="analytics-insight-card {"priority" if level == "Priority" else "watch" if level == "Watch" else "ready"}"><span>{escape(level)}</span><b>{escape(title)}</b><p>{escape(copy)}</p></article>'
+            for level, title, copy in insight_items
+        )
+        daily = summary["daily"]
+        daily_max = max([int(row.get("opens") or 0) for row in daily] + [1])
+        daily_chart = "".join(
+            f'<article title="{escape(str(row.get("day") or ""))}: {int(row.get("opens") or 0):,} active users"><i style="--activity-height:{max(6, int(int(row.get("opens") or 0) / daily_max * 100)) if int(row.get("opens") or 0) else 2}%"></i><small>{escape(str(row.get("day") or "")[5:])}</small></article>'
+            for row in daily
+        ) or '<p class="analytics-empty-state">Daily activity will appear after the first analytics event.</p>'
         platform_cards = "".join(
             f'<article><span>{escape(str(row.get("platform") or "unknown").title())}</span><b>{int(row.get("users") or 0):,}</b></article>'
             for row in summary["platforms"]
@@ -34513,6 +34583,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             admin_name=escape(str(row_value(user, "name") or "Admin")),
             admin_nav=self.render_admin_nav(user, "analytics"),
             period_links=period_links,
+            overview_cards=overview_cards,
+            insight_cards=insight_cards,
+            daily_chart=daily_chart,
             funnel_rows="".join(funnel_rows),
             platform_cards=platform_cards,
             daily_rows=daily_rows,

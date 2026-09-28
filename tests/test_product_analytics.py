@@ -149,6 +149,24 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertEqual(summary["stages"]["carpool_searches"], 1)
         self.assertEqual(summary["stages"]["rental_searches"], 1)
         self.assertEqual(summary["stages"]["activated_users"], 1)
+        self.assertEqual(summary["previous_stages"]["opens"], 0)
+
+    def test_summary_compares_to_the_immediately_preceding_equal_period(self):
+        prior_period_event = datetime.utcnow() - timedelta(days=8)
+        current_period_event = datetime.utcnow() - timedelta(days=1)
+        with app.db() as con:
+            con.executemany(
+                """INSERT INTO product_analytics_events
+                   (event_name, anonymous_id, platform, session_id, dedupe_key, occurred_at)
+                   VALUES ('app_open', ?, 'ios', 'session', ?, ?)""",
+                [
+                    ("prior-period-install", "prior-period-open", prior_period_event.strftime("%Y-%m-%d %H:%M:%S")),
+                    ("current-period-install", "current-period-open", current_period_event.strftime("%Y-%m-%d %H:%M:%S")),
+                ],
+            )
+        summary = app.product_analytics_summary(7)
+        self.assertEqual(summary["stages"]["opens"], 1)
+        self.assertEqual(summary["previous_stages"]["opens"], 1)
 
     def test_d7_retention_requires_authenticated_return_in_cohort_window(self):
         first_open = datetime.utcnow() - timedelta(days=10)
@@ -230,6 +248,10 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertIn("Stage reach", template)
         self.assertIn("never collected", template)
         self.assertIn("$funnel_rows", template)
+        self.assertIn("$overview_cards", template)
+        self.assertIn("$insight_cards", template)
+        self.assertIn("$daily_chart", template)
+        self.assertIn("immediately preceding equal period", template)
 
 
 if __name__ == "__main__":
