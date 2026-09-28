@@ -174,6 +174,25 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(updated["payment_status"], "REFUND_REVIEW")
         self.assertIn("Stripe refund requires the refund passcode", updated["cancellation_reason"])
 
+    def test_refund_retry_reuses_stripe_review_transaction_safely(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute("UPDATE bookings SET booking_status = 'CANCELLED', status = 'CANCELLED', payment_status = 'REFUND_REVIEW' WHERE id = ?", (booking["id"],))
+            con.execute(
+                "INSERT INTO transactions (booking_id, payment_method, amount, transaction_status, invoice_number) VALUES (?, 'Stripe Checkout', 12.50, 'REFUND_REVIEW', 'pi_retry_refund')",
+                (booking["id"],),
+            )
+        with patch.object(app, "stripe_api_request", return_value=({"id": "re_retry", "status": "succeeded"}, "ok")) as refund_request:
+            status, message = app.auto_refund_booking_payments(booking["id"])
+
+        self.assertEqual(status, "REFUNDED")
+        self.assertIn("Refunded 1 Stripe payment", message)
+        self.assertEqual(refund_request.call_args.args[0], "refunds")
+        with app.db() as con:
+            transaction = con.execute("SELECT transaction_status FROM transactions WHERE booking_id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(transaction["transaction_status"], "REFUNDED")
+
     def test_refund_is_not_final_until_stripe_confirms_success(self):
         with patch.object(app, "stripe_api_request", return_value=({"id": "re_pending", "status": "pending"}, "ok")):
             pending, pending_message, _ = app.stripe_refund_payment_reference("pi_refund_test", 123, 12.50, "refund-test")
@@ -218,8 +237,11 @@ class BookingHoldTest(unittest.TestCase):
         handler = Handler()
         with patch.object(app, "refund_passcode_configured", return_value=True), patch.object(app, "verify_refund_passcode", return_value=False):
             app.FairFaresHandler.refund_admin_booking_payment(handler)
-        self.assertIn("refund_message=", handler.redirected_to)
-        self.assertIn("Refund%20was%20not%20sent", handler.redirected_to)
+        parsed = urllib.parse.urlparse(handler.redirected_to)
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(query["refund_booking_id"], ["1"])
+        self.assertIn("Refund was not sent", query["refund_message"][0])
+        self.assertEqual(parsed.fragment, "booking-1")
 
     def test_mobile_customer_pickup_and_return_require_staff_approval(self):
         car = app.get_cars()[0]

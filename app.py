@@ -10299,7 +10299,7 @@ def auto_refund_booking_payments(booking_id: int) -> tuple[str, str]:
             SELECT *
             FROM transactions
             WHERE booking_id = ?
-              AND transaction_status IN ('PAID', 'HOLD_PAID')
+              AND transaction_status IN ('PAID', 'HOLD_PAID', 'REFUND_REVIEW')
               AND invoice_number != ''
               AND payment_method = 'Stripe Checkout'
               AND amount > 0
@@ -33775,7 +33775,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         booking_rows = get_admin_bookings()
         if selected_status != "ALL":
             booking_rows = [row for row in booking_rows if row["booking_status"] == selected_status]
-        bookings = "\n".join(self.render_admin_booking_row(row, user) for row in booking_rows)
+        try:
+            refund_booking_id = int(query.get("refund_booking_id", ["0"])[0])
+        except (TypeError, ValueError):
+            refund_booking_id = 0
+        bookings = "\n".join(
+            self.render_admin_booking_row(row, user, refund_booking_id, refund_feedback)
+            for row in booking_rows
+        )
         calendar_html = self.render_admin_booking_calendar(booking_rows, selected_calendar, selected_status)
         booking_notice = (
             f'<p class="request-notice"><b>Refund result</b><span>{escape(refund_feedback)}</span></p>'
@@ -35259,7 +35266,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         </tr>
         """
 
-    def render_admin_booking_row(self, row: sqlite3.Row, user: sqlite3.Row) -> str:
+    def render_admin_booking_row(
+        self,
+        row: sqlite3.Row,
+        user: sqlite3.Row,
+        refund_booking_id: int = 0,
+        refund_feedback: str = "",
+    ) -> str:
         is_request = row["booking_status"] in {"MODIFIED", "CANCELLATION_REQUESTED"}
         modification = pending_booking_modification(row)
         payment_label, pickup_balance_label = admin_payment_summary(row)
@@ -35280,6 +35293,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             """
         elif row["payment_status"] in {"PAID", "HOLD_PAID", "REFUND_REVIEW"}:
             refund_action = f'<small class="approval-note"><b>Refund locked</b>{escape(refund_block_reason)}</small>'
+        refund_result = (
+            f'<p class="request-notice"><b>Refund result</b><span>{escape(refund_feedback)}</span></p>'
+            if refund_feedback and refund_booking_id == int(row_value(row, "id") or 0) else ""
+        )
         booking_status_options = (
             ("PENDING_HOLD", "Pending 10-min hold"),
             ("EXPIRED_HOLD", "Expired hold"),
@@ -35338,7 +35355,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <small class="approval-note"><b>Owner-admin control</b>Payment and booking-status corrections are restricted. Complete pickup and return in the handoff workspace.</small>
         """
         return f"""
-        <tr class="{'admin-request-row' if is_request else ''}">
+        <tr id="booking-{int(row_value(row, 'id') or 0)}" class="{'admin-request-row' if is_request else ''}">
             <td data-label="Booking"><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
             <td data-label="User">{escape(row["user_name"])}<span>{escape(row["user_email"])}</span></td>
             <td data-label="Car">{escape(row["car_name"])}</td>
@@ -35356,6 +35373,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 {requested_trip}
                 {status_control}
                 {refund_action}
+                {refund_result}
             </td>
             <td data-label="Pickup"><a class="admin-text-link" href="/admin/pickup">Open Pickup</a></td>
         </tr>
@@ -36244,9 +36262,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
-        def refund_redirect(message: str) -> None:
-            self.redirect("/admin/bookings?refund_message=" + urllib.parse.quote(clean_text_value(message, 500)))
         form = self.read_form()
+        try:
+            refund_booking_id = int(form.get("booking_id") or 0)
+        except (TypeError, ValueError):
+            refund_booking_id = 0
+        def refund_redirect(message: str) -> None:
+            query = urllib.parse.urlencode({
+                "refund_message": clean_text_value(message, 500),
+                "refund_booking_id": refund_booking_id,
+            })
+            self.redirect(f"/admin/bookings?{query}#booking-{refund_booking_id}")
         reason = (form.get("reason") or "").strip() or "Manual refund requested by staff."
         if not refund_passcode_configured() or not verify_refund_passcode(form.get("refund_passcode", "")):
             refund_redirect("Refund was not sent: the refund passcode is incorrect or is not configured.")
