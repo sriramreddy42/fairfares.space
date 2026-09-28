@@ -44,7 +44,23 @@ function normalizeExplicitApiUrl(value: string | undefined) {
   return clean;
 }
 
-const CONFIGURED_APP_API_URL = normalizeExplicitApiUrl(String(Constants.expoConfig?.extra?.apiUrl || ""));
+function isLocalApiUrl(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLocaleLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+const RAW_CONFIGURED_APP_API_URL = normalizeExplicitApiUrl(String(Constants.expoConfig?.extra?.apiUrl || ""));
+// A previously installed development shell can retain an old localhost value
+// in its native Expo manifest even after Metro serves the current JavaScript.
+// Only an explicit environment override may opt a native app into a local API;
+// otherwise use the configured public endpoint so stale shells still load data.
+const CONFIGURED_APP_API_URL = Platform.OS !== "web" && isLocalApiUrl(RAW_CONFIGURED_APP_API_URL)
+  ? ""
+  : RAW_CONFIGURED_APP_API_URL;
 // app.json always provides the production URL. Only an environment override
 // is an explicit development endpoint; treating production as one inflated
 // every GET to four 30-second attempts.
