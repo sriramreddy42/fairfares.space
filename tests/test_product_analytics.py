@@ -257,6 +257,11 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertIn("What people are doing", template)
         self.assertIn("20-admin.css?v=", app.BASE_STYLESHEETS[2])
         self.assertIn("analytics-v2", app.BASE_STYLESHEETS[2])
+        self.assertEqual(
+            app.PAGE_STYLESHEETS["admin_analytics.html"],
+            [f"/static/css/sections/analytics-dashboard.css?v={app.ASSET_VERSION}-v1"],
+        )
+        self.assertTrue(Path("static/css/sections/analytics-dashboard.css").is_file())
 
 
 if __name__ == "__main__":

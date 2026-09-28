@@ -855,6 +855,7 @@ BASE_STYLESHEETS = [
     f"/static/css/sections/70-mobile-polish.min.css?v={ASSET_VERSION}",
 ]
 PAGE_STYLESHEETS = {
+    "admin_analytics.html": [f"/static/css/sections/analytics-dashboard.css?v={ASSET_VERSION}-v1"],
     "admin_wiki.html": [f"/static/css/wiki.min.css?v={ASSET_VERSION}"],
     "accommodations.html": [f"/static/css/accommodations.css?v={ASSET_VERSION}"],
     "carpool.html": [f"/static/css/carpool.css?v={ASSET_VERSION}"],
