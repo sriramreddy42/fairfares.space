@@ -73,6 +73,20 @@ const reactionOptions = [
   { value: "ANGRY", emoji: "😡", label: "Angry" },
 ] as const;
 const emptyDetails = { budget: "", moveInDate: "", preference: "", rent: "", availableDate: "", roomType: "", origin: "", destination: "", travelDate: "", travelTime: "", seats: "" };
+function emptyCommunityPostForm() {
+  return {
+    type: "QUESTION" as CommunityPost["type"],
+    category: "GENERAL" as CommunityPost["category"],
+    title: "",
+    body: "",
+    area: "",
+    linkUrl: "",
+    communityId: "",
+    images: [] as string[],
+    details: { ...emptyDetails },
+    expiresInDays: 45,
+  };
+}
 
 type CommunityFeedSnapshot = {
   posts: CommunityPost[];
@@ -327,8 +341,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [guestRemaining, setGuestRemaining] = useState(6);
   const [guestBenefitsOpen, setGuestBenefitsOpen] = useState(false);
   const pendingGuestAuth = useRef<"signup" | "login" | "">("");
-  const [form, setForm] = useState({ type: "QUESTION" as CommunityPost["type"], category: "GENERAL" as CommunityPost["category"], title: "", body: "", area: "", linkUrl: "", communityId: "", images: [] as string[], details: { ...emptyDetails }, expiresInDays: 45 });
+  const [form, setForm] = useState(emptyCommunityPostForm);
   const [publishing, setPublishing] = useState(false);
+  const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
   const reactionRequests = useRef(new Set<string>());
@@ -802,10 +817,64 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setAnswer("");
   }, [detail?.id]);
 
+  const composerFingerprint = (value: typeof form) => JSON.stringify(value);
+
+  const discardCommunityComposer = () => {
+    const emptyForm = emptyCommunityPostForm();
+    composerBaselineRef.current = composerFingerprint(emptyForm);
+    setForm(emptyForm);
+    setEditingPostId("");
+    setComposerOpen(false);
+  };
+
+  const requestCommunityComposerClose = () => {
+    if (publishing) return;
+    const changed = Boolean(composerBaselineRef.current)
+      && composerFingerprint(form) !== composerBaselineRef.current;
+    if (!changed) {
+      discardCommunityComposer();
+      return;
+    }
+    Alert.alert(
+      editingPostId ? "Discard post changes?" : "Discard this post?",
+      editingPostId ? "Your unsaved changes will be lost." : "Your unfinished post will be lost.",
+      [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Discard", style: "destructive", onPress: discardCommunityComposer },
+      ],
+    );
+  };
+
+  const openCommunityPostEditor = (post: CommunityPost) => {
+    const editorForm = {
+      type: post.type,
+      category: post.category,
+      title: post.title,
+      body: post.body,
+      area: post.area,
+      linkUrl: post.linkUrl,
+      communityId: post.community?.id || "",
+      images: [...post.images],
+      details: { ...emptyDetails, ...post.details },
+      expiresInDays: 45,
+    };
+    composerBaselineRef.current = composerFingerprint(editorForm);
+    setEditingPostId(post.id);
+    setForm(editorForm);
+    setDetail(null);
+    setComposerOpen(true);
+  };
+
   const openComposer = () => {
     if (!user) { onRequireLogin(); return; }
     setEditingPostId("");
-    setForm((current) => ({ ...current, area: current.area || groupSuggestionCity, communityId: selectedGroup }));
+    const newForm = {
+      ...emptyCommunityPostForm(),
+      area: groupSuggestionCity,
+      communityId: selectedGroup,
+    };
+    composerBaselineRef.current = composerFingerprint(newForm);
+    setForm(newForm);
     setComposerOpen(true);
   };
 
@@ -969,7 +1038,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         const result = await createCommunityPost({ ...form, city: groupSuggestionCity, title: form.title.trim(), body: form.body.trim(), area: form.area.trim(), linkUrl: form.linkUrl.trim() });
         setPosts((current) => [result.post, ...current]);
       }
-      setForm({ type: "QUESTION", category: "GENERAL", title: "", body: "", area: "", linkUrl: "", communityId: "", images: [], details: { ...emptyDetails }, expiresInDays: 45 });
+      const emptyForm = emptyCommunityPostForm();
+      composerBaselineRef.current = composerFingerprint(emptyForm);
+      setForm(emptyForm);
       setComposerOpen(false);
       Alert.alert(editingPostId ? "Post updated" : "Posted", editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
       setEditingPostId("");
@@ -1079,7 +1150,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const completedStatus = (post: CommunityPost): CommunityPost["fulfillmentStatus"] => post.category === "HAVE_PLACE" ? "FILLED" : post.category === "CARPOOL_RIDE" ? "ARRANGED" : post.category === "NEED_PLACE" || post.category === "NEED_ROOMMATE" ? "FOUND" : "RESOLVED";
   const managePost = (post: CommunityPost) => Alert.alert("Manage post", "Choose an action.", [
     { text: post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now() ? "Renew for 45 days" : post.fulfillmentStatus === "OPEN" ? `Mark ${completedStatus(post).toLowerCase()}` : "Reopen post", onPress: async () => { try { const expired = Boolean(post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now()); const status = expired || post.fulfillmentStatus !== "OPEN" ? "OPEN" : completedStatus(post); await updateCommunityPostStatus(post.id, status); mutatePost(post.id, (value) => ({ ...value, fulfillmentStatus: status, canAnswer: status === "OPEN", expiresAt: expired ? new Date(Date.now() + 45 * 86400000).toISOString() : value.expiresAt })); } catch (error) { Alert.alert("Status not changed", message(error)); } } },
-    { text: "Edit", onPress: () => { setEditingPostId(post.id); setForm({ type: post.type, category: post.category, title: post.title, body: post.body, area: post.area, linkUrl: post.linkUrl, communityId: post.community?.id || "", images: [...post.images], details: { ...emptyDetails, ...post.details }, expiresInDays: 45 }); setDetail(null); setComposerOpen(true); } },
+    { text: "Edit", onPress: () => openCommunityPostEditor(post) },
     { text: "Delete", style: "destructive", onPress: () => confirmDelete(post) },
     { text: "Cancel", style: "cancel" },
   ]);
@@ -1415,8 +1486,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </View></View>
     </Modal>
 
-    <Modal visible={composerOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setComposerOpen(false)}>
-      <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={() => { setComposerOpen(false); setEditingPostId(""); }} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? "Saving…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+    <Modal visible={composerOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestCommunityComposerClose}>
+      <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? "Saving…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
         <Text style={styles.formLabel}>What are you sharing?</Text><View style={styles.optionGrid}>{types.map((item) => <TouchableOpacity key={item.value} style={[styles.option, form.type === item.value && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, type: item.value }))} accessibilityRole="button" accessibilityState={{ selected: form.type === item.value }}><Text style={[styles.optionText, form.type === item.value && styles.optionTextActive]}>{item.label}</Text></TouchableOpacity>)}</View>
         <Text style={styles.formLabel}>What do you need?</Text><View style={styles.needGrid}>{categories.slice(1).map((item) => <TouchableOpacity key={item} style={[styles.needOption, form.category === item && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, category: item as CommunityPost["category"] }))} accessibilityRole="button" accessibilityState={{ selected: form.category === item }}><Text style={styles.needIcon}>{categoryIcons[item]}</Text><Text style={[styles.needText, form.category === item && styles.optionTextActive]}>{categoryLabels[item]}</Text></TouchableOpacity>)}</View>
         {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <><Text style={styles.formLabel}>Housing details</Text><TextInput style={styles.input} value={form.details.budget} onChangeText={(value) => setDetailField("budget", value)} placeholder="Monthly budget, for example $900" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.moveInDate} onChangeText={(value) => setDetailField("moveInDate", value)} placeholder="Move-in date" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.preference} onChangeText={(value) => setDetailField("preference", value)} placeholder="Roommate or home preferences" placeholderTextColor={theme.colors.muted} /></> : null}

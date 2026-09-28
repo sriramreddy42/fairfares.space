@@ -465,6 +465,10 @@ function FairFaresApp() {
   const [listingValidatedLabel, setListingValidatedLabel] = useState("");
   const [listingSubmitting, setListingSubmitting] = useState(false);
   const listingSubmittingRef = useRef(false);
+  // Android's predictive-back gesture arrives at a native Modal through
+  // onRequestClose. Keep the opening state so an accidental edge swipe can
+  // ask before it discards a partially completed listing.
+  const listingFormBaselineRef = useRef("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
   const [messengerMediaTransferActive, setMessengerMediaTransferActive] = useState(false);
 
@@ -1961,11 +1965,41 @@ function FairFaresApp() {
     return "need_place";
   }
 
+  function listingFormFingerprint(form: MobileHousingPostInput, roommateChoice: boolean | null) {
+    return JSON.stringify({ form, roommateChoice });
+  }
+
+  function closeListingForm() {
+    setListingOpen(false);
+    setListingAddressSuggestions([]);
+    setListingAddressLoading(false);
+  }
+
+  function requestListingClose() {
+    if (listingSubmittingRef.current) return;
+    const changed = Boolean(listingFormBaselineRef.current)
+      && listingFormFingerprint(listingForm, roommatePlaceChoice) !== listingFormBaselineRef.current;
+    if (!changed) {
+      closeListingForm();
+      return;
+    }
+    Alert.alert(
+      listingForm.listingId ? "Discard listing changes?" : "Discard this draft?",
+      listingForm.listingId
+        ? "Your unsaved edits will be lost."
+        : "Your unfinished post will be lost.",
+      [
+        { text: "Keep editing", style: "cancel" },
+        { text: "Discard", style: "destructive", onPress: closeListingForm }
+      ]
+    );
+  }
+
   function openListingFormForUser(user: BootstrapPayload["user"], intent = selectedNeed) {
     const resolvedIntent = resolveListingIntent(intent);
     const nextMode: MobileHousingPostInput["postMode"] =
       resolvedIntent === "have_place" ? "HAVE_PLACE" : "NEED_PLACE";
-    setListingForm({
+    const initialForm: MobileHousingPostInput = {
       ...emptyListingForm,
       postMode: nextMode,
       roommateIntent: resolvedIntent === "need_roommates",
@@ -1974,7 +2008,9 @@ function FairFaresApp() {
       contactName: user?.name || "",
       contactEmail: user?.email || "",
       contactPhone: user?.phone || ""
-    });
+    };
+    listingFormBaselineRef.current = listingFormFingerprint(initialForm, null);
+    setListingForm(initialForm);
     setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
@@ -2008,7 +2044,7 @@ function FairFaresApp() {
 
   function editHousingListing(post: HousingPost) {
     const havePlace = post.mode === "HAVE_PLACE";
-    setListingForm({
+    const initialForm: MobileHousingPostInput = {
       ...emptyListingForm,
       listingId: post.id,
       postMode: havePlace ? "HAVE_PLACE" : "NEED_PLACE",
@@ -2053,8 +2089,11 @@ function FairFaresApp() {
       contactPhone: post.contactPhone || data?.user?.phone || "",
       roommateIntent: Boolean(post.roommateIntent),
       images: post.images || []
-    });
-    setRoommatePlaceChoice(post.roommateIntent ? havePlace : null);
+    };
+    const initialRoommatePlaceChoice = post.roommateIntent ? havePlace : null;
+    listingFormBaselineRef.current = listingFormFingerprint(initialForm, initialRoommatePlaceChoice);
+    setListingForm(initialForm);
+    setRoommatePlaceChoice(initialRoommatePlaceChoice);
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
     setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
@@ -3273,19 +3312,6 @@ function FairFaresApp() {
     && !paymentUrl
     && !paymentStatus;
 
-  const listingRightEdgeBackResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponderCapture: () => false,
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
-      const horizontalSwipe = Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25;
-      return gesture.x0 >= viewportWidth - 34 && horizontalSwipe;
-    },
-    onPanResponderRelease: (_event, gesture) => {
-      const horizontalSwipe = Math.abs(gesture.dx) > 42 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15;
-      if (horizontalSwipe) setListingOpen(false);
-    },
-    onPanResponderTerminationRequest: () => true
-  }), [viewportWidth]);
-
   const searchRightEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => {
@@ -3941,12 +3967,11 @@ function FairFaresApp() {
           </View>
         </View>
       </Modal>
-      <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setListingOpen(false)}>
+      <Modal visible={listingOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={requestListingClose}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={styles.rightEdgeBackGestureZone} {...listingRightEdgeBackResponder.panHandlers} />
           <ScrollView style={[styles.modalCard, styles.listingModalCard]} contentContainerStyle={styles.listingForm} keyboardShouldPersistTaps="handled">
             <View style={styles.modalHeaderRow}>
-              <TouchableOpacity style={styles.modalBackButton} onPress={() => setListingOpen(false)} accessibilityRole="button" accessibilityLabel="Back">
+              <TouchableOpacity style={styles.modalBackButton} onPress={requestListingClose} accessibilityRole="button" accessibilityLabel="Back">
                 <Text style={styles.modalBackGlyph}>‹</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>
@@ -4158,7 +4183,7 @@ function FairFaresApp() {
             <TouchableOpacity style={[styles.primaryButton, listingSubmitting && { opacity: 0.6 }]} onPress={submitListing} disabled={listingSubmitting}>
               <View style={styles.buttonLoadingContent}>{listingSubmitting ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{listingSubmitting ? (listingForm.listingId ? "Saving changes…" : "Posting…") : listingForm.listingId ? "Save changes" : "Post listing"}</Text></View>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setListingOpen(false)}>
+            <TouchableOpacity onPress={requestListingClose}>
               <Text style={styles.switchText}>Cancel</Text>
             </TouchableOpacity>
           </ScrollView>
