@@ -255,6 +255,8 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertIn("immediately preceding equal period", template)
         self.assertIn("Full activity breakdown", template)
         self.assertIn("What people are doing", template)
+        self.assertIn("20-admin.css?v=", app.BASE_STYLESHEETS[2])
+        self.assertIn("analytics-v2", app.BASE_STYLESHEETS[2])
 
 
 if __name__ == "__main__":

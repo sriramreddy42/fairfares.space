@@ -845,7 +845,10 @@ ACCOMMODATION_LEASE_TERMS = (
 BASE_STYLESHEETS = [
     f"/static/css/sections/00-base-home.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/10-auth.min.css?v={ASSET_VERSION}",
-    f"/static/css/sections/20-admin.css?v={ASSET_VERSION}",
+    # Keep admin-dashboard visual changes independently cache-busted. The
+    # analytics page can ship new markup before a browser would otherwise
+    # revalidate this shared stylesheet.
+    f"/static/css/sections/20-admin.css?v={ASSET_VERSION}-analytics-v2",
     f"/static/css/sections/30-dashboard-manage.css?v={ASSET_VERSION}",
     f"/static/css/sections/50-home-results.min.css?v={ASSET_VERSION}",
     f"/static/css/sections/60-payment-admin-final.min.css?v={ASSET_VERSION}",
