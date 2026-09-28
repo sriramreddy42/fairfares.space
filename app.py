@@ -30301,6 +30301,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_chat_notification_avatar(self, parsed: urllib.parse.ParseResult) -> None:
         query = urllib.parse.parse_qs(parsed.query)
+        refund_feedback = clean_text_value(query.get("refund_message", [""])[0], 500)
         try:
             user_id = int((query.get("user") or ["0"])[0])
             community_id = int((query.get("community") or ["0"])[0])
@@ -33776,11 +33777,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             booking_rows = [row for row in booking_rows if row["booking_status"] == selected_status]
         bookings = "\n".join(self.render_admin_booking_row(row, user) for row in booking_rows)
         calendar_html = self.render_admin_booking_calendar(booking_rows, selected_calendar, selected_status)
+        booking_notice = (
+            f'<p class="request-notice"><b>Refund result</b><span>{escape(refund_feedback)}</span></p>'
+            if refund_feedback else ""
+        )
         body = render_template(
             "admin_bookings.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "bookings"),
             booking_calendar=calendar_html,
+            booking_notice=booking_notice,
             booking_status_options=self.render_booking_status_filter_options(selected_status),
             bookings=bookings or '<tr><td colspan="7">No bookings match this filter.</td></tr>',
         )
@@ -36238,10 +36244,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
+        def refund_redirect(message: str) -> None:
+            self.redirect("/admin/bookings?refund_message=" + urllib.parse.quote(clean_text_value(message, 500)))
         form = self.read_form()
         reason = (form.get("reason") or "").strip() or "Manual refund requested by staff."
         if not refund_passcode_configured() or not verify_refund_passcode(form.get("refund_passcode", "")):
-            self.redirect("/admin/bookings")
+            refund_redirect("Refund was not sent: the refund passcode is incorrect or is not configured.")
             return
         with db() as con:
             booking = con.execute(
@@ -36255,13 +36263,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (form.get("booking_id"),),
             ).fetchone()
-            allowed, _message = booking_refund_allowed(booking)
+            allowed, blocked_message = booking_refund_allowed(booking)
             if not allowed or not booking:
-                self.redirect("/admin/bookings")
+                refund_redirect(f"Refund was not sent: {blocked_message or 'booking not found.'}")
                 return
             if not is_admin_user(user):
-                create_manual_refund_task(con, booking, user, reason)
-                self.redirect("/admin/bookings")
+                ticket_id = create_manual_refund_task(con, booking, user, reason)
+                refund_redirect(f"Refund was not sent. A priority review task ({ticket_id}) was created for an owner admin.")
                 return
 
         next_payment_status, refund_message = auto_refund_booking_payments(int(row_value(booking, "id")))
@@ -36301,7 +36309,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"Manual refund action by {row_value(user, 'name')}: {next_payment_status} - {refund_message}",
             self.public_origin(),
         )
-        self.redirect("/admin/bookings")
+        refund_redirect(refund_message)
 
     def update_admin_booking_status(self) -> None:
         # Direct lifecycle or payment edits can bypass checkout and the handoff

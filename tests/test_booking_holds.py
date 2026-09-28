@@ -202,6 +202,25 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(updated_booking["payment_status"], "REFUNDED")
         self.assertEqual(transaction["transaction_status"], "REFUNDED")
 
+    def test_refund_page_reports_invalid_passcode_instead_of_silent_reload(self):
+        class Handler:
+            redirected_to = ""
+
+            def require_admin(self):
+                return {"id": 1}
+
+            def read_form(self):
+                return {"refund_passcode": "wrong", "reason": "Customer cancellation", "booking_id": "1"}
+
+            def redirect(self, location):
+                self.redirected_to = location
+
+        handler = Handler()
+        with patch.object(app, "refund_passcode_configured", return_value=True), patch.object(app, "verify_refund_passcode", return_value=False):
+            app.FairFaresHandler.refund_admin_booking_payment(handler)
+        self.assertIn("refund_message=", handler.redirected_to)
+        self.assertIn("Refund%20was%20not%20sent", handler.redirected_to)
+
     def test_mobile_customer_pickup_and_return_require_staff_approval(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
