@@ -3566,6 +3566,8 @@
 .admin-listings-table {
   min-width: 1050px;
 }
+.admin-chat-reports-table { min-width: 1180px; }
+.admin-chat-report-actions { margin-top: 8px; }
 .admin-mini-table th {
   color: var(--muted);
   font-size: 0.75rem;

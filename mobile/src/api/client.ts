@@ -2850,11 +2850,25 @@ export async function deleteChatMessage(conversationId: string, messageId: numbe
   });
 }
 
-export async function reportChatMessage(conversationId: string, messageId: number, reason: string) {
-  return request<{ ok: boolean }>("/api/chat/messages/report", {
+export type ChatReportReason = "SPAM_SCAM" | "HARASSMENT" | "HATE_OR_VULGAR_LANGUAGE" | "THREATS_OR_VIOLENCE" | "THEFT_OR_PROPERTY_DAMAGE" | "IMPERSONATION" | "PRIVACY" | "OTHER";
+
+export async function reportChatMessage(input: {
+  conversationId: string;
+  messageId?: number;
+  reportedUserId?: number;
+  reason: ChatReportReason;
+  details: string;
+}) {
+  return request<{ ok: boolean; reportId: number; priority: "NORMAL" | "HIGH"; message: string }>("/api/chat/messages/report", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ conversation_id: conversationId, message_id: String(messageId), reason })
+    body: formBody({
+      conversation_id: input.conversationId,
+      message_id: String(input.messageId || ""),
+      reported_user_id: String(input.reportedUserId || ""),
+      reason: input.reason,
+      details: input.details
+    })
   });
 }
 

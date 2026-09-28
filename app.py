@@ -2529,7 +2529,7 @@ def cleanup_deleted_chitthi_messages(*, force: bool = True, limit: int | None = 
                    EXISTS(
                      SELECT 1 FROM chat_message_reports reports
                      WHERE reports.message_id = messages.id
-                       AND UPPER(COALESCE(reports.status, 'OPEN')) NOT IN ('CLOSED', 'RESOLVED')
+                       AND UPPER(COALESCE(reports.status, 'OPEN')) NOT IN ('CLOSED', 'RESOLVED', 'DISMISSED')
                    ) AS has_open_report
             FROM chat_messages messages
             WHERE messages.deleted_at IS NOT NULL
@@ -8198,6 +8198,13 @@ def init_db() -> None:
         ensure_column(con, "chat_participants", "muted_at", "muted_at TEXT")
         ensure_column(con, "chat_participants", "blocked_at", "blocked_at TEXT")
         ensure_column(con, "chat_participants", "reported_at", "reported_at TEXT")
+        ensure_column(con, "chat_message_reports", "details", "details TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "chat_message_reports", "reported_user_id", "reported_user_id INTEGER")
+        ensure_column(con, "chat_message_reports", "rating_average", "rating_average REAL NOT NULL DEFAULT 0")
+        ensure_column(con, "chat_message_reports", "rating_count", "rating_count INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "chat_message_reports", "priority", "priority TEXT NOT NULL DEFAULT 'NORMAL'")
+        ensure_column(con, "chat_message_reports", "reviewed_by", "reviewed_by INTEGER")
+        ensure_column(con, "chat_message_reports", "reviewed_at", "reviewed_at TEXT")
         # Older group participant rows predate explicit history boundaries.
         # Anchor them to their persisted membership event when possible, then
         # to the first message at/after joining. Owners retain full history.
@@ -8306,6 +8313,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_attachment_device_receipts_message ON chat_attachment_device_receipts(message_id, user_id, device_id)")
         con.execute("UPDATE chat_communities SET visibility = 'PRIVATE' WHERE created_by_user_id IS NOT NULL AND visibility = 'PUBLIC'")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_status ON chat_message_reports(status, created_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_chat_reports_target_status ON chat_message_reports(reported_user_id, status, created_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_blocks_blocker ON chat_user_blocks(blocker_user_id, blocked_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_user ON mobile_push_tokens(user_id, enabled)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mobile_push_outbox_due ON mobile_push_outbox(status, next_attempt_at, id)")
@@ -11295,6 +11303,40 @@ def get_admin_community_reports(limit: int = 200) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_admin_chat_reports(limit: int = 200) -> list[sqlite3.Row]:
+    """Return Chitthi safety reports with only review metadata.
+
+    Chitthi message bodies are end-to-end encrypted, so this deliberately does
+    not pretend that staff can read them. The reporter's own explanation and a
+    message reference give staff a review trail without weakening encryption.
+    """
+    with db() as con:
+        return con.execute(
+            """
+            SELECT reports.*, conversations.public_id AS conversation_public_id,
+                   reporter.name AS reporter_name, reporter.email AS reporter_email,
+                   reported.name AS reported_name, reported.email AS reported_email,
+                   reviewer.name AS reviewer_name,
+                   (
+                     SELECT COUNT(*)
+                     FROM chat_message_reports related
+                     WHERE related.reported_user_id = reports.reported_user_id
+                       AND related.status IN ('OPEN', 'ESCALATED')
+                   ) AS open_report_count
+            FROM chat_message_reports reports
+            JOIN chat_conversations conversations ON conversations.id = reports.conversation_id
+            JOIN users reporter ON reporter.id = reports.reporter_user_id
+            LEFT JOIN users reported ON reported.id = reports.reported_user_id
+            LEFT JOIN users reviewer ON reviewer.id = reports.reviewed_by
+            ORDER BY CASE reports.priority WHEN 'HIGH' THEN 0 ELSE 1 END,
+                     CASE reports.status WHEN 'OPEN' THEN 0 WHEN 'ESCALATED' THEN 1 ELSE 2 END,
+                     reports.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+
+
 def get_staff_accounts() -> list[sqlite3.Row]:
     with db() as con:
         return con.execute(
@@ -11565,6 +11607,14 @@ def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
                 {
                     "requests": con.execute(
                         "SELECT COUNT(*) AS total FROM staff_account_requests WHERE status = 'PENDING'"
+                    ).fetchone()["total"],
+                    "community": con.execute(
+                        """
+                        SELECT
+                          (SELECT COUNT(*) FROM ask_community_reports WHERE status = 'OPEN') +
+                          (SELECT COUNT(*) FROM chat_message_reports WHERE status IN ('OPEN', 'ESCALATED'))
+                          AS total
+                        """
                     ).fetchone()["total"],
                     "system": con.execute(
                         "SELECT COUNT(*) AS total FROM app_feedback WHERE created_at >= datetime('now', '-7 days')"
@@ -12209,6 +12259,37 @@ COMMUNITY_CATEGORIES = {
 }
 COMMUNITY_REACTIONS = {"LIKE", "LOVE", "CARE", "HAHA", "WOW", "SAD", "ANGRY", "HELPFUL", "THANKS", "SUPPORT"}
 COMMUNITY_REPORT_REASONS = {"SPAM", "HARASSMENT", "MISINFORMATION", "PRIVACY", "UNSAFE", "OTHER"}
+
+# Chitthi reports are safety allegations, not a second way to leave a bad
+# rating.  Keep their categories specific enough for an operator to triage
+# them, and keep the rating snapshot strictly as review context.
+CHAT_REPORT_REASONS = {
+    "SPAM_SCAM": "Spam, scam, or fraud",
+    "HARASSMENT": "Harassment or bullying",
+    "HATE_OR_VULGAR_LANGUAGE": "Hate, sexual, or vulgar language",
+    "THREATS_OR_VIOLENCE": "Threats, violence, or immediate safety concern",
+    "THEFT_OR_PROPERTY_DAMAGE": "Theft or property damage",
+    "IMPERSONATION": "Impersonation or fake identity",
+    "PRIVACY": "Privacy or personal information",
+    "OTHER": "Something else",
+}
+CHAT_REPORT_HIGH_PRIORITY_REASONS = {"THREATS_OR_VIOLENCE", "THEFT_OR_PROPERTY_DAMAGE"}
+
+
+def chat_report_reason_label(reason: object) -> str:
+    normalized = clean_text_value(reason, 40).upper()
+    return CHAT_REPORT_REASONS.get(normalized, "Other")
+
+
+def chat_report_priority(reason: object) -> str:
+    return "HIGH" if clean_text_value(reason, 40).upper() in CHAT_REPORT_HIGH_PRIORITY_REASONS else "NORMAL"
+
+
+def chat_report_rating_label(report: sqlite3.Row | dict[str, object]) -> str:
+    count = int(row_value(report, "rating_count") or 0)
+    if count <= 0:
+        return "New member"
+    return f"{float(row_value(report, 'rating_average') or 0):.1f} ({count})"
 
 
 def community_public_id(prefix: str = "FFC") -> str:
@@ -26870,6 +26951,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/post/comment": self.comment_workspace_post,
             "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
             "/admin/community/moderate": self.moderate_community_content,
+            "/admin/chitthi/reports/moderate": self.moderate_chat_report,
             "/admin/users/moderate": self.moderate_user_account,
             "/admin/bookings/status": self.update_admin_booking_status,
             "/admin/bookings/refund": self.refund_admin_booking_payment,
@@ -30536,36 +30618,112 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         form = self.read_form()
         conversation_public_id = (form.get("conversation_id") or "").strip()
         message_id = int_from_form(form, "message_id", 0)
-        reason = " ".join((form.get("reason") or "Reported from Fair Messenger").split())[:300]
+        reason = clean_text_value(form.get("reason"), 40).upper()
+        details = clean_multiline_text_value(form.get("details"), 1200)
+        requested_user_id = int_from_form(form, "reported_user_id", 0)
         current_user_id = int(user["id"])
+        # Released clients before the structured report form sent a fixed,
+        # generic reason with no explanation. Preserve their ability to report
+        # a message while clearly marking it as an older-client submission.
+        legacy_report = reason in {"REPORTED FROM MOBILE MESSENGER", "REPORTED FROM FAIR MESSENGER"}
+        if legacy_report:
+            reason = "OTHER"
+            details = details or "Reported from an earlier FairFares app version."
+        if reason not in CHAT_REPORT_REASONS:
+            self.send_json({"ok": False, "message": "Choose a report reason."}, 400)
+            return
+        if len(details) < 10:
+            self.send_json({"ok": False, "message": "Tell us what happened in at least 10 characters."}, 400)
+            return
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, current_user_id)
             if not conversation:
                 self.send_json({"ok": False, "message": "Conversation not found."}, 404)
                 return
-            message = con.execute(
-                "SELECT id FROM chat_messages WHERE id = ? AND conversation_id = ? AND id >= ? LIMIT 1",
-                (message_id, conversation["id"], int(row_value(conversation, "visible_from_message_id") or 0)),
-            ).fetchone()
+            visible_from = int(row_value(conversation, "visible_from_message_id") or 0)
+            if message_id > 0:
+                message = con.execute(
+                    """
+                    SELECT id, sender_id FROM chat_messages
+                    WHERE id = ? AND conversation_id = ? AND id >= ? AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    (message_id, conversation["id"], visible_from),
+                ).fetchone()
+            else:
+                # A direct-chat member report is anchored to the latest message
+                # from that member. Group reports must identify the message,
+                # since a group has more than one possible target.
+                if row_value(conversation, "community_id") or requested_user_id <= 0:
+                    message = None
+                else:
+                    message = con.execute(
+                        """
+                        SELECT id, sender_id FROM chat_messages
+                        WHERE conversation_id = ? AND sender_id = ? AND id >= ? AND deleted_at IS NULL
+                        ORDER BY id DESC LIMIT 1
+                        """,
+                        (conversation["id"], requested_user_id, visible_from),
+                    ).fetchone()
             if not message:
-                self.send_json({"ok": False, "message": "Message not found."}, 404)
+                self.send_json({"ok": False, "message": "Choose a message from this member to report."}, 404)
                 return
+            reported_user_id = int(row_value(message, "sender_id") or 0)
+            if reported_user_id <= 0 or reported_user_id == current_user_id:
+                self.send_json({"ok": False, "message": "You can report another member's message only."}, 400)
+                return
+            if requested_user_id and requested_user_id != reported_user_id:
+                self.send_json({"ok": False, "message": "The reported member does not match this message."}, 400)
+                return
+            participant = con.execute(
+                "SELECT 1 FROM chat_participants WHERE conversation_id = ? AND user_id = ? LIMIT 1",
+                (conversation["id"], reported_user_id),
+            ).fetchone()
+            if not participant:
+                self.send_json({"ok": False, "message": "The reported member is not in this conversation."}, 400)
+                return
+            rating_summary = user_rating_summaries(con, [reported_user_id]).get(
+                reported_user_id, {"average": 0, "count": 0}
+            )
+            priority = chat_report_priority(reason)
             con.execute(
                 """
-                INSERT INTO chat_message_reports (message_id, conversation_id, reporter_user_id, reason)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO chat_message_reports
+                (message_id, conversation_id, reporter_user_id, reported_user_id, reason, details,
+                 rating_average, rating_count, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id, reporter_user_id) DO UPDATE SET
+                    reported_user_id = excluded.reported_user_id,
                     reason = excluded.reason,
+                    details = excluded.details,
+                    rating_average = excluded.rating_average,
+                    rating_count = excluded.rating_count,
+                    priority = excluded.priority,
                     status = 'OPEN',
+                    reviewed_by = NULL,
+                    reviewed_at = NULL,
                     created_at = CURRENT_TIMESTAMP
                 """,
-                (message_id, conversation["id"], current_user_id, reason),
+                (
+                    int(row_value(message, "id") or 0), conversation["id"], current_user_id, reported_user_id,
+                    reason, details, float(rating_summary.get("average") or 0),
+                    int(rating_summary.get("count") or 0), priority,
+                ),
             )
+            report_row = con.execute(
+                "SELECT id FROM chat_message_reports WHERE message_id = ? AND reporter_user_id = ?",
+                (int(row_value(message, "id") or 0), current_user_id),
+            ).fetchone()
             con.execute(
                 "UPDATE chat_participants SET reported_at = COALESCE(reported_at, CURRENT_TIMESTAMP) WHERE conversation_id = ? AND user_id = ?",
                 (conversation["id"], current_user_id),
             )
-        self.send_json({"ok": True})
+        self.send_json({
+            "ok": True,
+            "reportId": int(row_value(report_row, "id") or 0),
+            "priority": priority,
+            "message": "Safety report submitted for staff review.",
+        }, 201)
 
     def api_mute_chat_conversation(self) -> None:
         user = self.current_user()
@@ -33759,6 +33917,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         posts = get_admin_community_posts()
         reports = get_admin_community_reports()
+        chat_reports = get_admin_chat_reports()
         post_rows = "".join(
             f"""
             <article class="admin-community-card" data-admin-user-card data-admin-community-card data-search="{escape(' '.join(str(value or '') for value in (row_value(post, 'public_id'), row_value(post, 'title'), row_value(post, 'body'), row_value(post, 'author_name'), row_value(post, 'author_email'), row_value(post, 'city'), row_value(post, 'area'))).lower())}">
@@ -33782,14 +33941,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"""<tr><td><b>{escape(row_value(report, 'reason'))}</b><span>{escape(row_value(report, 'details') or 'No additional details')}</span></td><td>{escape(row_value(report, 'post_public_id') or row_value(report, 'answer_public_id'))}<span>{escape(row_value(report, 'post_title') or row_value(report, 'answer_body'))}</span></td><td>{escape(row_value(report, 'reporter_name'))}</td><td>{escape(row_value(report, 'status'))}</td><td>{escape(row_value(report, 'created_at'))}</td></tr>"""
             for report in reports
         ) or '<tr><td colspan="5">No reports.</td></tr>'
+        chat_report_rows = "".join(
+            f"""
+            <tr>
+              <td><b>{escape(chat_report_reason_label(row_value(report, 'reason')))}</b><span>{escape(row_value(report, 'priority') or 'NORMAL')} priority · {escape(row_value(report, 'status') or 'OPEN')}</span></td>
+              <td><b>{escape(row_value(report, 'reported_name') or 'Unknown member')}</b><span>{escape(row_value(report, 'reported_email') or '')}</span><span>Rating at report: {escape(chat_report_rating_label(report))}</span><span>{escape(str(row_value(report, 'open_report_count') or 0))} open/escalated reports for this member</span></td>
+              <td><b>{escape(row_value(report, 'reporter_name'))}</b><span>{escape(row_value(report, 'reporter_email') or '')}</span><span>{escape(row_value(report, 'details') or 'No reporter explanation')}</span></td>
+              <td><b>{escape(row_value(report, 'conversation_public_id'))}</b><span>Message #{escape(str(row_value(report, 'message_id') or ''))}</span><span>Encrypted message body is not exposed to staff.</span></td>
+              <td>{escape(row_value(report, 'created_at'))}<form method="post" action="/admin/chitthi/reports/moderate" class="admin-community-actions admin-chat-report-actions"><input type="hidden" name="report_id" value="{escape(str(row_value(report, 'id') or ''))}"><button name="action" value="ESCALATED" type="submit">Escalate</button><button name="action" value="RESOLVED" type="submit">Resolve</button><button name="action" value="DISMISSED" type="submit">Dismiss</button></form></td>
+            </tr>
+            """
+            for report in chat_reports
+        ) or '<tr><td colspan="5">No Chitthi safety reports.</td></tr>'
         self.send_html(render_template(
             "admin_community.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "community"),
             post_count=escape(str(len(posts))),
-            open_report_count=escape(str(sum(1 for report in reports if row_value(report, "status") == "OPEN"))),
+            open_report_count=escape(str(sum(1 for report in reports if row_value(report, "status") == "OPEN") + sum(1 for report in chat_reports if row_value(report, "status") in {"OPEN", "ESCALATED"}))),
             ask_community_posts=post_rows,
             ask_community_reports=report_rows,
+            chitthi_reports=chat_report_rows,
         ))
 
     def moderate_community_content(self) -> None:
@@ -33808,6 +33980,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if post:
                 con.execute("UPDATE ask_community_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, int(post["id"])))
                 con.execute("UPDATE ask_community_reports SET status = 'RESOLVED', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE post_id = ? AND status = 'OPEN'", (int(user["id"]), int(post["id"])))
+        self.redirect("/admin/community")
+
+    def moderate_chat_report(self) -> None:
+        user = self.require_owner_admin("/admin/community")
+        if not user:
+            return
+        form = self.read_form()
+        report_id = int_from_form(form, "report_id", 0)
+        action = clean_text_value(form.get("action"), 20).upper()
+        if report_id <= 0 or action not in {"ESCALATED", "RESOLVED", "DISMISSED"}:
+            self.redirect("/admin/community")
+            return
+        with db() as con:
+            con.execute(
+                """
+                UPDATE chat_message_reports
+                SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (action, int(row_value(user, "id") or 0), report_id),
+            )
         self.redirect("/admin/community")
 
     def moderate_user_account(self) -> None:

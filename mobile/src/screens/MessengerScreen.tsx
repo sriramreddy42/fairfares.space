@@ -80,7 +80,7 @@ import {
   updateChatTyping,
   voteChatPoll
 } from "../api/client";
-import type { ChatLinkPreview, ChatMessageInfoPerson } from "../api/client";
+import type { ChatLinkPreview, ChatMessageInfoPerson, ChatReportReason } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
@@ -119,6 +119,19 @@ type Props = {
   onCardMessageSent?: (context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) => void;
   onOpenCommunityPost?: (postId: string) => void;
 };
+
+const CHAT_REPORT_OPTIONS: Array<{ value: ChatReportReason; label: string; highPriority?: boolean }> = [
+  { value: "SPAM_SCAM", label: "Spam, scam, or fraud" },
+  { value: "HARASSMENT", label: "Harassment or bullying" },
+  { value: "HATE_OR_VULGAR_LANGUAGE", label: "Hate, sexual, or vulgar language" },
+  { value: "THREATS_OR_VIOLENCE", label: "Threats, violence, or immediate safety concern", highPriority: true },
+  { value: "THEFT_OR_PROPERTY_DAMAGE", label: "Theft or property damage", highPriority: true },
+  { value: "IMPERSONATION", label: "Impersonation or fake identity" },
+  { value: "PRIVACY", label: "Privacy or personal information" },
+  { value: "OTHER", label: "Something else" }
+];
+
+type ChatReportTarget = { messageId?: number; userId: number; name: string };
 
 type MessageSearchResult = {
   conversation: ChatConversation;
@@ -2282,6 +2295,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [ratingScore, setRatingScore] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [reportTarget, setReportTarget] = useState<ChatReportTarget | null>(null);
+  const [reportReason, setReportReason] = useState<ChatReportReason>("SPAM_SCAM");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
 
   function replaceCommunitiesPreservingOpenGroup(incoming: Community[]) {
     setCommunities((current) => {
@@ -6895,13 +6912,35 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     }
   }
 
-  async function reportMessage(message: ChatMessage) {
-    if (!activeConversationId) return;
+  function openChatReport(target: ChatReportTarget) {
+    setReportTarget(target);
+    setReportReason("SPAM_SCAM");
+    setReportDetails("");
+  }
+
+  async function submitChatReport() {
+    if (!activeConversationId || !reportTarget || reportDetails.trim().length < 10) return;
+    setReportSubmitting(true);
     try {
-      await reportChatMessage(activeConversationId, message.id, "Reported from mobile Messenger");
-      Alert.alert("Reported", "Thanks. FairFares will review this message.");
+      const result = await reportChatMessage({
+        conversationId: activeConversationId,
+        messageId: reportTarget.messageId,
+        reportedUserId: reportTarget.userId,
+        reason: reportReason,
+        details: reportDetails.trim()
+      });
+      setReportTarget(null);
+      setReportDetails("");
+      Alert.alert(
+        "Report submitted",
+        result.priority === "HIGH"
+          ? "Your safety report was marked high priority for staff review."
+          : "Thanks. FairFares staff will review this report."
+      );
     } catch (error) {
-      Alert.alert("Report failed", error instanceof Error ? error.message : "Could not report this message.");
+      Alert.alert("Report failed", error instanceof Error ? error.message : "Could not submit this report.");
+    } finally {
+      setReportSubmitting(false);
     }
   }
 
@@ -7573,6 +7612,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <View style={styles.chatOptionsPanel}>
             <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleMute(); }}><Text style={styles.chatOptionIcon}>◉</Text><Text style={styles.chatOptionText}>{activeConversation?.mutedAt ? "Unmute notifications" : "Mute notifications"}</Text></TouchableOpacity>
             {!isGroupConversation(activeConversation) ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); void toggleBlock(); }}><Text style={styles.chatOptionIcon}>⊘</Text><Text style={styles.chatOptionText}>{activeConversation?.blockedAt ? "Unblock member" : "Block member"}</Text></TouchableOpacity> : null}
+            {!isGroupConversation(activeConversation) && activeConversation?.otherUserId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); openChatReport({ userId: activeConversation.otherUserId!, name: activeConversation.otherName || "this member" }); }}><Text style={[styles.chatOptionIcon, styles.chatOptionDangerIcon]}>!</Text><Text style={[styles.chatOptionText, styles.chatOptionDangerText]}>Report member</Text></TouchableOpacity> : null}
             {!isGroupConversation(activeConversation) && activeConversation?.otherUserId && activeConversation.canRateOtherUser === true ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setRatingScore(0); setRatingComment(""); setRatingOpen(true); }}><Text style={styles.chatOptionIcon}>★</Text><Text style={styles.chatOptionText}>Rate member</Text></TouchableOpacity> : null}
             {activeConversation?.communityId ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => void showGroupMembers()}><Text style={styles.chatOptionIcon}>ⓘ</Text><Text style={styles.chatOptionText}>Group info</Text></TouchableOpacity> : null}
             {activeConversation?.communityId && (() => { const group = communities.find((item) => item.id === activeConversation.communityId); return Boolean(group?.canManageMembers); })() ? <TouchableOpacity style={styles.chatOptionRow} onPress={() => { setChatOptionsOpen(false); setSelectedGroupPeople([]); void findPeopleFromContacts("add", activeConversation.communityId || ""); }}><Text style={styles.chatOptionIcon}>＋</Text><Text style={styles.chatOptionText}>Add people</Text></TouchableOpacity> : null}
@@ -7600,6 +7640,30 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               <View style={styles.ratingActions}>
                 <TouchableOpacity style={styles.ratingCancel} disabled={ratingSubmitting} onPress={() => setRatingOpen(false)}><Text style={styles.ratingCancelText}>Cancel</Text></TouchableOpacity>
                 <TouchableOpacity style={[styles.ratingSubmit, (!ratingScore || ratingSubmitting) && styles.ratingSubmitDisabled]} disabled={!ratingScore || ratingSubmitting} onPress={() => void submitActiveMemberRating()}>{ratingSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.ratingSubmitText}>Submit rating</Text>}</TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={Boolean(reportTarget)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => !reportSubmitting && setReportTarget(null)}>
+          <Pressable style={styles.safetyReportBackdrop} onPress={() => !reportSubmitting && setReportTarget(null)}>
+            <Pressable style={styles.safetyReportCard} onPress={(event) => event.stopPropagation()}>
+              <Text style={styles.safetyReportTitle}>Report {reportTarget?.name || "member"}</Text>
+              <Text style={styles.safetyReportBody}>Reports go only to FairFares staff for review. They are separate from star ratings and do not automatically penalize anyone.</Text>
+              <ScrollView style={styles.safetyReportReasons} contentContainerStyle={styles.safetyReportReasonsContent} showsVerticalScrollIndicator={false}>
+                {CHAT_REPORT_OPTIONS.map((option) => {
+                  const selected = reportReason === option.value;
+                  return <TouchableOpacity key={option.value} style={[styles.safetyReportReason, selected && styles.safetyReportReasonSelected, option.highPriority && styles.safetyReportReasonUrgent]} disabled={reportSubmitting} onPress={() => setReportReason(option.value)} accessibilityRole="radio" accessibilityState={{ selected }}>
+                    <Text style={[styles.safetyReportReasonText, selected && styles.safetyReportReasonTextSelected]}>{option.label}</Text>
+                  </TouchableOpacity>;
+                })}
+              </ScrollView>
+              {CHAT_REPORT_OPTIONS.find((option) => option.value === reportReason)?.highPriority ? <Text style={styles.safetyReportUrgentNote}>For immediate danger, contact local emergency services first.</Text> : null}
+              <TextInput value={reportDetails} onChangeText={setReportDetails} editable={!reportSubmitting} multiline maxLength={1200} style={styles.safetyReportInput} placeholder="Tell staff what happened (required)" placeholderTextColor="#7b8794" textAlignVertical="top" />
+              <Text style={styles.safetyReportCounter}>{reportDetails.trim().length}/1200 · at least 10 characters</Text>
+              <View style={styles.safetyReportActions}>
+                <TouchableOpacity style={styles.safetyReportCancel} disabled={reportSubmitting} onPress={() => setReportTarget(null)}><Text style={styles.safetyReportCancelText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.safetyReportSubmit, (reportSubmitting || reportDetails.trim().length < 10) && styles.safetyReportSubmitDisabled]} disabled={reportSubmitting || reportDetails.trim().length < 10} onPress={() => void submitChatReport()}>{reportSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.safetyReportSubmitText}>Submit report</Text>}</TouchableOpacity>
               </View>
             </Pressable>
           </Pressable>
@@ -8047,7 +8111,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
                   <TouchableOpacity style={styles.messageActionRow} onPress={() => beginMessageSelection(actionMessage)} accessibilityRole="button" accessibilityLabel="Select"><Text style={styles.messageActionGlyph}>✓</Text><Text style={styles.messageActionLabel}>Select</Text></TouchableOpacity>
                   {actionMessage.mine && actionMessage.canEdit ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); editMessage(target); }} accessibilityRole="button" accessibilityLabel="Edit"><Text style={styles.messageActionGlyph}>✎</Text><Text style={styles.messageActionLabel}>Edit</Text></TouchableOpacity> : null}
                   {messageCanDelete(actionMessage) ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void deleteMessage(target); }} accessibilityRole="button" accessibilityLabel="Delete"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>⌫</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Delete</Text></TouchableOpacity> : null}
-                  {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); void reportMessage(target); }} accessibilityRole="button" accessibilityLabel="Report"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
+                  {!actionMessage.mine ? <TouchableOpacity style={styles.messageActionRow} onPress={() => { const target = actionMessage; setActionMessage(null); openChatReport({ messageId: target.id, userId: Number(target.senderId || 0), name: target.senderName || "this member" }); }} accessibilityRole="button" accessibilityLabel="Report"><Text style={[styles.messageActionGlyph, styles.messageActionDanger]}>!</Text><Text style={[styles.messageActionLabel, styles.messageActionDanger]}>Report</Text></TouchableOpacity> : null}
                 </Pressable>
               </Pressable>
               ) : null}
@@ -9004,6 +9068,7 @@ const styles = StyleSheet.create({
   chatOptionsPanel: { position: "absolute", top: 58, right: 14, width: 258, backgroundColor: "#f7f3ed", borderRadius: 16, padding: 7, borderWidth: 1, borderColor: "#cbc7c0", shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 }, elevation: 15, zIndex: 40 },
   chatOptionRow: { minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 11 },
   chatOptionIcon: { color: "#2864d7", width: 22, textAlign: "center", fontSize: 18, fontWeight: "900" },
+  chatOptionDangerIcon: { color: "#c2414d" },
   ratingBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.42)", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
   ratingCard: { width: "100%", maxWidth: 380, borderRadius: 24, backgroundColor: "#fffaf1", padding: 18, borderWidth: 1, borderColor: "rgba(22,163,112,0.22)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 16 },
   ratingTitle: { color: "#13231c", fontSize: 20, lineHeight: 24, fontWeight: "900" },
@@ -9019,6 +9084,26 @@ const styles = StyleSheet.create({
   ratingSubmit: { minHeight: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: "center", justifyContent: "center", backgroundColor: "#12a873" },
   ratingSubmitDisabled: { opacity: 0.48 },
   ratingSubmitText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  safetyReportBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.48)", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  safetyReportCard: { width: "100%", maxWidth: 410, maxHeight: "88%", borderRadius: 24, backgroundColor: "#fffaf7", padding: 18, borderWidth: 1, borderColor: "rgba(190,49,64,0.2)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 16 },
+  safetyReportTitle: { color: "#332022", fontSize: 20, lineHeight: 24, fontWeight: "900" },
+  safetyReportBody: { color: "#655b5b", fontSize: 12, lineHeight: 17, fontWeight: "700", marginTop: 8 },
+  safetyReportReasons: { maxHeight: 236, marginTop: 14 },
+  safetyReportReasonsContent: { gap: 7, paddingBottom: 2 },
+  safetyReportReason: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: "rgba(15,23,42,0.12)", backgroundColor: "#fff", justifyContent: "center", paddingHorizontal: 12 },
+  safetyReportReasonSelected: { borderColor: "#b83243", backgroundColor: "#fff0f1" },
+  safetyReportReasonUrgent: { borderColor: "rgba(190,49,64,0.42)" },
+  safetyReportReasonText: { color: "#3e3839", fontSize: 13, lineHeight: 17, fontWeight: "800" },
+  safetyReportReasonTextSelected: { color: "#9f2637" },
+  safetyReportUrgentNote: { color: "#a62936", fontSize: 11, lineHeight: 15, fontWeight: "800", marginTop: 9 },
+  safetyReportInput: { minHeight: 86, maxHeight: 126, marginTop: 12, borderRadius: 14, borderWidth: 1, borderColor: "rgba(15,23,42,0.14)", backgroundColor: "#fff", paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, color: "#17231d", fontSize: 14, lineHeight: 19 },
+  safetyReportCounter: { color: "#788087", fontSize: 10, lineHeight: 14, fontWeight: "700", marginTop: 5 },
+  safetyReportActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 10, marginTop: 13 },
+  safetyReportCancel: { minHeight: 44, borderRadius: 22, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(15,23,42,0.08)" },
+  safetyReportCancelText: { color: "#334155", fontSize: 14, fontWeight: "900" },
+  safetyReportSubmit: { minHeight: 44, borderRadius: 22, paddingHorizontal: 18, alignItems: "center", justifyContent: "center", backgroundColor: "#b83243" },
+  safetyReportSubmitDisabled: { opacity: 0.46 },
+  safetyReportSubmitText: { color: "#fff", fontSize: 14, fontWeight: "900" },
   ratingPrompt: { marginHorizontal: 10, marginTop: 7, marginBottom: 2, minHeight: 54, borderRadius: 18, backgroundColor: "rgba(255,250,241,0.96)", borderWidth: 1, borderColor: "rgba(245,158,11,0.26)", flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 11, shadowColor: "#000", shadowOpacity: 0.13, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
   ratingPromptIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(245,158,11,0.18)", alignItems: "center", justifyContent: "center" },
   ratingPromptIconText: { color: "#f59e0b", fontSize: 20, lineHeight: 23, fontWeight: "900" },
@@ -9031,6 +9116,7 @@ const styles = StyleSheet.create({
   nearbyOptionTitle: { color: "#1f2937", fontSize: 13, fontWeight: "700" },
   nearbyOptionMeta: { color: "#6b7280", fontSize: 10, lineHeight: 14, marginTop: 2 },
   chatOptionText: { color: "#242424", fontSize: 14, fontWeight: "600" },
+  chatOptionDangerText: { color: "#a62936" },
   dotsIcon: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5 },
   dotIcon: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#866525" },
   threadMessages: { flex: 1 },
