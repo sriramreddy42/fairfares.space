@@ -6470,7 +6470,8 @@ def run_email_automations(origin: str, now: datetime | None = None) -> dict[str,
                 "Find a nearby ride and a memory worth keeping.",
                 "See current FairFares cars and local pickup options for your next trip.",
                 "Explore Nearby",
-                    origin,
+                "/",
+                origin,
             )
         )
     sent = sum(1 for result in results if result.get("sent"))

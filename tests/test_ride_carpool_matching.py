@@ -262,7 +262,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
                 return {"status": "OK", "result": {"geometry": {"location": {"lat": 39.7559, "lng": -104.9942}}}}
             self.fail(f"Unexpected Google URL: {url}")
 
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_accommodation_geocode", return_value=None), patch.object(app, "google_api_get", side_effect=google_response), patch.object(app, "ride_point", return_value=city_point):
+        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_accommodation_geocode", return_value=None), patch.object(app, "google_api_get", side_effect=google_response), patch.object(app, "ride_point", return_value=city_point):
             suggestions = app.ride_place_suggestions("Denver, CO", "Coors Field")
             self.assertEqual(suggestions[0]["placeId"], place_id)
             self.assertEqual(suggestions[0]["lat"], 0)
