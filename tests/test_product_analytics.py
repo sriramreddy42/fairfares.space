@@ -46,18 +46,21 @@ class ProductAnalyticsTest(unittest.TestCase):
         thread.start()
         return server, thread
 
-    def post_event(self, server, payload, token=""):
+    def post_json(self, server, path, payload, token=""):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(
-            f"http://127.0.0.1:{server.server_port}/api/mobile/analytics/events",
+            f"http://127.0.0.1:{server.server_port}{path}",
             data=json.dumps(payload).encode("utf-8"),
             method="POST",
             headers=headers,
         )
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
+
+    def post_event(self, server, payload, token=""):
+        return self.post_json(server, "/api/mobile/analytics/events", payload, token)
 
     def test_event_ingestion_is_allow_listed_private_and_idempotent(self):
         server, thread = self.start_server()
@@ -120,10 +123,14 @@ class ProductAnalyticsTest(unittest.TestCase):
                     ("housing_search", "s2", "e4", day_two.replace(hour=10, minute=1, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                     ("housing_listing_view", "s2", "e5", day_two.replace(hour=10, minute=2, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                     ("housing_need_place_posted", "s2", "e6", day_two.replace(hour=10, minute=3, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("message_sent", "s2", "e7", day_two.replace(hour=10, minute=4, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("chitthi_community_joined", "s2", "e8", day_two.replace(hour=10, minute=5, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("carpool_search", "s2", "e9", day_two.replace(hour=10, minute=6, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
-                    ("rental_search", "s2", "e10", day_two.replace(hour=10, minute=7, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_need_roommates_posted", "s2", "e7", day_two.replace(hour=10, minute=4, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_have_place_listed", "s2", "e8", day_two.replace(hour=10, minute=5, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_message_sent", "s2", "e9", day_two.replace(hour=10, minute=6, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("housing_connection_confirmed", "s2", "e10", day_two.replace(hour=10, minute=7, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("message_sent", "s2", "e11", day_two.replace(hour=10, minute=8, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("chitthi_community_joined", "s2", "e12", day_two.replace(hour=10, minute=9, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("carpool_search", "s2", "e13", day_two.replace(hour=10, minute=10, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
+                    ("rental_search", "s2", "e14", day_two.replace(hour=10, minute=11, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")),
                 ],
             )
         summary = app.product_analytics_summary(7)
@@ -133,6 +140,10 @@ class ProductAnalyticsTest(unittest.TestCase):
         self.assertEqual(summary["stages"]["housing_searches"], 1)
         self.assertEqual(summary["stages"]["housing_listing_views"], 1)
         self.assertEqual(summary["stages"]["housing_need_place_posts"], 1)
+        self.assertEqual(summary["stages"]["housing_need_roommates_posts"], 1)
+        self.assertEqual(summary["stages"]["housing_have_place_listings"], 1)
+        self.assertEqual(summary["stages"]["housing_messages"], 1)
+        self.assertEqual(summary["stages"]["housing_connections"], 1)
         self.assertEqual(summary["stages"]["messages"], 1)
         self.assertEqual(summary["stages"]["community_joins"], 1)
         self.assertEqual(summary["stages"]["carpool_searches"], 1)
@@ -164,6 +175,29 @@ class ProductAnalyticsTest(unittest.TestCase):
         summary = app.product_analytics_summary(30)
         self.assertEqual(summary["stages"]["d7_eligible"], 2)
         self.assertEqual(summary["stages"]["d7_authenticated_returns"], 1)
+
+    def test_listing_owner_can_confirm_housing_connection(self):
+        with app.db() as con:
+            user_id = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Owner', 'owner@example.com', 'x', 'CUSTOMER', 0)"
+            ).lastrowid
+            con.execute("INSERT INTO sessions (token, user_id) VALUES ('housing-owner-session', ?)", (user_id,))
+            con.execute(
+                "INSERT INTO accommodation_posts (public_id, user_id, post_mode, visibility_status) VALUES ('FFH-TEST', ?, 'HAVE_PLACE', 'ACTIVE')",
+                (user_id,),
+            )
+        server, thread = self.start_server()
+        try:
+            status, payload = self.post_json(server, "/api/mobile/housing/complete", {"postId": "FFH-TEST"}, "housing-owner-session")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["status"], "MATCHED")
+            with app.db() as con:
+                post = con.execute("SELECT visibility_status FROM accommodation_posts WHERE public_id = 'FFH-TEST'").fetchone()
+            self.assertEqual(post["visibility_status"], "MATCHED")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_sign_in_merges_prior_anonymous_events_into_one_actor(self):
         with app.db() as con:

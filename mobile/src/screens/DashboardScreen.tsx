@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import { ActivityIndicator, Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
-import { getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
+import { completeHousingConnection, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
@@ -254,11 +254,43 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
   const [refreshError, setRefreshError] = useState("");
   const [rideActionBusyId, setRideActionBusyId] = useState("");
   const [housingEditBusyId, setHousingEditBusyId] = useState("");
+  const [housingCompletionBusyId, setHousingCompletionBusyId] = useState("");
   const [ratingRide, setRatingRide] = useState<RidePost | null>(null);
   const [ratingScore, setRatingScore] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const driverLocationSubscription = useRef<Location.LocationSubscription | null>(null);
   const sharingDriverRideId = useRef("");
+
+  function confirmHousingConnection(post: HousingActivityPost) {
+    const isRequest = /need|looking|request/i.test(post.modeLabel);
+    const outcome = isRequest ? "found a place" : "filled this place";
+    Alert.alert(
+      `Mark as ${isRequest ? "found" : "filled"}?`,
+      `Use this only after you have ${outcome} through FairFares. The listing will leave search, and FairFares will count one confirmed housing connection.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Confirm",
+          onPress: () => void (async () => {
+            setHousingCompletionBusyId(post.id);
+            try {
+              await completeHousingConnection(post.id);
+              setHousingActivity((current) => {
+                const next = current.map((item) => item.id === post.id ? { ...item, status: "MATCHED", expiryLabel: "Matched" } : item);
+                const snapshot = activitySnapshots.get(userId);
+                if (snapshot) activitySnapshots.set(userId, { ...snapshot, housing: next, updatedAt: Date.now() });
+                return next;
+              });
+            } catch (error) {
+              Alert.alert("Could not update listing", error instanceof Error ? error.message : "Please try again.");
+            } finally {
+              setHousingCompletionBusyId("");
+            }
+          })()
+        }
+      ]
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -706,6 +738,9 @@ export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHous
             </TouchableOpacity>
             <TouchableOpacity style={styles.listingAction} onPress={() => void shareHousingListing(post)} accessibilityRole="button" accessibilityLabel={`Share ${post.title}`}>
               <Text style={styles.listingActionText}>↗ Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.listingAction} disabled={Boolean(housingCompletionBusyId)} onPress={() => confirmHousingConnection(post)} accessibilityRole="button" accessibilityLabel={`Mark ${post.title} as ${/need|looking|request/i.test(post.modeLabel) ? "found" : "filled"}`}>
+              {housingCompletionBusyId === post.id ? <ActivityIndicator size="small" color={theme.colors.brand} /> : <Text style={styles.listingActionText}>{/need|looking|request/i.test(post.modeLabel) ? "✓ Found" : "✓ Filled"}</Text>}
             </TouchableOpacity>
           </View>
         </View>

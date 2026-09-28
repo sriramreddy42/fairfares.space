@@ -3611,7 +3611,7 @@ for _rate_limited_group_path in (
     API_WRITE_RATE_LIMITS[_rate_limited_group_path] = ("chat-group", 30, 60)
 
 for _rate_limited_marketplace_path in (
-    "/api/mobile/housing", "/api/mobile/rides", "/api/mobile/rides/dispatch",
+    "/api/mobile/housing", "/api/mobile/housing/complete", "/api/mobile/rides", "/api/mobile/rides/dispatch",
     "/api/mobile/rides/rating",
     "/api/mobile/rides/driver-profile", "/api/mobile/rentals/book",
     "/api/mobile/rentals/listing", "/api/mobile/rentals/checkout-session",
@@ -15817,6 +15817,8 @@ def accommodation_days_left(row: sqlite3.Row | dict[str, object]) -> int:
 def accommodation_expiry_label(row: sqlite3.Row | dict[str, object]) -> str:
     status = row_value(row, "visibility_status") or "ACTIVE"
     days_left = accommodation_days_left(row)
+    if status == "MATCHED":
+        return "Matched"
     if status == "EXPIRED" or days_left <= 0:
         return "Expired"
     return f"{days_left} day{'s' if days_left != 1 else ''} left"
@@ -26258,6 +26260,10 @@ PRODUCT_ANALYTICS_EVENTS = {
     "housing_search",
     "housing_listing_view",
     "housing_need_place_posted",
+    "housing_need_roommates_posted",
+    "housing_have_place_listed",
+    "housing_message_sent",
+    "housing_connection_confirmed",
     "chitthi_community_joined",
     "carpool_search",
     "rental_search",
@@ -26278,6 +26284,10 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
         "housing_searches": "housing_search",
         "housing_listing_views": "housing_listing_view",
         "housing_need_place_posts": "housing_need_place_posted",
+        "housing_need_roommates_posts": "housing_need_roommates_posted",
+        "housing_have_place_listings": "housing_have_place_listed",
+        "housing_messages": "housing_message_sent",
+        "housing_connections": "housing_connection_confirmed",
         "messages": "message_sent",
         "community_joins": "chitthi_community_joined",
         "carpool_searches": "carpool_search",
@@ -26298,7 +26308,8 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
         activation_row = con.execute(
             """SELECT COUNT(DISTINCT CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END) AS total
                FROM product_analytics_events
-               WHERE event_name IN ('housing_need_place_posted', 'message_sent', 'chitthi_community_joined',
+               WHERE event_name IN ('housing_need_place_posted', 'housing_need_roommates_posted', 'housing_have_place_listed',
+                                    'housing_message_sent', 'housing_connection_confirmed', 'message_sent', 'chitthi_community_joined',
                                     'rental_booking_started', 'rental_booking_completed')
                  AND datetime(occurred_at) >= datetime('now', ?)""",
             (window,),
@@ -26342,6 +26353,8 @@ def product_analytics_summary(days: int = 30) -> dict[str, object]:
                       COUNT(DISTINCT CASE WHEN event_name = 'app_open' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS opens,
                       COUNT(DISTINCT CASE WHEN event_name = 'housing_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_searches,
                       COUNT(DISTINCT CASE WHEN event_name = 'housing_listing_view' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_views,
+                      COUNT(DISTINCT CASE WHEN event_name = 'housing_message_sent' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_messages,
+                      COUNT(DISTINCT CASE WHEN event_name = 'housing_connection_confirmed' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS housing_connections,
                       COUNT(DISTINCT CASE WHEN event_name = 'message_sent' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS messages,
                       COUNT(DISTINCT CASE WHEN event_name = 'carpool_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS carpool_searches,
                       COUNT(DISTINCT CASE WHEN event_name = 'rental_search' THEN CASE WHEN user_id IS NOT NULL THEN 'u:' || user_id ELSE 'a:' || anonymous_id END END) AS rental_searches
@@ -27153,6 +27166,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
             "/api/mobile/notification-test": self.api_mobile_send_notification_test,
             "/api/mobile/housing": self.api_mobile_create_housing,
+            "/api/mobile/housing/complete": self.api_mobile_complete_housing,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
             "/api/mobile/community/guest-message": self.api_mobile_community_guest_message,
@@ -34447,6 +34461,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("housing_searches", "Housing searches"),
             ("housing_listing_views", "Housing listing viewers"),
             ("housing_need_place_posts", "“I need a place” posts"),
+            ("housing_need_roommates_posts", "“I need roommates” posts"),
+            ("housing_have_place_listings", "“I have a place” listings"),
+            ("housing_messages", "Housing message senders"),
+            ("housing_connections", "Confirmed housing connections"),
             ("messages", "People who messaged"),
             ("community_joins", "Chitthi community joins"),
             ("carpool_searches", "Carpool searches"),
@@ -34483,9 +34501,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         daily_rows = "".join(
             f'<tr><td data-label="Day">{escape(str(row.get("day") or ""))}</td><td data-label="Opens">{int(row.get("opens") or 0):,}</td>'
             f'<td data-label="Housing searches">{int(row.get("housing_searches") or 0):,}</td><td data-label="Housing views">{int(row.get("housing_views") or 0):,}</td>'
-            f'<td data-label="Messages">{int(row.get("messages") or 0):,}</td><td data-label="Carpool searches">{int(row.get("carpool_searches") or 0):,}</td><td data-label="Rental searches">{int(row.get("rental_searches") or 0):,}</td></tr>'
+            f'<td data-label="Housing messages">{int(row.get("housing_messages") or 0):,}</td><td data-label="Housing connections">{int(row.get("housing_connections") or 0):,}</td><td data-label="Messages">{int(row.get("messages") or 0):,}</td><td data-label="Carpool searches">{int(row.get("carpool_searches") or 0):,}</td><td data-label="Rental searches">{int(row.get("rental_searches") or 0):,}</td></tr>'
             for row in reversed(summary["daily"])
-        ) or '<tr><td colspan="7">No analytics events received for this period.</td></tr>'
+        ) or '<tr><td colspan="9">No analytics events received for this period.</td></tr>'
         period_links = "".join(
             f'<a class="{"active" if option == summary["days"] else ""}" href="/admin/analytics?days={option}">{"24 hours" if option == 1 else str(option) + " days"}</a>'
             for option in (1, 7, 30, 90)
@@ -43478,6 +43496,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # is committed, rather than making the next Ask feed request perform it.
         schedule_housing_community_projection_sync()
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
+
+    def api_mobile_complete_housing(self) -> None:
+        """Let a poster explicitly confirm a successful FairFares housing outcome."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        payload = self.read_json_body()
+        public_id = clean_text_value(payload.get("postId") or payload.get("post_id"), 80)
+        if not public_id:
+            self.send_json({"ok": False, "error": "Choose a housing listing first."}, 400)
+            return
+        with db() as con:
+            post = con.execute(
+                "SELECT id, visibility_status FROM accommodation_posts WHERE public_id = ? AND user_id = ? LIMIT 1",
+                (public_id, int(row_value(user, "id") or 0)),
+            ).fetchone()
+            if not post:
+                self.send_json({"ok": False, "error": "You can only complete your own housing listing."}, 403)
+                return
+            if row_value(post, "visibility_status") != "ACTIVE":
+                self.send_json({"ok": False, "error": "This housing listing is no longer active."}, 409)
+                return
+            con.execute(
+                "UPDATE accommodation_posts SET visibility_status = 'MATCHED', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (int(row_value(post, "id") or 0),),
+            )
+        invalidate_mobile_search_cache("housing")
+        schedule_housing_community_projection_sync()
+        self.send_json({"ok": True, "status": "MATCHED", "message": "Housing connection confirmed."})
 
     def serve_upload(self, path: str) -> None:
         if path.startswith("/uploads/chat/"):

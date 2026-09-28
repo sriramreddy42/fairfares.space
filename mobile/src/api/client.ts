@@ -271,6 +271,10 @@ export type ProductAnalyticsEventName =
   | "housing_search"
   | "housing_listing_view"
   | "housing_need_place_posted"
+  | "housing_need_roommates_posted"
+  | "housing_have_place_listed"
+  | "housing_message_sent"
+  | "housing_connection_confirmed"
   | "chitthi_community_joined"
   | "carpool_search"
   | "rental_search"
@@ -1733,6 +1737,9 @@ export async function sendEncryptedChatMessage(conversationId: string, envelopes
     body: JSON.stringify({ conversationId, envelopes, clientMessageId, silent, replyToMessageId, contextPostId, mentionedUserIds })
   });
   void trackProductEvent("message_sent", { source: "chitthi" });
+  // A post id is present only for the first message started from a housing
+  // listing. Do not send the post id, listing title, or message text.
+  if (contextPostId) void trackProductEvent("housing_message_sent", { source: "housing_listing" });
   return result;
 }
 
@@ -3196,6 +3203,16 @@ export async function createMobileHousingPost(input: MobileHousingPostInput) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });
+}
+
+export async function completeHousingConnection(postId: string) {
+  const result = await request<{ ok: boolean; status: string; message: string }>("/api/mobile/housing/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postId })
+  });
+  void trackProductEvent("housing_connection_confirmed", { source: "housing_activity" });
+  return result;
 }
 
 export async function mobileLogout() {

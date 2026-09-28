@@ -2289,8 +2289,13 @@ function FairFaresApp() {
     setListingSubmitting(true);
     try {
       const payload = await createMobileHousingPost(listingPayload);
-      if (!listingPayload.listingId && payload.post.mode === "NEED_PLACE" && !listingPayload.roommateIntent) {
-        void trackProductEvent("housing_need_place_posted", { source: "housing_post" });
+      if (!listingPayload.listingId) {
+        const eventName = payload.post.mode === "HAVE_PLACE"
+          ? "housing_have_place_listed"
+          : listingPayload.roommateIntent
+            ? "housing_need_roommates_posted"
+            : "housing_need_place_posted";
+        void trackProductEvent(eventName, { source: "housing_post" });
       }
       setListingOpen(false);
       setHousingListingSuccess(payload.post);
