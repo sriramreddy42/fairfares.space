@@ -3008,15 +3008,20 @@ export function HousingScreen({
                   key={car.id}
                   style={[styles.carMiniCard, isLight && styles.carMiniCardLight, isLowestDailyRate && styles.carMiniCardLowest, selectedRentalCar?.id === car.id && styles.carMiniCardActive]}
                   onPress={() => reviewRentalCar(car)}
-                  accessibilityLabel={`${car.name}. ${isLowestDailyRate ? "Lowest daily rental rate. " : ""}${dollars(rate.daily)} per day${rate.tier.rate ? `. ${rate.tier.label}: ${dollars(rate.effective)} per day` : ""}`}
+                  accessibilityLabel={`${car.name}. ${isLowestDailyRate ? "Lowest daily rental rate. " : ""}${rate.tier.rate ? `${rate.tier.label}: ${dollars(rate.effective)} per day, reduced from ${dollars(rate.daily)} per day.` : `${dollars(rate.daily)} per day.`}`}
                 >
                   <RentalCarImage uri={image} name={car.name} />
                   <View style={styles.carMiniBody}>
                     {isLowestDailyRate ? <Text style={styles.carMiniLowestLabel}>Lowest car rental</Text> : null}
                     <Text style={styles.carMiniTitle}>{car.name}</Text>
                     <Text style={styles.carMiniMeta}>{car.location || "Denver pickup"}</Text>
-                    <Text style={styles.carMiniPrice}>{dollars(rate.daily)}/day</Text>
-                    {rate.tier.rate ? <Text style={styles.carMiniBasePrice}>{rate.tier.label}: {dollars(rate.effective)}/day</Text> : null}
+                    {rate.tier.rate ? <>
+                      <View style={styles.carMiniRateLead}>
+                        <Text style={styles.carMiniRateTier}>{rate.tier.label} applied</Text>
+                        <Text style={styles.carMiniPrice}>{dollars(rate.effective)}/day</Text>
+                      </View>
+                      <Text style={styles.carMiniBasePrice}>Standard daily: <Text style={styles.carMiniStruckPrice}>{dollars(rate.daily)}/day</Text></Text>
+                    </> : <Text style={styles.carMiniPrice}>{dollars(rate.daily)}/day</Text>}
                     {durationSavingsText(car.daily_price, rentalDayCount) ? (
                       <Text style={styles.carMiniSavings}>{durationSavingsText(car.daily_price, rentalDayCount)}</Text>
                     ) : null}
@@ -4902,8 +4907,11 @@ const styles = StyleSheet.create({
   carMiniLowestLabel: { color: "#e8a617", fontSize: 11, lineHeight: 14, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase" },
   carMiniTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "900" },
   carMiniMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: "800" },
-  carMiniPrice: { color: theme.colors.green, fontSize: 19, fontWeight: "900" },
+  carMiniRateLead: { alignSelf: "flex-start", backgroundColor: "rgba(76, 207, 128, 0.14)", borderColor: "rgba(76, 207, 128, 0.5)", borderRadius: 12, borderWidth: 1, gap: 1, paddingHorizontal: 9, paddingVertical: 6 },
+  carMiniRateTier: { color: theme.colors.green, fontSize: 10, fontWeight: "900", letterSpacing: 0.8, textTransform: "uppercase" },
+  carMiniPrice: { color: theme.colors.green, fontSize: 21, fontWeight: "900" },
   carMiniBasePrice: { color: theme.colors.muted, fontSize: 12, fontWeight: "700", marginTop: -3 },
+  carMiniStruckPrice: { textDecorationLine: "line-through" },
   carMiniSavings: { color: theme.colors.soft, fontSize: 12, fontWeight: "800" },
   carMiniAction: { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingHorizontal: 14, paddingVertical: 8, overflow: "hidden", fontWeight: "900", alignSelf: "flex-start", marginTop: 4 },
   checkoutScreen: { flex: 1, backgroundColor: theme.colors.bg },
