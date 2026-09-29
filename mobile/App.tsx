@@ -459,6 +459,7 @@ function FairFaresApp() {
   const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
+  const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
@@ -656,7 +657,15 @@ function FairFaresApp() {
   const listingIsRoommateSearch = listingIntent === "need_roommates";
   const listingRoommateHasPlace = listingIsRoommateSearch && roommatePlaceChoice === true;
   const listingHasPropertyDetails = listingIsHavePlace || listingRoommateHasPlace;
-  const listingLocationInput = listingHasPropertyDetails ? listingForm.streetAddress : listingForm.area;
+  const listingNeedsContactDetails = !listingForm.contactName.trim()
+    || !listingForm.contactEmail.trim()
+    || !listingForm.contactPhone.trim();
+  // An exact street address is useful, but it should never prevent someone
+  // from posting a room. A neighbourhood is enough for initial discovery and
+  // also avoids asking people to publish their home address.
+  const listingLocationInput = listingHasPropertyDetails
+    ? (listingForm.streetAddress || listingForm.primaryNeighborhood || listingForm.apartmentName)
+    : listingForm.area;
   const housingSuccessSearchNeed: ListingIntent = housingListingSuccess?.roommateIntent
     ? "need_roommates"
     : housingListingSuccess?.mode === "HAVE_PLACE"
@@ -1971,6 +1980,7 @@ function FairFaresApp() {
 
   function closeListingForm() {
     setListingOpen(false);
+    setListingOptionalDetailsOpen(false);
     setListingAddressSuggestions([]);
     setListingAddressLoading(false);
   }
@@ -2015,6 +2025,7 @@ function FairFaresApp() {
     setListingAddressValidated(false);
     setListingValidatedLabel("");
     setRoommatePlaceChoice(null);
+    setListingOptionalDetailsOpen(false);
     setListingOpen(true);
   }
 
@@ -2098,6 +2109,7 @@ function FairFaresApp() {
     setListingAddressValidated(true);
     setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
     setHousingListingSuccess(null);
+    setListingOptionalDetailsOpen(true);
     setListingOpen(true);
   }
 
@@ -2180,7 +2192,7 @@ function FairFaresApp() {
     setListingValidatedLabel("");
   }
 
-  function updateListingLocationField(key: "city" | "streetAddress" | "area", value: string) {
+  function updateListingLocationField(key: "city" | "streetAddress" | "area" | "primaryNeighborhood", value: string) {
     setListingForm((current) => ({ ...current, [key]: value }));
     setListingAddressValidated(false);
     setListingValidatedLabel("");
@@ -2211,7 +2223,7 @@ function FairFaresApp() {
     if (!location || !normalizedCity || !zipCode) {
       Alert.alert(
         "Add the location details",
-        "Enter the address or preferred area together with its city and ZIP code."
+        "Enter the neighborhood, address, or preferred area together with its city and ZIP code."
       );
       return;
     }
@@ -2251,22 +2263,25 @@ function FairFaresApp() {
       active = false;
       clearTimeout(timer);
     };
-  }, [listingOpen, listingForm.area, listingForm.city, listingForm.streetAddress, listingAddressValidated, listingLocationInput]);
+  }, [listingOpen, listingForm.area, listingForm.city, listingForm.streetAddress, listingForm.primaryNeighborhood, listingAddressValidated, listingLocationInput]);
 
   async function submitListing() {
     if (listingSubmittingRef.current) return;
+    const generatedTitle = listingForm.title.trim() || (
+      listingIsHavePlace
+        ? `Place available in ${listingForm.primaryNeighborhood.trim() || listingForm.city.trim()}`
+        : listingIsRoommateSearch
+          ? `Looking for roommates in ${listingForm.area.trim() || listingForm.city.trim()}`
+          : `Looking for a place in ${listingForm.area.trim() || listingForm.city.trim()}`
+    );
     const requiredFields = [
       listingIsRoommateSearch && roommatePlaceChoice === null ? "whether you already have a place" : "",
       !listingForm.city.trim() ? "city" : "",
       !listingForm.zipCode.trim() ? "ZIP code" : "",
-      !listingForm.title.trim() ? "title" : "",
       !listingForm.description.trim() ? "description" : "",
       !listingForm.moveInDate.trim() ? (listingHasPropertyDetails ? "available from date" : "move-in date") : "",
       !listingForm.rentMin.trim() ? (listingHasPropertyDetails ? "rent" : "budget") : "",
       listingHasPropertyDetails && !listingForm.primaryNeighborhood.trim() ? "neighborhood / locality" : "",
-      listingHasPropertyDetails && !listingForm.accommodates.trim() ? "accommodates" : "",
-      listingIsNeedPlace && !listingForm.accommodates.trim() ? "people moving" : "",
-      listingIsRoommateSearch && !listingForm.roommateCount.trim() ? "roommates needed" : "",
       listingHasPropertyDetails && !(listingForm.images || []).length ? "valid room/property image" : "",
       !listingForm.contactName.trim() ? "contact name" : "",
       !listingForm.contactEmail.trim() ? "contact email" : "",
@@ -2292,7 +2307,7 @@ function FairFaresApp() {
     }
     const listingPayload: MobileHousingPostInput = {
       ...listingForm,
-      title: listingForm.title.trim(),
+      title: generatedTitle,
       description: listingForm.description.trim(),
       city: normalizeCityInput(listingForm.city),
       postMode: listingHasPropertyDetails ? "HAVE_PLACE" : "NEED_PLACE",
@@ -3989,7 +4004,7 @@ function FairFaresApp() {
                       : "First choose whether you already have a place or want to search together."
                   : "Share your preferred area, budget, move-in timing, and room requirements."}
             </Text>
-            <Text style={styles.requiredLegend}>* Required to publish</Text>
+            <Text style={styles.requiredLegend}>Only fields marked * are needed to publish.</Text>
             {renderFormSection(
               "Post type *",
               <>
@@ -4017,7 +4032,6 @@ function FairFaresApp() {
                     </View>
                   </View>
                 ) : null}
-                {!listingIsRoommateSearch ? renderChoiceGroup("category", listingCategories) : null}
               </>
             )}
             {renderFormSection(
@@ -4027,11 +4041,12 @@ function FairFaresApp() {
                 <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
                 {listingHasPropertyDetails ? (
                   <>
-                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Start typing the property address*" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
-                    {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking address…</Text></View> : null}
+                    <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Neighborhood / locality* eg Capitol Hill" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
+                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Exact address optional — not shown publicly" placeholderTextColor={theme.colors.muted} style={styles.input} autoCorrect={false} />
+                    {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
                     {listingAddressSuggestions.length ? (
                       <View style={styles.addressSuggestionPanel}>
-                        <Text style={styles.addressSuggestionTitle}>Select the correct address</Text>
+                        <Text style={styles.addressSuggestionTitle}>Select the correct location</Text>
                         {listingAddressSuggestions.map((suggestion) => (
                           <TouchableOpacity key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`} style={styles.addressSuggestion} onPress={() => selectListingAddress(suggestion)}>
                             <Text style={styles.addressSuggestionPin}>⌖</Text>
@@ -4043,10 +4058,8 @@ function FairFaresApp() {
                         ))}
                       </View>
                     ) : null}
-                    {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use entered address</Text></TouchableOpacity> : null}
+                    {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use this location</Text></TouchableOpacity> : null}
                     {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
-                    <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingForm("primaryNeighborhood", text)} placeholder="Neighborhood / locality* eg Capitol Hill" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                    <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} />
                   </>
                 ) : (
                   <>
@@ -4074,9 +4087,9 @@ function FairFaresApp() {
               </>
             )}
             {renderFormSection(
-              `${listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements"} *`,
+              `${listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements"}`,
               <>
-                <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Listing title*" : listingIsRoommateSearch ? "Roommate search title*" : "Request title*"} placeholderTextColor={theme.colors.muted} style={styles.input} />
+                <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Short title optional, eg Sunny room near DU" : listingIsRoommateSearch ? "Short title optional, eg Looking for two roommates" : "Short title optional, eg Looking near downtown"} placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Describe the room, property, rules, and who it fits*" : listingIsRoommateSearch ? "Describe your roommate plan, lifestyle, and timing*" : "Describe what kind of place you need*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
                 <DateTimeField label={listingHasPropertyDetails ? "Available from*" : "Move-in from*"} value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} />
                 <View style={styles.twoCol}>
@@ -4084,26 +4097,6 @@ function FairFaresApp() {
                   <TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingHasPropertyDetails ? "Rent max" : "Budget max"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
                 </View>
                 {renderChoiceGroup("rentPeriod", rentPeriods)}
-                {listingIsRoommateSearch && !listingRoommateHasPlace ? (
-                  <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates needed*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
-                ) : listingIsNeedPlace ? (
-                  <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="People moving*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
-                ) : (
-                  <View style={styles.twoCol}>
-                    <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="Accommodates*" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-                    <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder={listingRoommateHasPlace ? "Roommates needed*" : "Current roommates"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-                  </View>
-                )}
-                {renderChoiceGroup("bathroomType", bathroomOptions)}
-                {renderChoiceGroup("genderPreference", genderOptions)}
-                {renderChoiceGroup("leaseTerm", leaseOptions)}
-                {!listingHasPropertyDetails ? <TextInput value={listingForm.commutePreference} onChangeText={(text) => updateListingForm("commutePreference", text)} placeholder="Commute preference / transit notes optional" placeholderTextColor={theme.colors.muted} style={styles.input} /> : null}
-                {listingHasPropertyDetails ? (
-                  <>
-                    <TextInput value={listingForm.daysAvailable} onChangeText={(text) => updateListingForm("daysAvailable", text)} placeholder="Showing days / availability optional" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                    <TextInput value={listingForm.deposit} onChangeText={(text) => updateListingForm("deposit", text)} placeholder="Deposit optional" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
-                  </>
-                ) : null}
               </>
             )}
             {listingIsNeedPlace ? renderFormSection(
@@ -4138,48 +4131,59 @@ function FairFaresApp() {
                 <Text style={styles.photoCount}>{(listingForm.images || []).length}/4 photos selected</Text>
               </>
             )}
-            {renderFormSection(
-              listingHasPropertyDetails ? "Amenities and house preferences" : "Preferences",
+            <TouchableOpacity
+              style={styles.optionalDetailsToggle}
+              onPress={() => setListingOptionalDetailsOpen((current) => !current)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: listingOptionalDetailsOpen }}
+              accessibilityLabel="Add optional listing details"
+            >
+              <View style={styles.optionalDetailsCopy}>
+                <Text style={styles.optionalDetailsTitle}>Add details to improve matches</Text>
+                <Text style={styles.optionalDetailsText}>Preferences, amenities, roommate count, lease details, and social links.</Text>
+              </View>
+              <Text style={styles.optionalDetailsGlyph}>{listingOptionalDetailsOpen ? "−" : "+"}</Text>
+            </TouchableOpacity>
+            {listingOptionalDetailsOpen ? renderFormSection(
+              "Optional details",
               <>
-                {listingHasPropertyDetails ? (
-                  <View style={styles.choiceRow}>
-                    {amenityToggles.map(([field, label]) => (
-                      <TouchableOpacity
-                        key={field}
-                        style={[styles.choicePill, listingForm[field] && styles.choicePillActive]}
-                        onPress={() => updateListingForm(field, !listingForm[field] as MobileHousingPostInput[typeof field])}
-                      >
-                        <Text style={[styles.choiceText, listingForm[field] && styles.choiceTextActive]}>{label}</Text>
-                      </TouchableOpacity>
-                    ))}
+                {!listingIsRoommateSearch ? renderChoiceGroup("category", listingCategories) : null}
+                {listingIsRoommateSearch && !listingRoommateHasPlace ? (
+                  <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates needed" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                ) : listingIsNeedPlace ? (
+                  <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="People moving" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                ) : (
+                  <View style={styles.twoCol}>
+                    <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="People accommodated" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                    <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates needed" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
                   </View>
-                ) : null}
-                <TextInput value={listingForm.amenities} onChangeText={(text) => updateListingForm("amenities", text)} placeholder={listingHasPropertyDetails ? "Amenities, eg WiFi, gym, laundry, parking" : "Desired amenities optional, eg laundry, parking, near bus"} placeholderTextColor={theme.colors.muted} style={styles.input} />
-                {lifestyleOptions.map(([field, label, options]) => (
-                  <View key={field} style={styles.miniGroup}>
-                    <Text style={styles.miniLabel}>{label}</Text>
-                    <View style={styles.choiceRow}>
-                      {options.map((option) => (
-                        <TouchableOpacity key={option} style={[styles.choicePill, listingForm[field] === option && styles.choicePillActive]} onPress={() => updateListingForm(field, option as MobileHousingPostInput[typeof field])}>
-                          <Text style={[styles.choiceText, listingForm[field] === option && styles.choiceTextActive]}>{option}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                ))}
+                )}
+                {listingHasPropertyDetails ? <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} /> : null}
+                {renderChoiceGroup("bathroomType", bathroomOptions)}
+                {renderChoiceGroup("genderPreference", genderOptions)}
+                {renderChoiceGroup("leaseTerm", leaseOptions)}
+                {!listingHasPropertyDetails ? <TextInput value={listingForm.commutePreference} onChangeText={(text) => updateListingForm("commutePreference", text)} placeholder="Commute preference / transit notes" placeholderTextColor={theme.colors.muted} style={styles.input} /> : null}
+                {listingHasPropertyDetails ? <>
+                  <TextInput value={listingForm.daysAvailable} onChangeText={(text) => updateListingForm("daysAvailable", text)} placeholder="Showing days / availability" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                  <TextInput value={listingForm.deposit} onChangeText={(text) => updateListingForm("deposit", text)} placeholder="Deposit" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                  <View style={styles.choiceRow}>{amenityToggles.map(([field, label]) => <TouchableOpacity key={field} style={[styles.choicePill, listingForm[field] && styles.choicePillActive]} onPress={() => updateListingForm(field, !listingForm[field] as MobileHousingPostInput[typeof field])}><Text style={[styles.choiceText, listingForm[field] && styles.choiceTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+                </> : null}
+                <TextInput value={listingForm.amenities} onChangeText={(text) => updateListingForm("amenities", text)} placeholder="Amenities, eg WiFi, gym, laundry, parking" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                {lifestyleOptions.map(([field, label, options]) => <View key={field} style={styles.miniGroup}><Text style={styles.miniLabel}>{label}</Text><View style={styles.choiceRow}>{options.map((option) => <TouchableOpacity key={option} style={[styles.choicePill, listingForm[field] === option && styles.choicePillActive]} onPress={() => updateListingForm(field, option as MobileHousingPostInput[typeof field])}><Text style={[styles.choiceText, listingForm[field] === option && styles.choiceTextActive]}>{option}</Text></TouchableOpacity>)}</View></View>)}
                 <TextInput value={listingForm.aboutYou} onChangeText={(text) => updateListingForm("aboutYou", text)} placeholder={listingHasPropertyDetails ? "House rules / ideal tenant or roommate" : "About you / ideal roommates"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textAreaSmall]} multiline />
+                <TextInput value={listingForm.socialFacebook} onChangeText={(text) => updateListingForm("socialFacebook", text)} placeholder="Facebook URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
+                <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Instagram URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
               </>
-            )}
-            {renderFormSection(
-              "Contact * and socials",
+            ) : null}
+            {listingNeedsContactDetails ? renderFormSection(
+              "Contact details *",
               <>
+                <Text style={styles.contactDetailsHelp}>We use this only to help interested members contact you.</Text>
                 <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Contact name*" placeholderTextColor={theme.colors.muted} style={styles.input} />
                 <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Contact email*" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
                 <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Contact phone*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="phone-pad" />
-                <TextInput value={listingForm.socialFacebook} onChangeText={(text) => updateListingForm("socialFacebook", text)} placeholder="Facebook URL optional" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
-                <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Instagram URL optional" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
               </>
-            )}
+            ) : <View style={styles.contactDetailsReady}><Text style={styles.contactDetailsReadyText}>✓ Replies will go to Chitthi using your verified FairFares profile.</Text></View>}
             <TouchableOpacity style={[styles.primaryButton, listingSubmitting && { opacity: 0.6 }]} onPress={submitListing} disabled={listingSubmitting}>
               <View style={styles.buttonLoadingContent}>{listingSubmitting ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{listingSubmitting ? (listingForm.listingId ? "Saving changes…" : "Posting…") : listingForm.listingId ? "Save changes" : "Post listing"}</Text></View>
             </TouchableOpacity>
@@ -4537,6 +4541,14 @@ const styles = StyleSheet.create({
   textAreaSmall: { minHeight: 82, paddingTop: 14, textAlignVertical: "top" },
   formSection: { gap: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.bg },
   formSectionTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "600" },
+  optionalDetailsToggle: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.lg, padding: theme.spacing.md, backgroundColor: theme.colors.panel2 },
+  optionalDetailsCopy: { flex: 1, gap: 3 },
+  optionalDetailsTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "800" },
+  optionalDetailsText: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  optionalDetailsGlyph: { color: theme.colors.brand, fontSize: 27, lineHeight: 28, fontWeight: "500" },
+  contactDetailsHelp: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  contactDetailsReady: { borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "rgba(34,197,94,0.11)", borderWidth: 1, borderColor: "rgba(34,197,94,0.36)" },
+  contactDetailsReadyText: { color: theme.colors.text, fontSize: 12, lineHeight: 17, fontWeight: "700" },
   requiredLegend: { color: theme.colors.accent, fontSize: 12, lineHeight: 16, fontWeight: "800" },
   photoHelp: { color: theme.colors.muted, fontSize: 13, lineHeight: 18, fontWeight: "700" },
   photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
