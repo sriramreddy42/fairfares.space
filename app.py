@@ -107,6 +107,13 @@ SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 SESSION_TOUCH_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_TOUCH_SECONDS", 5 * 60)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
+DICEBEAR_AVATAR_ORIGIN = os.environ.get("FAIRFARES_DICEBEAR_API_ORIGIN", "").strip().rstrip("/")
+# Lorelei is CC0 and provides a complete illustrated person. The neutral
+# variant is intentionally only facial features, which is too sparse for a
+# recognizable FairFares profile character.
+DICEBEAR_AVATAR_STYLE = "lorelei"
+DICEBEAR_AVATAR_API_VERSION = "10.x"
+DICEBEAR_AVATAR_BACKGROUND_COLORS = {"b6ead8", "c9e4ff", "fde1d7", "f7e6ba", "ddd6fe", "d1fae5"}
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 MAX_HOUSING_IMAGE_BYTES = 3_000_000
 MAX_REQUEST_BODY_BYTES = 24_000_000
@@ -6530,6 +6537,10 @@ def init_db() -> None:
                 suspended_at TEXT,
                 suspended_reason TEXT NOT NULL DEFAULT '',
                 suspended_by INTEGER,
+                avatar_mode TEXT NOT NULL DEFAULT 'PHOTO',
+                avatar_seed TEXT NOT NULL DEFAULT '',
+                avatar_style TEXT NOT NULL DEFAULT '',
+                avatar_options_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -7913,6 +7924,10 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_account_deletion_user_status ON account_deletion_requests(user_id, status, requested_at DESC)")
         ensure_column(con, "users", "phone_verified_at", "phone_verified_at TEXT")
         ensure_column(con, "users", "profile_photo_url", "profile_photo_url TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "avatar_mode", "avatar_mode TEXT NOT NULL DEFAULT 'PHOTO'")
+        ensure_column(con, "users", "avatar_seed", "avatar_seed TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "avatar_style", "avatar_style TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "avatar_options_json", "avatar_options_json TEXT NOT NULL DEFAULT '{}'")
         con.execute(
             """
             INSERT OR IGNORE INTO testimonials
@@ -18031,6 +18046,9 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "consentPending": not has_current_consent,
         "promotionalNotificationsEnabled": bool(int(row_value(user, "promo_push_opt_in") or 0)),
         "profilePhotoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), int(row_value(user, "id") or 0)),
+        "avatarMode": "DICEBEAR" if row_value(user, "avatar_mode") == "DICEBEAR" else "PHOTO",
+        "avatarSeed": row_value(user, "avatar_seed") or "",
+        "avatarStyle": row_value(user, "avatar_style") or "",
     }
 
 
@@ -25190,6 +25208,29 @@ def optimized_static_image_url(url: str) -> str:
     return url
 
 
+def create_dicebear_avatar(seed: str, background_color: str = "") -> tuple[str, str]:
+    """Generate a FairFares-owned PNG from the private DiceBear service."""
+    safe_seed = clean_text_value(seed, 120)
+    safe_background = clean_text_value(background_color, 16).lower().lstrip("#")
+    if not safe_seed:
+        return "", "Choose a character first."
+    if not DICEBEAR_AVATAR_ORIGIN:
+        return "", "Character avatars are not configured yet."
+    params = {"seed": safe_seed, "backgroundColor": safe_background if safe_background in DICEBEAR_AVATAR_BACKGROUND_COLORS else "b6ead8", "borderRadius": "50", "size": "256"}
+    url = f"{DICEBEAR_AVATAR_ORIGIN}/{DICEBEAR_AVATAR_API_VERSION}/{DICEBEAR_AVATAR_STYLE}/png?{urllib.parse.urlencode(params)}"
+    try:
+        response = requests.get(url, timeout=(2, 12))
+        response.raise_for_status()
+    except requests.RequestException:
+        return "", "Character service is temporarily unavailable. Please try again."
+    payload = response.content
+    if not payload.startswith(b"\x89PNG\r\n\x1a\n") or len(payload) > 1_000_000:
+        return "", "Character service returned an invalid image."
+    data_url = "data:image/png;base64," + base64.b64encode(payload).decode("ascii")
+    stored = save_avatar_data_url(folder_name="avatars", data_url=data_url, fallback_name=f"dicebear-{hashlib.sha256(safe_seed.encode('utf-8')).hexdigest()[:16]}")
+    return (stored, "") if stored else ("", "Could not save your character. Please try again.")
+
+
 def profile_photo_url(user: sqlite3.Row | dict[str, object] | None) -> str:
     if not user:
         return ""
@@ -26948,6 +26989,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/bootstrap":
             self.api_mobile_bootstrap(parsed)
             return
+        if parsed.path == "/api/mobile/profile/avatar/preview":
+            self.api_mobile_avatar_preview(parsed)
+            return
         if parsed.path == "/api/mobile/app-version":
             self.api_mobile_app_version(parsed)
             return
@@ -27377,6 +27421,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
+            "/api/mobile/profile/avatar": self.api_mobile_update_avatar,
             "/api/mobile/profile/consent": self.api_mobile_accept_current_policies,
             "/api/mobile/push-token": self.api_mobile_push_token,
             "/api/mobile/notification-preferences": self.api_mobile_update_notification_preferences,
@@ -39834,6 +39879,65 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             updated = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         self.send_json({"ok": True, "user": mobile_user_payload(updated)})
 
+    def api_mobile_avatar_preview(self, parsed: urllib.parse.ParseResult) -> None:
+        if not self.current_user():
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view characters."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        seed = clean_text_value((params.get("seed", [""])[0] or ""), 120)
+        background_color = clean_text_value((params.get("backgroundColor", [""])[0] or ""), 16).lower().lstrip("#")
+        if not seed or not DICEBEAR_AVATAR_ORIGIN:
+            self.send_response(404)
+            self.end_headers()
+            return
+        query = urllib.parse.urlencode({"seed": seed, "backgroundColor": background_color if background_color in DICEBEAR_AVATAR_BACKGROUND_COLORS else "b6ead8", "borderRadius": "50", "size": "256"})
+        try:
+            response = requests.get(f"{DICEBEAR_AVATAR_ORIGIN}/{DICEBEAR_AVATAR_API_VERSION}/{DICEBEAR_AVATAR_STYLE}/png?{query}", timeout=(2, 12))
+            response.raise_for_status()
+        except requests.RequestException:
+            self.send_response(503)
+            self.end_headers()
+            return
+        image = response.content
+        if not image.startswith(b"\x89PNG\r\n\x1a\n") or len(image) > 1_000_000:
+            self.send_response(502)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Cache-Control", "private, max-age=300")
+        self.send_header("Content-Length", str(len(image)))
+        self.end_headers()
+        self.wfile.write(image)
+
+    def api_mobile_update_avatar(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to choose a character."}, 401)
+            return
+        payload = self.read_json_body()
+        seed = clean_text_value(payload.get("seed"), 120)
+        background_color = clean_text_value(payload.get("backgroundColor"), 16).lower().lstrip("#")
+        stored_avatar, error = create_dicebear_avatar(seed, background_color)
+        if not stored_avatar:
+            self.send_json({"ok": False, "error": error}, 503 if "temporarily" in error or "configured" in error else 400)
+            return
+        old_photo = str(row_value(user, "profile_photo_url") or "").strip()
+        options = json.dumps({"backgroundColor": background_color if background_color in DICEBEAR_AVATAR_BACKGROUND_COLORS else "b6ead8"}, separators=(",", ":"))
+        with db() as con:
+            con.execute(
+                """UPDATE users SET profile_photo_url = ?, avatar_mode = 'DICEBEAR', avatar_seed = ?,
+                                  avatar_style = ?, avatar_options_json = ? WHERE id = ?""",
+                (stored_avatar, seed, DICEBEAR_AVATAR_STYLE, options, int(row_value(user, "id") or 0)),
+            )
+            updated = con.execute("SELECT * FROM users WHERE id = ?", (int(row_value(user, "id") or 0),)).fetchone()
+        if old_photo and old_photo != stored_avatar:
+            try:
+                delete_stored_upload_reference(old_photo)
+            except Exception:
+                pass
+        self.send_json({"ok": True, "user": mobile_user_payload(updated)})
+
     def api_mobile_update_profile(self) -> None:
         user = self.current_user()
         if not user:
@@ -39961,6 +40065,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 else:
                     cursor = con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?,
+                                  avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}',
                                   chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
                            WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
                         (name, email, phone, date_of_birth or None, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),

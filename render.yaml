@@ -57,6 +57,9 @@ services:
         value: "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com"
       - key: OPENAI_API_KEY
         sync: false
+      # Private DiceBear renderer URL, set after the fairfares-dicebear service is created.
+      - key: FAIRFARES_DICEBEAR_API_ORIGIN
+        sync: false
       - key: OPENAI_AGENT_MCP_SERVERS
         sync: false
       - key: OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED
@@ -81,3 +84,12 @@ services:
         value: ""
       - key: FAIRFARES_CHITTHI_CRYPTO_THROTTLE_MS
         value: "0"
+
+  # Private DiceBear renderer for FairFares character avatars. The public
+  # FairFares service is the only caller; members never contact it directly.
+  - type: pserv
+    name: fairfares-dicebear
+    runtime: docker
+    dockerfilePath: ./services/dicebear/Dockerfile
+    dockerContext: ./services/dicebear
+    plan: 0.5c-512mb

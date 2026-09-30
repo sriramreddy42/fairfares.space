@@ -3242,6 +3242,14 @@ export async function updateMobileProfile(input: MobileProfileInput) {
   });
 }
 
+export async function updateDiceBearAvatar(input: { seed: string; backgroundColor?: string }) {
+  return request<{ ok: boolean; user: BootstrapPayload["user"]; error?: string }>("/api/mobile/profile/avatar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
 export async function acceptCurrentPolicies() {
   return request<{ ok: boolean; user: BootstrapPayload["user"] }>("/api/mobile/profile/consent", {
     method: "POST",

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { ActivityIndicator, Alert, AppState, Image, ImageSourcePropType, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, sendMobileNotificationTest, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, sendMobileNotificationTest, updateDiceBearAvatar, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
+import { AvatarMotion } from "../components/AvatarMotion";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
@@ -38,6 +39,7 @@ type AccountHistoryItem = { id: string; sourceId: string; title: string; meta: s
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
 const profileDraftKey = (userId: number) => `fairfares.mobile.profileDraft.${userId}`;
+const DICEBEAR_AVATAR_BACKGROUNDS = ["b6ead8", "c9e4ff", "fde1d7", "f7e6ba", "ddd6fe", "d1fae5"];
 const PUSH_CATEGORIES: { key: keyof MobileNotificationPreferences; title: string; copy: string }[] = [
   { key: "chitthi", title: "Chitthi messages", copy: "Messages still arrive in Chitthi when alerts are off." },
   { key: "housing", title: "Housing", copy: "For listing and match alerts when available." },
@@ -76,7 +78,7 @@ export function ProfileScreen({
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
-  const [savingMode, setSavingMode] = useState<"photo" | "details" | "">("");
+  const [savingMode, setSavingMode] = useState<"photo" | "details" | "avatar" | "">("");
   const profileMutationRunningRef = useRef(false);
   const currentProfileUserIdRef = useRef(Number(user?.id || 0));
   currentProfileUserIdRef.current = Number(user?.id || 0);
@@ -89,6 +91,8 @@ export function ProfileScreen({
   const [historySection, setHistorySection] = useState<AccountHistorySection | null>(null);
   const [carpoolHistoryView, setCarpoolHistoryView] = useState<CarpoolHistoryView>("listings");
   const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
+  const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
+  const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportTopic, setSupportTopic] = useState(SUPPORT_TOPICS[0]);
   const [supportMessage, setSupportMessage] = useState("");
@@ -357,6 +361,29 @@ export function ProfileScreen({
     }
   }
 
+  function characterAvatarPreview(seed: string, backgroundColor: string) {
+    return `/api/mobile/profile/avatar/preview?seed=${encodeURIComponent(seed)}&backgroundColor=${encodeURIComponent(backgroundColor)}`;
+  }
+
+  async function chooseCharacterAvatar(seed: string, backgroundColor: string) {
+    if (!user || profileMutationRunningRef.current) return;
+    profileMutationRunningRef.current = true;
+    setSavingMode("avatar");
+    try {
+      const payload = await updateDiceBearAvatar({ seed, backgroundColor });
+      if (Number(payload.user?.id || 0) !== Number(user.id || 0)) return;
+      setProfilePhoto(payload.user?.profilePhotoUrl || "");
+      onProfileUpdated(payload.user);
+      setCharacterPickerOpen(false);
+      Alert.alert("Character updated", "Your FairFares character is now used across the app.");
+    } catch (error) {
+      Alert.alert("Character not saved", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      profileMutationRunningRef.current = false;
+      setSavingMode("");
+    }
+  }
+
   async function saveProfile() {
     if (!user) {
       onLogin();
@@ -482,7 +509,7 @@ export function ProfileScreen({
             <View style={styles.badge}><Text style={styles.badgeText}>{user?.phone ? "Phone on file" : "Add phone"}</Text></View>
           </View>
         </View>
-        <TouchableOpacity style={styles.avatar} onPress={choosePhoto} disabled={saving}>
+        <AvatarMotion style={styles.avatar}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving}>
           <UserAvatar
             photoUrl={profilePhoto}
             style={styles.avatarImage}
@@ -490,7 +517,7 @@ export function ProfileScreen({
             fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>}
           />
           {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
-        </TouchableOpacity>
+        </TouchableOpacity></AvatarMotion>
       </View>
 
       {!user ? (
@@ -541,6 +568,22 @@ export function ProfileScreen({
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
                 <View style={styles.buttonContent}>{savingMode === "details" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving…" : profileDirty && sensitiveChanged && !completingInitialPhone && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text></View>
               </TouchableOpacity>
+            </View>
+            <View style={styles.characterAppearanceSection}>
+              <View style={styles.characterAppearanceHeader}>
+                <View><Text style={styles.label}>Public appearance</Text><Text style={styles.characterAppearanceCopy}>{user.avatarMode === "DICEBEAR" ? "You are using a FairFares character." : "You are using your profile photo."}</Text></View>
+                <TouchableOpacity style={styles.characterAppearanceButton} onPress={() => setCharacterPickerOpen((open) => !open)} disabled={saving} accessibilityRole="button" accessibilityState={{ expanded: characterPickerOpen }} accessibilityLabel="Change FairFares character"><Text style={styles.characterAppearanceButtonText}>{characterPickerOpen ? "Close" : "Choose character"}</Text></TouchableOpacity>
+              </View>
+              {characterPickerOpen ? <>
+                <View style={styles.characterAvatarGrid}>
+                  {Array.from({ length: 6 }, (_, index) => {
+                    const seed = `fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${index}`;
+                    const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length];
+                    return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, saving && styles.disabled]} disabled={saving} onPress={() => void chooseCharacterAvatar(seed, backgroundColor)} accessibilityRole="button" accessibilityLabel={`Choose character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>;
+                  })}
+                </View>
+                <TouchableOpacity style={styles.characterShuffleButton} onPress={() => setCharacterAvatarSet((current) => current + 1)} disabled={saving} accessibilityRole="button"><Text style={styles.characterShuffleButtonText}>{savingMode === "avatar" ? "Saving character…" : "Shuffle characters"}</Text></TouchableOpacity>
+              </> : null}
             </View>
           </> : null}
         </View>
@@ -775,6 +818,7 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: theme.colors.panel2, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
   badgeText: { color: theme.colors.soft, fontWeight: "700", fontSize: 11 },
   avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.colors.line, overflow: "hidden" },
+  avatarTouchTarget: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center" },
   avatarImage: { width: "100%", height: "100%" },
   avatarLoading: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.48)" },
   avatarText: { color: theme.colors.text, fontSize: 26, fontWeight: "800" },
@@ -799,6 +843,17 @@ const styles = StyleSheet.create({
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, minHeight: 48, paddingHorizontal: 13, fontSize: 15 },
   securityNote: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, fontWeight: "600", backgroundColor: "rgba(37,99,235,0.12)", borderRadius: theme.radius.md, padding: 10 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginTop: 4 },
+  characterAppearanceSection: { gap: 10, paddingTop: 13, marginTop: 5, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  characterAppearanceHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  characterAppearanceCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 16, marginTop: 3 },
+  characterAppearanceButton: { borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(94,196,122,0.52)", paddingHorizontal: 11, paddingVertical: 8 },
+  characterAppearanceButtonText: { color: theme.colors.green, fontSize: 12, fontWeight: "900" },
+  characterAvatarGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  characterAvatarOption: { width: 54, height: 54, borderRadius: 27, overflow: "hidden", borderWidth: 2, borderColor: "rgba(94,196,122,0.45)", backgroundColor: theme.colors.panel2 },
+  characterAvatarImage: { width: "100%", height: "100%" },
+  characterAvatarFallback: { color: theme.colors.soft, fontSize: 27, fontWeight: "800" },
+  characterShuffleButton: { alignSelf: "flex-start", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingVertical: 9 },
+  characterShuffleButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   privacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.line },
   privacyCopy: { flex: 1 },
   settingsLink: { color: theme.colors.brand, fontWeight: "800", fontSize: 13 },

@@ -83,6 +83,9 @@ export type FairFaresUser = {
   consentPending?: boolean;
   promotionalNotificationsEnabled?: boolean;
   profilePhotoUrl?: string;
+  avatarMode?: "PHOTO" | "DICEBEAR";
+  avatarSeed?: string;
+  avatarStyle?: string;
 };
 
 export type StaffPickupBooking = {

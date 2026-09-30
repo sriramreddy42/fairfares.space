@@ -15,7 +15,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent, updateDiceBearAvatar } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -26,6 +26,7 @@ import { NearbyRelayProvider } from "./src/providers/NearbyRelayProvider";
 import { encryptForDevices, getOrCreateDeviceIdentity } from "./src/utils/chatCrypto";
 import { AppErrorBoundary } from "./src/components/AppErrorBoundary";
 import { UserAvatar } from "./src/components/UserAvatar";
+import { AvatarMotion } from "./src/components/AvatarMotion";
 import { logDevelopmentPerformance, setPerformanceContext, startJavaScriptResponsivenessMonitor } from "./src/utils/performanceDiagnostics";
 import { avatarInitials } from "./src/utils/text";
 import { shareHousingListing } from "./src/utils/listingShare";
@@ -48,6 +49,8 @@ declare const process: {
 };
 
 WebBrowser.maybeCompleteAuthSession();
+
+const DICEBEAR_AVATAR_BACKGROUNDS = ["b6ead8", "c9e4ff", "fde1d7", "f7e6ba", "ddd6fe", "d1fae5"];
 
 const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || "google-ios-client-not-configured";
 const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || "google-android-client-not-configured";
@@ -495,6 +498,8 @@ function FairFaresApp() {
   const [profileCompletionEditRequested, setProfileCompletionEditRequested] = useState(false);
   const [profileConsentAccepted, setProfileConsentAccepted] = useState(false);
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
+  const [characterAvatarBusy, setCharacterAvatarBusy] = useState(false);
+  const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [carpoolFocusKey, setCarpoolFocusKey] = useState(0);
@@ -2864,6 +2869,23 @@ function FairFaresApp() {
     }
   }
 
+  function characterAvatarPreview(seed: string, backgroundColor: string) {
+    return `/api/mobile/profile/avatar/preview?seed=${encodeURIComponent(seed)}&backgroundColor=${encodeURIComponent(backgroundColor)}`;
+  }
+
+  async function selectCharacterAvatar(seed: string, backgroundColor: string) {
+    if (characterAvatarBusy) return;
+    setCharacterAvatarBusy(true);
+    try {
+      const payload = await updateDiceBearAvatar({ seed, backgroundColor });
+      if (payload.user) updateLocalUser(payload.user);
+    } catch (error) {
+      Alert.alert("Character not saved", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCharacterAvatarBusy(false);
+    }
+  }
+
   function updateLocalUser(user: BootstrapPayload["user"]) {
     if (!user) return;
     const userId = Number(user.id || 0);
@@ -3836,19 +3858,40 @@ function FairFaresApp() {
       </Modal>
       <Modal visible={profileCompletionOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setProfileCompletionOpen(false)}>
         <View style={styles.profileCompletionBackdrop}>
+          <ScrollView style={styles.profileCompletionScroll} contentContainerStyle={styles.profileCompletionScrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.profileCompletionCard} accessibilityRole="alert">
-            <View style={styles.profileCompletionAvatar}>
+            <AvatarMotion style={styles.profileCompletionAvatar}>
               <UserAvatar
                 photoUrl={data?.user?.profilePhotoUrl}
                 imageStyle={styles.profileCompletionAvatarImage}
                 fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
               />
-            </View>
+            </AvatarMotion>
             <Text style={styles.profileCompletionEyebrow}>Your FairFares profile</Text>
             <Text style={styles.profileCompletionTitle}>Complete your profile</Text>
             <Text style={styles.profileCompletionCopy}>Add the missing details so members can recognize and trust who they are connecting with.</Text>
+            {!data?.user?.profilePhotoUrl?.trim() ? (
+              <View style={styles.characterAvatarPicker}>
+                <Text style={styles.characterAvatarPickerTitle}>Choose a FairFares character</Text>
+                <View style={styles.characterAvatarGrid}>
+                  {Array.from({ length: 6 }, (_, index) => {
+                    const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`;
+                    const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length];
+                    return (
+                      <TouchableOpacity key={seed} style={[styles.characterAvatarOption, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => void selectCharacterAvatar(seed, backgroundColor)} accessibilityRole="button" accessibilityLabel={`Choose character ${index + 1}`}>
+                        <UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarSet((current) => current + 1)} accessibilityRole="button" accessibilityLabel="Show different characters">
+                  <Text style={styles.characterAvatarShuffleText}>{characterAvatarBusy ? "Saving character…" : "Shuffle characters"}</Text>
+                </TouchableOpacity>
+                <Text style={styles.characterAvatarHint}>Or add a profile photo from Account. You can change this anytime.</Text>
+              </View>
+            ) : null}
             <View style={styles.profileCompletionMissingRow}>
-              {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Profile photo</Text> : null}
+              {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Photo or character</Text> : null}
               {!data?.user?.name?.trim() ? <Text style={styles.profileCompletionChip}>Full name</Text> : null}
               {!data?.user?.email?.trim() ? <Text style={styles.profileCompletionChip}>Email</Text> : null}
               {!data?.user?.phone?.trim() ? <Text style={styles.profileCompletionChip}>Phone number</Text> : null}
@@ -3877,6 +3920,7 @@ function FairFaresApp() {
               <Text style={styles.profileCompletionLaterText}>Not now</Text>
             </TouchableOpacity>
           </View>
+          </ScrollView>
         </View>
       </Modal>
       <Modal visible={reviewPromptOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => void dismissReviewPrompt()}>
@@ -4404,6 +4448,8 @@ const styles = StyleSheet.create({
   listingSuccessSecondary: { minHeight: 48, paddingHorizontal: 24, alignItems: "center", justifyContent: "center", marginTop: 2 },
   listingSuccessSecondaryText: { color: "#dce7e2", fontSize: 14, fontWeight: "900" },
   profileCompletionBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.82)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
+  profileCompletionScroll: { width: "100%", maxWidth: 410 },
+  profileCompletionScrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: 24 },
   profileCompletionCard: { width: "100%", maxWidth: 410, borderRadius: 28, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: theme.colors.panel, paddingHorizontal: 22, paddingVertical: 24, alignItems: "center", gap: 11 },
   profileCompletionAvatar: { width: 72, height: 72, borderRadius: 36, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123c27", borderWidth: 2, borderColor: theme.colors.green },
   profileCompletionAvatarImage: { width: "100%", height: "100%" },
@@ -4411,6 +4457,15 @@ const styles = StyleSheet.create({
   profileCompletionEyebrow: { color: theme.colors.green, fontSize: 11, lineHeight: 15, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2, marginTop: 3 },
   profileCompletionTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
   profileCompletionCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
+  characterAvatarPicker: { width: "100%", alignItems: "center", gap: 9, paddingTop: 2 },
+  characterAvatarPickerTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  characterAvatarGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10 },
+  characterAvatarOption: { width: 52, height: 52, borderRadius: 26, overflow: "hidden", borderWidth: 2, borderColor: "rgba(94,196,122,0.45)", backgroundColor: theme.colors.panel2 },
+  characterAvatarImage: { width: "100%", height: "100%" },
+  characterAvatarFallback: { color: theme.colors.soft, fontSize: 27, fontWeight: "800" },
+  characterAvatarShuffle: { minHeight: 36, paddingHorizontal: 15, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(94,196,122,0.5)", alignItems: "center", justifyContent: "center" },
+  characterAvatarShuffleText: { color: theme.colors.green, fontSize: 13, fontWeight: "900" },
+  characterAvatarHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, fontWeight: "700", textAlign: "center" },
   profileCompletionMissingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7, marginVertical: 4 },
   profileCompletionChip: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 10, paddingVertical: 6 },
   profileCompletionPrimary: { width: "100%", minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
