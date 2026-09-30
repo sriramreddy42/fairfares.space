@@ -559,7 +559,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
     throw new Error(lastError || "Background request did not finish.");
   }
   const referenceId = reportApiDiagnostic("network_failure", `${String(init.method || "GET").toUpperCase()} ${path}: ${lastError}`);
-  if (EXPLICIT_API_URL) {
+  if (!isLocalApiUrl(currentApiBase())) {
     throw new Error(`FairFares is temporarily unavailable. Check your internet connection and try again shortly. Reference: ${referenceId}`);
   }
   throw new Error(`Could not connect to the local FairFares API. Reference: ${referenceId}. Last error: ${lastError}. Start the backend with HOST=0.0.0.0 PORT=8010 python3 app.py, then restart Expo with --clear.`);
@@ -1560,7 +1560,9 @@ export async function getChatConversationsPage(cursor = "", offset = 0, query = 
   const existing = chatConversationPageRequests.get(requestKey);
   if (existing) return existing;
   const pending = (async (): Promise<ChatConversationPage> => {
-    const payload = await request<{ ok: boolean; conversations: ChatConversation[]; pagination?: { hasMore?: boolean; nextCursor?: string } }>(`/api/chat/conversations?${params.toString()}`);
+    // A conversation fetch is read-only. Give a momentary mobile-network drop
+    // one extra retry before an otherwise healthy inbox looks unavailable.
+    const payload = await request<{ ok: boolean; conversations: ChatConversation[]; pagination?: { hasMore?: boolean; nextCursor?: string } }>(`/api/chat/conversations?${params.toString()}`, {}, { attempts: 3 });
     const conversations = payload.conversations || [];
     return {
       conversations,
