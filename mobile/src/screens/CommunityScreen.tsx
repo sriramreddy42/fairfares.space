@@ -595,7 +595,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     // iOS cannot reliably present the member modal over the page-sheet post
     // modal. Dismiss the post first, then present the member profile from the
     // root screen in the post modal's onDismiss callback.
-    if (detail) {
+    if (Platform.OS === "ios" && detail) {
       pendingMemberProfileRef.current = author;
       setDetail(null);
       return;
