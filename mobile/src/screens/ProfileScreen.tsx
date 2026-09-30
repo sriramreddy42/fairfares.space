@@ -506,28 +506,10 @@ export function ProfileScreen({
         { paddingBottom: layout.navClearance }
       ]}
       showsVerticalScrollIndicator={false}
+      stickyHeaderIndices={user ? [0] : undefined}
     >
-      {!user ? <View style={styles.hero}>
-        <View style={styles.heroCopy}>
-          <SectionHeader eyebrow="Account" title={displayName} />
-          <View style={styles.badgeRow}>
-            <View style={styles.badge}><Text style={styles.badgeText}>Email pending</Text></View>
-            <View style={styles.badge}><Text style={styles.badgeText}>Add phone</Text></View>
-          </View>
-        </View>
-        <AvatarMotion style={styles.avatar}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving}>
-          <UserAvatar
-            photoUrl={profilePhoto}
-            style={styles.avatarImage}
-            imageStyle={styles.avatarImage}
-            fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>}
-          />
-          {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
-        </TouchableOpacity></AvatarMotion>
-      </View> : null}
-
       {user ? (
-        <View style={styles.accountAvatarStudio}>
+        <View style={styles.accountAvatarStudioSticky}>
           <View style={styles.accountAvatarStudioIdentity}>
             <AvatarMotion style={[styles.avatar, styles.accountAvatarStudioIdentityAvatar]}>
               <UserAvatar photoUrl={profilePhoto} style={styles.avatarImage} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>} />
@@ -549,15 +531,36 @@ export function ProfileScreen({
             <TouchableOpacity
               style={[styles.accountAvatarStudioSave, (saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)) && styles.accountAvatarStudioSaveDisabled]}
               disabled={saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)}
-              onPress={() => characterCreatorTab === "photo"
-                ? choosePhoto()
-                : void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
+              onPress={() => characterCreatorTab === "photo" ? choosePhoto() : void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
               accessibilityRole="button"
               accessibilityLabel={characterCreatorTab === "photo" ? "Upload profile photo" : "Save selected character"}
             >
               {saving ? <ActivityIndicator size="small" color="#06291e" /> : <Text style={styles.accountAvatarStudioSaveText}>{characterCreatorTab === "photo" ? "Upload" : characterPreviewDirty ? "Save" : "Choose"}</Text>}
             </TouchableOpacity>
           </View>
+        </View>
+      ) : null}
+      {!user ? <View style={styles.hero}>
+        <View style={styles.heroCopy}>
+          <SectionHeader eyebrow="Account" title={displayName} />
+          <View style={styles.badgeRow}>
+            <View style={styles.badge}><Text style={styles.badgeText}>Email pending</Text></View>
+            <View style={styles.badge}><Text style={styles.badgeText}>Add phone</Text></View>
+          </View>
+        </View>
+        <AvatarMotion style={styles.avatar}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving}>
+          <UserAvatar
+            photoUrl={profilePhoto}
+            style={styles.avatarImage}
+            imageStyle={styles.avatarImage}
+            fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>}
+          />
+          {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
+        </TouchableOpacity></AvatarMotion>
+      </View> : null}
+
+      {user ? (
+        <View style={styles.accountAvatarStudioBody}>
           <View style={[styles.characterCreatorStage, { backgroundColor: `#${characterBackground}` }]}>
             <View style={styles.characterCreatorHaloLarge} />
             <View style={styles.characterCreatorHaloSmall} />
@@ -925,7 +928,8 @@ const styles = StyleSheet.create({
   characterShuffleButton: { alignSelf: "flex-start", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingVertical: 9 },
   characterShuffleButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   characterCreatorScreen: { flex: 1, backgroundColor: "#17243b" },
-  accountAvatarStudio: { overflow: "hidden", borderRadius: 26, backgroundColor: "#17243b", paddingTop: 14, borderWidth: 1, borderColor: "rgba(156,233,204,0.28)", shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
+  accountAvatarStudioSticky: { zIndex: 4, backgroundColor: "#17243b", paddingTop: 14, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderBottomWidth: 0, borderColor: "rgba(156,233,204,0.28)", marginBottom: -12, shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
+  accountAvatarStudioBody: { overflow: "hidden", borderBottomLeftRadius: 26, borderBottomRightRadius: 26, backgroundColor: "#17243b", borderWidth: 1, borderTopWidth: 0, borderColor: "rgba(156,233,204,0.28)", shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
   accountAvatarStudioIdentity: { marginHorizontal: 16, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.10)", flexDirection: "row", alignItems: "center", gap: 10 },
   accountAvatarStudioIdentityAvatar: { width: 44, height: 44, borderRadius: 22, borderColor: "rgba(156,233,204,0.75)", backgroundColor: "rgba(255,255,255,0.14)" },
   accountAvatarStudioIdentityCopy: { flex: 1, minWidth: 0 },
