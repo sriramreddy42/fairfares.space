@@ -500,6 +500,8 @@ function FairFaresApp() {
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const [characterAvatarBusy, setCharacterAvatarBusy] = useState(false);
   const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
+  const [characterAvatarPickerOpen, setCharacterAvatarPickerOpen] = useState(false);
+  const [characterAvatarChoice, setCharacterAvatarChoice] = useState<{ seed: string; backgroundColor: string } | null>(null);
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
   const [carpoolFocusKey, setCarpoolFocusKey] = useState(0);
@@ -2878,7 +2880,11 @@ function FairFaresApp() {
     setCharacterAvatarBusy(true);
     try {
       const payload = await updateDiceBearAvatar({ seed, backgroundColor });
-      if (payload.user) updateLocalUser(payload.user);
+      if (payload.user) {
+        updateLocalUser(payload.user);
+        setCharacterAvatarChoice(null);
+        setCharacterAvatarPickerOpen(false);
+      }
     } catch (error) {
       Alert.alert("Character not saved", error instanceof Error ? error.message : "Please try again.");
     } finally {
@@ -3872,22 +3878,29 @@ function FairFaresApp() {
             <Text style={styles.profileCompletionCopy}>Add the missing details so members can recognize and trust who they are connecting with.</Text>
             {!data?.user?.profilePhotoUrl?.trim() ? (
               <View style={styles.characterAvatarPicker}>
-                <Text style={styles.characterAvatarPickerTitle}>Choose a FairFares character</Text>
-                <View style={styles.characterAvatarGrid}>
-                  {Array.from({ length: 6 }, (_, index) => {
-                    const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`;
-                    const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length];
-                    return (
-                      <TouchableOpacity key={seed} style={[styles.characterAvatarOption, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => void selectCharacterAvatar(seed, backgroundColor)} accessibilityRole="button" accessibilityLabel={`Choose character ${index + 1}`}>
-                        <UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarSet((current) => current + 1)} accessibilityRole="button" accessibilityLabel="Show different characters">
-                  <Text style={styles.characterAvatarShuffleText}>{characterAvatarBusy ? "Saving character…" : "Shuffle characters"}</Text>
+                <TouchableOpacity style={styles.characterAvatarPickerToggle} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarPickerOpen((open) => !open)} accessibilityRole="button" accessibilityState={{ expanded: characterAvatarPickerOpen }} accessibilityLabel="Choose a FairFares character">
+                  <Text style={styles.characterAvatarPickerTitle}>Choose a FairFares character</Text>
+                  <Text style={styles.characterAvatarPickerToggleText}>{characterAvatarPickerOpen ? "Hide" : "Choose"}</Text>
                 </TouchableOpacity>
-                <Text style={styles.characterAvatarHint}>Or add a profile photo from Account. You can change this anytime.</Text>
+                {characterAvatarPickerOpen ? <>
+                  <Text style={styles.characterAvatarHint}>Select a look, then save it. You can change it later in Account.</Text>
+                  <View style={styles.characterAvatarGrid}>
+                    {Array.from({ length: 6 }, (_, index) => {
+                      const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`;
+                      const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length];
+                      const selected = characterAvatarChoice?.seed === seed;
+                      return (
+                        <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}>
+                          <UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.characterAvatarPickerActions}>
+                    <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button" accessibilityLabel="Show different characters"><Text style={styles.characterAvatarShuffleText}>Shuffle</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.characterAvatarSave, (!characterAvatarChoice || characterAvatarBusy) && styles.disabledButton]} disabled={!characterAvatarChoice || characterAvatarBusy} onPress={() => characterAvatarChoice && void selectCharacterAvatar(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor)} accessibilityRole="button" accessibilityLabel="Save selected character"><Text style={styles.characterAvatarSaveText}>{characterAvatarBusy ? "Saving…" : "Save character"}</Text></TouchableOpacity>
+                  </View>
+                </> : null}
               </View>
             ) : null}
             <View style={styles.profileCompletionMissingRow}>
@@ -4459,12 +4472,18 @@ const styles = StyleSheet.create({
   profileCompletionCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
   characterAvatarPicker: { width: "100%", alignItems: "center", gap: 9, paddingTop: 2 },
   characterAvatarPickerTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  characterAvatarPickerToggle: { width: "100%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: theme.radius.md, paddingHorizontal: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  characterAvatarPickerToggleText: { color: theme.colors.green, fontSize: 12, fontWeight: "900" },
   characterAvatarGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10 },
   characterAvatarOption: { width: 52, height: 52, borderRadius: 26, overflow: "hidden", borderWidth: 2, borderColor: "rgba(94,196,122,0.45)", backgroundColor: theme.colors.panel2 },
+  characterAvatarOptionSelected: { borderWidth: 3, borderColor: theme.colors.green, transform: [{ scale: 1.07 }] },
   characterAvatarImage: { width: "100%", height: "100%" },
   characterAvatarFallback: { color: theme.colors.soft, fontSize: 27, fontWeight: "800" },
+  characterAvatarPickerActions: { width: "100%", flexDirection: "row", gap: 9 },
   characterAvatarShuffle: { minHeight: 36, paddingHorizontal: 15, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(94,196,122,0.5)", alignItems: "center", justifyContent: "center" },
   characterAvatarShuffleText: { color: theme.colors.green, fontSize: 13, fontWeight: "900" },
+  characterAvatarSave: { flex: 1, minHeight: 36, paddingHorizontal: 15, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center" },
+  characterAvatarSaveText: { color: "#06291e", fontSize: 13, fontWeight: "900" },
   characterAvatarHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, fontWeight: "700", textAlign: "center" },
   profileCompletionMissingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7, marginVertical: 4 },
   profileCompletionChip: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 10, paddingVertical: 6 },
