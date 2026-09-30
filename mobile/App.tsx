@@ -10,7 +10,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
@@ -4232,6 +4232,9 @@ function FairFaresApp() {
                   }}
                   placeholder="City or metro"
                   placeholderTextColor={theme.colors.muted}
+                  autoCorrect={false}
+                  spellCheck={false}
+                  autoCapitalize="words"
                   style={[styles.input, styles.searchInputWithClear]}
                 />
                 {searchCity ? (
@@ -4258,7 +4261,7 @@ function FairFaresApp() {
                     <TouchableOpacity
                       key={cityOption}
                       style={styles.citySuggestionOption}
-                      onPress={() => { selectedCitySuggestionRef.current = cityOption; setSearchCity(cityOption); setSearchArea(""); setSearchCitySuggestions([]); }}
+                      onPress={() => { Keyboard.dismiss(); selectedCitySuggestionRef.current = cityOption; setSearchCity(cityOption); setSearchArea(""); setSearchCitySuggestions([]); }}
                     >
                       <Text style={styles.citySuggestionPin}>⌖</Text>
                       <Text style={styles.citySuggestionText}>{cityOption}</Text>
@@ -4272,6 +4275,9 @@ function FairFaresApp() {
                   onChangeText={setSearchArea}
                   placeholder="Area or landmark"
                   placeholderTextColor={theme.colors.muted}
+                  autoCorrect={false}
+                  spellCheck={false}
+                  autoCapitalize="words"
                   style={[styles.input, styles.searchInputWithClear]}
                 />
                 {searchArea ? (
@@ -4295,7 +4301,7 @@ function FairFaresApp() {
                 </Text>
                 <ScrollView style={styles.suggestionList} contentContainerStyle={styles.suggestionListContent} nestedScrollEnabled keyboardShouldPersistTaps="handled">
                   {searchSuggestionChips().map((chip) => (
-                    <TouchableOpacity key={chip} style={styles.chip} onPress={() => setSearchArea(chip)}>
+                    <TouchableOpacity key={chip} style={styles.chip} onPress={() => { Keyboard.dismiss(); setSearchArea(chip); }}>
                       <Text style={styles.chipText}>{chip}</Text>
                     </TouchableOpacity>
                   ))}
