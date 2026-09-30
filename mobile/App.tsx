@@ -15,7 +15,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent, updateDiceBearAvatar } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerCommunityGuestPushToken, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent, updateDiceBearAvatar } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -519,6 +519,7 @@ function FairFaresApp() {
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
+  const guestPushRegistrationAttemptedRef = useRef(false);
   const lastPushRegistrationSyncRef = useRef(0);
   const notificationPermissionPromptShownRef = useRef(false);
   const startupChatKeyRegistrationRef = useRef({ userId: 0, running: false, registeredAt: 0 });
@@ -844,6 +845,43 @@ function FairFaresApp() {
       // Logout must still succeed if the device is temporarily offline.
     }
     pushTokenRef.current = "";
+  }
+
+  async function enableGuestCommunityNotifications() {
+    // Ask only after a guest has posted a comment. Browsing Ask Community must
+    // remain possible without a permission prompt, and a guest is never given
+    // the normal member-message capability.
+    if (Platform.OS === "web" || authenticatedUserIdRef.current || guestPushRegistrationAttemptedRef.current) return false;
+    guestPushRegistrationAttemptedRef.current = true;
+    try {
+      if (Platform.OS === "android") {
+        await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.updates, {
+          name: "FairFares updates",
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: "default",
+          vibrationPattern: [0, 250, 150, 250],
+          lightColor: "#10b981"
+        });
+      }
+      let permission = await Notifications.getPermissionsAsync();
+      if (permission.status !== "granted") {
+        permission = await Notifications.requestPermissionsAsync({
+          ios: { allowAlert: true, allowBadge: true, allowSound: true }
+        });
+      }
+      if (permission.status !== "granted") return false;
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+      if (!projectId) throw new Error("Expo project ID is unavailable.");
+      const token = await Notifications.getExpoPushTokenAsync({ projectId });
+      if (!token.data || authenticatedUserIdRef.current) return false;
+      await registerCommunityGuestPushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Guest mobile device");
+      return true;
+    } catch (error) {
+      // A guest comment is already saved. Push setup is intentionally
+      // best-effort and never interrupts the public discussion flow.
+      console.warn("[FairFares notifications] Guest reply registration failed", error);
+      return false;
+    }
   }
 
   async function resolveInitialDeviceCity() {
@@ -2989,6 +3027,7 @@ function FairFaresApp() {
         testimonials={data?.testimonials || []}
         onRequireLogin={() => setLoginOpen(true)}
         onRequireSignup={() => { setAuthMessage(""); setAuthMode("signup"); setLoginOpen(true); }}
+        onRequestGuestNotifications={() => { void enableGuestCommunityNotifications(); }}
         onOpenHousing={(postId = "") => {
           if (postId) {
             const openResolvedListing = (post: HousingPost) => {

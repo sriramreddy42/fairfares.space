@@ -39656,8 +39656,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
 
     def api_mobile_push_token(self) -> None:
         user = self.current_user()
-        if not user:
-            self.send_json({"ok": False, "login_required": True, "error": "Login is required to register notifications."}, 401)
+        guest = None if user else self.current_community_guest()
+        if not user and not guest:
+            self.send_json({"ok": False, "login_required": True, "error": "Login or a FairFares guest session is required to register notifications."}, 401)
             return
         payload = self.read_json_body() if "application/json" in (self.headers.get("Content-Type") or "").lower() else self.read_form()
         token = clean_text_value(payload.get("token"), 300)
@@ -39669,7 +39670,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not (token.startswith("ExponentPushToken[") or token.startswith("ExpoPushToken[")):
             self.send_json({"ok": False, "error": "A valid Expo push token is required."}, 400)
             return
-        current_user_id = int(user["id"])
+        # A guest token is accepted only when it belongs to an active,
+        # installation-bound Ask Community guest session. This enables alerts
+        # for replies to that guest's own comments without making guest
+        # profiles generally contactable in Chitthi.
+        current_user_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
+        if not current_user_id:
+            self.send_json({"ok": False, "error": "This guest session is unavailable."}, 401)
+            return
         with _PUSH_TOKEN_REGISTRATION_LOCK:
             with db() as con:
                 existing = con.execute(
@@ -43199,6 +43207,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
         now = datetime.utcnow().isoformat(timespec="seconds")
         notify_user_id = 0
+        # Guests cannot be contacted by arbitrary profiles. A reply to a
+        # guest's public comment is still an event for that same guest and is
+        # delivered as a scoped Ask Community notification.
+        guest_reply_user_id = 0
         notify_title = ""
         notify_subtitle = ""
         chitthi_conversation_public_id = ""
@@ -43229,10 +43241,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     self.send_json({"ok": False, "error": "The reply target is unavailable."}, 404)
                     return
                 parent_id = int(parent["id"])
-                # A reply belongs in the commenter’s Chitthi thread. Guest
-                # commenters keep the existing post-owner thread because their
-                # limited guest inbox is tied to that conversation.
-                if not int(row_value(parent, "author_is_guest") or 0):
+                # A reply belongs in the commenter’s Chitthi thread. Guests
+                # cannot receive arbitrary direct messages, but can receive a
+                # scoped alert which returns them to this public discussion.
+                if int(row_value(parent, "author_is_guest") or 0):
+                    guest_reply_user_id = int(row_value(parent, "author_id") or 0)
+                else:
                     parent_author_id = int(row_value(parent, "author_id") or 0)
             if guest:
                 allowance = con.execute(
@@ -43285,6 +43299,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if notify_user_id and notify_user_id != author_id and not chitthi_conversation_public_id:
             notification_title = "New community reply" if parent_author_id else "New community answer"
             send_mobile_push_for_users([notify_user_id], notification_title, f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
+        if guest_reply_user_id and guest_reply_user_id != author_id:
+            responder_name = str(row_value(user, "name") or row_value(guest, "name") or "A FairFares member")
+            send_mobile_push_for_users(
+                [guest_reply_user_id],
+                "New reply to your comment",
+                f"{responder_name} replied in Ask Community: {notify_title}"[:240],
+                {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community", "guestReply": True},
+            )
         remaining = max(0, 6 - guest_usage_after) if guest else None
         self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id, "guestRemaining": remaining}, 201)
 

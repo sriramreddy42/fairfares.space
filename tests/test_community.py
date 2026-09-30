@@ -418,6 +418,50 @@ class CommunityFeatureTest(unittest.TestCase):
                 (self.owner_id,),
             ).fetchone())
 
+    def test_guest_reply_registers_a_scoped_alert_without_opening_direct_chat(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, session = self.request(
+            "POST",
+            "/api/mobile/community/guest-session",
+            payload={"installationId": "test-guest-reply-alert-installation-0001"},
+        )
+        guest_token = session["token"]
+        status, guest_comment = self.guest_request(
+            "POST", "/api/mobile/community/answer", guest_token,
+            {"postId": post_id, "body": "Is this place still available?"},
+        )
+        self.assertEqual(status, 201)
+        status, registered = self.guest_request(
+            "POST", "/api/mobile/push-token", guest_token,
+            {
+                "token": "ExpoPushToken[guest-comment-alert-device]",
+                "platform": "ios",
+                "deviceLabel": "Guest iPhone",
+                "notificationSchema": 4,
+                "enabled": True,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(registered["enabled"])
+        with app.db() as con:
+            guest_user_id = int(con.execute("SELECT id FROM users WHERE name = ?", (session["guestId"],)).fetchone()["id"])
+            token = con.execute("SELECT user_id FROM mobile_push_tokens WHERE token = ?", ("ExpoPushToken[guest-comment-alert-device]",)).fetchone()
+        self.assertEqual(int(token["user_id"]), guest_user_id)
+
+        with mock.patch.object(app, "send_mobile_push_for_users") as send_push:
+            status, reply = self.request(
+                "POST", "/api/mobile/community/answer", "member-token",
+                {"postId": post_id, "parentAnswerId": guest_comment["answerId"], "body": "Yes, it is still available."},
+            )
+        self.assertEqual(status, 201)
+        self.assertTrue(reply["answerId"])
+        guest_alerts = [call for call in send_push.call_args_list if call.args and call.args[0] == [guest_user_id]]
+        self.assertEqual(len(guest_alerts), 1)
+        self.assertEqual(guest_alerts[0].args[1], "New reply to your comment")
+        self.assertEqual(guest_alerts[0].args[3]["type"], "COMMUNITY_ANSWER")
+        self.assertEqual(guest_alerts[0].args[3]["postId"], post_id)
+
     def test_signup_claims_guest_identity_and_preserves_comments(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]

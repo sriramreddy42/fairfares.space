@@ -1586,6 +1586,19 @@ export async function registerMobilePushToken(token: string, platform: string, d
   }, { attempts: 3 });
 }
 
+// Guests only register the device after they choose to participate in Ask
+// Community. The server binds this token to the installation-scoped guest
+// session, so it can alert them about replies without turning a guest profile
+// into a generally messageable Chitthi account.
+export async function registerCommunityGuestPushToken(token: string, platform: string, deviceLabel: string, notificationSchema = 4) {
+  const guest = await ensureCommunityGuestSession();
+  return request<{ ok: boolean; enabled: boolean }>("/api/mobile/push-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(communityGuestToken || guest.token ? { "X-FairFares-Guest-Token": communityGuestToken || guest.token } : {}) },
+    body: JSON.stringify({ token, platform, deviceLabel, enabled: true, notificationSchema })
+  }, { attempts: 3 });
+}
+
 export type MobileNotificationPreferences = {
   chitthi: boolean;
   carpool: boolean;

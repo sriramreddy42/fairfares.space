@@ -33,6 +33,7 @@ type Props = {
   testimonials?: BootstrapPayload["testimonials"];
   onRequireLogin: () => void;
   onRequireSignup: () => void;
+  onRequestGuestNotifications?: () => void;
   onOpenHousing: (postId?: string) => void;
   onOpenRides: (target?: "ride" | "requests" | "activity", rideId?: string) => void;
   onOpenRentalCars: () => void;
@@ -274,7 +275,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenRentalBooking, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onRequestGuestNotifications, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenRentalBooking, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const { width: viewportWidth } = useWindowDimensions();
   const compactPostActions = !layout.isTablet && viewportWidth < 390;
@@ -1071,6 +1072,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       if (replyThreadId) setExpandedReplyThreads((current) => new Set([...current, replyThreadId]));
       if (!user && typeof result.guestRemaining === "number") {
         setGuestRemaining(result.guestRemaining);
+        // A guest who has chosen to join a discussion can opt into the system
+        // prompt here. The app then alerts only for replies to that guest's
+        // own Ask Community comments.
+        void onRequestGuestNotifications?.();
       }
       setDetail(await getCommunityPost(detail.id));
       await load(true);
