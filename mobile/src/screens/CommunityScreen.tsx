@@ -45,6 +45,69 @@ type Props = {
   onInitialPostOpened?: () => void;
 };
 
+type MemberProfileTarget = CommunityPost["author"];
+type MemberProfileSheetHandle = { open: (author: MemberProfileTarget) => void };
+
+type MemberProfileSheetProps = {
+  viewerId: number;
+  isSignedIn: boolean;
+  onRequireLogin: () => void;
+  onOpenHousing: (postId?: string) => void;
+  onOpenUserChat: (userId: number) => void;
+};
+
+// Keep member-profile state outside the feed. Opening or closing this sheet used
+// to rerender every visible Ask card, which made the return transition feel stuck
+// on slower phones.
+const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, MemberProfileSheetProps>(function MemberProfileSheet({ viewerId, isSignedIn, onRequireLogin, onOpenHousing, onOpenUserChat }, ref) {
+  const isLight = useColorScheme() === "light";
+  const [profile, setProfile] = useState<CommunityUserProfile | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const requestRef = useRef(0);
+
+  const close = useCallback(() => {
+    requestRef.current += 1;
+    setLoading(false);
+    setLoadFailed(false);
+    setProfile(null);
+  }, []);
+
+  const open = useCallback((author: MemberProfileTarget) => {
+    if (!author.id) return;
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    setProfile({ id: author.id, name: author.name, photoUrl: author.photoUrl, listings: [] });
+    setLoading(true);
+    setLoadFailed(false);
+    void getCommunityUserProfile(author.id)
+      .then((nextProfile) => {
+        if (requestRef.current === requestId) setProfile(nextProfile);
+      })
+      .catch(() => {
+        if (requestRef.current === requestId) setLoadFailed(true);
+      })
+      .finally(() => {
+        if (requestRef.current === requestId) setLoading(false);
+      });
+  }, []);
+
+  React.useImperativeHandle(ref, () => ({ open }), [open]);
+
+  return <Modal visible={Boolean(profile)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={close}>
+    <View style={styles.memberBackdrop}><View style={[styles.memberCard, isLight && styles.memberCardLight]}>
+      <TouchableOpacity style={[styles.memberClose, isLight && styles.memberCloseLight]} onPress={close} accessibilityLabel="Close member details"><Text style={[styles.memberCloseText, isLight && styles.memberCloseTextLight]}>×</Text></TouchableOpacity>
+      {profile ? <>
+        <UserAvatar photoUrl={profile.photoUrl} style={styles.memberAvatar} imageStyle={styles.memberAvatarImage} fallback={<Text style={styles.memberAvatarText}>{initials(profile.name)}</Text>} />
+        <Text style={[styles.memberName, isLight && styles.textPrimaryLight]}>{profile.name}</Text>
+        <Text style={[styles.memberSummary, isLight && styles.textSecondaryLight]}>{loading ? "Loading profile…" : loadFailed ? "FairFares member" : `${profile.listings.length} active ${profile.listings.length === 1 ? "listing" : "listings"}`}</Text>
+        {viewerId !== profile.id ? <TouchableOpacity style={styles.memberChitthi} onPress={() => { const id = profile.id; close(); if (!isSignedIn) onRequireLogin(); else onOpenUserChat(id); }}><Text style={styles.memberChitthiText}>Open Chitthi connection</Text></TouchableOpacity> : <Text style={styles.memberOwnProfile}>This is your public profile</Text>}
+        {!loading && profile.listings.length ? <ScrollView style={styles.memberListings} contentContainerStyle={styles.memberListingsContent}>{profile.listings.map((listing) => <TouchableOpacity key={listing.id} style={[styles.memberListing, isLight && styles.memberListingLight]} onPress={() => { close(); onOpenHousing(listing.id); }}><View style={styles.memberListingCopy}><Text style={[styles.memberListingTitle, isLight && styles.textPrimaryLight]} numberOfLines={2}>{listing.title}</Text><Text style={[styles.memberListingMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{listing.addressLabel || listing.location}</Text><Text style={styles.memberListingRent} numberOfLines={1}>{listing.rent}</Text></View><Text style={styles.memberListingArrow}>›</Text></TouchableOpacity>)}</ScrollView> : !loading ? <Text style={[styles.memberEmpty, isLight && styles.textSecondaryLight]}>{loadFailed ? "Listings are temporarily unavailable. You can still connect in Chitthi." : "No active listings right now."}</Text> : <ActivityIndicator color={theme.colors.brand} />}
+      </> : null}
+    </View></View>
+  </Modal>;
+});
+
 const categories = ["ALL", "GENERAL", "NEED_ROOMMATE", "NEED_PLACE", "HAVE_PLACE", "CARPOOL_RIDE"] as const;
 const popularTopics = [
   { value: "HOUSING", image: require("../../assets/ask-topic-housing.png"), title: "Housing", subtitle: "Ask or share", color: "#d8edff" },
@@ -329,10 +392,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
-  const [memberProfile, setMemberProfile] = useState<CommunityUserProfile | null>(null);
-  const [memberProfileLoading, setMemberProfileLoading] = useState(false);
-  const [memberProfileLoadFailed, setMemberProfileLoadFailed] = useState(false);
-  const memberProfileRequest = useRef(0);
+  const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const [answer, setAnswer] = useState("");
   const [answerReplyTarget, setAnswerReplyTarget] = useState<{ id: string; name: string } | null>(null);
   const [editingAnswerId, setEditingAnswerId] = useState("");
@@ -529,34 +589,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     return () => clearInterval(timer);
   }, [communityReviews.length]);
 
-  async function openMemberProfile(author: CommunityPost["author"]) {
-    if (!author.id) return;
-    const requestId = memberProfileRequest.current + 1;
-    memberProfileRequest.current = requestId;
-    setMemberProfile({ id: author.id, name: author.name, photoUrl: author.photoUrl, listings: [] });
-    setMemberProfileLoading(true);
-    setMemberProfileLoadFailed(false);
-    try {
-      const profile = await getCommunityUserProfile(author.id);
-      if (memberProfileRequest.current === requestId) setMemberProfile(profile);
-    } catch {
-      if (memberProfileRequest.current === requestId) {
-        // The author identity is already part of the signed public post. Keep
-        // that useful profile shell and Chitthi action visible if an older
-        // backend does not yet provide the optional listings endpoint.
-        setMemberProfileLoadFailed(true);
-      }
-    } finally {
-      if (memberProfileRequest.current === requestId) setMemberProfileLoading(false);
-    }
-  }
-
-  function closeMemberProfile() {
-    memberProfileRequest.current += 1;
-    setMemberProfileLoading(false);
-    setMemberProfileLoadFailed(false);
-    setMemberProfile(null);
-  }
+  const openMemberProfile = useCallback((author: MemberProfileTarget) => {
+    memberProfileSheetRef.current?.open(author);
+  }, []);
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -1558,18 +1593,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </KeyboardAvoidingView>
     </Modal>
 
-    <Modal visible={Boolean(memberProfile)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={closeMemberProfile}>
-      <View style={styles.memberBackdrop}><View style={[styles.memberCard, isLight && styles.memberCardLight]}>
-        <TouchableOpacity style={[styles.memberClose, isLight && styles.memberCloseLight]} onPress={closeMemberProfile} accessibilityLabel="Close member details"><Text style={[styles.memberCloseText, isLight && styles.memberCloseTextLight]}>×</Text></TouchableOpacity>
-        {memberProfile ? <>
-          <UserAvatar photoUrl={memberProfile.photoUrl} style={styles.memberAvatar} imageStyle={styles.memberAvatarImage} fallback={<Text style={styles.memberAvatarText}>{initials(memberProfile.name)}</Text>} />
-          <Text style={[styles.memberName, isLight && styles.textPrimaryLight]}>{memberProfile.name}</Text>
-          <Text style={[styles.memberSummary, isLight && styles.textSecondaryLight]}>{memberProfileLoading ? "Loading profile…" : memberProfileLoadFailed ? "FairFares member" : `${memberProfile.listings.length} active ${memberProfile.listings.length === 1 ? "listing" : "listings"}`}</Text>
-          {Number(user?.id || 0) !== memberProfile.id ? <TouchableOpacity style={styles.memberChitthi} onPress={() => { const id = memberProfile.id; closeMemberProfile(); if (!user) onRequireLogin(); else onOpenUserChat(id); }}><Text style={styles.memberChitthiText}>Open Chitthi connection</Text></TouchableOpacity> : <Text style={styles.memberOwnProfile}>This is your public profile</Text>}
-          {!memberProfileLoading && memberProfile.listings.length ? <ScrollView style={styles.memberListings} contentContainerStyle={styles.memberListingsContent}>{memberProfile.listings.map((listing) => <TouchableOpacity key={listing.id} style={[styles.memberListing, isLight && styles.memberListingLight]} onPress={() => { closeMemberProfile(); onOpenHousing(listing.id); }}><View style={styles.memberListingCopy}><Text style={[styles.memberListingTitle, isLight && styles.textPrimaryLight]} numberOfLines={2}>{listing.title}</Text><Text style={[styles.memberListingMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{listing.addressLabel || listing.location}</Text><Text style={styles.memberListingRent} numberOfLines={1}>{listing.rent}</Text></View><Text style={styles.memberListingArrow}>›</Text></TouchableOpacity>)}</ScrollView> : !memberProfileLoading ? <Text style={[styles.memberEmpty, isLight && styles.textSecondaryLight]}>{memberProfileLoadFailed ? "Listings are temporarily unavailable. You can still connect in Chitthi." : "No active listings right now."}</Text> : <ActivityIndicator color={theme.colors.brand} />}
-        </> : null}
-      </View></View>
-    </Modal>
+    <MemberProfileSheet
+      ref={memberProfileSheetRef}
+      viewerId={Number(user?.id || 0)}
+      isSignedIn={Boolean(user)}
+      onRequireLogin={onRequireLogin}
+      onOpenHousing={onOpenHousing}
+      onOpenUserChat={onOpenUserChat}
+    />
   </View>;
 }
 
