@@ -225,6 +225,8 @@ export function ProfileScreen({
   }, [user?.id]);
 
   const displayName = user?.name || "FairFares Guest";
+  const accountEmailBadge = user?.isVerified ? "Email verified" : "Email pending";
+  const accountPhoneBadge = user?.phone ? "Phone on file" : "Add phone";
   const sensitiveChanged = Boolean(user && (
     email.trim().toLowerCase() !== user.email.toLowerCase()
     || phone.replace(/\D/g, "") !== String(user.phone || "").replace(/\D/g, "")
@@ -505,12 +507,12 @@ export function ProfileScreen({
       ]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.hero}>
+      {!user ? <View style={styles.hero}>
         <View style={styles.heroCopy}>
           <SectionHeader eyebrow="Account" title={displayName} />
           <View style={styles.badgeRow}>
-            <View style={styles.badge}><Text style={styles.badgeText}>{user?.isVerified ? "Email verified" : "Email pending"}</Text></View>
-            <View style={styles.badge}><Text style={styles.badgeText}>{user?.phone ? "Phone on file" : "Add phone"}</Text></View>
+            <View style={styles.badge}><Text style={styles.badgeText}>Email pending</Text></View>
+            <View style={styles.badge}><Text style={styles.badgeText}>Add phone</Text></View>
           </View>
         </View>
         <AvatarMotion style={styles.avatar}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving}>
@@ -522,10 +524,24 @@ export function ProfileScreen({
           />
           {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
         </TouchableOpacity></AvatarMotion>
-      </View>
+      </View> : null}
 
       {user ? (
         <View style={styles.accountAvatarStudio}>
+          <View style={styles.accountAvatarIdentity}>
+            <View style={styles.accountAvatarIdentityCopy}>
+              <Text style={styles.accountAvatarIdentityEyebrow}>ACCOUNT</Text>
+              <Text style={styles.accountAvatarIdentityName} numberOfLines={1}>{displayName}</Text>
+              <View style={styles.accountAvatarIdentityBadges}>
+                <View style={styles.accountAvatarIdentityBadge}><Text style={styles.accountAvatarIdentityBadgeText}>{accountEmailBadge}</Text></View>
+                <View style={styles.accountAvatarIdentityBadge}><Text style={styles.accountAvatarIdentityBadgeText}>{accountPhoneBadge}</Text></View>
+              </View>
+            </View>
+            <AvatarMotion style={[styles.avatar, styles.accountAvatarIdentityAvatar]}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving} accessibilityLabel="Change profile photo">
+              <UserAvatar photoUrl={profilePhoto} style={styles.avatarImage} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>} />
+              {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
+            </TouchableOpacity></AvatarMotion>
+          </View>
           <View style={styles.accountAvatarStudioHeader}>
             <View>
               <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
@@ -905,6 +921,14 @@ const styles = StyleSheet.create({
   characterShuffleButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   characterCreatorScreen: { flex: 1, backgroundColor: "#17243b" },
   accountAvatarStudio: { overflow: "hidden", borderRadius: 26, backgroundColor: "#17243b", paddingTop: 18, borderWidth: 1, borderColor: "rgba(156,233,204,0.28)", shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
+  accountAvatarIdentity: { paddingHorizontal: 20, paddingBottom: 15, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 14 },
+  accountAvatarIdentityCopy: { flex: 1, minWidth: 0 },
+  accountAvatarIdentityEyebrow: { color: "#ff7d73", fontWeight: "900", fontSize: 10, letterSpacing: 1.3 },
+  accountAvatarIdentityName: { color: "#ffffff", fontSize: 22, lineHeight: 28, fontWeight: "900", marginTop: 2 },
+  accountAvatarIdentityBadges: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  accountAvatarIdentityBadge: { borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.12)", paddingHorizontal: 8, paddingVertical: 5 },
+  accountAvatarIdentityBadgeText: { color: "#dff8ed", fontSize: 10, fontWeight: "800" },
+  accountAvatarIdentityAvatar: { width: 60, height: 60, borderRadius: 30, borderColor: "rgba(156,233,204,0.75)", backgroundColor: "rgba(255,255,255,0.14)" },
   accountAvatarStudioHeader: { minHeight: 52, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   accountAvatarStudioEyebrow: { color: "#9ce9cc", fontWeight: "900", fontSize: 10, letterSpacing: 1.3 },
   accountAvatarStudioTitle: { color: "#fff", fontSize: 22, lineHeight: 28, fontWeight: "900" },
