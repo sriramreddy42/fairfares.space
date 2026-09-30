@@ -546,7 +546,17 @@ export function ProfileScreen({
               <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
               <Text style={styles.accountAvatarStudioTitle}>Make it yours</Text>
             </View>
-            <Text style={styles.accountAvatarStudioHint}>Edit</Text>
+            <TouchableOpacity
+              style={[styles.accountAvatarStudioSave, (saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)) && styles.accountAvatarStudioSaveDisabled]}
+              disabled={saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)}
+              onPress={() => characterCreatorTab === "photo"
+                ? choosePhoto()
+                : void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
+              accessibilityRole="button"
+              accessibilityLabel={characterCreatorTab === "photo" ? "Upload profile photo" : "Save selected character"}
+            >
+              {saving ? <ActivityIndicator size="small" color="#06291e" /> : <Text style={styles.accountAvatarStudioSaveText}>{characterCreatorTab === "photo" ? "Upload" : characterPreviewDirty ? "Save" : "Choose"}</Text>}
+            </TouchableOpacity>
           </View>
           <View style={[styles.characterCreatorStage, { backgroundColor: `#${characterBackground}` }]}>
             <View style={styles.characterCreatorHaloLarge} />
@@ -576,18 +586,15 @@ export function ProfileScreen({
               <Text style={styles.characterCreatorSheetCopy}>Tap a character to preview it. Nothing changes until you save.</Text>
               <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${index}`; const selected = index === characterChoice; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected]} onPress={() => { setCharacterChoice(index); setCharacterPreviewDirty(true); }} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, characterBackground)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
               <TouchableOpacity style={styles.characterShuffleButton} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterChoice(0); setCharacterPreviewDirty(true); }} disabled={saving} accessibilityRole="button"><Text style={styles.characterShuffleButtonText}>Shuffle looks</Text></TouchableOpacity>
-              <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={() => void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)} disabled={saving} accessibilityRole="button"><View style={styles.buttonContent}>{savingMode === "avatar" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "avatar" ? "Saving character…" : "Save character"}</Text></View></TouchableOpacity>
             </> : null}
             {characterCreatorTab === "scene" ? <>
               <Text style={styles.characterCreatorSheetTitle}>Choose a scene</Text>
               <Text style={styles.characterCreatorSheetCopy}>Choose the background behind your character.</Text>
               <View style={styles.characterBackgroundRow}>{DICEBEAR_AVATAR_BACKGROUNDS.map((background) => { const selected = background === characterBackground; return <TouchableOpacity key={background} style={[styles.characterBackgroundOption, { backgroundColor: `#${background}` }, selected && styles.characterBackgroundOptionSelected]} onPress={() => { setCharacterBackground(background); setCharacterPreviewDirty(true); }} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel="Choose character background" />; })}</View>
-              <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={() => void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)} disabled={saving} accessibilityRole="button"><View style={styles.buttonContent}>{savingMode === "avatar" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "avatar" ? "Saving character…" : "Save character"}</Text></View></TouchableOpacity>
             </> : null}
             {characterCreatorTab === "photo" ? <>
               <Text style={styles.characterCreatorSheetTitle}>Use a profile photo</Text>
               <Text style={styles.characterCreatorSheetCopy}>A photo replaces the character across FairFares. You can choose a character again any time.</Text>
-              <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={choosePhoto} disabled={saving} accessibilityRole="button"><View style={styles.buttonContent}>{savingMode === "photo" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text></View></TouchableOpacity>
             </> : null}
           </View>
         </View>
@@ -939,7 +946,9 @@ const styles = StyleSheet.create({
   accountAvatarStudioHeader: { minHeight: 60, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   accountAvatarStudioEyebrow: { color: "#9ce9cc", fontWeight: "900", fontSize: 10, letterSpacing: 1.3 },
   accountAvatarStudioTitle: { color: "#fff", fontSize: 22, lineHeight: 28, fontWeight: "900" },
-  accountAvatarStudioHint: { color: "#d4ddec", fontSize: 11, fontWeight: "800", borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.12)", paddingHorizontal: 10, paddingVertical: 6 },
+  accountAvatarStudioSave: { minWidth: 64, minHeight: 36, paddingHorizontal: 13, borderRadius: theme.radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: "#91ebcb" },
+  accountAvatarStudioSaveDisabled: { backgroundColor: "rgba(255,255,255,0.14)" },
+  accountAvatarStudioSaveText: { color: "#06291e", fontSize: 12, fontWeight: "900" },
   accountAvatarStudioControls: { marginTop: 4, paddingHorizontal: 22, paddingTop: 18, paddingBottom: 24, backgroundColor: theme.colors.panel, gap: 12 },
   characterCreatorTopBar: { minHeight: 88, paddingTop: 42, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   characterCreatorClose: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
