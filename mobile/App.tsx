@@ -865,19 +865,24 @@ function FairFaresApp() {
       setDiscoveryLocation((current) => current || payload.location.city || requestedCity);
       if (payload.location.city && payload.location.city.trim() !== requestedCity.trim()) void getHousingAreaStats(payload.location.city);
       setVisiblePosts(payload.housing);
-      const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
-      if (bootstrapGenerationRef.current !== generation) return;
-      if (carResult.status === "fulfilled") {
-        setCars(carResult.value);
-      } else {
-        // Inventory is independent of bootstrap. Keep the last usable list on
-        // a transient request failure and refresh it shortly instead of
-        // making rental cars disappear until the next app reload.
-        setTimeout(() => {
-          void getCars().then(setCars).catch(() => undefined);
-        }, 1_500);
-      }
-      setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
+      // The home screen has enough verified data to render once bootstrap
+      // returns. Car inventory and site services are independent extras, so
+      // never keep the launch screen visible while either slow request runs.
+      void (async () => {
+        const [carResult, serviceResult] = await Promise.allSettled([getCars(), getSiteServices()]);
+        if (bootstrapGenerationRef.current !== generation) return;
+        if (carResult.status === "fulfilled") {
+          setCars(carResult.value);
+        } else {
+          // Inventory is independent of bootstrap. Keep the last usable list on
+          // a transient request failure and refresh it shortly instead of
+          // making rental cars disappear until the next app reload.
+          setTimeout(() => {
+            void getCars().then(setCars).catch(() => undefined);
+          }, 1_500);
+        }
+        setServices(serviceResult.status === "fulfilled" ? serviceResult.value : []);
+      })();
     } catch (error) {
       if (bootstrapGenerationRef.current !== generation) return;
       if (isAuthenticationRejection(error)) {
