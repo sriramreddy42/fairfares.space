@@ -46,10 +46,11 @@ class ProductAnalyticsTest(unittest.TestCase):
         thread.start()
         return server, thread
 
-    def post_json(self, server, path, payload, token=""):
+    def post_json(self, server, path, payload, token="", extra_headers=None):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        headers.update(extra_headers or {})
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}{path}",
             data=json.dumps(payload).encode("utf-8"),
@@ -243,12 +244,21 @@ class ProductAnalyticsTest(unittest.TestCase):
             )
         server, thread = self.start_server()
         try:
-            status, payload = self.post_json(server, "/api/mobile/housing/complete", {"postId": "FFH-TEST"}, "housing-owner-session")
+            status, payload = self.post_json(
+                server,
+                "/api/mobile/housing/complete",
+                {"postId": "FFH-TEST"},
+                "housing-owner-session",
+                {"X-FairFares-Install-ID": "complete-install", "X-FairFares-Client-Platform": "ios"},
+            )
             self.assertEqual(status, 200)
             self.assertEqual(payload["status"], "MATCHED")
             with app.db() as con:
                 post = con.execute("SELECT visibility_status FROM accommodation_posts WHERE public_id = 'FFH-TEST'").fetchone()
+                events = con.execute("SELECT event_name, metadata_json FROM product_analytics_events").fetchall()
             self.assertEqual(post["visibility_status"], "MATCHED")
+            self.assertEqual([event["event_name"] for event in events], ["housing_connection_confirmed"])
+            self.assertEqual(json.loads(events[0]["metadata_json"]), {"source": "housing_complete_api"})
         finally:
             server.shutdown()
             server.server_close()

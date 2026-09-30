@@ -26583,6 +26583,30 @@ def record_product_analytics_event(
     return bool(cursor.rowcount)
 
 
+def record_native_request_product_event(
+    event_name: str,
+    *,
+    installation_id: object,
+    platform: object,
+    user_id: int | None = None,
+    metadata: dict[str, object] | None = None,
+) -> bool:
+    """Record a completed native request at most once per person and day."""
+    clean_platform = clean_text_value(platform, 20).lower()
+    clean_installation_id = clean_text_value(installation_id, 100)
+    if clean_platform not in {"ios", "android"} or not clean_installation_id:
+        return False
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    return record_product_analytics_event(
+        event_name,
+        clean_installation_id,
+        user_id=user_id,
+        platform=clean_platform,
+        metadata=metadata,
+        dedupe_key=f"server:{today}:{clean_installation_id}:{event_name}",
+    )
+
+
 def product_analytics_summary(days: int = 30) -> dict[str, object]:
     days = days if days in {1, 7, 30, 90} else 30
     window = f"-{days} days"
@@ -30166,6 +30190,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         envelopes = form.get("envelopes") if isinstance(form.get("envelopes"), list) else []
         raw_mention_ids = form.get("mentionedUserIds") if isinstance(form.get("mentionedUserIds"), list) else []
         mention_ids = sorted({int(float_from_value(value) or 0) for value in raw_mention_ids if int(float_from_value(value) or 0) > 0})[:20]
+        housing_message_context = False
         with db() as con:
             conversation = get_chat_conversation_by_public_id(con, conversation_public_id, int(user["id"]))
             if not conversation:
@@ -30233,9 +30258,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     ),
                 )
                 message = con.execute("SELECT * FROM chat_messages WHERE id = ?", (int(message["id"]),)).fetchone()
+                housing_message_context = str(listing_context.get("type") or "") == "HOUSING"
             if not bool(form.get("silent")):
                 con.commit()
                 self.notify_chat_recipients(con, conversation, user, message)
+        if housing_message_context:
+            # Older clients already send the server-verified listing context
+            # when starting a Chitthi letter from Housing. Count the completed
+            # send without retaining the listing ID or encrypted text.
+            record_native_request_product_event(
+                "housing_message_sent",
+                installation_id=self.request_installation_id(),
+                platform=self.headers.get("X-FairFares-Client-Platform"),
+                user_id=int(user["id"]),
+                metadata={"source": "housing_chat_api"},
+            )
         self.send_json({"ok": True, "message": chat_message_payload(message, int(user["id"]))}, 201)
 
     def api_react_chat_message(self) -> None:
@@ -40966,16 +41003,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             # the dashboard begins measuring real use before every customer
             # has installed the newer binary. One event per person per day
             # keeps pagination and retries from inflating the funnel.
-            if not installation_id or client_platform not in {"ios", "android"}:
-                return
-            today = datetime.now(UTC).strftime("%Y%m%d")
-            record_product_analytics_event(
+            record_native_request_product_event(
                 event_name,
-                installation_id,
+                installation_id=installation_id,
                 user_id=viewer_id or None,
                 platform=client_platform,
                 metadata={"resultCount": result_count, "source": "housing_api"},
-                dedupe_key=f"server:{today}:{installation_id}:{event_name}",
             )
 
         params = urllib.parse.parse_qs(parsed.query)
@@ -44138,6 +44171,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # Start the derived Ask card update as soon as the listing transaction
         # is committed, rather than making the next Ask feed request perform it.
         schedule_housing_community_projection_sync()
+        if not existing_listing:
+            event_name = (
+                "housing_have_place_listed" if mode == "HAVE_PLACE"
+                else "housing_need_roommates_posted" if roommate_intent
+                else "housing_need_place_posted"
+            )
+            record_native_request_product_event(
+                event_name,
+                installation_id=self.request_installation_id(),
+                platform=self.headers.get("X-FairFares-Client-Platform"),
+                user_id=int(user["id"]),
+                metadata={"source": "housing_create_api"},
+            )
         self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
 
     def api_mobile_complete_housing(self) -> None:
@@ -44168,6 +44214,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
         invalidate_mobile_search_cache("housing")
         schedule_housing_community_projection_sync()
+        record_native_request_product_event(
+            "housing_connection_confirmed",
+            installation_id=self.request_installation_id(),
+            platform=self.headers.get("X-FairFares-Client-Platform"),
+            user_id=int(user["id"]),
+            metadata={"source": "housing_complete_api"},
+        )
         self.send_json({"ok": True, "status": "MATCHED", "message": "Housing connection confirmed."})
 
     def serve_upload(self, path: str) -> None:
