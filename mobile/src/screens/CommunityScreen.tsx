@@ -393,6 +393,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
+  const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
   const [answer, setAnswer] = useState("");
   const [answerReplyTarget, setAnswerReplyTarget] = useState<{ id: string; name: string } | null>(null);
   const [editingAnswerId, setEditingAnswerId] = useState("");
@@ -590,8 +591,17 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [communityReviews.length]);
 
   const openMemberProfile = useCallback((author: MemberProfileTarget) => {
+    if (!author.id) return;
+    // iOS cannot reliably present the member modal over the page-sheet post
+    // modal. Dismiss the post first, then present the member profile from the
+    // root screen in the post modal's onDismiss callback.
+    if (detail) {
+      pendingMemberProfileRef.current = author;
+      setDetail(null);
+      return;
+    }
     memberProfileSheetRef.current?.open(author);
-  }, []);
+  }, [detail]);
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -1208,6 +1218,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setTimeout(() => mode === "signup" ? onRequireSignup() : onRequireLogin(), 80);
   };
 
+  const handleDetailDismiss = () => {
+    finishGuestAuth();
+    const author = pendingMemberProfileRef.current;
+    pendingMemberProfileRef.current = null;
+    if (!author) return;
+    requestAnimationFrame(() => memberProfileSheetRef.current?.open(author));
+  };
+
   const completedStatus = (post: CommunityPost): CommunityPost["fulfillmentStatus"] => post.category === "HAVE_PLACE" ? "FILLED" : post.category === "CARPOOL_RIDE" ? "ARRANGED" : post.category === "NEED_PLACE" || post.category === "NEED_ROOMMATE" ? "FOUND" : "RESOLVED";
   const managePost = (post: CommunityPost) => Alert.alert("Manage post", "Choose an action.", [
     { text: post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now() ? "Renew for 45 days" : post.fulfillmentStatus === "OPEN" ? `Mark ${completedStatus(post).toLowerCase()}` : "Reopen post", onPress: async () => { try { const expired = Boolean(post.expiresAt && new Date(post.expiresAt).getTime() <= Date.now()); const status = expired || post.fulfillmentStatus !== "OPEN" ? "OPEN" : completedStatus(post); await updateCommunityPostStatus(post.id, status); mutatePost(post.id, (value) => ({ ...value, fulfillmentStatus: status, canAnswer: status === "OPEN", expiresAt: expired ? new Date(Date.now() + 45 * 86400000).toISOString() : value.expiresAt })); } catch (error) { Alert.alert("Status not changed", message(error)); } } },
@@ -1591,7 +1609,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </ScrollView></View>
     </Modal>
 
-    <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={finishGuestAuth}>
+    <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={handleDetailDismiss}>
       <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}>{expandedReactionTarget ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}<View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={() => setDetail(null)}><Text style={[styles.cancel, isLight && styles.textBodyLight]}>Close</Text></TouchableOpacity><Text style={[styles.modalTitle, isLight && styles.textPrimaryLight]}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
       <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
         {renderPost(detail)}
