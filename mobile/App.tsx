@@ -904,12 +904,15 @@ function FairFaresApp() {
 
   useEffect(() => {
     let cancelled = false;
-    // The first screen must not be held behind a location lookup or a slow
-    // upstream request. Both are useful refinements, but neither is required
-    // to render the member's saved/default city and usable app shell.
+    // The first screen must not be held behind a location lookup or the full
+    // authenticated bootstrap. Both are useful refinements, but neither is
+    // required to render the usable community shell. In particular, bootstrap
+    // includes message badge and marketplace work that can occasionally take
+    // several seconds on a busy database. Keep the launch illustration brief,
+    // then let the shell paint while that request completes in the background.
     const startupEscapeHatch = setTimeout(() => {
       if (!cancelled) setLoading(false);
-    }, 8_000);
+    }, 2_400);
     async function restoreSessionAndCheckout() {
       await hydrateAuthToken().catch(() => "");
       if (cancelled) return;
