@@ -523,21 +523,6 @@ export function ProfileScreen({
             </View>
             <Text style={styles.accountAvatarStudioAccountLabel}>ACCOUNT</Text>
           </View>
-          <View style={styles.accountAvatarStudioHeader}>
-            <View>
-              <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
-              <Text style={styles.accountAvatarStudioTitle}>Make it yours</Text>
-            </View>
-            <TouchableOpacity
-              style={[styles.accountAvatarStudioSave, (saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)) && styles.accountAvatarStudioSaveDisabled]}
-              disabled={saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)}
-              onPress={() => characterCreatorTab === "photo" ? choosePhoto() : void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
-              accessibilityRole="button"
-              accessibilityLabel={characterCreatorTab === "photo" ? "Upload profile photo" : "Save selected character"}
-            >
-              {saving ? <ActivityIndicator size="small" color="#06291e" /> : <Text style={styles.accountAvatarStudioSaveText}>{characterCreatorTab === "photo" ? "Upload" : characterPreviewDirty ? "Save" : "Choose"}</Text>}
-            </TouchableOpacity>
-          </View>
         </View>
       ) : null}
       {!user ? <View style={styles.hero}>
@@ -561,6 +546,21 @@ export function ProfileScreen({
 
       {user ? (
         <View style={styles.accountAvatarStudioBody}>
+          <View style={styles.accountAvatarStudioHeader}>
+            <View>
+              <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
+              <Text style={styles.accountAvatarStudioTitle}>Make it yours</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.accountAvatarStudioSave, (saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)) && styles.accountAvatarStudioSaveDisabled]}
+              disabled={saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)}
+              onPress={() => characterCreatorTab === "photo" ? choosePhoto() : void chooseCharacterAvatar(`fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
+              accessibilityRole="button"
+              accessibilityLabel={characterCreatorTab === "photo" ? "Upload profile photo" : "Save selected character"}
+            >
+              {saving ? <ActivityIndicator size="small" color="#06291e" /> : <Text style={styles.accountAvatarStudioSaveText}>{characterCreatorTab === "photo" ? "Upload" : characterPreviewDirty ? "Save" : "Choose"}</Text>}
+            </TouchableOpacity>
+          </View>
           <View style={[styles.characterCreatorStage, { backgroundColor: `#${characterBackground}` }]}>
             <View style={styles.characterCreatorHaloLarge} />
             <View style={styles.characterCreatorHaloSmall} />
