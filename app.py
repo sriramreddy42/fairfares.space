@@ -115,10 +115,10 @@ DICEBEAR_AVATAR_ORIGIN = (
     if _dicebear_avatar_origin and not _dicebear_avatar_origin.startswith(("http://", "https://"))
     else _dicebear_avatar_origin
 )
-# Lorelei is CC0 and provides a complete illustrated person. The neutral
-# variant is intentionally only facial features, which is too sparse for a
-# recognizable FairFares profile character.
-DICEBEAR_AVATAR_STYLE = "lorelei"
+# Open Peeps is CC0 illustrated half-body character art. It gives the
+# FairFares character creator a more expressive preview without turning a
+# profile avatar into a third-party hosted resource.
+DICEBEAR_AVATAR_STYLE = "open-peeps"
 DICEBEAR_AVATAR_API_VERSION = "10.x"
 DICEBEAR_AVATAR_BACKGROUND_COLORS = {"b6ead8", "c9e4ff", "fde1d7", "f7e6ba", "ddd6fe", "d1fae5"}
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000

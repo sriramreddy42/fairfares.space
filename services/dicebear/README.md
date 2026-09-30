@@ -9,5 +9,5 @@ The service is intentionally not public. It listens on DiceBear's standard port
 FairFares service as `FAIRFARES_DICEBEAR_API_ORIGIN`; no dashboard copy/paste
 or public URL is required.
 
-The main application permits only the approved CC0 `lorelei` style. No
+The main application permits only the approved CC0 `open-peeps` style. No
 member-controlled arbitrary URL is accepted.
