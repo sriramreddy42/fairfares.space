@@ -583,7 +583,7 @@ export function ProfileScreen({
               return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab((current) => current === tab ? null : tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><View style={[styles.characterCreatorTabMarker, selected && styles.characterCreatorTabMarkerSelected]} /><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
             })}
           </View>
-          <View style={styles.accountAvatarStudioControls}>
+          {characterCreatorTab ? <View style={styles.accountAvatarStudioControls}>
             {characterCreatorTab === "look" ? <>
               <Text style={styles.characterCreatorSheetTitle}>Try a new look</Text>
               <Text style={styles.characterCreatorSheetCopy}>Tap a look to preview it, then use Save above.</Text>
@@ -599,7 +599,7 @@ export function ProfileScreen({
               <Text style={styles.characterCreatorSheetTitle}>Use a profile photo</Text>
               <Text style={styles.characterCreatorSheetCopy}>A photo replaces the character across FairFares. You can choose a character again any time.</Text>
             </> : null}
-          </View>
+          </View> : null}
         </View>
       ) : null}
 
