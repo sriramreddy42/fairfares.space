@@ -8,14 +8,15 @@ import {
 import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
-  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, getCommunityUserProfile, joinChatCommunity,
+  getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
   getHousingActivity, getRentalBookings, getRideActivity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
-import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, CommunityUserProfile, FairFaresUser, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
+import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, FairFaresUser, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
+import { MemberProfileSheet, MemberProfileSheetHandle, MemberProfileTarget } from "../components/MemberProfileSheet";
 import { theme } from "../theme";
 import { pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
@@ -44,69 +45,6 @@ type Props = {
   initialPostId?: string;
   onInitialPostOpened?: () => void;
 };
-
-type MemberProfileTarget = CommunityPost["author"];
-type MemberProfileSheetHandle = { open: (author: MemberProfileTarget) => void };
-
-type MemberProfileSheetProps = {
-  viewerId: number;
-  isSignedIn: boolean;
-  onRequireLogin: () => void;
-  onOpenHousing: (postId?: string) => void;
-  onOpenUserChat: (userId: number) => void;
-};
-
-// Keep member-profile state outside the feed. Opening or closing this sheet used
-// to rerender every visible Ask card, which made the return transition feel stuck
-// on slower phones.
-const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, MemberProfileSheetProps>(function MemberProfileSheet({ viewerId, isSignedIn, onRequireLogin, onOpenHousing, onOpenUserChat }, ref) {
-  const isLight = useColorScheme() === "light";
-  const [profile, setProfile] = useState<CommunityUserProfile | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const requestRef = useRef(0);
-
-  const close = useCallback(() => {
-    requestRef.current += 1;
-    setLoading(false);
-    setLoadFailed(false);
-    setProfile(null);
-  }, []);
-
-  const open = useCallback((author: MemberProfileTarget) => {
-    if (!author.id) return;
-    const requestId = requestRef.current + 1;
-    requestRef.current = requestId;
-    setProfile({ id: author.id, name: author.name, photoUrl: author.photoUrl, listings: [] });
-    setLoading(true);
-    setLoadFailed(false);
-    void getCommunityUserProfile(author.id)
-      .then((nextProfile) => {
-        if (requestRef.current === requestId) setProfile(nextProfile);
-      })
-      .catch(() => {
-        if (requestRef.current === requestId) setLoadFailed(true);
-      })
-      .finally(() => {
-        if (requestRef.current === requestId) setLoading(false);
-      });
-  }, []);
-
-  React.useImperativeHandle(ref, () => ({ open }), [open]);
-
-  return <Modal visible={Boolean(profile)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={close}>
-    <View style={styles.memberBackdrop}><View style={[styles.memberCard, isLight && styles.memberCardLight]}>
-      <TouchableOpacity style={[styles.memberClose, isLight && styles.memberCloseLight]} onPress={close} accessibilityLabel="Close member details"><Text style={[styles.memberCloseText, isLight && styles.memberCloseTextLight]}>×</Text></TouchableOpacity>
-      {profile ? <>
-        <UserAvatar photoUrl={profile.photoUrl} style={styles.memberAvatar} imageStyle={styles.memberAvatarImage} fallback={<Text style={styles.memberAvatarText}>{initials(profile.name)}</Text>} />
-        <Text style={[styles.memberName, isLight && styles.textPrimaryLight]}>{profile.name}</Text>
-        <Text style={[styles.memberSummary, isLight && styles.textSecondaryLight]}>{loading ? "Loading profile…" : loadFailed ? "FairFares member" : `${profile.listings.length} active ${profile.listings.length === 1 ? "listing" : "listings"}`}</Text>
-        {viewerId !== profile.id ? <TouchableOpacity style={styles.memberChitthi} onPress={() => { const id = profile.id; close(); if (!isSignedIn) onRequireLogin(); else onOpenUserChat(id); }}><Text style={styles.memberChitthiText}>Message</Text></TouchableOpacity> : <Text style={styles.memberOwnProfile}>This is your public profile</Text>}
-        {!loading && profile.listings.length ? <ScrollView style={styles.memberListings} contentContainerStyle={styles.memberListingsContent}>{profile.listings.map((listing) => <TouchableOpacity key={listing.id} style={[styles.memberListing, isLight && styles.memberListingLight]} onPress={() => { close(); onOpenHousing(listing.id); }}><View style={styles.memberListingCopy}><Text style={[styles.memberListingTitle, isLight && styles.textPrimaryLight]} numberOfLines={2}>{listing.title}</Text><Text style={[styles.memberListingMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{listing.addressLabel || listing.location}</Text><Text style={styles.memberListingRent} numberOfLines={1}>{listing.rent}</Text></View><Text style={styles.memberListingArrow}>›</Text></TouchableOpacity>)}</ScrollView> : !loading ? <Text style={[styles.memberEmpty, isLight && styles.textSecondaryLight]}>{loadFailed ? "Listings are temporarily unavailable. You can still connect in Chitthi." : "No active listings right now."}</Text> : <ActivityIndicator color={theme.colors.brand} />}
-      </> : null}
-    </View></View>
-  </Modal>;
-});
 
 const categories = ["ALL", "GENERAL", "NEED_ROOMMATE", "NEED_PLACE", "HAVE_PLACE", "CARPOOL_RIDE"] as const;
 const popularTopics = [
@@ -1689,31 +1627,6 @@ const styles = StyleSheet.create({
   activitySummary: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(145,145,150,.28)", paddingTop: 8 }, activitySummaryLight: { borderTopColor: "rgba(101,103,107,.16)" }, reactionBreakdown: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }, answerReactionStats: { minHeight: 24, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 5 }, activityText: { color: theme.colors.soft, fontSize: 10, fontWeight: "700" }, commentCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, footerIconAction: { minWidth: 58, height: 34, paddingHorizontal: 6, flexDirection: "row", gap: 4, borderRadius: 9, alignItems: "center", justifyContent: "center" }, footerIcon: { color: theme.colors.soft, fontSize: 20, lineHeight: 23 }, compactFooterIcon: { fontSize: 16, lineHeight: 19 }, footerShareIcon: { color: theme.colors.soft, fontSize: 19, fontWeight: "500", transform: [{ rotate: "-12deg" }] }, footerActionLabel: { color: theme.colors.soft, fontSize: 10, fontWeight: "800", flexShrink: 1 }, compactFooterActionLabel: { fontSize: 9 },
   postOpenArea: { gap: 12 },
   answerAuthorButton: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
-  memberBackdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 20, backgroundColor: "rgba(0,0,0,.72)" },
-  memberCard: { maxHeight: "78%", borderRadius: 26, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, padding: 20, alignItems: "center", gap: 9 },
-  memberCardLight: { backgroundColor: "#fff", borderColor: "#e1e5e9" },
-  memberClose: { position: "absolute", right: 13, top: 13, zIndex: 2, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
-  memberCloseLight: { backgroundColor: "#eef1f3" },
-  memberCloseText: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 },
-  memberCloseTextLight: { color: "#24282d" },
-  memberAvatar: { width: 86, height: 86, borderRadius: 43, backgroundColor: "#173b2d", marginTop: 5 },
-  memberAvatarImage: { borderRadius: 43 },
-  memberAvatarText: { color: "#a8ecd1", fontSize: 25, fontWeight: "900" },
-  memberName: { color: theme.colors.text, fontSize: 23, lineHeight: 29, fontWeight: "900", textAlign: "center" },
-  memberSummary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
-  memberChitthi: { width: "100%", minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, marginTop: 5 },
-  memberChitthiText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
-  memberOwnProfile: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 5 },
-  memberListings: { width: "100%", marginTop: 5 },
-  memberListingsContent: { gap: 8, paddingBottom: 2 },
-  memberListing: { minHeight: 76, flexDirection: "row", alignItems: "center", borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 13, paddingVertical: 10 },
-  memberListingLight: { borderColor: "#e1e5e9", backgroundColor: "#f6f7f8" },
-  memberListingCopy: { flex: 1, minWidth: 0 },
-  memberListingTitle: { color: theme.colors.text, fontSize: 13, lineHeight: 17, fontWeight: "900" },
-  memberListingMeta: { color: theme.colors.muted, fontSize: 10, marginTop: 3 },
-  memberListingRent: { color: theme.colors.brand, fontSize: 11, fontWeight: "900", marginTop: 3 },
-  memberListingArrow: { color: theme.colors.brand, fontSize: 27 },
-  memberEmpty: { color: theme.colors.muted, fontSize: 12, paddingVertical: 12 },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaGridSingle: { height: 330 },

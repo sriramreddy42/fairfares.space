@@ -16,6 +16,7 @@ import Reanimated, { cancelAnimation, Extrapolation, interpolate, useAnimatedSty
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserAvatar } from "../components/UserAvatar";
+import { MemberProfileSheet, MemberProfileSheetHandle } from "../components/MemberProfileSheet";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
 import { deviceAddressCityLabel } from "../utils/locationRegion";
@@ -2336,6 +2337,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [attachmentPreviewGroup, setAttachmentPreviewGroup] = useState<Array<{ uri: string; name: string; mimeType: string; createdAt: string; messageId: number; type: "IMAGE" | "VIDEO" }>>([]);
   const [selectedGroupPhotoIndex, setSelectedGroupPhotoIndex] = useState<number | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<{ uri: string; label: string } | null>(null);
+  const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
 
   function scrollPendingPreviewToIndex(index: number, animated = true) {
@@ -6021,6 +6023,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     await openContactChat({ id: member.id, name: member.name });
   }
 
+  function openMessageSenderProfile(message: ChatMessage) {
+    const id = Number(message.senderId || 0);
+    if (!id || message.mine) return;
+    memberProfileSheetRef.current?.open({
+      id,
+      name: message.senderName?.trim() || "FairFares member",
+      photoUrl: message.senderPhotoUrl || ""
+    });
+  }
+
   async function leaveActiveGroup() {
     const communityId = activeConversation?.communityId || "";
     if (!communityId) return;
@@ -7912,7 +7924,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             <View key={message.id} style={styles.threadMessageCell}>
             <View style={[styles.threadMessageRow, message.mine && styles.threadMessageRowMine, messageRunEnds && styles.threadMessageRunEnd, highlightedMessageId === message.id && styles.highlightedMessageRow]}>
               {!message.mine && isGroupConversation(activeConversation) && messageRunEnds ? (
-                <TouchableOpacity style={styles.smallAvatar} disabled={!message.senderPhotoUrl} onPress={() => setProfilePhotoPreview({ uri: message.senderPhotoUrl || "", label: message.senderName || "Profile photo" })} accessibilityRole={message.senderPhotoUrl ? "button" : undefined} accessibilityLabel={message.senderPhotoUrl ? `Open ${message.senderName || "sender"} profile photo` : undefined}>
+                <TouchableOpacity style={styles.smallAvatar} disabled={!Number(message.senderId || 0)} onPress={() => openMessageSenderProfile(message)} accessibilityRole={Number(message.senderId || 0) ? "button" : undefined} accessibilityLabel={Number(message.senderId || 0) ? `View ${message.senderName || "sender"}'s profile` : undefined}>
                   <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
                 </TouchableOpacity>
               ) : !message.mine && isGroupConversation(activeConversation) ? <View style={styles.smallAvatarSpacer} /> : null}
@@ -8868,6 +8880,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </Pressable>
         </View>
       </Modal>
+      <MemberProfileSheet
+        ref={memberProfileSheetRef}
+        viewerId={currentUserId}
+        isSignedIn={signedIn}
+        onRequireLogin={onRequireLogin}
+        onOpenUserChat={(userId, name) => {
+          const member = groupMembers.find((item) => item.id === userId);
+          void openContactChat({ id: userId, name: name || member?.name || "FairFares member" });
+        }}
+      />
     </View>
   );
 }
