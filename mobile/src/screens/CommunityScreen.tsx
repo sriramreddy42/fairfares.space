@@ -1042,8 +1042,24 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setPublishing(true);
     try {
       if (editingPostId) {
-        await updateCommunityPost(editingPostId, { title: form.title.trim(), body: form.body.trim(), linkUrl: form.linkUrl.trim(), details: form.details, images: form.images });
-        await load(true);
+        const postId = editingPostId;
+        const nextTitle = form.title.trim();
+        const nextBody = form.body.trim();
+        const nextLinkUrl = form.linkUrl.trim();
+        await updateCommunityPost(postId, { title: nextTitle, body: nextBody, linkUrl: nextLinkUrl, details: form.details, images: form.images });
+        // The save has succeeded. Do not hold this page-sheet open behind a
+        // full local-and-national feed refresh: that extra request made an
+        // Edit tap appear stuck when the feed was slow. Update the card the
+        // member sees immediately and reconcile it quietly in the background.
+        mutatePost(postId, (post) => ({
+          ...post,
+          title: nextTitle,
+          body: nextBody,
+          linkUrl: nextLinkUrl,
+          details: { ...form.details },
+          images: [...form.images],
+        }));
+        void load(true);
       } else {
         const result = await createCommunityPost({ ...form, city: groupSuggestionCity, title: form.title.trim(), body: form.body.trim(), area: form.area.trim(), linkUrl: form.linkUrl.trim() });
         setPosts((current) => [result.post, ...current]);

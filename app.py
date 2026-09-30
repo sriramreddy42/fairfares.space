@@ -40807,6 +40807,55 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             offset = max(0, int(params.get("offset", ["0"])[0] or 0))
         except ValueError:
             limit, offset = 30, 0
+        if post_public_id:
+            # Opening an owner's edit form needs one known listing, not the
+            # full discovery search. In particular, do not run city repair,
+            # geo ranking, or search cache maintenance before this direct
+            # primary-key lookup; any of those can wait behind a writer and
+            # make a simple Edit tap look like the app froze.
+            with db() as con:
+                row = con.execute(
+                    """
+                    SELECT accommodation_posts.*,
+                           users.name AS owner_name,
+                           users.profile_photo_url AS owner_photo,
+                           (
+                               SELECT image_url
+                               FROM accommodation_post_images images
+                               WHERE images.post_id = accommodation_posts.id
+                               ORDER BY images.sort_order ASC, images.id ASC
+                               LIMIT 1
+                           ) AS preview_image_url
+                    FROM accommodation_posts
+                    LEFT JOIN users ON users.id = accommodation_posts.user_id
+                    WHERE accommodation_posts.public_id = ?
+                      AND accommodation_posts.visibility_status = 'ACTIVE'
+                      AND (accommodation_posts.expires_at IS NULL OR accommodation_posts.expires_at = '' OR datetime(accommodation_posts.expires_at) > datetime('now'))
+                      AND COALESCE(accommodation_posts.source_label, '') != 'SAMPLE_DATA'
+                    LIMIT 1
+                    """,
+                    (post_public_id,),
+                ).fetchone()
+            posts = mobile_housing_posts_for_viewer(
+                [mobile_housing_post_payload(row)] if row else [], viewer_id
+            )
+            self.send_json(
+                {
+                    "ok": True,
+                    "city": city,
+                    "area": area,
+                    "need": need,
+                    "category": category,
+                    "gender": gender,
+                    "budget": budget,
+                    "radius": radius,
+                    "posts": posts,
+                    "pagination": {"limit": limit, "offset": offset, "returned": len(posts), "hasMore": False, "nextOffset": offset + len(posts)},
+                    "mapsEnabled": bool(os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()),
+                },
+                headers={"X-FairFares-Cache": "DIRECT"},
+            )
+            return
         search_radius = float_from_value(radius)
         posts, cache_status = cached_mobile_search(
             ("housing", city, area, need, category, gender, budget, search_radius, limit, center_lat, center_lng, offset, post_public_id),
