@@ -1,6 +1,5 @@
-import React, { ReactNode, useEffect } from "react";
-import { StyleProp, ViewStyle } from "react-native";
-import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withTiming } from "react-native-reanimated";
+import React, { ReactNode, useEffect, useRef } from "react";
+import { AccessibilityInfo, Animated, Easing, StyleProp, ViewStyle } from "react-native";
 
 type Props = {
   children: ReactNode;
@@ -10,21 +9,43 @@ type Props = {
 
 /** A restrained idle motion for prominent identity moments, never chat lists. */
 export function AvatarMotion({ children, style, active = true }: Props) {
-  const scale = useSharedValue(1);
-  const translateY = useSharedValue(0);
-  const reduceMotion = useReducedMotion();
+  const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!active || reduceMotion) {
-      scale.value = withTiming(1, { duration: 120 });
-      translateY.value = withTiming(0, { duration: 120 });
-      return;
-    }
-    const timing = { duration: 2100, easing: Easing.inOut(Easing.ease) };
-    scale.value = withRepeat(withSequence(withTiming(1.025, timing), withTiming(1, timing)), -1, false);
-    translateY.value = withRepeat(withSequence(withTiming(-2, timing), withTiming(0, timing)), -1, false);
-  }, [active, reduceMotion, scale, translateY]);
+    let mounted = true;
+    let loop: Animated.CompositeAnimation | null = null;
+    const reset = () => {
+      loop?.stop();
+      progress.setValue(0);
+    };
+    const start = () => {
+      if (!mounted || !active) {
+        reset();
+        return;
+      }
+      loop = Animated.loop(Animated.sequence([
+        Animated.timing(progress, { toValue: 1, duration: 2100, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(progress, { toValue: 0, duration: 2100, easing: Easing.inOut(Easing.ease), useNativeDriver: true })
+      ]));
+      loop.start();
+    };
+    // Motion is decorative, so reduce-motion users always receive a still avatar.
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
+      if (reduced) reset();
+      else start();
+    }).catch(start);
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (reduced) => {
+      if (reduced) reset();
+      else start();
+    });
+    return () => {
+      mounted = false;
+      subscription.remove();
+      loop?.stop();
+    };
+  }, [active, progress]);
 
-  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }, { scale: scale.value }] }));
-  return <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>;
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [0, -2] });
+  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] });
+  return <Animated.View style={[style, { transform: [{ translateY }, { scale }] }]}>{children}</Animated.View>;
 }
