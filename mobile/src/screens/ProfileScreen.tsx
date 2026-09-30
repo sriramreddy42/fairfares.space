@@ -35,6 +35,7 @@ type Props = {
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
 type AccountHistorySection = "housing" | "carpool" | "rentals";
 type CarpoolHistoryView = "listings" | "requests";
+type CharacterCreatorTab = "look" | "photo" | "scene";
 type AccountHistoryItem = { id: string; sourceId: string; title: string; meta: string; status: string; current: boolean; kind: string; editable: boolean };
 const PAST_RIDE_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "EXPIRED", "DECLINED"]);
 const PAST_RENTAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "CANCELED", "RETURNED", "EXPIRED_HOLD"]);
@@ -95,6 +96,7 @@ export function ProfileScreen({
   const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
   const [characterChoice, setCharacterChoice] = useState(0);
   const [characterBackground, setCharacterBackground] = useState(DICEBEAR_AVATAR_BACKGROUNDS[0]);
+  const [characterCreatorTab, setCharacterCreatorTab] = useState<CharacterCreatorTab>("look");
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportTopic, setSupportTopic] = useState(SUPPORT_TOPICS[0]);
   const [supportMessage, setSupportMessage] = useState("");
@@ -813,38 +815,50 @@ export function ProfileScreen({
               <View style={styles.characterCreatorHaloSmall} />
               <AvatarMotion style={styles.characterCreatorPreviewMotion}>
                 <UserAvatar
-                  photoUrl={characterAvatarPreview(`fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
+                  photoUrl={characterCreatorTab === "photo" && profilePhoto ? profilePhoto : characterAvatarPreview(`fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)}
                   style={styles.characterCreatorPreview}
                   imageStyle={styles.characterCreatorPreview}
                   fallback={<ActivityIndicator size="large" color="#10243d" />}
                 />
               </AvatarMotion>
-              <Text style={styles.characterCreatorStageCopy}>This is how your character will appear in FairFares.</Text>
+              <Text style={styles.characterCreatorStageCopy}>{characterCreatorTab === "photo" ? "This is how your profile photo appears in FairFares." : "This is how your character will appear in FairFares."}</Text>
+            </View>
+            <View style={styles.characterCreatorTabs} accessibilityRole="tablist">
+              {([
+                ["look", "☺", "Character"],
+                ["photo", "▣", "Photo"],
+                ["scene", "○", "Scene"]
+              ] as Array<[CharacterCreatorTab, string, string]>).map(([tab, glyph, label]) => {
+                const selected = characterCreatorTab === tab;
+                return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><Text style={[styles.characterCreatorTabGlyph, selected && styles.characterCreatorTabGlyphSelected]}>{glyph}</Text><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
+              })}
             </View>
             <View style={styles.characterCreatorSheet}>
               <View style={styles.characterCreatorHandle} />
-              <Text style={styles.characterCreatorSheetTitle}>Choose a look</Text>
-              <Text style={styles.characterCreatorSheetCopy}>Tap a character to preview it. Nothing changes until you save.</Text>
-              <View style={styles.characterAvatarGrid}>
-                {Array.from({ length: 6 }, (_, index) => {
-                  const seed = `fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${index}`;
-                  const selected = index === characterChoice;
-                  return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected]} onPress={() => setCharacterChoice(index)} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, characterBackground)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>;
-                })}
-              </View>
-              <TouchableOpacity style={styles.characterShuffleButton} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterChoice(0); }} disabled={saving} accessibilityRole="button" accessibilityLabel="Show six more character options">
-                <Text style={styles.characterShuffleButtonText}>Shuffle looks</Text>
-              </TouchableOpacity>
-              <Text style={styles.characterCreatorSectionLabel}>Background</Text>
-              <View style={styles.characterBackgroundRow}>
-                {DICEBEAR_AVATAR_BACKGROUNDS.map((background) => {
-                  const selected = background === characterBackground;
-                  return <TouchableOpacity key={background} style={[styles.characterBackgroundOption, { backgroundColor: `#${background}` }, selected && styles.characterBackgroundOptionSelected]} onPress={() => setCharacterBackground(background)} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel="Choose character background" />;
-                })}
-              </View>
-              <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={() => void chooseCharacterAvatar(`fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)} disabled={saving} accessibilityRole="button" accessibilityLabel="Save FairFares character">
-                <View style={styles.buttonContent}>{savingMode === "avatar" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "avatar" ? "Saving character…" : "Save character"}</Text></View>
-              </TouchableOpacity>
+              {characterCreatorTab === "look" ? <>
+                <Text style={styles.characterCreatorSheetTitle}>Try a new look</Text>
+                <Text style={styles.characterCreatorSheetCopy}>Tap a character to preview it. Nothing changes until you save.</Text>
+                <View style={styles.characterAvatarGrid}>
+                  {Array.from({ length: 6 }, (_, index) => {
+                    const seed = `fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${index}`;
+                    const selected = index === characterChoice;
+                    return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected]} onPress={() => setCharacterChoice(index)} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, characterBackground)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>;
+                  })}
+                </View>
+                <TouchableOpacity style={styles.characterShuffleButton} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterChoice(0); }} disabled={saving} accessibilityRole="button" accessibilityLabel="Show six more character options"><Text style={styles.characterShuffleButtonText}>Shuffle looks</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={() => void chooseCharacterAvatar(`fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)} disabled={saving} accessibilityRole="button" accessibilityLabel="Save FairFares character"><View style={styles.buttonContent}>{savingMode === "avatar" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "avatar" ? "Saving character…" : "Save character"}</Text></View></TouchableOpacity>
+              </> : null}
+              {characterCreatorTab === "scene" ? <>
+                <Text style={styles.characterCreatorSheetTitle}>Choose a scene</Text>
+                <Text style={styles.characterCreatorSheetCopy}>Choose the background behind your character, then save the character when it looks right.</Text>
+                <View style={styles.characterBackgroundRow}>{DICEBEAR_AVATAR_BACKGROUNDS.map((background) => { const selected = background === characterBackground; return <TouchableOpacity key={background} style={[styles.characterBackgroundOption, { backgroundColor: `#${background}` }, selected && styles.characterBackgroundOptionSelected]} onPress={() => setCharacterBackground(background)} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel="Choose character background" />; })}</View>
+                <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={() => void chooseCharacterAvatar(`fairfares-${Number(user?.id || 0)}-${characterAvatarSet}-${characterChoice}`, characterBackground)} disabled={saving} accessibilityRole="button" accessibilityLabel="Save FairFares character"><View style={styles.buttonContent}>{savingMode === "avatar" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "avatar" ? "Saving character…" : "Save character"}</Text></View></TouchableOpacity>
+              </> : null}
+              {characterCreatorTab === "photo" ? <>
+                <Text style={styles.characterCreatorSheetTitle}>Use a profile photo</Text>
+                <Text style={styles.characterCreatorSheetCopy}>A profile photo replaces the character across FairFares. You can return here and choose a character at any time.</Text>
+                <TouchableOpacity style={[styles.characterCreatorSaveButton, saving && styles.disabled]} onPress={choosePhoto} disabled={saving} accessibilityRole="button" accessibilityLabel="Upload profile photo"><View style={styles.buttonContent}>{savingMode === "photo" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.characterCreatorSaveButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text></View></TouchableOpacity>
+              </> : null}
             </View>
           </ScrollView>
         </View>
@@ -916,6 +930,13 @@ const styles = StyleSheet.create({
   characterCreatorPreviewMotion: { width: 252, height: 252, borderRadius: 126, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.18)", zIndex: 1 },
   characterCreatorPreview: { width: "100%", height: "100%" },
   characterCreatorStageCopy: { position: "absolute", bottom: 18, zIndex: 1, color: "#10243d", fontSize: 12, fontWeight: "800", textAlign: "center", paddingHorizontal: 20 },
+  characterCreatorTabs: { marginTop: 12, paddingHorizontal: 22, flexDirection: "row", justifyContent: "space-around", gap: 8 },
+  characterCreatorTab: { minWidth: 72, minHeight: 58, alignItems: "center", justifyContent: "center", gap: 3, borderRadius: 16, paddingHorizontal: 8 },
+  characterCreatorTabSelected: { backgroundColor: "rgba(156,233,204,0.18)", borderWidth: 1, borderColor: "rgba(156,233,204,0.55)" },
+  characterCreatorTabGlyph: { color: "#d4ddec", fontSize: 22, lineHeight: 24, fontWeight: "900" },
+  characterCreatorTabGlyphSelected: { color: "#9ce9cc" },
+  characterCreatorTabText: { color: "#d4ddec", fontSize: 11, fontWeight: "800" },
+  characterCreatorTabTextSelected: { color: "#9ce9cc" },
   characterCreatorSheet: { marginTop: -18, paddingTop: 12, paddingHorizontal: 22, paddingBottom: 36, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: theme.colors.panel, gap: 12 },
   characterCreatorHandle: { width: 42, height: 5, borderRadius: 4, alignSelf: "center", backgroundColor: theme.colors.line, marginBottom: 2 },
   characterCreatorSheetTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" },
