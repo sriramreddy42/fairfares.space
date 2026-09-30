@@ -13032,6 +13032,7 @@ def community_post_rows(
         return con.execute(
             f"""
             SELECT posts.*, users.name AS author_name, users.profile_photo_url AS author_photo,
+                   users.guest_account AS author_is_guest,
                    communities.public_id AS community_public_id, communities.name AS community_name,
                    communities.visibility AS community_visibility,
                    (SELECT public_id FROM ask_community_answers accepted WHERE accepted.id = posts.accepted_answer_id) AS accepted_answer_public_id,
@@ -13042,6 +13043,7 @@ def community_post_rows(
                    (SELECT latest.author_id FROM ask_community_answers latest WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_id,
                    (SELECT users_latest.name FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_name,
                    (SELECT users_latest.profile_photo_url FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_photo,
+                   (SELECT users_latest.guest_account FROM ask_community_answers latest JOIN users users_latest ON users_latest.id = latest.author_id WHERE latest.post_id = posts.id AND latest.status = 'PUBLISHED' ORDER BY latest.id DESC LIMIT 1) AS latest_answer_author_is_guest,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id) AS reaction_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LIKE', 'HELPFUL')) AS reaction_like_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.post_id = posts.id AND reactions.reaction IN ('LOVE', 'THANKS')) AS reaction_love_count,
@@ -13227,6 +13229,7 @@ def community_post_payload(
             "id": author_id,
             "name": str(row_value(row, "author_name") or "FairFares member"),
             "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id),
+            "isGuest": bool(int(float_from_value(row_value(row, "author_is_guest")) or 0)),
             "ratingSummary": author_rating,
         },
         "community": {
@@ -13242,6 +13245,7 @@ def community_post_payload(
                 "id": int(row_value(row, "latest_answer_author_id") or 0),
                 "name": str(row_value(row, "latest_answer_author_name") or "FairFares member"),
                 "photoUrl": avatar_delivery_path(row_value(row, "latest_answer_author_photo"), int(row_value(row, "latest_answer_author_id") or 0)),
+                "isGuest": bool(int(float_from_value(row_value(row, "latest_answer_author_is_guest")) or 0)),
             },
             "createdAt": str(row_value(row, "latest_answer_created_at") or ""),
         } if row_value(row, "latest_answer_public_id") else None,
@@ -13286,6 +13290,7 @@ def community_answer_rows(post_id: int, viewer_id: int = 0) -> list[sqlite3.Row]
         return con.execute(
             """
             SELECT answers.*, users.name AS author_name, users.profile_photo_url AS author_photo,
+                   users.guest_account AS author_is_guest,
                    (SELECT public_id FROM ask_community_answers parent WHERE parent.id = answers.parent_answer_id) AS parent_answer_public_id,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id) AS reaction_count,
                    (SELECT COUNT(*) FROM ask_community_reactions reactions WHERE reactions.answer_id = answers.id AND reactions.reaction IN ('LIKE', 'HELPFUL')) AS reaction_like_count,
@@ -13312,7 +13317,12 @@ def community_answer_payload(row: sqlite3.Row, accepted_answer_id: int = 0, view
         "id": str(row_value(row, "public_id") or ""),
         "body": str(row_value(row, "body") or ""),
         "parentAnswerId": str(row_value(row, "parent_answer_public_id") or ""),
-        "author": {"id": author_id, "name": str(row_value(row, "author_name") or "FairFares member"), "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id)},
+        "author": {
+            "id": author_id,
+            "name": str(row_value(row, "author_name") or "FairFares member"),
+            "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id),
+            "isGuest": bool(int(float_from_value(row_value(row, "author_is_guest")) or 0)),
+        },
         "reactionCount": int(row_value(row, "reaction_count") or 0),
         "reactionCounts": {
             "LIKE": int(row_value(row, "reaction_like_count") or 0),

@@ -253,6 +253,7 @@ export type CommunityAuthor = {
   id: number;
   name: string;
   photoUrl: string;
+  isGuest?: boolean;
   ratingSummary?: UserRatingSummary;
 };
 
@@ -260,6 +261,7 @@ export type CommunityUserProfile = {
   id: number;
   name: string;
   photoUrl: string;
+  isGuest?: boolean;
   listings: HousingPost[];
 };
 

@@ -461,6 +461,10 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(guest_alerts[0].args[1], "New reply to your comment")
         self.assertEqual(guest_alerts[0].args[3]["type"], "COMMUNITY_ANSWER")
         self.assertEqual(guest_alerts[0].args[3]["postId"], post_id)
+        status, detail = self.guest_request("GET", f"/api/mobile/community?postId={post_id}", guest_token)
+        self.assertEqual(status, 200)
+        guest_answer = next(answer for answer in detail["posts"][0]["answers"] if answer["id"] == guest_comment["answerId"])
+        self.assertTrue(guest_answer["author"]["isGuest"])
 
     def test_signup_claims_guest_identity_and_preserves_comments(self):
         _, created = self.create_post()
