@@ -371,7 +371,17 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (!user?.id || !feedReadyForSecondaryReads || loading || refreshing) return () => { cancelled = true; };
 
     const timer = setTimeout(() => {
-      void Promise.allSettled([getRideActivity(), getRentalBookings(), getHousingActivity()]).then(([rideResult, rentalResult, housingResult]) => {
+      // These power a helpful banner, not the first paint of Ask. Starting
+      // all three account-heavy reads together made a cold launch contend
+      // with bootstrap, the community feed, and Chitthi on the same SQLite
+      // service. Keep the priority (rental, housing, then carpool) but make
+      // the reads cooperative and leave the feed fully usable while they run.
+      void (async () => {
+        const [rentalResult] = await Promise.allSettled([getRentalBookings()]);
+        const [housingResult] = await Promise.allSettled([getHousingActivity()]);
+        const [rideResult] = await Promise.allSettled([getRideActivity()]);
+        return [rideResult, rentalResult, housingResult] as const;
+      })().then(([rideResult, rentalResult, housingResult]) => {
         if (cancelled) return;
         const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
         const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
@@ -471,7 +481,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         rideId: ride.id,
         });
       });
-    }, 400);
+    }, 2_500);
 
     return () => { cancelled = true; clearTimeout(timer); };
   }, [actionNoticeRefreshKey, feedReadyForSecondaryReads, loading, refreshing, user?.id]);

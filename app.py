@@ -12794,6 +12794,13 @@ def sync_housing_into_community() -> None:
 _COMMUNITY_HOUSING_SYNC_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULED = False
+_COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED = 0.0
+# Community opens can be bursty after a mobile cold start. The projection is
+# derived data, so checking it once a minute is enough and avoids adding a
+# writer behind the feed, chat, rental, and ride reads that open together.
+COMMUNITY_HOUSING_SYNC_MIN_INTERVAL_SECONDS = positive_int_env(
+    "FAIRFARES_COMMUNITY_HOUSING_SYNC_SECONDS", 60
+)
 
 
 def housing_community_projection_needs_sync() -> bool:
@@ -12833,11 +12840,19 @@ def ensure_housing_community_projection_current() -> None:
 
 def schedule_housing_community_projection_sync() -> None:
     """Refresh derived housing cards without making an Ask feed read wait."""
-    global _COMMUNITY_HOUSING_SYNC_SCHEDULED
+    global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED
+    now = time.monotonic()
     with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
-        if _COMMUNITY_HOUSING_SYNC_SCHEDULED:
+        if (
+            _COMMUNITY_HOUSING_SYNC_SCHEDULED
+            or (
+                _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED
+                and now - _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED < COMMUNITY_HOUSING_SYNC_MIN_INTERVAL_SECONDS
+            )
+        ):
             return
         _COMMUNITY_HOUSING_SYNC_SCHEDULED = True
+        _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED = now
 
     def run() -> None:
         global _COMMUNITY_HOUSING_SYNC_SCHEDULED
