@@ -8536,6 +8536,16 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         </Modal>
       </Animated.View>
       </View>
+      <MemberProfileSheet
+        ref={memberProfileSheetRef}
+        viewerId={currentUserId}
+        isSignedIn={signedIn}
+        onRequireLogin={onRequireLogin}
+        onOpenUserChat={(userId, name) => {
+          const member = groupMembers.find((item) => item.id === userId);
+          void openContactChat({ id: userId, name: name || member?.name || "FairFares member" });
+        }}
+      />
       </ChatPhotoViewerContext.Provider>
     );
   }
@@ -8880,16 +8890,6 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           </Pressable>
         </View>
       </Modal>
-      <MemberProfileSheet
-        ref={memberProfileSheetRef}
-        viewerId={currentUserId}
-        isSignedIn={signedIn}
-        onRequireLogin={onRequireLogin}
-        onOpenUserChat={(userId, name) => {
-          const member = groupMembers.find((item) => item.id === userId);
-          void openContactChat({ id: userId, name: name || member?.name || "FairFares member" });
-        }}
-      />
     </View>
   );
 }
