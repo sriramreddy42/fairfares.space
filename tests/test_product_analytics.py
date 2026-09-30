@@ -62,6 +62,14 @@ class ProductAnalyticsTest(unittest.TestCase):
     def post_event(self, server, payload, token=""):
         return self.post_json(server, "/api/mobile/analytics/events", payload, token)
 
+    def get_json(self, server, path, headers=None):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            headers=headers or {},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+
     def test_event_ingestion_is_allow_listed_private_and_idempotent(self):
         server, thread = self.start_server()
         try:
@@ -101,6 +109,35 @@ class ProductAnalyticsTest(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 self.post_event(server, {"eventName": "email_address_captured", "anonymousId": "install-1"})
             self.assertEqual(raised.exception.code, 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_older_native_housing_reads_are_counted_once_per_day(self):
+        with app.db() as con:
+            owner_id = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Owner', 'owner@example.com', 'x', 'CUSTOMER', 0)"
+            ).lastrowid
+            con.execute(
+                "INSERT INTO accommodation_posts (public_id, user_id, post_mode, visibility_status) VALUES ('FFH-READ', ?, 'HAVE_PLACE', 'ACTIVE')",
+                (owner_id,),
+            )
+        server, thread = self.start_server()
+        headers = {
+            "X-FairFares-Install-ID": "legacy-native-install",
+            "X-FairFares-Client-Platform": "android",
+        }
+        try:
+            self.assertEqual(self.get_json(server, "/api/mobile/housing?city=Denver%2C%20CO&limit=1", headers)[0], 200)
+            self.assertEqual(self.get_json(server, "/api/mobile/housing?city=Denver%2C%20CO&limit=1", headers)[0], 200)
+            self.assertEqual(self.get_json(server, "/api/mobile/housing?postId=FFH-READ&limit=1", headers)[0], 200)
+            with app.db() as con:
+                rows = con.execute(
+                    "SELECT event_name, metadata_json FROM product_analytics_events ORDER BY event_name"
+                ).fetchall()
+            self.assertEqual([row["event_name"] for row in rows], ["housing_listing_view", "housing_search"])
+            self.assertEqual(json.loads(rows[0]["metadata_json"]), {"resultCount": "1", "source": "housing_api"})
         finally:
             server.shutdown()
             server.server_close()

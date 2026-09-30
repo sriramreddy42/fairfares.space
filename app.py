@@ -26526,6 +26526,63 @@ PRODUCT_ANALYTICS_EVENTS = {
 }
 
 
+def record_product_analytics_event(
+    event_name: str,
+    anonymous_id: object,
+    *,
+    user_id: int | None = None,
+    platform: object = "unknown",
+    app_version: object = "",
+    build_version: object = "",
+    session_id: object = "",
+    metadata: dict[str, object] | None = None,
+    dedupe_key: object = "",
+) -> bool:
+    """Persist one private, allow-listed product event.
+
+    Both native clients and a few completed server read paths use this helper.
+    Server-side events let older installed builds contribute to the funnels
+    without collecting a location, listing id, search text, or message content.
+    """
+    clean_event_name = clean_text_value(event_name, 60).lower()
+    clean_anonymous_id = re.sub(r"[^A-Za-z0-9._-]", "", clean_text_value(anonymous_id, 100))
+    if clean_event_name not in PRODUCT_ANALYTICS_EVENTS or not clean_anonymous_id:
+        return False
+    clean_platform = clean_text_value(platform, 20).lower()
+    if clean_platform not in {"ios", "android", "web"}:
+        clean_platform = "unknown"
+    clean_metadata: dict[str, str] = {}
+    for key in ("carId", "resultCount", "source"):
+        value = (metadata or {}).get(key)
+        if isinstance(value, (str, int, float, bool)):
+            clean_metadata[key] = str(value)[:80]
+    clean_dedupe_key = re.sub(r"[^A-Za-z0-9._:-]", "", clean_text_value(dedupe_key, 160))
+    if not clean_dedupe_key:
+        clean_dedupe_key = f"{clean_anonymous_id}:{clean_event_name}:{uuid.uuid4().hex}"
+    clean_user_id = int(user_id or 0) or None
+    with db() as con:
+        # Once an installation signs in, retain its earlier anonymous activity
+        # under the same person so one device does not count twice in funnels.
+        if clean_user_id:
+            con.execute(
+                "UPDATE product_analytics_events SET user_id = ? WHERE anonymous_id = ? AND user_id IS NULL",
+                (clean_user_id, clean_anonymous_id),
+            )
+        cursor = con.execute(
+            """INSERT OR IGNORE INTO product_analytics_events
+               (event_name, anonymous_id, user_id, platform, app_version, build_version,
+                session_id, metadata_json, dedupe_key, occurred_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                clean_event_name, clean_anonymous_id, clean_user_id, clean_platform,
+                clean_text_value(app_version, 30), clean_text_value(build_version, 30),
+                clean_text_value(session_id, 100), json.dumps(clean_metadata, separators=(",", ":")),
+                clean_dedupe_key, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+    return bool(cursor.rowcount)
+
+
 def product_analytics_summary(days: int = 30) -> dict[str, object]:
     days = days if days in {1, 7, 30, 90} else 30
     window = f"-{days} days"
@@ -40899,6 +40956,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_housing(self, parsed: urllib.parse.ParseResult) -> None:
         viewer = self.current_user()
         viewer_id = int(row_value(viewer, "id") or 0)
+        installation_id = self.request_installation_id()
+        client_platform = clean_text_value(self.headers.get("X-FairFares-Client-Platform"), 20).lower()
+
+        def record_completed_read(event_name: str, result_count: int) -> None:
+            # Build 40 and earlier already attach an installation ID to every
+            # native request, but they predate the dedicated housing event
+            # calls. Record only the completed read and result count here, so
+            # the dashboard begins measuring real use before every customer
+            # has installed the newer binary. One event per person per day
+            # keeps pagination and retries from inflating the funnel.
+            if not installation_id or client_platform not in {"ios", "android"}:
+                return
+            today = datetime.now(UTC).strftime("%Y%m%d")
+            record_product_analytics_event(
+                event_name,
+                installation_id,
+                user_id=viewer_id or None,
+                platform=client_platform,
+                metadata={"resultCount": result_count, "source": "housing_api"},
+                dedupe_key=f"server:{today}:{installation_id}:{event_name}",
+            )
+
         params = urllib.parse.parse_qs(parsed.query)
         city = (params.get("city", ["Denver, CO"])[0] or "").strip()
         area = (params.get("area", [""])[0] or "").strip()
@@ -40951,6 +41030,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             posts = mobile_housing_posts_for_viewer(
                 [mobile_housing_post_payload(row)] if row else [], viewer_id
             )
+            # Do not treat the owner's edit lookup as a marketplace view.
+            if posts and int(posts[0].get("posterUserId") or 0) != viewer_id:
+                record_completed_read("housing_listing_view", len(posts))
             self.send_json(
                 {
                     "ok": True,
@@ -40992,6 +41074,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # payload can still populate their edit form. Copy cached dictionaries
         # before redaction so one guest request cannot poison a later owner hit.
         posts = mobile_housing_posts_for_viewer(posts, viewer_id)
+        record_completed_read("housing_search", len(posts))
         self.send_json(
             {
                 "ok": True,
