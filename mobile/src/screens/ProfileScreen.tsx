@@ -528,12 +528,25 @@ export function ProfileScreen({
 
       {user ? (
         <View style={styles.accountAvatarStudio}>
+          <View style={styles.accountAvatarStudioIdentity}>
+            <AvatarMotion style={[styles.avatar, styles.accountAvatarStudioIdentityAvatar]}>
+              <UserAvatar photoUrl={profilePhoto} style={styles.avatarImage} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>} />
+            </AvatarMotion>
+            <View style={styles.accountAvatarStudioIdentityCopy}>
+              <Text style={styles.accountAvatarStudioName} numberOfLines={1}>{displayName}</Text>
+              <View style={styles.accountAvatarStudioStatusRow}>
+                <View style={styles.accountAvatarStudioStatus}><Text style={styles.accountAvatarStudioStatusText}>{accountEmailBadge}</Text></View>
+                <Text style={styles.accountAvatarStudioPhone}>{accountPhoneBadge}</Text>
+              </View>
+            </View>
+            <Text style={styles.accountAvatarStudioAccountLabel}>ACCOUNT</Text>
+          </View>
           <View style={styles.accountAvatarStudioHeader}>
             <View>
               <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
               <Text style={styles.accountAvatarStudioTitle}>Make it yours</Text>
             </View>
-            <Text style={styles.accountAvatarStudioHint}>Preview</Text>
+            <Text style={styles.accountAvatarStudioHint}>Edit</Text>
           </View>
           <View style={[styles.characterCreatorStage, { backgroundColor: `#${characterBackground}` }]}>
             <View style={styles.characterCreatorHaloLarge} />
@@ -546,22 +559,15 @@ export function ProfileScreen({
                 fallback={<ActivityIndicator size="large" color="#10243d" />}
               />
             </AvatarMotion>
-            <View style={styles.characterCreatorStageIdentity}>
-              <Text style={styles.characterCreatorStageName} numberOfLines={1}>{displayName}</Text>
-              <View style={styles.characterCreatorStageBadges}>
-                <Text style={styles.characterCreatorStageBadge}>{accountEmailBadge}</Text>
-                <Text style={styles.characterCreatorStageBadge}>{accountPhoneBadge}</Text>
-              </View>
-            </View>
           </View>
           <View style={styles.characterCreatorTabs} accessibilityRole="tablist">
             {([
-              ["look", "Character"],
+              ["look", "Looks"],
               ["photo", "Photo"],
-              ["scene", "Scene"]
+              ["scene", "Background"]
             ] as Array<[CharacterCreatorTab, string]>).map(([tab, label]) => {
               const selected = characterCreatorTab === tab;
-              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
+              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><View style={[styles.characterCreatorTabMarker, selected && styles.characterCreatorTabMarkerSelected]} /><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
             })}
           </View>
           <View style={styles.accountAvatarStudioControls}>
@@ -912,7 +918,16 @@ const styles = StyleSheet.create({
   characterShuffleButton: { alignSelf: "flex-start", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 13, paddingVertical: 9 },
   characterShuffleButtonText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
   characterCreatorScreen: { flex: 1, backgroundColor: "#17243b" },
-  accountAvatarStudio: { overflow: "hidden", borderRadius: 26, backgroundColor: "#17243b", paddingTop: 18, borderWidth: 1, borderColor: "rgba(156,233,204,0.28)", shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
+  accountAvatarStudio: { overflow: "hidden", borderRadius: 26, backgroundColor: "#17243b", paddingTop: 14, borderWidth: 1, borderColor: "rgba(156,233,204,0.28)", shadowColor: "#0b1526", shadowOpacity: 0.26, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
+  accountAvatarStudioIdentity: { marginHorizontal: 16, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.10)", flexDirection: "row", alignItems: "center", gap: 10 },
+  accountAvatarStudioIdentityAvatar: { width: 44, height: 44, borderRadius: 22, borderColor: "rgba(156,233,204,0.75)", backgroundColor: "rgba(255,255,255,0.14)" },
+  accountAvatarStudioIdentityCopy: { flex: 1, minWidth: 0 },
+  accountAvatarStudioName: { color: "#ffffff", fontSize: 15, lineHeight: 20, fontWeight: "900" },
+  accountAvatarStudioStatusRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 3 },
+  accountAvatarStudioStatus: { borderRadius: theme.radius.pill, backgroundColor: "rgba(94,196,122,0.16)", borderWidth: 1, borderColor: "rgba(156,233,204,0.40)", paddingHorizontal: 7, paddingVertical: 3 },
+  accountAvatarStudioStatusText: { color: "#a9f1d4", fontSize: 9, fontWeight: "900" },
+  accountAvatarStudioPhone: { color: "#b9c7dc", fontSize: 10, fontWeight: "700" },
+  accountAvatarStudioAccountLabel: { color: "#9fb0c8", fontSize: 9, fontWeight: "900", letterSpacing: 1.1 },
   accountAvatarIdentity: { paddingHorizontal: 20, paddingBottom: 15, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 14 },
   accountAvatarIdentityCopy: { flex: 1, minWidth: 0 },
   accountAvatarIdentityEyebrow: { color: "#ff7d73", fontWeight: "900", fontSize: 10, letterSpacing: 1.3 },
@@ -921,7 +936,7 @@ const styles = StyleSheet.create({
   accountAvatarIdentityBadge: { borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.12)", paddingHorizontal: 8, paddingVertical: 5 },
   accountAvatarIdentityBadgeText: { color: "#dff8ed", fontSize: 10, fontWeight: "800" },
   accountAvatarIdentityAvatar: { width: 60, height: 60, borderRadius: 30, borderColor: "rgba(156,233,204,0.75)", backgroundColor: "rgba(255,255,255,0.14)" },
-  accountAvatarStudioHeader: { minHeight: 52, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  accountAvatarStudioHeader: { minHeight: 60, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   accountAvatarStudioEyebrow: { color: "#9ce9cc", fontWeight: "900", fontSize: 10, letterSpacing: 1.3 },
   accountAvatarStudioTitle: { color: "#fff", fontSize: 22, lineHeight: 28, fontWeight: "900" },
   accountAvatarStudioHint: { color: "#d4ddec", fontSize: 11, fontWeight: "800", borderRadius: theme.radius.pill, backgroundColor: "rgba(255,255,255,0.12)", paddingHorizontal: 10, paddingVertical: 6 },
@@ -939,14 +954,12 @@ const styles = StyleSheet.create({
   characterCreatorHaloSmall: { position: "absolute", width: 205, height: 205, borderRadius: 103, backgroundColor: "rgba(255,255,255,0.26)", top: 68, left: -42 },
   characterCreatorPreviewMotion: { width: 252, height: 252, borderRadius: 126, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.18)", zIndex: 1 },
   characterCreatorPreview: { width: "100%", height: "100%" },
-  characterCreatorStageIdentity: { position: "absolute", zIndex: 1, left: 14, right: 14, bottom: 14, alignItems: "center", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "rgba(255,255,255,0.48)" },
-  characterCreatorStageName: { maxWidth: "100%", color: "#10243d", fontSize: 15, lineHeight: 19, fontWeight: "900" },
-  characterCreatorStageBadges: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 6, marginTop: 4 },
-  characterCreatorStageBadge: { color: "#183a50", fontSize: 10, fontWeight: "800" },
-  characterCreatorTabs: { marginTop: 12, paddingHorizontal: 22, flexDirection: "row", justifyContent: "space-around", gap: 8 },
-  characterCreatorTab: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: theme.radius.pill, paddingHorizontal: 8 },
-  characterCreatorTabSelected: { backgroundColor: "rgba(156,233,204,0.18)", borderWidth: 1, borderColor: "rgba(156,233,204,0.55)" },
-  characterCreatorTabText: { color: "#d4ddec", fontSize: 12, fontWeight: "800" },
+  characterCreatorTabs: { marginTop: 12, marginHorizontal: 16, padding: 4, flexDirection: "row", gap: 4, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.09)" },
+  characterCreatorTab: { flex: 1, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 12, paddingHorizontal: 6 },
+  characterCreatorTabSelected: { backgroundColor: "rgba(156,233,204,0.18)", borderWidth: 1, borderColor: "rgba(156,233,204,0.48)" },
+  characterCreatorTabMarker: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#7f91aa" },
+  characterCreatorTabMarkerSelected: { backgroundColor: "#91ebcb" },
+  characterCreatorTabText: { color: "#d4ddec", fontSize: 11, fontWeight: "800" },
   characterCreatorTabTextSelected: { color: "#9ce9cc" },
   characterCreatorSheet: { marginTop: -18, paddingTop: 12, paddingHorizontal: 22, paddingBottom: 36, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: theme.colors.panel, gap: 12 },
   characterCreatorHandle: { width: 42, height: 5, borderRadius: 4, alignSelf: "center", backgroundColor: theme.colors.line, marginBottom: 2 },
