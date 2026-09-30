@@ -853,6 +853,40 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertTrue(detail["posts"][0]["answers"][0]["accepted"])
         self.assertEqual(detail["posts"][0]["acceptedAnswerId"], answer_id)
 
+    def test_reply_notifies_the_comment_author_not_the_post_author(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        status, comment = self.request(
+            "POST", "/api/mobile/community/answer", "member-token",
+            {"postId": post_id, "body": "Is this still available for October?"},
+        )
+        self.assertEqual(status, 201)
+
+        status, reply = self.request(
+            "POST", "/api/mobile/community/answer", "outsider-token",
+            {"postId": post_id, "parentAnswerId": comment["answerId"], "body": "Yes, I am interested in the same place."},
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(reply["conversationId"])
+
+        with app.db() as con:
+            message = con.execute(
+                """SELECT messages.*, conversations.public_id AS conversation_public_id
+                   FROM chat_messages messages
+                   JOIN chat_conversations conversations ON conversations.id = messages.conversation_id
+                   WHERE messages.client_message_id = ?""",
+                (f"community-answer-{reply['answerId']}",),
+            ).fetchone()
+            self.assertIsNotNone(message)
+            self.assertEqual(message["conversation_public_id"], reply["conversationId"])
+            self.assertEqual(int(message["sender_id"]), self.outsider_id)
+            recipient_ids = {
+                int(row["user_id"])
+                for row in con.execute("SELECT user_id FROM chat_participants WHERE conversation_id = ?", (int(message["conversation_id"]),)).fetchall()
+            }
+        self.assertEqual(recipient_ids, {self.member_id, self.outsider_id})
+        self.assertNotIn(self.owner_id, recipient_ids)
+
     def test_multiple_reaction_types_persist_and_reload_together(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]

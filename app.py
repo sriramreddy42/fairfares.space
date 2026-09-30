@@ -42972,6 +42972,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         now = datetime.utcnow().isoformat(timespec="seconds")
         notify_user_id = 0
         notify_title = ""
+        notify_subtitle = ""
         chitthi_conversation_public_id = ""
         guest_usage_after = 0
         with db() as con:
@@ -42987,12 +42988,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "You have reached the hourly answer limit. Please try again later."}, 429)
                 return
             parent_id = None
+            parent_author_id = 0
             if parent_public_id:
-                parent = con.execute("SELECT id FROM ask_community_answers WHERE public_id = ? AND post_id = ? AND status = 'PUBLISHED'", (parent_public_id, int(post["id"]))).fetchone()
+                parent = con.execute(
+                    """SELECT answers.id, answers.author_id, COALESCE(users.guest_account, 0) AS author_is_guest
+                       FROM ask_community_answers answers
+                       LEFT JOIN users ON users.id = answers.author_id
+                       WHERE answers.public_id = ? AND answers.post_id = ? AND answers.status = 'PUBLISHED'""",
+                    (parent_public_id, int(post["id"])),
+                ).fetchone()
                 if not parent:
                     self.send_json({"ok": False, "error": "The reply target is unavailable."}, 404)
                     return
                 parent_id = int(parent["id"])
+                # A reply belongs in the commenter’s Chitthi thread. Guest
+                # commenters keep the existing post-owner thread because their
+                # limited guest inbox is tied to that conversation.
+                if not int(row_value(parent, "author_is_guest") or 0):
+                    parent_author_id = int(row_value(parent, "author_id") or 0)
             if guest:
                 allowance = con.execute(
                     """UPDATE ask_community_guest_sessions
@@ -43006,8 +43019,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 guest_usage_after = int(con.execute("SELECT messages_used FROM ask_community_guest_sessions WHERE id = ?", (int(guest["id"]),)).fetchone()["messages_used"])
             answer_id = community_public_id("FFA")
             con.execute("INSERT INTO ask_community_answers (public_id, post_id, author_id, parent_answer_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (answer_id, int(post["id"]), author_id, parent_id, body, now, now))
-            notify_user_id = int(post["author_id"] or 0)
+            notify_user_id = parent_author_id or int(post["author_id"] or 0)
             notify_title = str(post["title"] or "Community question")
+            notify_subtitle = "New reply to your Ask Community comment" if parent_author_id else "New comment on your Ask Community post"
             notification_user = user or con.execute("SELECT * FROM users WHERE id = ?", (author_id,)).fetchone()
             if notify_user_id and notify_user_id != author_id:
                 conversation, _ = get_or_create_person_conversation(con, notification_user, notify_user_id)
@@ -43023,7 +43037,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                             "type": "COMMUNITY",
                             "id": post_public_id,
                             "title": notify_title,
-                            "subtitle": "New comment on your Ask Community post",
+                            "subtitle": notify_subtitle,
                             "ownerUserId": str(notify_user_id),
                             "ownerName": str(row_value(owner, "name") or "FairFares member"),
                         },
@@ -43041,7 +43055,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         # client report that the comment itself was not posted.
                         print(f"Community answer notification failed: {exc}")
         if notify_user_id and notify_user_id != author_id and not chitthi_conversation_public_id:
-            send_mobile_push_for_users([notify_user_id], "New community answer", f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
+            notification_title = "New community reply" if parent_author_id else "New community answer"
+            send_mobile_push_for_users([notify_user_id], notification_title, f"{row_value(user, 'name') or row_value(guest, 'name') or 'A FairFares guest'} answered: {notify_title}"[:240], {"type": "COMMUNITY_ANSWER", "postId": post_public_id, "target": "community"})
         remaining = max(0, 6 - guest_usage_after) if guest else None
         self.send_json({"ok": True, "answerId": answer_id, "conversationId": chitthi_conversation_public_id, "guestRemaining": remaining}, 201)
 
