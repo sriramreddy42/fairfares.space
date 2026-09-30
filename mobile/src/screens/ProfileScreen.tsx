@@ -548,8 +548,8 @@ export function ProfileScreen({
         <View style={styles.accountAvatarStudioBody}>
           <View style={styles.accountAvatarStudioHeader}>
             <View>
-              <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
-              <Text style={styles.accountAvatarStudioTitle}>Make it yours</Text>
+              <Text style={styles.accountAvatarStudioEyebrow}>CHARACTER</Text>
+              <Text style={styles.accountAvatarStudioTitle}>Choose your look</Text>
             </View>
             <TouchableOpacity
               style={[styles.accountAvatarStudioSave, (saving || (characterCreatorTab !== "photo" && !characterPreviewDirty)) && styles.accountAvatarStudioSaveDisabled]}
@@ -586,7 +586,7 @@ export function ProfileScreen({
           <View style={styles.accountAvatarStudioControls}>
             {characterCreatorTab === "look" ? <>
               <Text style={styles.characterCreatorSheetTitle}>Try a new look</Text>
-              <Text style={styles.characterCreatorSheetCopy}>Tap a character to preview it. Nothing changes until you save.</Text>
+              <Text style={styles.characterCreatorSheetCopy}>Tap a look to preview it, then use Save above.</Text>
               <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(user.id || 0)}-${characterAvatarSet}-${index}`; const selected = index === characterChoice; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected]} onPress={() => { setCharacterChoice(index); setCharacterPreviewDirty(true); }} disabled={saving} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, characterBackground)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
               <TouchableOpacity style={styles.characterShuffleButton} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterChoice(0); setCharacterPreviewDirty(true); }} disabled={saving} accessibilityRole="button"><Text style={styles.characterShuffleButtonText}>Shuffle looks</Text></TouchableOpacity>
             </> : null}
@@ -621,7 +621,7 @@ export function ProfileScreen({
           >
             <View style={styles.profileDetailsHeaderCopy}>
               <Text style={styles.cardTitle}>Profile details</Text>
-              <Text style={styles.profileDetailsSummary}>{profileDetailsOpen ? "Hide personal information" : "Name, email, phone and profile photo"}</Text>
+              <Text style={styles.profileDetailsSummary}>{profileDetailsOpen ? "Hide personal information" : "Name, email, phone and birthday"}</Text>
             </View>
             <Text style={styles.profileDetailsChevron}>{profileDetailsOpen ? "⌃" : "⌄"}</Text>
           </TouchableOpacity>
@@ -645,17 +645,9 @@ export function ProfileScreen({
             </>
             ) : null}
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={choosePhoto} disabled={saving}>
-                <View style={styles.buttonContent}>{savingMode === "photo" ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}<Text style={styles.secondaryButtonText}>{savingMode === "photo" ? "Saving photo…" : "Upload photo"}</Text></View>
-              </TouchableOpacity>
               <TouchableOpacity style={[styles.primaryButton, !canSaveProfile && styles.disabled]} onPress={saveProfile} disabled={!canSaveProfile}>
                 <View style={styles.buttonContent}>{savingMode === "details" ? <ActivityIndicator size="small" color="#fff" /> : null}<Text style={styles.primaryButtonText}>{savingMode === "details" ? "Saving…" : profileDirty && sensitiveChanged && !completingInitialPhone && !currentPassword.trim() ? "Password required" : profileDirty ? "Save profile" : "Saved"}</Text></View>
               </TouchableOpacity>
-            </View>
-            <View style={styles.characterAppearanceSection}>
-              <View style={styles.characterAppearanceHeader}>
-                <View><Text style={styles.label}>Public appearance</Text><Text style={styles.characterAppearanceCopy}>{user.avatarMode === "DICEBEAR" ? "Your character editor is above your profile details." : "Choose a character or profile photo in the editor above."}</Text></View>
-              </View>
             </View>
           </> : null}
         </View>
@@ -962,7 +954,7 @@ const styles = StyleSheet.create({
   characterCreatorTitle: { color: "#fff", fontSize: 20, lineHeight: 26, fontWeight: "900" },
   characterCreatorTopSpacer: { width: 42, height: 42 },
   characterCreatorContent: { flexGrow: 1, justifyContent: "space-between" },
-  characterCreatorStage: { minHeight: 346, marginHorizontal: 16, borderRadius: 28, alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.34)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 16, shadowOffset: { width: 0, height: 9 }, elevation: 7 },
+  characterCreatorStage: { minHeight: 322, marginHorizontal: 16, borderRadius: 28, alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.34)", shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 16, shadowOffset: { width: 0, height: 9 }, elevation: 7 },
   characterCreatorHaloLarge: { position: "absolute", width: 310, height: 310, borderRadius: 155, backgroundColor: "rgba(255,255,255,0.28)", top: 12 },
   characterCreatorHaloSmall: { position: "absolute", width: 205, height: 205, borderRadius: 103, backgroundColor: "rgba(255,255,255,0.26)", top: 68, left: -42 },
   characterCreatorPreviewMotion: { width: 252, height: 252, borderRadius: 126, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.18)", zIndex: 1 },
