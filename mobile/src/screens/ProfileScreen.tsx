@@ -95,7 +95,7 @@ export function ProfileScreen({
   const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
   const [characterChoice, setCharacterChoice] = useState(0);
   const [characterBackground, setCharacterBackground] = useState(DICEBEAR_AVATAR_BACKGROUNDS[0]);
-  const [characterCreatorTab, setCharacterCreatorTab] = useState<CharacterCreatorTab>("look");
+  const [characterCreatorTab, setCharacterCreatorTab] = useState<CharacterCreatorTab | null>(null);
   const [characterPreviewDirty, setCharacterPreviewDirty] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportTopic, setSupportTopic] = useState(SUPPORT_TOPICS[0]);
@@ -580,7 +580,7 @@ export function ProfileScreen({
               ["scene", "Background"]
             ] as Array<[CharacterCreatorTab, string]>).map(([tab, label]) => {
               const selected = characterCreatorTab === tab;
-              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><View style={[styles.characterCreatorTabMarker, selected && styles.characterCreatorTabMarkerSelected]} /><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
+              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab((current) => current === tab ? null : tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><View style={[styles.characterCreatorTabMarker, selected && styles.characterCreatorTabMarkerSelected]} /><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
             })}
           </View>
           <View style={styles.accountAvatarStudioControls}>
