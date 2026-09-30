@@ -1393,15 +1393,37 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     return rows;
   }, [category, communityInsertIndex, lowestRental, nationalPosts, posts, selectedGroup]);
 
-  const renderFeedRow = ({ item }: { item: CommunityFeedRow }) => {
-    if (item.kind === "post") return renderPost(item.post);
-    if (item.kind === "communities") return renderCommunitySuggestions();
-    if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
-    if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across {acrossCountryName === "India" ? "India" : "the USA"}</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>{acrossCountryName === "India" ? "🇮🇳" : "🇺🇸"}</Text></View>;
-    if (item.kind === "testimonial") return renderCommunityReview();
-    if (item.kind === "rental") return renderLowestRental();
-    return <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text>;
+  // The detail sheet is intentionally stateful, but opening a comment must not
+  // replace FlatList's render callback. On iOS that made every visible card
+  // eligible for a costly update before the sheet could animate in.
+  const feedRenderContext = useRef<{
+    renderPost: (post: CommunityPost) => React.ReactElement;
+    renderCommunitySuggestions: () => React.ReactElement | null;
+    renderCommunityReview: () => React.ReactElement;
+    renderLowestRental: () => React.ReactElement | null;
+    groupSuggestionCity: string;
+    acrossCountryName: string;
+  } | null>(null);
+  feedRenderContext.current = {
+    renderPost,
+    renderCommunitySuggestions,
+    renderCommunityReview,
+    renderLowestRental,
+    groupSuggestionCity,
+    acrossCountryName,
   };
+
+  const renderFeedRow = useCallback(({ item }: { item: CommunityFeedRow }) => {
+    const context = feedRenderContext.current;
+    if (!context) return null;
+    if (item.kind === "post") return context.renderPost(item.post);
+    if (item.kind === "communities") return context.renderCommunitySuggestions();
+    if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {context.groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
+    if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across {context.acrossCountryName === "India" ? "India" : "the USA"}</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>{context.acrossCountryName === "India" ? "🇮🇳" : "🇺🇸"}</Text></View>;
+    if (item.kind === "testimonial") return context.renderCommunityReview();
+    if (item.kind === "rental") return context.renderLowestRental();
+    return <Text style={styles.feedEndNote}>Be the first to ask. Your post will appear here for people near {context.groupSuggestionCity.split(",", 1)[0] || "your city"}.</Text>;
+  }, []);
 
   const renderInlineReplyComposer = (parent: CommunityAnswer) => answerReplyTarget?.id === parent.id ? (
     <View style={styles.inlineReplyComposer}>
