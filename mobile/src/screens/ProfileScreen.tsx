@@ -528,20 +528,6 @@ export function ProfileScreen({
 
       {user ? (
         <View style={styles.accountAvatarStudio}>
-          <View style={styles.accountAvatarIdentity}>
-            <View style={styles.accountAvatarIdentityCopy}>
-              <Text style={styles.accountAvatarIdentityEyebrow}>ACCOUNT</Text>
-              <Text style={styles.accountAvatarIdentityName} numberOfLines={1}>{displayName}</Text>
-              <View style={styles.accountAvatarIdentityBadges}>
-                <View style={styles.accountAvatarIdentityBadge}><Text style={styles.accountAvatarIdentityBadgeText}>{accountEmailBadge}</Text></View>
-                <View style={styles.accountAvatarIdentityBadge}><Text style={styles.accountAvatarIdentityBadgeText}>{accountPhoneBadge}</Text></View>
-              </View>
-            </View>
-            <AvatarMotion style={[styles.avatar, styles.accountAvatarIdentityAvatar]}><TouchableOpacity style={styles.avatarTouchTarget} onPress={choosePhoto} disabled={saving} accessibilityLabel="Change profile photo">
-              <UserAvatar photoUrl={profilePhoto} style={styles.avatarImage} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{firstInitial(displayName)}</Text>} />
-              {savingMode === "photo" ? <View style={styles.avatarLoading}><ActivityIndicator color="#fff" /></View> : null}
-            </TouchableOpacity></AvatarMotion>
-          </View>
           <View style={styles.accountAvatarStudioHeader}>
             <View>
               <Text style={styles.accountAvatarStudioEyebrow}>YOUR FAIRFARES CHARACTER</Text>
@@ -560,16 +546,22 @@ export function ProfileScreen({
                 fallback={<ActivityIndicator size="large" color="#10243d" />}
               />
             </AvatarMotion>
-            <Text style={styles.characterCreatorStageCopy}>{characterCreatorTab === "photo" ? "This is how your profile photo appears in FairFares." : "This is how your character will appear in FairFares."}</Text>
+            <View style={styles.characterCreatorStageIdentity}>
+              <Text style={styles.characterCreatorStageName} numberOfLines={1}>{displayName}</Text>
+              <View style={styles.characterCreatorStageBadges}>
+                <Text style={styles.characterCreatorStageBadge}>{accountEmailBadge}</Text>
+                <Text style={styles.characterCreatorStageBadge}>{accountPhoneBadge}</Text>
+              </View>
+            </View>
           </View>
           <View style={styles.characterCreatorTabs} accessibilityRole="tablist">
             {([
-              ["look", "☺", "Character"],
-              ["photo", "▣", "Photo"],
-              ["scene", "○", "Scene"]
-            ] as Array<[CharacterCreatorTab, string, string]>).map(([tab, glyph, label]) => {
+              ["look", "Character"],
+              ["photo", "Photo"],
+              ["scene", "Scene"]
+            ] as Array<[CharacterCreatorTab, string]>).map(([tab, label]) => {
               const selected = characterCreatorTab === tab;
-              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><Text style={[styles.characterCreatorTabGlyph, selected && styles.characterCreatorTabGlyphSelected]}>{glyph}</Text><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
+              return <TouchableOpacity key={tab} style={[styles.characterCreatorTab, selected && styles.characterCreatorTabSelected]} onPress={() => setCharacterCreatorTab(tab)} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={`${label} options`}><Text style={[styles.characterCreatorTabText, selected && styles.characterCreatorTabTextSelected]}>{label}</Text></TouchableOpacity>;
             })}
           </View>
           <View style={styles.accountAvatarStudioControls}>
@@ -947,13 +939,14 @@ const styles = StyleSheet.create({
   characterCreatorHaloSmall: { position: "absolute", width: 205, height: 205, borderRadius: 103, backgroundColor: "rgba(255,255,255,0.26)", top: 68, left: -42 },
   characterCreatorPreviewMotion: { width: 252, height: 252, borderRadius: 126, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.18)", zIndex: 1 },
   characterCreatorPreview: { width: "100%", height: "100%" },
-  characterCreatorStageCopy: { position: "absolute", bottom: 18, zIndex: 1, color: "#10243d", fontSize: 12, fontWeight: "800", textAlign: "center", paddingHorizontal: 20 },
+  characterCreatorStageIdentity: { position: "absolute", zIndex: 1, left: 14, right: 14, bottom: 14, alignItems: "center", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "rgba(255,255,255,0.48)" },
+  characterCreatorStageName: { maxWidth: "100%", color: "#10243d", fontSize: 15, lineHeight: 19, fontWeight: "900" },
+  characterCreatorStageBadges: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 6, marginTop: 4 },
+  characterCreatorStageBadge: { color: "#183a50", fontSize: 10, fontWeight: "800" },
   characterCreatorTabs: { marginTop: 12, paddingHorizontal: 22, flexDirection: "row", justifyContent: "space-around", gap: 8 },
-  characterCreatorTab: { minWidth: 72, minHeight: 58, alignItems: "center", justifyContent: "center", gap: 3, borderRadius: 16, paddingHorizontal: 8 },
+  characterCreatorTab: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: theme.radius.pill, paddingHorizontal: 8 },
   characterCreatorTabSelected: { backgroundColor: "rgba(156,233,204,0.18)", borderWidth: 1, borderColor: "rgba(156,233,204,0.55)" },
-  characterCreatorTabGlyph: { color: "#d4ddec", fontSize: 22, lineHeight: 24, fontWeight: "900" },
-  characterCreatorTabGlyphSelected: { color: "#9ce9cc" },
-  characterCreatorTabText: { color: "#d4ddec", fontSize: 11, fontWeight: "800" },
+  characterCreatorTabText: { color: "#d4ddec", fontSize: 12, fontWeight: "800" },
   characterCreatorTabTextSelected: { color: "#9ce9cc" },
   characterCreatorSheet: { marginTop: -18, paddingTop: 12, paddingHorizontal: 22, paddingBottom: 36, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: theme.colors.panel, gap: 12 },
   characterCreatorHandle: { width: 42, height: 5, borderRadius: 4, alignSelf: "center", backgroundColor: theme.colors.line, marginBottom: 2 },
