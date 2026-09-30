@@ -57,9 +57,12 @@ services:
         value: "41774403974-gv0gpcao504prpo5urcldo6h9ioka0k1.apps.googleusercontent.com"
       - key: OPENAI_API_KEY
         sync: false
-      # Private DiceBear renderer URL, set after the fairfares-dicebear service is created.
+      # Injected from the private service. The Python app adds the http scheme.
       - key: FAIRFARES_DICEBEAR_API_ORIGIN
-        sync: false
+        fromService:
+          name: fairfares-dicebear
+          type: pserv
+          property: hostport
       - key: OPENAI_AGENT_MCP_SERVERS
         sync: false
       - key: OPENAI_AGENT_MCP_ALLOW_UNRESTRICTED

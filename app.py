@@ -107,7 +107,14 @@ SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 SESSION_TOUCH_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_TOUCH_SECONDS", 5 * 60)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
-DICEBEAR_AVATAR_ORIGIN = os.environ.get("FAIRFARES_DICEBEAR_API_ORIGIN", "").strip().rstrip("/")
+_dicebear_avatar_origin = os.environ.get("FAIRFARES_DICEBEAR_API_ORIGIN", "").strip().rstrip("/")
+# Render Blueprint service references provide an internal `host:port` value.
+# Accept that form while keeping a fully qualified URL for local deployments.
+DICEBEAR_AVATAR_ORIGIN = (
+    f"http://{_dicebear_avatar_origin}"
+    if _dicebear_avatar_origin and not _dicebear_avatar_origin.startswith(("http://", "https://"))
+    else _dicebear_avatar_origin
+)
 # Lorelei is CC0 and provides a complete illustrated person. The neutral
 # variant is intentionally only facial features, which is too sparse for a
 # recognizable FairFares profile character.
