@@ -9080,11 +9080,31 @@ def rental_search_cars(
 ) -> list[sqlite3.Row]:
     cars = get_cars()
     clean_location = location.strip().casefold()
+    normalized_location = normalize_location_label(location)
     clean_category = category.strip().casefold()
     if clean_location:
+        def matches_location(car: sqlite3.Row) -> bool:
+            # Inventory addresses have historically been entered with mixed
+            # punctuation (for example, "1665 Logan St, Denver, CO 80203"
+            # and "1665 Logan St Denver CO 80203"). Match their normalized
+            # location labels, not their raw strings, so an enabled pickup
+            # location returns every car assigned to it.
+            if not normalized_location:
+                return False
+            location_keys = [
+                normalize_location_label(candidate)
+                for candidate in split_inventory_locations(row_value(car, "location"))
+            ]
+            return any(
+                normalized_location == location_key
+                or normalized_location in location_key
+                or location_key in normalized_location
+                for location_key in location_keys
+                if location_key
+            )
         cars = [
             car for car in cars
-            if clean_location in str(row_value(car, "location") or "").casefold()
+            if matches_location(car)
             or clean_location in str(row_value(car, "name") or "").casefold()
             or clean_location in str(row_value(car, "category") or "").casefold()
         ]
