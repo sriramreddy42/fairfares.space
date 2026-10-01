@@ -25,6 +25,7 @@
         "applinks:www.fairfare.space"
       ],
       "entitlements": {
+        "aps-environment": "$(APS_ENVIRONMENT)",
         "com.apple.developer.siri": true,
         "com.apple.developer.usernotifications.communication": true,
         "keychain-access-groups": [

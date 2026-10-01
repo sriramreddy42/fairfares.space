@@ -499,6 +499,7 @@
 			baseConfigurationReference = E3107518BAE3DD58C01BF34C /* Pods-FairFares.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = development;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FairFares/FairFares.entitlements;
 				CURRENT_PROJECT_VERSION = 67;
@@ -536,6 +537,7 @@
 			baseConfigurationReference = 0420532E7111ECF48DE38147 /* Pods-FairFares.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APS_ENVIRONMENT = production;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FairFares/FairFares.entitlements;
 				CODE_SIGN_STYLE = Automatic;
