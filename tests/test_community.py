@@ -26,6 +26,20 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.payload
+
+
 class CommunityFeatureTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -465,6 +479,72 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 200)
         guest_answer = next(answer for answer in detail["posts"][0]["answers"] if answer["id"] == guest_comment["answerId"])
         self.assertTrue(guest_answer["author"]["isGuest"])
+
+    def test_guest_reply_moves_through_outbox_expo_ticket_and_delivery_receipt(self):
+        """A public reply to a guest comment becomes a durable, routed alert."""
+        _, created = self.create_post(title="Reply alert delivery proof")
+        post_id = created["post"]["id"]
+        _, session = self.request(
+            "POST", "/api/mobile/community/guest-session",
+            payload={"installationId": "test-guest-reply-outbox-installation-0001"},
+        )
+        guest_token = session["token"]
+        status, guest_comment = self.guest_request(
+            "POST", "/api/mobile/community/answer", guest_token,
+            {"postId": post_id, "body": "Can somebody reply to this guest comment?"},
+        )
+        self.assertEqual(status, 201)
+        push_token = "ExpoPushToken[guest-reply-outbox-device]"
+        status, _registered = self.guest_request(
+            "POST", "/api/mobile/push-token", guest_token,
+            {"token": push_token, "platform": "ios", "deviceLabel": "Guest iPhone", "enabled": True},
+        )
+        self.assertEqual(status, 200)
+
+        # Product events normally dispatch in a background worker.  Prevent
+        # that worker from consuming the event so this assertion proves the
+        # request itself records the exact durable event before a provider call.
+        # Patch the work function rather than ``threading.Thread`` because the
+        # local HTTP server also creates request threads.
+        with mock.patch.object(app, "process_mobile_push_outbox", return_value={"accepted": 0, "retried": 0, "failed": 0, "disabled": 0}):
+            status, reply = self.request(
+                "POST", "/api/mobile/community/answer", "member-token",
+                {"postId": post_id, "parentAnswerId": guest_comment["answerId"], "body": "Yes — this reply will alert the guest."},
+            )
+        self.assertEqual(status, 201)
+        self.assertTrue(reply["answerId"])
+        with app.db() as con:
+            row = con.execute(
+                "SELECT * FROM mobile_push_outbox WHERE token = ? ORDER BY id DESC LIMIT 1",
+                (push_token,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "PENDING")
+        self.assertEqual(row["title"], "New reply to your comment")
+        payload = json.loads(row["data_json"])
+        self.assertEqual(payload["type"], "COMMUNITY_ANSWER")
+        self.assertEqual(payload["postId"], post_id)
+        self.assertEqual(payload["target"], "community")
+        self.assertTrue(payload["guestReply"])
+        self.assertEqual(payload["targetPlatform"], "ios")
+
+        with mock.patch.object(app, "send_expo_push", return_value={
+            push_token: {"status": "ACCEPTED", "ticketId": "guest-reply-ticket", "error": ""},
+        }):
+            dispatched = app.process_mobile_push_outbox()
+        self.assertEqual(dispatched["accepted"], 1)
+        with app.db() as con:
+            con.execute("UPDATE mobile_push_outbox SET accepted_at = datetime('now', '-1 minute') WHERE id = ?", (row["id"],))
+        with mock.patch.object(
+            app.urllib.request, "urlopen",
+            return_value=FakeResponse({"data": {"guest-reply-ticket": {"status": "ok"}}}),
+        ):
+            receipts = app.check_expo_push_receipts()
+        self.assertEqual(receipts["delivered"], 1)
+        with app.db() as con:
+            delivered = con.execute("SELECT status, delivered_at FROM mobile_push_outbox WHERE id = ?", (row["id"],)).fetchone()
+        self.assertEqual(delivered["status"], "DELIVERED")
+        self.assertTrue(delivered["delivered_at"])
 
     def test_signup_claims_guest_identity_and_preserves_comments(self):
         _, created = self.create_post()
