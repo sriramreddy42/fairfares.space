@@ -131,6 +131,33 @@ class ChatPersonThreadsTest(unittest.TestCase):
         self.assertEqual(inbox[0]["otherName"], "Unmessaged Person")
         self.assertEqual(inbox[0]["lastMessage"], "Hello")
 
+    def test_ask_housing_offer_card_opens_a_verified_person_thread(self):
+        """Older app builds send the virtual Housing card ID to Chitthi."""
+        with app.db() as con:
+            sender_id = self.insert_user(con, "Seeker", "ask-seeker@example.com")
+            owner_id = self.insert_user(con, "Offer owner", "ask-owner@example.com")
+            con.execute(
+                """
+                INSERT INTO ask_community_posts
+                (public_id, author_id, post_type, title, body, category, city, area,
+                 details_json, fulfillment_status, status, expires_at)
+                VALUES ('FFC-ASK-CHAT', ?, 'REQUEST', 'Available room',
+                        'A private room is available near transit and grocery stores.',
+                        'HAVE_PLACE', 'Denver, CO', 'Capitol Hill',
+                        '{"rent":"$900"}', 'OPEN', 'PUBLISHED', '2099-12-31 23:59:59')
+                """,
+                (owner_id,),
+            )
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (sender_id,)).fetchone()
+            conversation, error = app.get_or_create_accommodation_conversation(con, "ASK-FFC-ASK-CHAT", sender)
+            context = app.chat_listing_context(con, sender_id, "ASK-FFC-ASK-CHAT")
+
+        self.assertFalse(error)
+        self.assertIsNotNone(conversation)
+        self.assertEqual(context["type"], "COMMUNITY")
+        self.assertEqual(context["id"], "FFC-ASK-CHAT")
+        self.assertEqual(int(context["ownerUserId"]), owner_id)
+
     def test_direct_chat_exposes_only_other_participant_phone_and_groups_hide_it(self):
         with app.db() as con:
             first_user_id = self.insert_user(con, "First Caller", "caller-one@example.com")

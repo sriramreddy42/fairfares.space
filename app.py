@@ -23471,6 +23471,33 @@ def get_accommodation_post_message_recipient(con: sqlite3.Connection, post: sqli
     return None
 
 
+def active_ask_housing_offer(con: sqlite3.Connection, housing_card_id: str) -> sqlite3.Row | None:
+    """Find the public Ask offer behind a virtual Housing card, if active."""
+    if not str(housing_card_id or "").startswith("ASK-"):
+        return None
+    public_id = clean_text_value(str(housing_card_id)[4:], 80)
+    if not public_id:
+        return None
+    return con.execute(
+        """
+        SELECT posts.*, users.name AS author_name, users.guest_account AS author_is_guest
+        FROM ask_community_posts posts
+        JOIN users ON users.id = posts.author_id
+        LEFT JOIN chat_communities communities ON communities.id = posts.community_id
+        WHERE posts.public_id = ?
+          AND posts.category = 'HAVE_PLACE'
+          AND COALESCE(posts.source_kind, '') = ''
+          AND posts.status = 'PUBLISHED'
+          AND posts.fulfillment_status = 'OPEN'
+          AND COALESCE(users.guest_account, 0) = 0
+          AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))
+          AND (posts.community_id IS NULL OR communities.visibility = 'PUBLIC')
+        LIMIT 1
+        """,
+        (public_id,),
+    ).fetchone()
+
+
 def get_person_conversation(
     con: sqlite3.Connection,
     first_user_id: int,
@@ -23643,6 +23670,9 @@ def get_or_create_accommodation_conversation(
         (post_public_id,),
     ).fetchone()
     if not post:
+        ask_offer = active_ask_housing_offer(con, post_public_id)
+        if ask_offer:
+            return get_or_create_person_conversation(con, sender, int(row_value(ask_offer, "author_id") or 0))
         if post_public_id.startswith("FFH-DEMO-"):
             demo_owner = con.execute(
                 "SELECT * FROM users WHERE lower(email) = lower(?) AND guest_account = 0 LIMIT 1",
@@ -24019,6 +24049,31 @@ def chat_listing_context(
                     "ownerUserId": row_value(owner, "id"),
                     "ownerName": row_value(owner, "name") or SAMPLE_HOUSING_OWNER_NAME,
                 }
+        ask_offer = active_ask_housing_offer(con, post_public_id)
+        if ask_offer:
+            try:
+                details = json.loads(str(row_value(ask_offer, "details_json") or "{}"))
+            except (TypeError, ValueError):
+                details = {}
+            if not isinstance(details, dict):
+                details = {}
+            location = ", ".join(
+                value for value in (
+                    clean_text_value(row_value(ask_offer, "area"), 120),
+                    clean_text_value(row_value(ask_offer, "city"), 120),
+                ) if value
+            )
+            subtitle = " · ".join(
+                value for value in (location, clean_text_value(details.get("rent"), 40)) if value
+            )
+            return {
+                "type": "COMMUNITY",
+                "id": str(row_value(ask_offer, "public_id") or ""),
+                "title": row_value(ask_offer, "title") or "Community housing offer",
+                "subtitle": subtitle,
+                "ownerUserId": row_value(ask_offer, "author_id"),
+                "ownerName": row_value(ask_offer, "author_name") or "FairFares member",
+            }
     if ride_public_id:
         ride = con.execute(
             "SELECT * FROM ride_posts WHERE public_id = ? LIMIT 1",
