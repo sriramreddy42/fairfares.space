@@ -358,6 +358,18 @@ export async function getStaffPickupBookings(bookingId = "") {
   }>(`/api/mobile/admin/pickups${bookingId ? `?bookingId=${encodeURIComponent(bookingId)}` : ""}`);
 }
 
+export function staffHandoffPhotoUrl(bookingId: number, phase: "pickup" | "return", field: "front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear") {
+  return staffPrivateHandoffPhotoUrl(bookingId, `${phase}_${field}_image`.replace("interiorFront", "interior_front").replace("interiorRear", "interior_rear"));
+}
+
+export function staffPrivateHandoffPhotoUrl(bookingId: number, field: string) {
+  return `/api/mobile/admin/handoff-photo?bookingId=${encodeURIComponent(String(bookingId))}&field=${encodeURIComponent(field)}`;
+}
+
+export function rentalPickupEvidencePhotoUrl(bookingId: string, field: string) {
+  return `/api/mobile/rentals/pickup-evidence-photo?bookingId=${encodeURIComponent(bookingId)}&field=${encodeURIComponent(field)}`;
+}
+
 export async function startStaffIdentityVerification(bookingId: number) {
   return request<{
     ok: boolean;
@@ -378,16 +390,32 @@ export async function submitStaffHandoffInspection(input: {
   actualTime: string;
   odometer: string;
   fuelLevel: string;
-  customerSignature: string;
+  customerSignature?: string;
   staffSignature: string;
   photos: Record<"front" | "back" | "left" | "right" | "odometer" | "fuel" | "interiorFront" | "interiorRear", string>;
+  licensePhotos?: Record<"front" | "back", string>;
+  existingDamageStatus?: "NONE" | "RECORDED";
+  existingDamageNotes?: string;
+  existingDamagePhotos?: string[];
   conditionStatus?: string;
   newDamageFound?: string;
+  actualReturnLocation?: string;
+  keysConfirmed?: "RETURNED" | "MISSING";
+  cleanlinessStatus?: "CLEAN" | "NEEDS_CLEANING";
+  smokingStatus?: "NO" | "YES";
+  issueTypes?: string[];
+  returnDamagePhotos?: string[];
   chargeAmount?: string;
   chargeNotes?: string;
 }) {
   return request<{ ok: boolean; message: string }>("/api/mobile/admin/handoff-inspection", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input)
+  });
+}
+
+export async function acceptRentalPickup(bookingId: string, signature: string) {
+  return request<{ ok: boolean; message: string; booking?: RentalServiceBooking }>("/api/mobile/rentals/pickup-acceptance", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bookingId, signature, accepted: true })
   });
 }
 
@@ -1756,6 +1784,17 @@ export async function sendEncryptedChatMessage(conversationId: string, envelopes
   // listing. Do not send the post id, listing title, or message text.
   if (contextPostId) void trackProductEvent("housing_message_sent", { source: "housing_listing" });
   return result;
+}
+
+// Guest Ask Community conversations use a short-lived, scoped reply channel.
+// A guest has no account-held device key, so this intentionally does not enter
+// the end-to-end encrypted member-to-member transport.
+export async function sendGuestCommunityChatMessage(conversationId: string, message: string, clientMessageId = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
+  return request<{ ok: boolean; message: ChatMessage }>("/api/chat/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ conversation_id: conversationId, message, client_message_id: clientMessageId })
+  });
 }
 
 export async function reactToChatMessage(conversationId: string, messageId: number, emoji: string) {

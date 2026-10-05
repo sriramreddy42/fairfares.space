@@ -15,12 +15,15 @@ import {
   View
 } from "react-native";
 import {
+  acceptRentalPickup,
+  authenticatedAssetSource,
   createRentalSupportTicket,
   emailRentalDocuments,
   getRentalBookings,
   isAuthenticationRejection,
   requestRentalCancellation,
   requestRentalModification,
+  rentalPickupEvidencePhotoUrl,
   startRentalIdentityVerification,
   setAuthToken,
   startRentalCheckout,
@@ -49,7 +52,7 @@ type Props = {
   onRequireLogin: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   editBookingId?: string;
-  editBookingAction?: "balance" | "deposit" | "extension" | "manage";
+  editBookingAction?: "balance" | "deposit" | "extension" | "extendRequest" | "pickup" | "returnReview" | "manage";
   onEditBookingOpened?: () => void;
 };
 
@@ -60,7 +63,7 @@ type ServiceAction = {
   onPress: () => void;
 };
 
-type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | null;
+type PanelMode = "modify" | "cancel" | "documents" | "details" | "support" | "pickupAcceptance" | "returnRecord" | null;
 type ServicesView = "grid" | "rental";
 type ServiceTile = {
   label: string;
@@ -127,6 +130,8 @@ export function ServicesScreen({
   const [supportTopic, setSupportTopic] = useState("Rental support");
   const [supportMessage, setSupportMessage] = useState("");
   const [exportsInfoOpen, setExportsInfoOpen] = useState(false);
+  const [pickupSignature, setPickupSignature] = useState("");
+  const [pickupAccepted, setPickupAccepted] = useState(false);
 
   async function loadBookings() {
     if (!user) {
@@ -169,9 +174,9 @@ export function ServicesScreen({
     if (!editBookingId || !bookings.some((booking) => booking.id === editBookingId)) return;
     setSelectedBookingId(editBookingId);
     setView("rental");
-    // Payment actions land on the selected booking's payment card. Opening
-    // the modification form here hid the approved-extension checkout button.
-    setPanelMode(null);
+    // Approved extension payments land on the selected booking's payment card.
+    // A general active-rental prompt opens the extension request form instead.
+    setPanelMode(editBookingAction === "pickup" ? "pickupAcceptance" : editBookingAction === "returnReview" ? "returnRecord" : editBookingAction === "extendRequest" ? "modify" : null);
     onEditBookingOpened?.();
   }, [bookings, editBookingAction, editBookingId]);
 
@@ -310,10 +315,41 @@ export function ServicesScreen({
     }
   }
 
+  async function acceptPickupCondition() {
+    if (!selectedBooking) return;
+    if (!pickupAccepted || !pickupSignature.trim()) { Alert.alert("Confirm pickup condition", "Confirm that you reviewed the vehicle condition and enter your signature."); return; }
+    setBusy(true);
+    try {
+      const result = await acceptRentalPickup(selectedBooking.id, pickupSignature.trim());
+      setBookings((rows) => mergeBooking(rows, result.booking));
+      setPanelMode("details");
+      Alert.alert("Pickup condition accepted", result.message);
+    } catch (acceptError) { Alert.alert("Could not accept pickup", acceptError instanceof Error ? acceptError.message : "Try again."); }
+    finally { setBusy(false); }
+  }
+
   async function openRentalPayment(kind: "balance" | "deposit" | "extension") {
     if (!selectedBooking) return;
     setBusy(true);
     try {
+      // A staff pickup submission can change a booking while this screen is
+      // open. Refresh before opening the optional deposit so a renter never
+      // reaches Stripe for a deposit that is no longer eligible.
+      if (kind === "deposit") {
+        const refreshedBookings = await getRentalBookings();
+        setBookings(refreshedBookings);
+        const refreshedBooking = refreshedBookings.find((booking) => booking.id === selectedBooking.id);
+        if (!refreshedBooking || refreshedBooking.status !== "CONFIRMED" || refreshedBooking.paymentStatus !== "PAID") {
+          const pickupReviewReady = refreshedBooking?.status === "PICKUP_SUBMITTED" && refreshedBooking.handoff?.pickupAcceptanceStatus === "PENDING";
+          Alert.alert(
+            "Deposit no longer available",
+            pickupReviewReady
+              ? "Staff has sent the pickup condition for your review. The optional deposit is not needed now—review and sign the pickup record instead."
+              : "This booking is no longer at the deposit step. We refreshed it and now show the correct next step."
+          );
+          return;
+        }
+      }
       const result = kind === "balance"
         ? await startRentalCheckout("full", selectedBooking.id)
         : kind === "extension"
@@ -365,7 +401,7 @@ export function ServicesScreen({
   const inProgressRental = selectedBooking?.status === "PICKED_UP";
   const handoffPhase = selectedBooking?.handoff?.phase || (selectedBooking?.paymentStatus === "PAID" ? "deposit" : "payment");
   const primaryStep = handoffPhase === "payment"
-    ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
+    ? { title: "Complete rental payment", copy: `Pay the remaining ${selectedBooking?.dueAtPickupLabel || "balance"} before pickup. After payment, you can optionally authorize the refundable deposit.`, label: "Pay rental balance", onPress: () => void openRentalPayment("balance") }
     : handoffPhase === "deposit"
       ? { title: "Optional refundable deposit", copy: `You may authorize the $${Number(selectedBooking?.depositAmount || 250).toFixed(2)} card hold. It does not replace rental payment, identity verification, or the staff pickup inspection.`, label: "Authorize optional deposit", onPress: () => void openRentalPayment("deposit") }
       : handoffPhase === "pickup"
@@ -375,18 +411,22 @@ export function ServicesScreen({
             ? { title: "Complete identity verification", copy: selectedBooking.handoff.identityMessage || "Complete the secure driver license and selfie check on this phone before pickup.", label: "Verify identity", onPress: () => void completeRentalIdentityVerification() }
             : { title: "Identity verification pending", copy: selectedBooking?.handoff?.identityMessage || "FairFares staff will request your secure driver license and selfie check before pickup.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
         : handoffPhase === "pickup_review"
-          ? { title: "Pickup awaiting staff approval", copy: "FairFares staff is reviewing the recorded pickup inspection before vehicle release.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
+          ? selectedBooking?.handoff?.pickupAcceptanceStatus === "PENDING"
+            ? { title: "Review pickup condition", copy: "Staff recorded the vehicle condition. Review the photos and e-sign before the vehicle is released.", label: "Review & sign", onPress: () => setPanelMode("pickupAcceptance" as PanelMode) }
+            : { title: "Pickup condition accepted", copy: "FairFares staff will review the accepted record and release the vehicle.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
           : handoffPhase === "return"
             ? { title: "Return with FairFares staff", copy: `Meet staff by ${selectedBooking?.returnTime || "the scheduled time"} on ${selectedBooking?.returnDate || "the return date"}. Staff records the return inspection, photos, and deposit review.`, label: "View return instructions", onPress: () => setPanelMode("details" as PanelMode) }
             : handoffPhase === "return_review"
-              ? { title: "Return awaiting staff review", copy: "FairFares staff is reviewing the return inspection and deposit outcome.", label: "View return status", onPress: () => setPanelMode("details" as PanelMode) }
+              ? selectedBooking?.handoff?.returnReviewStatus === "CHARGES_PENDING"
+                ? { title: "Return review in progress", copy: "Staff recorded an issue. Your photos, notes, and deposit status are ready to review.", label: "View return status", onPress: () => setPanelMode("returnRecord" as PanelMode) }
+                : { title: "Return awaiting staff review", copy: "FairFares staff is reviewing the return inspection and deposit outcome.", label: "View return status", onPress: () => setPanelMode("returnRecord" as PanelMode) }
               : handoffPhase === "change_review"
                 ? { title: "Modification awaiting review", copy: "FairFares will notify you after availability and pricing are confirmed.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
                 : handoffPhase === "cancellation_review"
                   ? { title: "Cancellation awaiting review", copy: "Your booking remains visible while refund and deposit details are reviewed.", label: "View booking", onPress: () => setPanelMode("details" as PanelMode) }
                   : handoffPhase === "closed"
                     ? { title: "Booking closed", copy: "This reservation is no longer active. Documents remain available when generated.", label: "Booking details", onPress: () => setPanelMode("details" as PanelMode) }
-                    : { title: "Rental completed", copy: "Your final documents and deposit outcome are available below.", label: "Documents & receipt", onPress: () => setPanelMode("documents" as PanelMode) };
+                  : { title: "Rental completed", copy: "Your return record, photos, and deposit outcome are ready.", label: "View return record", onPress: () => setPanelMode("returnRecord" as PanelMode) };
   const extensionPaymentDue = Boolean(inProgressRental && selectedBooking?.extensionPaymentStatus === "PENDING" && Number(selectedBooking?.extensionPaymentDue || 0) > 0);
   const actions: ServiceAction[] = [
     {
@@ -519,21 +559,6 @@ export function ServicesScreen({
               </View>
             ) : null}
 
-            <Text style={styles.moreOptionsTitle}>More options</Text>
-            <View style={styles.actionGrid}>
-              {actions.map((action) => (
-                <TouchableOpacity
-                  key={action.label}
-                  style={[styles.actionButton, action.primary && styles.primaryAction]}
-                  onPress={action.onPress}
-                  activeOpacity={0.78}
-                >
-                  <Image source={action.icon} style={styles.actionIcon} resizeMode="contain" />
-                  <Text style={styles.actionLabel} numberOfLines={2}>{action.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             {selectedBooking && bookingCanPay ? (
               <View style={styles.paymentCard}>
                 <View style={styles.paymentHeader}>
@@ -545,7 +570,7 @@ export function ServicesScreen({
                 </View>
                 {selectedBooking.paymentStatus === "HOLD_PAID" ? (
                   <>
-                    <Text style={styles.paymentCopy}>Your booking is confirmed. Pay the remaining {selectedBooking.dueAtPickupLabel} rental balance before pickup.</Text>
+                    <Text style={styles.paymentCopy}>Your booking is confirmed. Pay the remaining {selectedBooking.dueAtPickupLabel} rental balance before pickup; the optional refundable deposit becomes available after payment.</Text>
                     <TouchableOpacity style={styles.paymentButton} onPress={() => void openRentalPayment("balance")} disabled={busy}>
                       <Text style={styles.paymentButtonText}>{busy ? "Opening Stripe..." : `Pay remaining ${selectedBooking.dueAtPickupLabel}`}</Text>
                     </TouchableOpacity>
@@ -583,6 +608,21 @@ export function ServicesScreen({
                 </TouchableOpacity>
               </View>
             ) : null}
+
+            <Text style={styles.moreOptionsTitle}>More options</Text>
+            <View style={styles.actionGrid}>
+              {actions.map((action) => (
+                <TouchableOpacity
+                  key={action.label}
+                  style={[styles.actionButton, action.primary && styles.primaryAction]}
+                  onPress={action.onPress}
+                  activeOpacity={0.78}
+                >
+                  <Image source={action.icon} style={styles.actionIcon} resizeMode="contain" />
+                  <Text style={styles.actionLabel} numberOfLines={2}>{action.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </>
         )}
       </ScrollView>
@@ -713,6 +753,49 @@ export function ServicesScreen({
                     <Text style={styles.detailsLine}>{selectedDocument?.status || (selectedDocumentSet?.locked ? selectedDocumentSet.lockMessage : "Ready when generated.")}</Text>
                   </View>
                   <PrimaryButton label={selectedBooking.invoiceUrl ? "Open invoice" : "Email rental documents"} onPress={sendDocuments} disabled={busy} />
+                </>
+              ) : null}
+
+              {selectedBooking && panelMode === "pickupAcceptance" ? (
+                <>
+                  <View style={styles.greenNote}><Text style={styles.greenNoteTitle}>Review the pickup condition</Text><Text style={styles.greenNoteBody}>These staff-captured vehicle photos become the pickup record. Driver-license images remain private to FairFares staff.</Text></View>
+                  <Summary booking={selectedBooking} />
+                  <Text style={styles.sectionTitle}>Vehicle evidence</Text>
+                  <View style={styles.pickupPhotoGrid}>
+                    {[{ field: "pickup_front_image", label: "Front" }, { field: "pickup_back_image", label: "Rear" }, { field: "pickup_left_image", label: "Driver side" }, { field: "pickup_right_image", label: "Passenger side" }, { field: "pickup_odometer_image", label: "Odometer" }, { field: "pickup_fuel_image", label: "Fuel / charge" }, { field: "pickup_interior_front_image", label: "Front interior" }, { field: "pickup_interior_rear_image", label: "Rear / cargo" }].map(({ field, label }) => <View key={field} style={styles.pickupPhotoCard}><Image source={authenticatedAssetSource(rentalPickupEvidencePhotoUrl(selectedBooking.id, field))} style={styles.pickupPhoto} /><Text style={styles.pickupPhotoLabel}>{label}</Text></View>)}</View>
+                  {selectedBooking.handoff?.pickupExistingDamageStatus === "RECORDED" ? <View style={styles.detailSection}><Text style={styles.sectionTitle}>Existing damage noted</Text><Text style={styles.detailsLine}>{selectedBooking.handoff?.pickupExistingDamageNotes || "Staff recorded existing vehicle condition."}</Text>{Array.from({ length: Math.min(10, Number(selectedBooking.handoff?.pickupExistingDamagePhotoCount || 0)) }, (_, index) => ({ field: `pickup_existing_damage_${index + 1}_image`, label: `Damage ${index + 1}` })).map(({ field, label }) => <View key={field} style={styles.pickupPhotoCard}><Image source={authenticatedAssetSource(rentalPickupEvidencePhotoUrl(selectedBooking.id, field))} style={styles.pickupPhoto} /><Text style={styles.pickupPhotoLabel}>{label}</Text></View>)}</View> : <View style={styles.detailSection}><Text style={styles.sectionTitle}>No existing damage noted</Text></View>}
+                  <ToggleRow label="I reviewed the pickup condition and accept this vehicle record." selected={pickupAccepted} onPress={() => setPickupAccepted((value) => !value)} />
+                  <InputField label="Your e-signature" value={pickupSignature} onChangeText={setPickupSignature} placeholder="Type your full name" />
+                  <PrimaryButton label={busy ? "Saving..." : "Accept pickup condition"} onPress={acceptPickupCondition} disabled={busy} />
+                </>
+              ) : null}
+
+              {selectedBooking && panelMode === "returnRecord" ? (
+                <>
+                  <View style={styles.greenNote}>
+                    <Text style={styles.greenNoteTitle}>{selectedBooking.handoff?.returnReviewStatus === "CHARGES_PENDING" ? "Return review in progress" : "Return record"}</Text>
+                    <Text style={styles.greenNoteBody}>{selectedBooking.handoff?.returnReviewStatus === "CHARGES_PENDING" ? "Staff recorded an issue. Your deposit remains on hold while FairFares reviews the evidence and any applicable charges." : "Staff completed the return inspection. Your deposit outcome is shown below."}</Text>
+                  </View>
+                  <Summary booking={selectedBooking} />
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionTitle}>Return summary</Text>
+                    <Text style={styles.detailsLine}>Returned: {selectedBooking.handoff?.actualReturnDate || selectedBooking.returnDate} at {selectedBooking.handoff?.actualReturnTime || selectedBooking.returnTime}</Text>
+                    <Text style={styles.detailsLine}>Location: {selectedBooking.handoff?.actualReturnLocation || selectedBooking.returnLocation}</Text>
+                    <Text style={styles.detailsLine}>Odometer: {selectedBooking.handoff?.returnOdometer || "Pending"}</Text>
+                    <Text style={styles.detailsLine}>Fuel / charge: {selectedBooking.handoff?.returnFuelLevel || "Pending"}</Text>
+                    <Text style={styles.detailsLine}>Keys / accessories: {(selectedBooking.handoff?.returnKeysConfirmed || "Pending").replaceAll("_", " ")}</Text>
+                    <Text style={styles.detailsLine}>Cleanliness: {(selectedBooking.handoff?.returnCleanlinessStatus || "Pending").replaceAll("_", " ")}</Text>
+                    <Text style={styles.detailsLine}>Smoking check: {(selectedBooking.handoff?.returnSmokingStatus || "Pending").replaceAll("_", " ")}</Text>
+                    <Text style={styles.detailsLine}>Deposit: {selectedBooking.depositLabel || selectedBooking.handoff?.depositStatus || selectedBooking.depositStatus}</Text>
+                  </View>
+                  {(selectedBooking.handoff?.returnIssueTypes || []).length ? <View style={styles.detailSection}><Text style={styles.sectionTitle}>Items under review</Text><Text style={styles.detailsLine}>{(selectedBooking.handoff?.returnIssueTypes || []).map((item) => item.replaceAll("_", " ")).join(", ")}</Text><Text style={styles.detailsLine}>{selectedBooking.handoff?.returnIssueNotes || "Staff is reviewing the return evidence."}</Text></View> : null}
+                  <Text style={styles.sectionTitle}>Return photos</Text>
+                  <View style={styles.pickupPhotoGrid}>
+                    {[{ field: "return_front_image", label: "Front" }, { field: "return_back_image", label: "Rear" }, { field: "return_left_image", label: "Driver side" }, { field: "return_right_image", label: "Passenger side" }, { field: "return_odometer_image", label: "Odometer" }, { field: "return_fuel_image", label: "Fuel / charge" }, { field: "return_interior_front_image", label: "Front interior" }, { field: "return_interior_rear_image", label: "Rear / cargo" }].map(({ field, label }) => <View key={field} style={styles.pickupPhotoCard}><Image source={authenticatedAssetSource(rentalPickupEvidencePhotoUrl(selectedBooking.id, field))} style={styles.pickupPhoto} /><Text style={styles.pickupPhotoLabel}>{label}</Text></View>)}
+                    {Array.from({ length: Math.min(10, Number(selectedBooking.handoff?.returnDamagePhotoCount || 0)) }, (_, index) => ({ field: `return_damage_${index + 1}_image`, label: `Damage ${index + 1}` })).map(({ field, label }) => <View key={field} style={styles.pickupPhotoCard}><Image source={authenticatedAssetSource(rentalPickupEvidencePhotoUrl(selectedBooking.id, field))} style={styles.pickupPhoto} /><Text style={styles.pickupPhotoLabel}>{label}</Text></View>)}
+                  </View>
+                  <SecondaryButton label="Documents & receipt" onPress={() => setPanelMode("documents")} />
+                  <SecondaryButton label="Contact support" onPress={() => setPanelMode("support")} />
                 </>
               ) : null}
 
@@ -847,6 +930,7 @@ function panelTitle(mode: PanelMode) {
   if (mode === "cancel") return "Cancel reservation";
   if (mode === "documents") return "Invoice & documents";
   if (mode === "support") return "Support center";
+  if (mode === "pickupAcceptance") return "Review pickup condition";
   return "Booking details";
 }
 
@@ -1600,5 +1684,10 @@ const styles = StyleSheet.create({
     color: "#f8fafc",
     fontSize: 14,
     fontWeight: "900"
-  }
+  },
+  pickupPhotoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  pickupPhotoCard: { width: "47%", borderRadius: 12, overflow: "hidden", backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  pickupPhoto: { width: "100%", aspectRatio: 1.15, backgroundColor: theme.colors.panel2 },
+  pickupPhotoLabel: { color: theme.colors.text, fontSize: 12, fontWeight: "700", padding: 8 }
+
 });

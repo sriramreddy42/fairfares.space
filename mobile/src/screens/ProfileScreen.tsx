@@ -808,7 +808,7 @@ export function ProfileScreen({
               <Text style={styles.historySectionTitle}>Expired / completed · {previousHistoryItems.length}</Text>
               {previousHistoryItems.length ? previousHistoryItems.map((item) => (
                 <View key={`previous-${item.id}`} style={styles.historyRow}>
-                  <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · Expired</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
+                  <View style={styles.historyRowCopy}><Text style={styles.historyKind}>{item.kind} · {item.status}</Text><Text style={styles.historyItemTitle}>{item.title}</Text><Text style={styles.historyItemMeta}>{item.meta}</Text></View>
                   <Text style={styles.historyPreviousBadge}>{item.status}</Text>
                 </View>
               )) : <Text style={styles.historyEmpty}>No previous records yet.</Text>}

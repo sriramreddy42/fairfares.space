@@ -1,5 +1,6 @@
 import os
 import json
+import io
 import sqlite3
 import tempfile
 import threading
@@ -116,6 +117,52 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(save_to_r2.call_args.kwargs["folder_name"], "rental-handoff")
         save_locally.assert_not_called()
 
+    def test_mobile_staff_can_read_private_pickup_photo(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET pickup_front_image = ? WHERE id = ?",
+                ("data:image/jpeg;base64,dGVzdA==", booking["id"]),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Handoff Staff', 'handoff-photo@example.com', ?, 1, 'EMPLOYEE', 0)",
+                (app.hash_password("Password123!"),),
+            )
+            staff = con.execute("SELECT * FROM users WHERE email = 'handoff-photo@example.com'").fetchone()
+
+        class Handler:
+            def __init__(self):
+                self.status = 0
+                self.headers = {}
+                self.wfile = io.BytesIO()
+
+            def require_mobile_admin(self):
+                return staff
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, key, value):
+                self.headers[key] = value
+
+            def end_headers(self):
+                return
+
+            def send_json(self, payload, status=200):
+                self.status = status
+
+        handler = Handler()
+        app.FairFaresHandler.api_mobile_admin_handoff_photo(
+            handler,
+            urllib.parse.urlparse(f"/api/mobile/admin/handoff-photo?bookingId={booking['id']}&field=pickup_front_image"),
+        )
+
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(handler.headers["Content-Type"], "image/jpeg")
+        self.assertEqual(handler.headers["Cache-Control"], "private, no-store")
+        self.assertEqual(handler.wfile.getvalue(), b"test")
+
     def test_vehicle_release_requires_full_payment_but_not_optional_deposit(self):
         booking = {
             "booking_status": "CONFIRMED",
@@ -173,6 +220,65 @@ class BookingHoldTest(unittest.TestCase):
             updated = con.execute("SELECT payment_status, cancellation_reason FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
         self.assertEqual(updated["payment_status"], "REFUND_REVIEW")
         self.assertIn("Stripe refund requires the refund passcode", updated["cancellation_reason"])
+
+    def test_admin_booking_table_exposes_only_request_decisions(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Owner', 'owner-ui@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            owner = con.execute("SELECT * FROM users WHERE email = 'owner-ui@example.com'").fetchone()
+        admin_booking = next(row for row in app.get_admin_bookings() if int(row["id"]) == int(booking["id"]))
+
+        html = app.FairFaresHandler.render_admin_booking_row(None, admin_booking, owner)
+
+        self.assertNotIn('<select name="booking_status">', html)
+        self.assertNotIn('<select name="payment_status">', html)
+        self.assertIn("Rental handoffs", html)
+        self.assertNotIn("Pending 10-min hold", html)
+        self.assertNotIn("Return awaiting inspection", html)
+
+    def test_admin_booking_table_cannot_bypass_pickup_workflow(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status = 'CONFIRMED', status = 'CONFIRMED', payment_status = 'PAID' WHERE id = ?",
+                (booking["id"],),
+            )
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Owner', 'owner-flow@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            owner = con.execute("SELECT * FROM users WHERE email = 'owner-flow@example.com'").fetchone()
+
+        class Handler:
+            def __init__(self):
+                self.error = None
+
+            def require_owner_admin(self):
+                return owner
+
+            def read_form(self):
+                return {"booking_id": str(booking["id"]), "booking_status": "PICKED_UP", "payment_status": "PAID"}
+
+            def send_error(self, status, message):
+                self.error = (status, message)
+
+        handler = Handler()
+        app.FairFaresHandler.update_admin_booking_status(handler)
+
+        self.assertEqual(handler.error[0], 409)
+        self.assertIn("rental handoff workspace", handler.error[1])
+        with app.db() as con:
+            updated = con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()
+        self.assertEqual(updated["booking_status"], "CONFIRMED")
 
     def test_refund_retry_reuses_stripe_review_transaction_safely(self):
         car = app.get_cars()[0]
@@ -485,6 +591,63 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(completed["booking_status"], "RETURNED")
         self.assertEqual(completed["security_deposit_status"], "RELEASED")
 
+    def test_staff_damage_return_requires_evidence_and_notifies_renter(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "UPDATE bookings SET booking_status='PICKED_UP', status='PICKED_UP', payment_status='PAID', security_deposit_status='AUTHORIZED' WHERE id=?",
+                (booking["id"],),
+            )
+            con.execute("UPDATE cars SET status='RENTED' WHERE id=?", (car["id"],))
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Damage Return Admin', 'damage-return-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin = con.execute("SELECT * FROM users WHERE email='damage-return-admin@example.com'").fetchone()
+
+        class Handler:
+            def __init__(self, payload):
+                self._payload = payload
+                self.response = None
+
+            def require_mobile_admin(self):
+                return admin
+
+            def read_json_body(self):
+                return self._payload
+
+            def send_json(self, payload, status=200, headers=None):
+                self.response = (status, payload)
+
+        photo = "data:image/jpeg;base64,dGVzdA=="
+        photos = {key: photo for key in ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")}
+        handler = Handler({
+            "bookingId": booking["id"], "phase": "return", "actualDate": "2026-10-02", "actualTime": "04:00 PM",
+            "actualReturnLocation": "FairFares return bay", "odometer": "22175", "fuelLevel": "THREE_QUARTERS",
+            "customerSignature": "Hold Tester", "staffSignature": "Damage Return Admin", "photos": photos,
+            "conditionStatus": "DAMAGE_NOTED", "newDamageFound": "YES", "keysConfirmed": "RETURNED",
+            "cleanlinessStatus": "NEEDS_CLEANING", "smokingStatus": "NO", "issueTypes": ["DAMAGE", "CLEANING"],
+            "returnDamagePhotos": [photo], "chargeNotes": "Scratch on rear bumper and interior cleaning required.",
+        })
+        with patch.object(app, "store_rental_handoff_photo", return_value="r2://fairfares-attachments/rental-handoff/test.jpg"), patch.object(app, "send_rental_booking_push") as push:
+            app.FairFaresHandler.api_mobile_admin_handoff_inspection(handler)
+
+        self.assertEqual((handler.response[0], handler.response[1]["ok"]), (200, True))
+        self.assertEqual(push.call_args.args[3], "RETURN_REVIEW_STARTED")
+        self.assertEqual(push.call_args.args[1], "Return review started")
+        stored = app.get_booking_by_id(booking["id"])
+        self.assertEqual(stored["booking_status"], "RETURN_SUBMITTED")
+        self.assertEqual(stored["return_review_status"], "CHARGES_PENDING")
+        self.assertEqual(stored["return_issue_types"], "CLEANING,DAMAGE")
+        self.assertTrue(stored["return_damage_1_image"])
+        self.assertEqual(app.get_car(car["id"])["status"], "RENTED")
+        renter_payload = app.mobile_rental_service_booking_payload(stored, user_id=self.user_id)
+        self.assertEqual(renter_payload["statusLabel"], "Return review in progress")
+        self.assertEqual(renter_payload["liveStatus"]["title"], "Return review in progress")
+        self.assertEqual(renter_payload["handoff"]["phase"], "return_review")
+        self.assertEqual(renter_payload["handoff"]["returnDamagePhotoCount"], 1)
+
     def test_clear_return_evidence_is_purged_after_retention_but_damage_evidence_is_kept(self):
         car = app.get_cars()[0]
         clear_booking = app.create_booking_for_user(self.user_id, car["id"], days=1)
@@ -732,9 +895,17 @@ class BookingHoldTest(unittest.TestCase):
                 status, pickup_saved = request_json("/api/mobile/admin/handoff-inspection", "handoff-admin", {
                     "bookingId": booking["id"], "phase": "pickup", "actualDate": "2026-09-25",
                     "actualTime": "10:00 AM", "odometer": "22000", "fuelLevel": "FULL",
-                    "customerSignature": "Hold Tester", "staffSignature": "HTTP Handoff Admin", "photos": photos,
+                    "staffSignature": "HTTP Handoff Admin", "photos": photos,
+                    "licensePhotos": {"front": photo, "back": photo}, "existingDamageStatus": "NONE",
                 })
             self.assertEqual((status, pickup_saved["ok"]), (200, True))
+            _, awaiting_acceptance = request_json("/api/mobile/rentals/bookings", "handoff-customer")
+            self.assertEqual(awaiting_acceptance["bookings"][0]["handoff"]["phase"], "pickup_review")
+            self.assertEqual(awaiting_acceptance["bookings"][0]["handoff"]["pickupAcceptanceStatus"], "PENDING")
+            status, accepted = request_json("/api/mobile/rentals/pickup-acceptance", "handoff-customer", {"bookingId": booking["booking_id"], "signature": "Hold Tester", "accepted": True})
+            self.assertEqual((status, accepted["ok"]), (200, True))
+            status, released = request_json("/api/mobile/admin/handoff-review", "handoff-admin", {"bookingId": booking["id"], "action": "APPROVE_PICKUP"})
+            self.assertEqual((status, released["ok"]), (200, True))
             _, active = request_json("/api/mobile/rentals/bookings", "handoff-customer")
             self.assertEqual(active["bookings"][0]["handoff"]["phase"], "return")
 
@@ -746,17 +917,26 @@ class BookingHoldTest(unittest.TestCase):
             self.assertIn("staff completes the return inspection", returned["error"])
             with patch.object(app, "store_rental_handoff_photo", return_value="r2://fairfares-attachments/rental-handoff/test.jpg"), patch.object(
                 app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")
-            ):
+            ), patch.object(app, "send_rental_booking_push") as return_push:
                 status, return_saved = request_json("/api/mobile/admin/handoff-inspection", "handoff-admin", {
                     "bookingId": booking["id"], "phase": "return", "actualDate": "2026-09-27",
                     "actualTime": "02:00 PM", "odometer": "22175", "fuelLevel": "FULL",
                     "customerSignature": "Hold Tester", "staffSignature": "HTTP Handoff Admin", "photos": photos,
+                    "actualReturnLocation": "FairFares return bay", "keysConfirmed": "RETURNED",
+                    "cleanlinessStatus": "CLEAN", "smokingStatus": "NO", "issueTypes": [],
                     "conditionStatus": "ACCEPTABLE", "newDamageFound": "NO", "chargeAmount": "0", "chargeNotes": "",
                 })
             self.assertEqual((status, return_saved["ok"]), (200, True))
+            self.assertEqual(return_push.call_args_list[0].args[3], "RETURN_COMPLETED")
+            self.assertEqual(return_push.call_args_list[1].args[3], "SECURITY_DEPOSIT_RELEASED")
             _, completed_payload = request_json("/api/mobile/rentals/bookings", "handoff-customer")
             completed = completed_payload["bookings"][0]
             self.assertEqual(completed["handoff"]["phase"], "complete")
+            self.assertEqual(completed["handoff"]["actualReturnLocation"], "FairFares return bay")
+            self.assertEqual(completed["handoff"]["returnKeysConfirmed"], "RETURNED")
+            self.assertEqual(completed["handoff"]["returnCleanlinessStatus"], "CLEAN")
+            self.assertEqual(completed["handoff"]["returnSmokingStatus"], "NO")
+            self.assertEqual(completed["handoff"]["returnIssueTypes"], [])
             self.assertEqual(completed["depositStatus"], "RELEASED")
             self.assertEqual(app.get_car(car["id"])["status"], "AVAILABLE")
         finally:

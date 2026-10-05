@@ -37,7 +37,7 @@ type Props = {
   onOpenHousing: (postId?: string) => void;
   onOpenRides: (target?: "ride" | "requests" | "activity", rideId?: string) => void;
   onOpenRentalCars: () => void;
-  onOpenRentalBooking: (bookingId: string, action?: "balance" | "deposit" | "extension" | "manage") => void;
+  onOpenRentalBooking: (bookingId: string, action?: "balance" | "deposit" | "extension" | "extendRequest" | "pickup" | "returnReview" | "manage") => void;
   onOpenGas: () => void;
   gasPriceRefreshKey?: number;
   onOpenCommunity: (communityId: string) => void;
@@ -90,6 +90,21 @@ function emptyCommunityPostForm() {
   };
 }
 
+function postFieldExamples(category: CommunityPost["category"]) {
+  switch (category) {
+    case "NEED_PLACE":
+      return { title: "Looking for a room near downtown", body: "Include your preferred area, move-in date, budget, and what you are looking for." };
+    case "NEED_ROOMMATE":
+      return { title: "Looking for a roommate from August", body: "Share the area, budget, move-in date, and the kind of roommate you hope to find." };
+    case "HAVE_PLACE":
+      return { title: "Private room available near campus", body: "Include the area, monthly rent, available date, room type, and who it would suit." };
+    case "CARPOOL_RIDE":
+      return { title: "Ride needed from Aurora to Denver", body: "Include where you are leaving from, where you are going, and when you need to travel." };
+    default:
+      return { title: "Looking for local recommendations", body: "Explain your question and include the details people need to give you a useful answer." };
+  }
+}
+
 type CommunityFeedSnapshot = {
   posts: CommunityPost[];
   nationalPosts: CommunityPost[];
@@ -118,7 +133,7 @@ type CommunityActionNotice = {
   bookingId?: string;
   housingPostId?: string;
   housingInquiryUserId?: number;
-  rentalAction?: "balance" | "deposit" | "extension" | "manage";
+  rentalAction?: "balance" | "deposit" | "extension" | "extendRequest" | "pickup" | "returnReview" | "manage";
 };
 
 const communityFeedSnapshots = new Map<string, CommunityFeedSnapshot>();
@@ -344,6 +359,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [guestBenefitsOpen, setGuestBenefitsOpen] = useState(false);
   const pendingGuestAuth = useRef<"signup" | "login" | "">("");
   const [form, setForm] = useState(emptyCommunityPostForm);
+  const [postValidation, setPostValidation] = useState<{ title?: string; body?: string }>({});
+  const fieldExamples = postFieldExamples(form.category);
   const [publishing, setPublishing] = useState(false);
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
@@ -388,14 +405,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         const rides = rideResult.status === "fulfilled" ? rideResult.value : [] as RidePost[];
         const bookings = rentalResult.status === "fulfilled" ? rentalResult.value : [] as RentalServiceBooking[];
         const housingPosts = housingResult.status === "fulfilled" ? housingResult.value : [] as HousingActivityPost[];
-        const actionableBooking = bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
+        const actionableBooking = bookings.find((booking) => booking.status === "PICKUP_SUBMITTED" && booking.handoff?.pickupAcceptanceStatus === "PENDING")
+        || bookings.find((booking) => booking.status === "RETURN_SUBMITTED" && booking.handoff?.returnReviewStatus === "CHARGES_PENDING")
+        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.extensionPaymentStatus === "PENDING" && Number(booking.extensionPaymentDue || 0) > 0)
         || bookings.find((booking) => ["MODIFIED", "CANCELLATION_REQUESTED"].includes(booking.status))
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "HOLD_PAID")
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus !== "AUTHORIZED")
-        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED")
+        || bookings.find((booking) => booking.status === "PICKED_UP" && booking.paymentStatus === "PAID")
         || bookings.find((booking) => booking.status === "CONFIRMED" && booking.paymentStatus === "PAID" && booking.depositStatus === "AUTHORIZED");
 
         if (actionableBooking) {
+        const pickupReview = actionableBooking.status === "PICKUP_SUBMITTED" && actionableBooking.handoff?.pickupAcceptanceStatus === "PENDING";
+        const returnReview = actionableBooking.status === "RETURN_SUBMITTED" && actionableBooking.handoff?.returnReviewStatus === "CHARGES_PENDING";
         const extensionDue = actionableBooking.extensionPaymentStatus === "PENDING" && Number(actionableBooking.extensionPaymentDue || 0) > 0;
         const modificationReview = actionableBooking.status === "MODIFIED";
         const cancellationReview = actionableBooking.status === "CANCELLATION_REQUESTED";
@@ -408,15 +429,15 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
             ? actionableBooking.dueAtPickupLabel || "remaining balance"
             : `$${Number(actionableBooking.depositAmount || 250).toFixed(2)}`;
         setActionNotice({
-          id: `rental:${actionableBooking.id}:${actionableBooking.paymentStatus}:${actionableBooking.depositStatus || ""}:${actionableBooking.extensionPaymentStatus || ""}`,
-          icon: extensionDue ? "↗" : modificationReview || cancellationReview ? "⏳" : balanceDue ? "💳" : depositDue ? "🔒" : rentalInProgress ? "⏱" : "🚗",
-          eyebrow: extensionDue ? "Approved rental extension" : modificationReview ? "Rental modification review" : cancellationReview ? "Rental cancellation review" : balanceDue ? "Complete rental payment" : depositDue ? "Refundable security deposit" : rentalInProgress ? "Rental in progress" : "Rental ready",
-          title: extensionDue ? `Pay ${amount} to complete your extension` : modificationReview ? "Your rental changes are under review" : cancellationReview ? "Your cancellation request is under review" : balanceDue ? `Pay full remaining amount: ${amount}` : depositDue ? `Authorize refundable ${amount} security deposit` : rentalInProgress ? "Need more time with your rental?" : "Your rental is ready for pickup",
-          body: extensionDue ? "Your new return window is reserved. Complete secure payment to confirm it." : modificationReview ? "Your current booking remains reserved while FairFares reviews the requested changes." : cancellationReview ? "Your current booking remains reserved while FairFares reviews your cancellation request." : balanceDue ? "Your 10% hold secured the booking. Complete the full payment before pickup." : depositDue ? "Your rental is paid in full. The deposit is a card authorization, not an extra rental charge." : rentalInProgress ? "Extend the return time before the current return deadline. We will check availability first." : "Payment and the refundable deposit are complete. View pickup details; documents unlock after pickup.",
-          actionLabel: extensionDue ? "Pay extension" : modificationReview || cancellationReview ? "Manage rental" : balanceDue ? "Pay full amount" : depositDue ? "Authorize deposit" : rentalInProgress ? "Extend rental" : "Manage rental",
+          id: `rental:${actionableBooking.id}:${actionableBooking.paymentStatus}:${actionableBooking.depositStatus || ""}:${actionableBooking.extensionPaymentStatus || ""}:${actionableBooking.handoff?.returnReviewStatus || ""}`,
+          icon: pickupReview ? "📋" : returnReview ? "⚠️" : extensionDue ? "↗" : modificationReview || cancellationReview ? "⏳" : balanceDue ? "💳" : depositDue ? "🔒" : rentalInProgress ? "⏱" : "🚗",
+          eyebrow: pickupReview ? "Pickup condition ready" : returnReview ? "Return review in progress" : extensionDue ? "Approved rental extension" : modificationReview ? "Rental modification review" : cancellationReview ? "Rental cancellation review" : balanceDue ? "Complete rental payment" : depositDue ? "Optional refundable deposit" : rentalInProgress ? "Rental in progress" : "Rental ready",
+          title: pickupReview ? "Review pickup condition" : returnReview ? "Return review in progress" : extensionDue ? `Pay ${amount} to complete your extension` : modificationReview ? "Your rental changes are under review" : cancellationReview ? "Your cancellation request is under review" : balanceDue ? `Pay full remaining amount: ${amount}` : depositDue ? `Optional ${amount} refundable deposit` : rentalInProgress ? "Need more time with your rental?" : "Your rental is ready for pickup",
+          body: pickupReview ? "Staff recorded vehicle photos and existing condition. Review and e-sign before the vehicle is released." : returnReview ? "Staff recorded return evidence. FairFares is reviewing the deposit outcome; you can view the photos and notes." : extensionDue ? "Your new return window is reserved. Complete secure payment to confirm it." : modificationReview ? "Your current booking remains reserved while FairFares reviews the requested changes." : cancellationReview ? "Your current booking remains reserved while FairFares reviews your cancellation request." : balanceDue ? "Your 10% hold secured the booking. Complete the full payment before pickup." : depositDue ? "Your rental is paid in full. This card authorization is optional and does not block identity verification, pickup, or return." : rentalInProgress ? "Extend the return time before the current return deadline. We will check availability first." : "Payment and the refundable deposit are complete. View pickup details; documents unlock after pickup.",
+          actionLabel: pickupReview ? "Review & sign" : returnReview ? "View return details" : extensionDue ? "Pay extension" : modificationReview || cancellationReview ? "Manage rental" : balanceDue ? "Pay full amount" : depositDue ? "Optional deposit" : rentalInProgress ? "Extend rental" : "Manage rental",
           action: "rental",
           bookingId: actionableBooking.id,
-          rentalAction: extensionDue ? "extension" : modificationReview || cancellationReview ? "manage" : balanceDue ? "balance" : depositDue ? "deposit" : rentalInProgress ? "extension" : "manage",
+          rentalAction: pickupReview ? "pickup" : returnReview ? "returnReview" : extensionDue ? "extension" : modificationReview || cancellationReview ? "manage" : balanceDue ? "balance" : depositDue ? "deposit" : rentalInProgress ? "extendRequest" : "manage",
         });
           return;
         }
@@ -819,6 +840,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const emptyForm = emptyCommunityPostForm();
     composerBaselineRef.current = composerFingerprint(emptyForm);
     setForm(emptyForm);
+    setPostValidation({});
     setEditingPostId("");
     setComposerOpen(false);
   };
@@ -857,6 +879,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     composerBaselineRef.current = composerFingerprint(editorForm);
     setEditingPostId(post.id);
     setForm(editorForm);
+    setPostValidation({});
     setDetail(null);
     setComposerOpen(true);
   };
@@ -871,6 +894,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     };
     composerBaselineRef.current = composerFingerprint(newForm);
     setForm(newForm);
+    setPostValidation({});
     setComposerOpen(true);
   };
 
@@ -1023,8 +1047,22 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     catch (error) { Alert.alert("Post not saved", message(error)); }
   };
 
+  const updatePostTextField = (field: "title" | "body", value: string) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setPostValidation((current) => current[field] ? { ...current, [field]: undefined } : current);
+  };
+
   const publish = async () => {
-    if (!form.title.trim() || !form.body.trim()) { Alert.alert("Complete your post", "Add a clear title and helpful details."); return; }
+    const titleLength = form.title.trim().length;
+    const bodyLength = form.body.trim().length;
+    const validation = {
+      title: titleLength < 6 ? (titleLength ? "Use at least 6 characters for the title." : "Add a clear title.") : undefined,
+      body: bodyLength < 12 ? (bodyLength ? "Add a little more detail (at least 12 characters)." : "Add helpful details for your post.") : undefined,
+    };
+    if (validation.title || validation.body) {
+      setPostValidation(validation);
+      return;
+    }
     setPublishing(true);
     try {
       if (editingPostId) {
@@ -1053,6 +1091,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       const emptyForm = emptyCommunityPostForm();
       composerBaselineRef.current = composerFingerprint(emptyForm);
       setForm(emptyForm);
+      setPostValidation({});
       setComposerOpen(false);
       Alert.alert(editingPostId ? "Post updated" : "Posted", editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
       setEditingPostId("");
@@ -1064,9 +1103,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (!detail || !answer.trim()) return;
     if (!user && guestRemaining <= 0) { setGuestBenefitsOpen(true); return; }
     const replyThreadId = answerReplyTarget?.id || "";
+    const postId = detail.id;
+    const submittedBody = answer.trim();
     setDetailBusy(true);
     try {
-      const result = await answerCommunityPost(detail.id, answer.trim(), answerReplyTarget?.id || "");
+      const result = await answerCommunityPost(postId, submittedBody, replyThreadId);
       setAnswer("");
       setAnswerReplyTarget(null);
       if (replyThreadId) setExpandedReplyThreads((current) => new Set([...current, replyThreadId]));
@@ -1077,8 +1118,34 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         // own Ask Community comments.
         void onRequestGuestNotifications?.();
       }
-      setDetail(await getCommunityPost(detail.id));
-      await load(true);
+      const now = new Date().toISOString();
+      const optimisticAnswer: CommunityAnswer = {
+        id: result.answerId,
+        body: submittedBody,
+        parentAnswerId: replyThreadId,
+        author: user
+          ? { id: user.id, name: user.name, photoUrl: user.profilePhotoUrl || "" }
+          : { id: 0, name: guestIdentity || "Guest", photoUrl: "", isGuest: true },
+        reactionCount: 0,
+        reactionCounts: {},
+        viewerReaction: "",
+        accepted: false,
+        canEdit: Boolean(user),
+        createdAt: now,
+        updatedAt: now,
+      };
+      setDetail((current) => current?.id === postId
+        ? {
+            ...current,
+            answerCount: current.answerCount + 1,
+            latestAnswer: { id: optimisticAnswer.id, body: optimisticAnswer.body, author: optimisticAnswer.author, createdAt: optimisticAnswer.createdAt },
+            answers: [...(current.answers || []), optimisticAnswer],
+          }
+        : current);
+      void getCommunityPost(postId)
+        .then((fresh) => setDetail((current) => current?.id === postId ? fresh : current))
+        .catch(() => undefined);
+      void load(true);
     }
     catch (error) {
       if (!user && message(error).toLowerCase().includes("unlimited community")) setGuestBenefitsOpen(true);
@@ -1100,13 +1167,24 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const saveAnswerEdit = async () => {
     if (!detail || !editingAnswerId || answer.trim().length < 2) return;
+    const postId = detail.id;
+    const answerId = editingAnswerId;
+    const submittedBody = answer.trim();
     setDetailBusy(true);
     try {
-      await updateCommunityAnswer(editingAnswerId, answer.trim());
+      await updateCommunityAnswer(answerId, submittedBody);
       setEditingAnswerId("");
       setAnswer("");
-      setDetail(await getCommunityPost(detail.id));
-      await load(true);
+      setDetail((current) => current?.id === postId
+        ? {
+            ...current,
+            answers: (current.answers || []).map((item) => item.id === answerId ? { ...item, body: submittedBody, updatedAt: new Date().toISOString() } : item),
+          }
+        : current);
+      void getCommunityPost(postId)
+        .then((fresh) => setDetail((current) => current?.id === postId ? fresh : current))
+        .catch(() => undefined);
+      void load(true);
     } catch (error) {
       Alert.alert("Comment not updated", message(error));
     } finally {
@@ -1116,11 +1194,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const acceptAnswer = async (answerId: string) => {
     if (!detail || detailBusy) return;
+    const postId = detail.id;
     setDetailBusy(true);
     try {
-      await acceptCommunityAnswer(detail.id, answerId);
-      setDetail(await getCommunityPost(detail.id));
-      await load(true);
+      await acceptCommunityAnswer(postId, answerId);
+      setDetail((current) => current?.id === postId
+        ? {
+            ...current,
+            acceptedAnswerId: answerId,
+            answers: (current.answers || []).map((item) => ({ ...item, accepted: item.id === answerId })),
+          }
+        : current);
+      void getCommunityPost(postId)
+        .then((fresh) => setDetail((current) => current?.id === postId ? fresh : current))
+        .catch(() => undefined);
+      void load(true);
     } catch (error) {
       Alert.alert("Answer not accepted", message(error));
     } finally {
@@ -1536,19 +1624,58 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? "Saving…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
         <Text style={styles.formLabel}>What are you sharing?</Text><View style={styles.optionGrid}>{types.map((item) => <TouchableOpacity key={item.value} style={[styles.option, form.type === item.value && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, type: item.value }))} accessibilityRole="button" accessibilityState={{ selected: form.type === item.value }}><Text style={[styles.optionText, form.type === item.value && styles.optionTextActive]}>{item.label}</Text></TouchableOpacity>)}</View>
         <Text style={styles.formLabel}>What do you need?</Text><View style={styles.needGrid}>{categories.slice(1).map((item) => <TouchableOpacity key={item} style={[styles.needOption, form.category === item && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, category: item as CommunityPost["category"] }))} accessibilityRole="button" accessibilityState={{ selected: form.category === item }}><Text style={styles.needIcon}>{categoryIcons[item]}</Text><Text style={[styles.needText, form.category === item && styles.optionTextActive]}>{categoryLabels[item]}</Text></TouchableOpacity>)}</View>
-        {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <><Text style={styles.formLabel}>Housing details</Text><TextInput style={styles.input} value={form.details.budget} onChangeText={(value) => setDetailField("budget", value)} placeholder="Monthly budget, for example $900" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.moveInDate} onChangeText={(value) => setDetailField("moveInDate", value)} placeholder="Move-in date" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.preference} onChangeText={(value) => setDetailField("preference", value)} placeholder="Roommate or home preferences" placeholderTextColor={theme.colors.muted} /></> : null}
-        {form.category === "HAVE_PLACE" ? <><Text style={styles.formLabel}>Place details</Text><TextInput style={styles.input} value={form.details.rent} onChangeText={(value) => setDetailField("rent", value)} placeholder="Monthly rent" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.availableDate} onChangeText={(value) => setDetailField("availableDate", value)} placeholder="Available date" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.roomType} onChangeText={(value) => setDetailField("roomType", value)} placeholder="Private room, shared room, entire place…" placeholderTextColor={theme.colors.muted} /></> : null}
-        {form.category === "CARPOOL_RIDE" ? <><Text style={styles.formLabel}>Ride details</Text><TextInput style={styles.input} value={form.details.origin} onChangeText={(value) => setDetailField("origin", value)} placeholder="Leaving from" placeholderTextColor={theme.colors.muted} /><TextInput style={styles.input} value={form.details.destination} onChangeText={(value) => setDetailField("destination", value)} placeholder="Going to" placeholderTextColor={theme.colors.muted} /><View style={styles.inlineFields}><TextInput style={[styles.input, styles.inlineInput]} value={form.details.travelDate} onChangeText={(value) => setDetailField("travelDate", value)} placeholder="Date" placeholderTextColor={theme.colors.muted} /><TextInput style={[styles.input, styles.inlineInput]} value={form.details.travelTime} onChangeText={(value) => setDetailField("travelTime", value)} placeholder="Time" placeholderTextColor={theme.colors.muted} /><TextInput style={[styles.input, { width: 78 }]} value={form.details.seats} onChangeText={(value) => setDetailField("seats", value.replace(/\D/g, "").slice(0, 2))} keyboardType="number-pad" placeholder="Seats" placeholderTextColor={theme.colors.muted} /></View></> : null}
-        <TextInput style={styles.titleInput} value={form.title} onChangeText={(title) => setForm((current) => ({ ...current, title }))} maxLength={140} placeholder="Write a clear title" placeholderTextColor={theme.colors.muted} />
-        <TextInput style={styles.bodyInput} value={form.body} onChangeText={(body) => setForm((current) => ({ ...current, body }))} multiline maxLength={3000} textAlignVertical="top" placeholder="Add details that will help people give a useful answer…" placeholderTextColor={theme.colors.muted} />
+        {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <View style={styles.detailFields}>
+          <Text style={styles.formLabel}>Housing details <Text style={styles.formLabelOptional}>Optional</Text></Text>
+          <Text style={styles.fieldLabel}>Monthly budget</Text>
+          <TextInput style={styles.input} value={form.details.budget} onChangeText={(value) => setDetailField("budget", value)} placeholder="Example: $900 per month" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>Move-in date</Text>
+          <TextInput style={styles.input} value={form.details.moveInDate} onChangeText={(value) => setDetailField("moveInDate", value)} placeholder="Example: August 1" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>Preferences</Text>
+          <TextInput style={styles.input} value={form.details.preference} onChangeText={(value) => setDetailField("preference", value)} placeholder="Example: Quiet home, pet-friendly" placeholderTextColor={theme.colors.muted} />
+        </View> : null}
+        {form.category === "HAVE_PLACE" ? <View style={styles.detailFields}>
+          <Text style={styles.formLabel}>Place details <Text style={styles.formLabelOptional}>Optional</Text></Text>
+          <Text style={styles.fieldLabel}>Monthly rent</Text>
+          <TextInput style={styles.input} value={form.details.rent} onChangeText={(value) => setDetailField("rent", value)} placeholder="Example: $950 per month" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>Available from</Text>
+          <TextInput style={styles.input} value={form.details.availableDate} onChangeText={(value) => setDetailField("availableDate", value)} placeholder="Example: August 1" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>Room type</Text>
+          <TextInput style={styles.input} value={form.details.roomType} onChangeText={(value) => setDetailField("roomType", value)} placeholder="Example: Private room" placeholderTextColor={theme.colors.muted} />
+        </View> : null}
+        {form.category === "CARPOOL_RIDE" ? <View style={styles.detailFields}>
+          <Text style={styles.formLabel}>Ride details <Text style={styles.formLabelOptional}>Optional</Text></Text>
+          <Text style={styles.fieldLabel}>Leaving from</Text>
+          <TextInput style={styles.input} value={form.details.origin} onChangeText={(value) => setDetailField("origin", value)} placeholder="Example: Aurora" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>Going to</Text>
+          <TextInput style={styles.input} value={form.details.destination} onChangeText={(value) => setDetailField("destination", value)} placeholder="Example: Downtown Denver" placeholderTextColor={theme.colors.muted} />
+          <Text style={styles.fieldLabel}>When are you travelling?</Text>
+          <View style={styles.inlineFields}>
+            <TextInput style={[styles.input, styles.inlineInput]} value={form.details.travelDate} onChangeText={(value) => setDetailField("travelDate", value)} placeholder="Date" placeholderTextColor={theme.colors.muted} />
+            <TextInput style={[styles.input, styles.inlineInput]} value={form.details.travelTime} onChangeText={(value) => setDetailField("travelTime", value)} placeholder="Time" placeholderTextColor={theme.colors.muted} />
+            <TextInput style={[styles.input, { width: 78 }]} value={form.details.seats} onChangeText={(value) => setDetailField("seats", value.replace(/\D/g, "").slice(0, 2))} keyboardType="number-pad" placeholder="Seats" placeholderTextColor={theme.colors.muted} />
+          </View>
+        </View> : null}
+        <View style={styles.fieldGroup}>
+          <View style={styles.fieldHeader}><Text style={styles.fieldLabel}>Post title <Text style={styles.fieldRequired}>Required</Text></Text><Text style={styles.fieldHint}>One short summary people can scan.</Text></View>
+          <TextInput style={[styles.titleInput, postValidation.title && styles.fieldInputInvalid]} value={form.title} onChangeText={(title) => updatePostTextField("title", title)} maxLength={140} placeholder={fieldExamples.title} placeholderTextColor={theme.colors.muted} accessibilityLabel="Post title" accessibilityHint={postValidation.title || "Use at least 6 characters."} />
+          {postValidation.title ? <Text style={styles.fieldError}>{postValidation.title}</Text> : null}
+        </View>
+        <View style={styles.fieldGroup}>
+          <View style={styles.fieldHeader}><Text style={styles.fieldLabel}>Details <Text style={styles.fieldRequired}>Required</Text></Text><Text style={styles.fieldHint}>The more useful context you share, the better replies you will get.</Text></View>
+          <TextInput style={[styles.bodyInput, postValidation.body && styles.fieldInputInvalid]} value={form.body} onChangeText={(body) => updatePostTextField("body", body)} multiline maxLength={3000} textAlignVertical="top" placeholder={fieldExamples.body} placeholderTextColor={theme.colors.muted} accessibilityLabel="Post details" accessibilityHint={postValidation.body || "Use at least 12 characters."} />
+          {postValidation.body ? <Text style={styles.fieldError}>{postValidation.body}</Text> : null}
+        </View>
         <View style={styles.counter}><Text style={styles.counterText}>{form.body.length}/3000</Text></View>
         <View style={[styles.attachmentPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <View><Text style={styles.attachmentTitle}>Add to your post</Text><Text style={styles.attachmentHint}>Share a helpful link or up to 4 photos</Text></View>
+          <View><Text style={styles.attachmentTitle}>Add to your post <Text style={styles.attachmentOptional}>Optional</Text></Text><Text style={styles.attachmentHint}>A link or up to 4 photos can help people understand your post.</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
           {form.images.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.images.map((image, index) => <TouchableOpacity key={index} onPress={() => setForm((current) => ({ ...current, images: current.images.filter((_, target) => target !== index) }))}><Image source={{ uri: absoluteUrl(image) }} style={styles.previewImage} /><View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
           <TouchableOpacity style={styles.addPhoto} onPress={async () => { try { const images = await pickCompressedImages(4 - form.images.length); setForm((current) => ({ ...current, images: [...current.images, ...images].slice(0, 4) })); } catch (error) { Alert.alert("Photos not added", message(error)); } }} accessibilityRole="button" accessibilityLabel="Add up to four photos"><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos</Text><Text style={styles.addPhotoBody}>{form.images.length ? `${form.images.length} of 4 selected · Tap a photo to remove it` : "Choose up to 4 clear, relevant images"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
         </View>
-        <TextInput style={styles.input} value={form.area} onChangeText={(area) => setForm((current) => ({ ...current, area }))} placeholder={`Location or area · ${city}`} placeholderTextColor={theme.colors.muted} />
+        <View style={styles.fieldGroup}>
+          <View style={styles.fieldHeader}><Text style={styles.fieldLabel}>Location or area <Text style={styles.fieldOptional}>Optional</Text></Text><Text style={styles.fieldHint}>This helps nearby members find your post.</Text></View>
+          <TextInput style={styles.input} value={form.area} onChangeText={(area) => setForm((current) => ({ ...current, area }))} placeholder={`Example: Near downtown · ${city}`} placeholderTextColor={theme.colors.muted} />
+        </View>
         {groupOptions.length ? <><Text style={styles.formLabel}>Audience</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}><TouchableOpacity style={[styles.chip, !form.communityId && styles.chipActive]} onPress={() => setForm((current) => ({ ...current, communityId: "" }))}><Text style={[styles.chipText, !form.communityId && styles.chipTextActive]}>Everyone</Text></TouchableOpacity>{groupOptions.map((group) => <TouchableOpacity key={group.id} style={[styles.chip, form.communityId === group.id && styles.chipActive]} onPress={() => setForm((current) => ({ ...current, communityId: group.id }))}><Text style={[styles.chipText, form.communityId === group.id && styles.chipTextActive]}>{group.name}</Text></TouchableOpacity>)}</ScrollView></> : null}
         <Text style={[styles.safety, { backgroundColor: theme.colors.panel2 }]}>Keep personal phone numbers, exact home addresses, and sensitive documents out of public posts.</Text>
       </ScrollView></View>
@@ -1649,7 +1776,7 @@ const styles = StyleSheet.create({
   reactionSummaryIconOnly: { minWidth: 42, paddingHorizontal: 7, justifyContent: "center" },
   empty: { alignItems: "center", backgroundColor: theme.colors.panel, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, padding: 30, gap: 8 }, emptyIcon: { fontSize: 36 }, emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" }, emptyBody: { color: theme.colors.muted, textAlign: "center", lineHeight: 20 }, emptyButton: { marginTop: 8, backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 11 }, emptyButtonText: { color: "#06291e", fontWeight: "800" },
   loadMore: { alignSelf: "center", borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 999, paddingHorizontal: 20, paddingVertical: 12 }, loadMoreText: { color: "#9be8c7", fontWeight: "800" },
-  modal: { flex: 1, backgroundColor: theme.colors.bg }, modalHead: { minHeight: 62, borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, cancel: { color: theme.colors.soft, fontSize: 15 }, modalTitle: { color: theme.colors.text, fontWeight: "800", fontSize: 16 }, publish: { color: theme.colors.brand, fontWeight: "800", fontSize: 15 }, danger: { color: theme.colors.accent, fontWeight: "800" }, disabled: { opacity: .45 }, form: { padding: 18, gap: 15, paddingBottom: 40 }, formLabel: { color: theme.colors.soft, fontWeight: "800", fontSize: 12, textTransform: "uppercase", letterSpacing: .5 }, optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, option: { width: "48%", backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 14, padding: 13 }, optionActive: { backgroundColor: "#173b2d", borderColor: theme.colors.brand }, optionText: { color: theme.colors.soft, fontWeight: "700" }, optionTextActive: { color: "#a9f2d2" }, titleInput: { color: theme.colors.text, fontSize: 22, fontWeight: "800", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingVertical: 13 }, bodyInput: { minHeight: 150, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, color: theme.colors.text, fontSize: 15, lineHeight: 22 }, input: { minHeight: 50, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, paddingHorizontal: 14, color: theme.colors.text }, counter: { alignItems: "flex-end", marginTop: -10 }, counterText: { color: theme.colors.muted, fontSize: 11 }, attachmentPanel: { gap: 10, padding: 13, borderRadius: 17, borderWidth: 1, borderColor: "#315348", backgroundColor: "#111d19" }, attachmentTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, attachmentHint: { color: theme.colors.muted, fontSize: 11, marginTop: 2 }, previewImage: { width: 105, height: 105, borderRadius: 15 }, removeImage: { position: "absolute", right: 5, top: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: "rgba(0,0,0,.75)", alignItems: "center", justifyContent: "center" }, removeImageText: { color: "#fff", fontSize: 18 }, addPhoto: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderStyle: "dashed", borderColor: "#3f6554", borderRadius: 14, padding: 13 }, addPhotoIcon: { color: theme.colors.brand, fontSize: 24 }, addPhotoCopy: { flex: 1, minWidth: 0 }, addPhotoTitle: { color: theme.colors.text, fontWeight: "800" }, addPhotoBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 }, addPhotoChevron: { color: theme.colors.brand, fontSize: 25 }, safety: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, backgroundColor: "#211f17", borderRadius: 14, padding: 13 },
+  modal: { flex: 1, backgroundColor: theme.colors.bg }, modalHead: { minHeight: 62, borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, cancel: { color: theme.colors.soft, fontSize: 15 }, modalTitle: { color: theme.colors.text, fontWeight: "800", fontSize: 16 }, publish: { color: theme.colors.brand, fontWeight: "800", fontSize: 15 }, danger: { color: theme.colors.accent, fontWeight: "800" }, disabled: { opacity: .45 }, form: { padding: 18, gap: 15, paddingBottom: 40 }, formLabel: { color: theme.colors.soft, fontWeight: "800", fontSize: 12, textTransform: "uppercase", letterSpacing: .5 }, formLabelOptional: { color: theme.colors.muted, fontWeight: "700", textTransform: "none", letterSpacing: 0 }, optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, option: { width: "48%", backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 14, padding: 13 }, optionActive: { backgroundColor: "#173b2d", borderColor: theme.colors.brand }, optionText: { color: theme.colors.soft, fontWeight: "700" }, optionTextActive: { color: "#a9f2d2" }, detailFields: { gap: 7 }, fieldGroup: { gap: 5 }, fieldHeader: { gap: 2 }, fieldLabel: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, fieldHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17 }, fieldRequired: { color: theme.colors.brand, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: .2 }, fieldOptional: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: .2 }, titleInput: { color: theme.colors.text, fontSize: 22, fontWeight: "800", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingVertical: 13 }, bodyInput: { minHeight: 150, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, color: theme.colors.text, fontSize: 15, lineHeight: 22 }, fieldInputInvalid: { borderColor: "#dc2626", borderBottomColor: "#dc2626" }, fieldError: { color: "#dc2626", fontSize: 12, lineHeight: 16, fontWeight: "800" }, input: { minHeight: 50, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, paddingHorizontal: 14, color: theme.colors.text }, counter: { alignItems: "flex-end", marginTop: -10 }, counterText: { color: theme.colors.muted, fontSize: 11 }, attachmentPanel: { gap: 10, padding: 13, borderRadius: 17, borderWidth: 1, borderColor: "#315348", backgroundColor: "#111d19" }, attachmentTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, attachmentOptional: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: .2 }, attachmentHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 }, previewImage: { width: 105, height: 105, borderRadius: 15 }, removeImage: { position: "absolute", right: 5, top: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: "rgba(0,0,0,.75)", alignItems: "center", justifyContent: "center" }, removeImageText: { color: "#fff", fontSize: 18 }, addPhoto: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderStyle: "dashed", borderColor: "#3f6554", borderRadius: 14, padding: 13 }, addPhotoIcon: { color: theme.colors.brand, fontSize: 24 }, addPhotoCopy: { flex: 1, minWidth: 0 }, addPhotoTitle: { color: theme.colors.text, fontWeight: "800" }, addPhotoBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 }, addPhotoChevron: { color: theme.colors.brand, fontSize: 25 }, safety: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, backgroundColor: "#211f17", borderRadius: 14, padding: 13 },
   detailContent: { padding: 14, gap: 14, paddingBottom: 45 }, answersTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800", marginTop: 6 }, answerCard: { backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, gap: 11 }, answerAvatar: { width: 36, height: 36, borderRadius: 12, backgroundColor: theme.colors.panel2 }, accepted: { color: "#7ee2b8", fontSize: 12, fontWeight: "800" }, acceptedLight: { color: "#126b4c" }, answerBody: { color: theme.colors.soft, lineHeight: 21 }, answerActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, answerAction: { color: theme.colors.muted, fontWeight: "700", fontSize: 12 }, acceptAction: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, answerComposer: { backgroundColor: theme.colors.panel, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, padding: 12, gap: 10 }, answerInput: { minHeight: 75, color: theme.colors.text, fontSize: 14, textAlignVertical: "top" }, sendAnswer: { alignSelf: "flex-end", backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10 }, sendAnswerText: { color: "#06291e", fontWeight: "800" }, locked: { color: theme.colors.muted, textAlign: "center", padding: 18 },
   signInAnswer: { backgroundColor: "#10291f", borderWidth: 1, borderColor: "#315945", borderRadius: 18, padding: 18, alignItems: "center", gap: 4 }, signInAnswerTitle: { color: "#9be8c7", fontSize: 16, fontWeight: "800" }, signInAnswerBody: { color: theme.colors.muted, fontSize: 12, textAlign: "center" },
   replyLabel: { color: theme.colors.brand, fontSize: 10, fontWeight: "800" }, replyAction: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, replyingTo: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 10, borderRadius: 9, backgroundColor: theme.colors.panel2 }, replyingToText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" }, replyingToClose: { color: theme.colors.muted, fontSize: 20 }, guestAllowance: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, guestAllowanceName: { color: theme.colors.brand, fontSize: 11, fontWeight: "900" }, guestAllowanceCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, guestSignupHint: { color: theme.colors.brand, fontSize: 11, textAlign: "center", fontWeight: "800", paddingVertical: 3 },

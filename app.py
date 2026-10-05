@@ -234,6 +234,12 @@ _ACCOMMODATION_EXPIRY_SCHEDULED = False
 _ACCOMMODATION_EXPIRY_LAST_SCHEDULED = 0.0
 _ACCOMMODATION_CITY_REPAIR_LOCK = threading.Lock()
 _ACCOMMODATION_CITY_REPAIR_LAST_RUN: dict[str, float] = {}
+_ACCOMMODATION_CITY_REPAIR_SCHEDULE_LOCK = threading.Lock()
+_ACCOMMODATION_CITY_REPAIR_SCHEDULED = False
+_COMMUNITY_LOCATION_REPAIR_LOCK = threading.Lock()
+_COMMUNITY_LOCATION_REPAIR_LAST_RUN: dict[str, float] = {}
+_COMMUNITY_LOCATION_REPAIR_SCHEDULE_LOCK = threading.Lock()
+_COMMUNITY_LOCATION_REPAIR_SCHEDULED = False
 _CHITTHI_MEDIA_CLEANUP_LOCK = threading.Lock()
 _CHITTHI_MEDIA_CLEANUP_LAST_RUN: dict[str, float] = {}
 _CHITTHI_MESSAGE_CLEANUP_LOCK = threading.Lock()
@@ -265,6 +271,7 @@ RIDE_REVERSE_GEOCODE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_REVERSE_GE
 RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES", 10_000)
 SESSION_CLEANUP_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_CLEANUP_SECONDS", 10 * 60)
 ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
+COMMUNITY_LOCATION_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_COMMUNITY_LOCATION_REPAIR_SECONDS", 10 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -1222,6 +1229,33 @@ def store_rental_handoff_photo(*, data_url: str, fallback_name: str) -> str:
         allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
         max_bytes=2_000_000,
     )
+
+
+def rental_handoff_photo_parts(booking_id: int, field: str) -> tuple[str, str, bytes] | None:
+    """Load one private inspection or licence image for an authenticated staff viewer."""
+    if booking_id <= 0 or field not in RENTAL_PRIVATE_HANDOFF_PHOTO_FIELDS:
+        return None
+    booking = get_booking_by_id(booking_id)
+    reference = str(row_value(booking, field) or "") if booking else ""
+    if reference.startswith("data:image/"):
+        image = data_url_upload_parts(
+            reference,
+            f"handoff-{booking_id}-{field}",
+            allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
+            max_bytes=2_000_000,
+        )
+    elif reference.startswith("drive://"):
+        image = google_drive_upload_parts(reference.removeprefix("drive://").strip())
+    elif reference.startswith("r2://"):
+        image = r2_upload_parts(reference, max_bytes=2_000_000)
+    else:
+        image = local_upload_parts(reference)
+    if not image:
+        return None
+    filename, mime_type, payload = image
+    if mime_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"} or len(payload) > 2_000_000:
+        return None
+    return filename, mime_type, payload
 
 
 def upload_file_payload_to_drive(
@@ -2293,13 +2327,25 @@ def delete_stored_upload_reference(value: str) -> bool:
     return False
 
 
+PICKUP_EXISTING_DAMAGE_PHOTO_FIELDS = tuple(
+    f"pickup_existing_damage_{index}_image" for index in range(1, 11)
+)
+RETURN_DAMAGE_PHOTO_FIELDS = tuple(
+    f"return_damage_{index}_image" for index in range(1, 11)
+)
+
 RENTAL_HANDOFF_PHOTO_FIELDS = (
     "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
+    *PICKUP_EXISTING_DAMAGE_PHOTO_FIELDS,
     "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
     "return_front_image", "return_back_image", "return_left_image", "return_right_image",
+    *RETURN_DAMAGE_PHOTO_FIELDS,
     "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
     "damage_photo_image",
 )
+
+RENTAL_PICKUP_LICENSE_PHOTO_FIELDS = ("pickup_license_front_image", "pickup_license_back_image")
+RENTAL_PRIVATE_HANDOFF_PHOTO_FIELDS = RENTAL_HANDOFF_PHOTO_FIELDS + RENTAL_PICKUP_LICENSE_PHOTO_FIELDS
 
 
 def cleanup_expired_rental_handoff_evidence(*, limit: int = 100) -> dict[str, int]:
@@ -2997,6 +3043,27 @@ def cached_mobile_search(cache_key: tuple[object, ...], factory):
                 _MOBILE_SEARCH_CACHE.pop(oldest_key, None)
                 _MOBILE_SEARCH_KEY_LOCKS.pop(oldest_key, None)
         return value, "MISS"
+
+
+def cached_mobile_value(cache_key: tuple[object, ...]) -> object | None:
+    """Return a still-valid in-process mobile value without starting work."""
+    with _MOBILE_SEARCH_CACHE_LOCK:
+        cached = _MOBILE_SEARCH_CACHE.get(cache_key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+    return None
+
+
+def cache_mobile_value(cache_key: tuple[object, ...], value: object) -> None:
+    """Store a short-lived user response; marketplace writes clear its prefix."""
+    with _MOBILE_SEARCH_CACHE_LOCK:
+        _MOBILE_SEARCH_CACHE[cache_key] = (time.monotonic() + MOBILE_SEARCH_CACHE_SECONDS, value)
+        if len(_MOBILE_SEARCH_CACHE) > MOBILE_SEARCH_CACHE_MAX_ENTRIES:
+            now = time.monotonic()
+            expired = [key for key, entry in _MOBILE_SEARCH_CACHE.items() if entry[0] <= now]
+            for key in expired:
+                _MOBILE_SEARCH_CACHE.pop(key, None)
+                _MOBILE_SEARCH_KEY_LOCKS.pop(key, None)
 
 
 def invalidate_mobile_search_cache(prefix: str = "") -> None:
@@ -8015,6 +8082,7 @@ def init_db() -> None:
         ensure_column(con, "bookings", "actual_pickup_time", "actual_pickup_time TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "actual_return_date", "actual_return_date TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "actual_return_time", "actual_return_time TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "actual_return_location", "actual_return_location TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "late_fee_amount", "late_fee_amount REAL NOT NULL DEFAULT 0")
         ensure_column(con, "bookings", "late_fee_note", "late_fee_note TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "price_match_agency", "price_match_agency TEXT NOT NULL DEFAULT ''")
@@ -8036,6 +8104,10 @@ def init_db() -> None:
         ensure_column(con, "bookings", "pickup_condition_status", "pickup_condition_status TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_condition_status", "return_condition_status TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "new_damage_found", "new_damage_found TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_keys_confirmed", "return_keys_confirmed TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_cleanliness_status", "return_cleanliness_status TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_smoking_status", "return_smoking_status TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "return_issue_types", "return_issue_types TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "damage_resolution", "damage_resolution TEXT NOT NULL DEFAULT 'NOT_APPLICABLE'")
         ensure_column(con, "bookings", "pickup_customer_signature", "pickup_customer_signature TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "pickup_staff_signature", "pickup_staff_signature TEXT NOT NULL DEFAULT ''")
@@ -8063,6 +8135,18 @@ def init_db() -> None:
         ensure_column(con, "bookings", "return_interior_front_image", "return_interior_front_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "return_interior_rear_image", "return_interior_rear_image TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "bookings", "damage_photo_image", "damage_photo_image TEXT NOT NULL DEFAULT ''")
+        for index in range(1, 11):
+            ensure_column(con, "bookings", f"return_damage_{index}_image", f"return_damage_{index}_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_license_front_image", "pickup_license_front_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_license_back_image", "pickup_license_back_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_existing_damage_status", "pickup_existing_damage_status TEXT NOT NULL DEFAULT 'NOT_RECORDED'")
+        ensure_column(con, "bookings", "pickup_existing_damage_notes", "pickup_existing_damage_notes TEXT NOT NULL DEFAULT ''")
+        for index in range(1, 11):
+            ensure_column(con, "bookings", f"pickup_existing_damage_{index}_image", f"pickup_existing_damage_{index}_image TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "bookings", "pickup_acceptance_status", "pickup_acceptance_status TEXT NOT NULL DEFAULT 'NOT_REQUESTED'")
+        ensure_column(con, "bookings", "pickup_acceptance_requested_at", "pickup_acceptance_requested_at TEXT")
+        ensure_column(con, "bookings", "pickup_acceptance_signed_at", "pickup_acceptance_signed_at TEXT")
+        ensure_column(con, "bookings", "pickup_acceptance_signature", "pickup_acceptance_signature TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "insurances", "document_url", "document_url TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "rental_agreements", "agreement_data", "agreement_data TEXT NOT NULL DEFAULT '{}'")
         ensure_column(con, "discounts", "max_uses", "max_uses INTEGER NOT NULL DEFAULT 0")
@@ -8384,6 +8468,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_driver_notified ON ride_dispatch_notifications(driver_user_id, notified_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status ON ride_dispatch_notifications(request_ride_post_id, status)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request ON ride_dispatch_notifications(request_ride_post_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ride_dispatch_request_status_responded ON ride_dispatch_notifications(request_ride_post_id, status, responded_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rater_dispatch ON ride_ratings(rater_user_id, dispatch_notification_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ride_ratings_rated_user ON ride_ratings(rated_user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_user_ratings_reviewed_status ON user_ratings(reviewed_user_id, status)")
@@ -9805,12 +9890,21 @@ def confirm_booking_hold_payment(
     )
     send_confirmed_booking_email_once(booking_id, origin)
     confirmed_booking = get_booking_by_id(booking_id)
-    send_rental_booking_push(
-        confirmed_booking or booking,
-        "Rental booking confirmed",
-        f"Payment received. Your booking {row_value(booking, 'booking_id') or booking_id} is confirmed.",
-        "PAYMENT_CONFIRMED",
-    )
+    payment_notice_booking = confirmed_booking or booking
+    if payment_option == "hold":
+        send_rental_booking_push(
+            payment_notice_booking,
+            "10% rental hold received",
+            "Your reservation is confirmed. Pay the remaining rental balance before pickup.",
+            "HOLD_PAYMENT_CONFIRMED",
+        )
+    else:
+        send_rental_booking_push(
+            payment_notice_booking,
+            "Rental paid in full",
+            "Your rental payment is complete. A refundable deposit is optional and does not block pickup.",
+            "FULL_PAYMENT_CONFIRMED",
+        )
     return True, invoice_number
 
 
@@ -9905,7 +9999,9 @@ def create_security_deposit_checkout_session(
     if row_value(booking, "payment_status") not in {"HOLD_PAID", "PAID"}:
         return {}, "Security deposit can be authorized after the 10% hold or full payment is recorded."
     if row_value(booking, "booking_status") != "CONFIRMED":
-        return {}, "Only a confirmed booking can accept a security deposit authorization."
+        if row_value(booking, "booking_status") == "PICKUP_SUBMITTED":
+            return {}, "Your pickup condition is ready to review. The optional deposit is no longer available after staff begins pickup."
+        return {}, "The optional security deposit is available only for a confirmed booking, before staff pickup begins."
     if row_value(booking, "security_deposit_status") == "AUTHORIZED":
         return {}, "The security deposit is already authorized for this booking."
     amount_cents = int(round(SECURITY_DEPOSIT_AMOUNT * 100))
@@ -10052,6 +10148,12 @@ def return_checks_clear_for_deposit_release(booking: sqlite3.Row | dict[str, obj
         and row_value(booking, "return_fuel_level")
         and row_value(booking, "return_condition_status") == "ACCEPTABLE"
         and row_value(booking, "new_damage_found") == "NO"
+        # Empty values are legacy inspection records created before these
+        # explicit checks existed. New return submissions always populate them.
+        and row_value(booking, "return_keys_confirmed") in {"", "RETURNED"}
+        and row_value(booking, "return_cleanliness_status") in {"", "CLEAN"}
+        and row_value(booking, "return_smoking_status") in {"", "NO"}
+        and not row_value(booking, "return_issue_types")
         and float(row_value(booking, "post_return_charge_amount") or 0) == 0
         and row_value(booking, "return_customer_signature")
         and row_value(booking, "return_staff_signature")
@@ -12597,11 +12699,24 @@ def housing_community_city_label(con: sqlite3.Connection, listing: sqlite3.Row |
     the structured location cache populated when the listing was created.
     """
     raw_city = normalize_accommodation_place_label(str(row_value(listing, "city") or ""))
+    raw_city_parts = [part.strip() for part in raw_city.split(",") if part.strip()]
+    # Some older forms saved an entire address in the city field, for example
+    # "6343 E Girard Pl, Denver". The trailing component is still a useful
+    # municipality clue; the street itself is never a city candidate.
+    address_tail_city = (
+        raw_city_parts[-1]
+        if len(raw_city_parts) >= 2 and re.search(r"\d", raw_city_parts[0])
+        else ""
+    )
     location_candidates = (
+        normalize_accommodation_place_label(address_tail_city),
         raw_city,
+        normalize_accommodation_place_label(str(row_value(listing, "street_address") or "")),
         normalize_accommodation_place_label(str(row_value(listing, "area_or_apartment") or "")),
         normalize_accommodation_place_label(str(row_value(listing, "city_area_zip") or "")),
         normalize_accommodation_place_label(str(row_value(listing, "primary_neighborhood") or "")),
+        normalize_accommodation_place_label(str(row_value(listing, "apartment_name") or "")),
+        normalize_accommodation_place_label(str(row_value(listing, "work_school_location") or "")),
     )
     landmark_city = bool(re.search(
         r"\b(?:airport|campus|college|mall|station|terminal|university)\b",
@@ -12618,8 +12733,48 @@ def housing_community_city_label(con: sqlite3.Connection, listing: sqlite3.Row |
             return variants[0]
     if str(row_value(listing, "country") or "").strip().upper() not in {"US", "USA", "UNITED STATES"}:
         return raw_city
+    # Resolve an actual city or neighbourhood from the location catalogue.
+    # Every catalogue row carries a metro_id, so this is dynamic: a newly
+    # resolved neighbourhood automatically joins its metro without a source
+    # code change or a second city selection from the member.
+    for candidate in location_candidates:
+        if candidate == raw_city and landmark_city:
+            continue
+        candidate_root = candidate.split(",", 1)[0].strip()
+        if not candidate_root:
+            continue
+        catalog_rows = con.execute(
+            """SELECT city, state FROM accommodation_local_areas
+               WHERE (lower(city) = lower(?) OR lower(name) = lower(?))
+                 AND trim(city) != '' AND trim(state) != ''
+               GROUP BY lower(city), upper(state)
+               ORDER BY CASE WHEN lower(city) = lower(?) THEN 0 ELSE 1 END, id""",
+            (candidate_root, candidate_root, candidate_root),
+        ).fetchall()
+        if len(catalog_rows) == 1:
+            qualified = f"{row_value(catalog_rows[0], 'city')}, {row_value(catalog_rows[0], 'state')}"
+            qualified_variants = community_us_city_variants(qualified)
+            if qualified_variants:
+                return qualified_variants[0]
+    # The supported metro catalog remains only a bootstrap fallback for bare
+    # city names before a device has resolved any nearby neighbourhood data.
+    # It never asks a member to re-enter their metro city.
+    for candidate in location_candidates:
+        if candidate == raw_city and landmark_city:
+            # The raw field can be a landmark such as "University of Dayton,
+            # OH". It is not a municipality, so let a later area, ZIP, or
+            # neighbourhood clue select Dayton instead.
+            continue
+        candidate_root = candidate.split(",", 1)[0].strip().casefold()
+        if not candidate_root or re.search(r"\d", candidate_root):
+            continue
+        for metro in ACCOMMODATION_METRO_GROUPS.values():
+            for suggested_city in metro.get("suggested", ()):
+                suggested_variants = community_us_city_variants(suggested_city)
+                if suggested_variants and suggested_variants[0].split(",", 1)[0].strip().casefold() == candidate_root:
+                    return suggested_variants[0]
     zip_code = clean_text_value(row_value(listing, "zip_code"), 16)
-    city_root = raw_city.split(",", 1)[0].strip()
+    city_root = (address_tail_city or raw_city.split(",", 1)[0]).strip()
     location_row = None
     # Before falling back to the nearest cached point, match unqualified
     # listing clues against actual municipality names.  This turns an area of
@@ -12730,6 +12885,41 @@ def repair_active_housing_city_labels(*, force: bool = False) -> int:
     return repaired
 
 
+def schedule_active_housing_city_label_repair() -> None:
+    """Run best-effort label maintenance away from a customer-facing read.
+
+    The repair can inspect every active US listing and occasionally write a
+    correction.  That is useful maintenance, but doing it in the first housing
+    request after its ten-minute interval lets a routine app launch become the
+    writer that delays chat, rides, and rentals behind SQLite's lock.
+    """
+    global _ACCOMMODATION_CITY_REPAIR_SCHEDULED
+    repair_key = str(DB_PATH)
+    now = time.monotonic()
+    with _ACCOMMODATION_CITY_REPAIR_LOCK:
+        last_run = _ACCOMMODATION_CITY_REPAIR_LAST_RUN.get(repair_key, 0.0)
+        if now - last_run < ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS:
+            return
+    with _ACCOMMODATION_CITY_REPAIR_SCHEDULE_LOCK:
+        if _ACCOMMODATION_CITY_REPAIR_SCHEDULED:
+            return
+        _ACCOMMODATION_CITY_REPAIR_SCHEDULED = True
+
+    def run() -> None:
+        global _ACCOMMODATION_CITY_REPAIR_SCHEDULED
+        try:
+            repair_active_housing_city_labels()
+        except sqlite3.Error:
+            # Maintenance is retried by a later housing read. Never make a
+            # customer request wait for or fail because of it.
+            pass
+        finally:
+            with _ACCOMMODATION_CITY_REPAIR_SCHEDULE_LOCK:
+                _ACCOMMODATION_CITY_REPAIR_SCHEDULED = False
+
+    threading.Thread(target=run, name="housing-city-label-repair", daemon=True).start()
+
+
 def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
     # This projection also runs from a coalesced background job. Do not force
@@ -12737,6 +12927,21 @@ def sync_housing_into_community() -> None:
     # SQLite writer whenever a projection was pending.
     repair_active_housing_city_labels(force=False)
     with db() as con:
+        # A derived Ask card must never outlive its source Housing listing.
+        # Without this reconciliation, an expired or deactivated listing can
+        # remain actionable in Ask while Housing correctly returns no result.
+        con.execute(
+            """UPDATE ask_community_posts
+               SET status = 'HIDDEN', fulfillment_status = 'CLOSED', updated_at = CURRENT_TIMESTAMP
+               WHERE source_kind = 'HOUSING'
+                 AND status NOT IN ('HIDDEN', 'DELETED')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM accommodation_posts source
+                     WHERE source.public_id = ask_community_posts.source_public_id
+                       AND source.visibility_status = 'ACTIVE'
+                       AND (source.expires_at IS NULL OR source.expires_at = '' OR datetime(source.expires_at) > datetime('now'))
+                 )"""
+        )
         # Only touch missing or changed projections. Rewriting every active
         # listing (and all of its images) made an ordinary Ask read hold the
         # SQLite writer lock long enough to starve unrelated Carpool reads.
@@ -12751,6 +12956,7 @@ def sync_housing_into_community() -> None:
             WHERE accommodation_posts.visibility_status = 'ACTIVE'
               AND accommodation_posts.public_id IS NOT NULL
               AND accommodation_posts.public_id != ''
+              AND (accommodation_posts.expires_at IS NULL OR accommodation_posts.expires_at = '' OR datetime(accommodation_posts.expires_at) > datetime('now'))
               AND (
                     projected.id IS NULL
                  OR COALESCE(projected.updated_at, '') != COALESCE(accommodation_posts.updated_at, accommodation_posts.created_at, '')
@@ -12764,6 +12970,22 @@ def sync_housing_into_community() -> None:
             source_id = str(row_value(listing, "public_id") or "")
             community_city = housing_community_city_label(con, listing)
             category = "HAVE_PLACE" if str(row_value(listing, "post_mode") or "").upper() == "HAVE_PLACE" else "NEED_PLACE"
+            # Legacy rows can contain an unqualified city that cannot be
+            # placed in any local or nationwide feed. Do not create a
+            # misleading Ask card for it; the housing record remains intact
+            # for an owner to correct with its actual city/state.
+            if (
+                str(row_value(listing, "country") or "").strip().upper() in {"US", "USA", "UNITED STATES"}
+                and not community_us_city_variants(community_city)
+            ):
+                con.execute(
+                    """UPDATE ask_community_posts
+                       SET status = 'HIDDEN', fulfillment_status = 'CLOSED', updated_at = CURRENT_TIMESTAMP
+                       WHERE source_kind = 'HOUSING' AND source_public_id = ?
+                         AND status NOT IN ('HIDDEN', 'DELETED')""",
+                    (source_id,),
+                )
+                continue
             details = {
                 "rent": format_accommodation_rent(listing),
                 "moveInDate": str(row_value(listing, "move_in_date") or ""),
@@ -12816,13 +13038,7 @@ def sync_housing_into_community() -> None:
 _COMMUNITY_HOUSING_SYNC_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULED = False
-_COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED = 0.0
-# Community opens can be bursty after a mobile cold start. The projection is
-# derived data, so checking it once a minute is enough and avoids adding a
-# writer behind the feed, chat, rental, and ride reads that open together.
-COMMUNITY_HOUSING_SYNC_MIN_INTERVAL_SECONDS = positive_int_env(
-    "FAIRFARES_COMMUNITY_HOUSING_SYNC_SECONDS", 60
-)
+_COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = False
 
 
 def housing_community_projection_needs_sync() -> bool:
@@ -12838,6 +13054,7 @@ def housing_community_projection_needs_sync() -> bool:
             WHERE listings.visibility_status = 'ACTIVE'
               AND listings.public_id IS NOT NULL
               AND listings.public_id != ''
+              AND (listings.expires_at IS NULL OR listings.expires_at = '' OR datetime(listings.expires_at) > datetime('now'))
               AND (
                     projected.id IS NULL
                  OR COALESCE(projected.updated_at, '') != COALESCE(listings.updated_at, listings.created_at, '')
@@ -12861,32 +13078,34 @@ def ensure_housing_community_projection_current() -> None:
 
 
 def schedule_housing_community_projection_sync() -> None:
-    """Refresh derived housing cards without making an Ask feed read wait."""
-    global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED
-    now = time.monotonic()
+    """Refresh derived housing cards without making an Ask feed read wait.
+
+    Writes may arrive while a sync is already running.  Record one coalesced
+    retry in that case: dropping it behind a time throttle left a newly saved
+    Housing post absent from Ask for up to a minute.
+    """
+    global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED
     with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
-        if (
-            _COMMUNITY_HOUSING_SYNC_SCHEDULED
-            or (
-                _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED
-                and now - _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED < COMMUNITY_HOUSING_SYNC_MIN_INTERVAL_SECONDS
-            )
-        ):
+        if _COMMUNITY_HOUSING_SYNC_SCHEDULED:
+            _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = True
             return
         _COMMUNITY_HOUSING_SYNC_SCHEDULED = True
-        _COMMUNITY_HOUSING_SYNC_LAST_SCHEDULED = now
 
     def run() -> None:
-        global _COMMUNITY_HOUSING_SYNC_SCHEDULED
-        try:
-            ensure_housing_community_projection_current()
-        except sqlite3.Error:
-            # Derived data retries with the next feed load; the current feed
-            # should remain immediately available.
-            pass
-        finally:
+        global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED
+        while True:
+            try:
+                ensure_housing_community_projection_current()
+            except sqlite3.Error:
+                # Derived data retries with the next feed load; the current
+                # feed should remain immediately available.
+                pass
             with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
+                if _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED:
+                    _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = False
+                    continue
                 _COMMUNITY_HOUSING_SYNC_SCHEDULED = False
+                return
 
     threading.Thread(target=run, name="housing-community-sync", daemon=True).start()
 
@@ -12909,6 +13128,147 @@ def community_us_city_variants(value: str) -> tuple[str, ...]:
         return ()
     state_name = next((name.title() for name, state_code in COMMUNITY_US_STATE_NAMES.items() if state_code == code), "")
     return tuple(dict.fromkeys((f"{parts[0]}, {code}", f"{parts[0]}, {state_name}")))
+
+
+def infer_community_post_city(*values: object) -> str:
+    """Return a safe city/state only when a post explicitly names one.
+
+    Ask posts used to allow an empty location. Those rows cannot match either
+    the local feed or the nationwide-US section, even where the body clearly
+    says e.g. ``Location is Parker, Colorado``. This helper intentionally
+    does not guess from a member profile or device location; it repairs only
+    an explicit city-and-state mention in the post itself.
+    """
+    text = "\n".join(clean_multiline_text_value(value, 3_500) for value in values if value).strip()
+    if not text:
+        return ""
+    state_aliases = sorted(
+        set(COMMUNITY_US_STATE_NAMES) | set(COMMUNITY_US_STATE_CODES),
+        key=len,
+        reverse=True,
+    )
+    state_pattern = "|".join(re.escape(item) for item in state_aliases)
+    # Prefer a labelled location because it avoids treating arbitrary prose as
+    # a city. It accepts both abbreviations and full state names.
+    labelled = re.search(
+        rf"\b(?:location|located|city|area)\b\s*(?:is\s*)?[:\-]?\s*"
+        rf"([A-Za-z][A-Za-z .'-]{{0,56}}?)\s*,\s*({state_pattern})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if labelled:
+        variants = community_us_city_variants(f"{labelled.group(1).strip()}, {labelled.group(2).strip()}")
+        if variants:
+            return variants[0]
+    # A dedicated line such as "Parker, CO" is also unambiguous.
+    for match in re.finditer(
+        rf"(?m)^\s*([A-Za-z][A-Za-z .'-]{{0,56}}?)\s*,\s*({state_pattern})\s*$",
+        text,
+        re.IGNORECASE,
+    ):
+        variants = community_us_city_variants(f"{match.group(1).strip()}, {match.group(2).strip()}")
+        if variants:
+            return variants[0]
+    return ""
+
+
+CANADIAN_PROVINCE_CODES = {
+    "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
+}
+
+
+def community_post_city_label(value: object, *context: object) -> str:
+    """Return a location label that can safely participate in a public feed.
+
+    Direct Ask posts are not backed by a housing location record, so they
+    cannot use the housing resolver below.  A non-empty value such as
+    ``Parker`` or ``6343 E Girard Pl, Denver`` used to bypass validation even
+    though neither can be found in a local or nationwide feed.  Keep only a
+    state-qualified U.S. city, an explicit city/state in the post text, or a
+    structured non-U.S. city/region label. The latter remains local-only and
+    is never included in the nationwide U.S. section.
+    """
+    raw = clean_text_value(value, 120)
+    us_variants = community_us_city_variants(raw)
+    if us_variants:
+        return us_variants[0]
+    inferred = infer_community_post_city(raw, *context)
+    if inferred:
+        return inferred
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) == 2 and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{0,56}", parts[0]):
+        # Keep non-U.S. local communities usable, for example London,
+        # England or Halifax, NS. A two-letter value is accepted only for a
+        # recognised Canadian province; that still rejects U.S. typos such as
+        # "Denver, CE" instead of silently creating an unreachable post.
+        if parts[1].upper() in CANADIAN_PROVINCE_CODES:
+            return f"{parts[0]}, {parts[1].upper()}"
+        if len(parts[1]) > 2 and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,56}", parts[1]):
+            return f"{parts[0]}, {parts[1]}"
+    if (
+        len(parts) == 3
+        and all(re.fullmatch(r"[A-Za-z][A-Za-z .'-]{0,56}", part) for part in parts)
+        and inferred_location_country(raw)
+        and inferred_location_country(raw) != "US"
+    ):
+        return ", ".join(parts)
+    return ""
+
+
+def repair_unlocated_community_posts(*, force: bool = False) -> int:
+    """Backfill explicit city/state references on active city-less Ask posts."""
+    repair_key = str(DB_PATH)
+    now = time.monotonic()
+    with _COMMUNITY_LOCATION_REPAIR_LOCK:
+        last_run = _COMMUNITY_LOCATION_REPAIR_LAST_RUN.get(repair_key, 0.0)
+        if not force and now - last_run < COMMUNITY_LOCATION_REPAIR_INTERVAL_SECONDS:
+            return 0
+        _COMMUNITY_LOCATION_REPAIR_LAST_RUN[repair_key] = now
+    repaired = 0
+    with db() as con:
+        rows = con.execute(
+            """SELECT id, title, body, area FROM ask_community_posts
+               WHERE status IN ('PUBLISHED', 'LOCKED') AND trim(city) = ''"""
+        ).fetchall()
+        for row in rows:
+            city = infer_community_post_city(row_value(row, "title"), row_value(row, "body"))
+            if not city:
+                continue
+            con.execute(
+                """UPDATE ask_community_posts
+                   SET city = ?, area = CASE WHEN trim(area) = '' THEN ? ELSE area END
+                   WHERE id = ?""",
+                (city, city, int(row_value(row, "id") or 0)),
+            )
+            repaired += 1
+    return repaired
+
+
+def schedule_unlocated_community_post_repair() -> None:
+    """Repair location labels off the request path after a feed read begins."""
+    global _COMMUNITY_LOCATION_REPAIR_SCHEDULED
+    repair_key = str(DB_PATH)
+    now = time.monotonic()
+    with _COMMUNITY_LOCATION_REPAIR_LOCK:
+        last_run = _COMMUNITY_LOCATION_REPAIR_LAST_RUN.get(repair_key, 0.0)
+        if now - last_run < COMMUNITY_LOCATION_REPAIR_INTERVAL_SECONDS:
+            return
+    with _COMMUNITY_LOCATION_REPAIR_SCHEDULE_LOCK:
+        if _COMMUNITY_LOCATION_REPAIR_SCHEDULED:
+            return
+        _COMMUNITY_LOCATION_REPAIR_SCHEDULED = True
+
+    def run() -> None:
+        global _COMMUNITY_LOCATION_REPAIR_SCHEDULED
+        try:
+            repair_unlocated_community_posts()
+        except sqlite3.Error:
+            pass
+        finally:
+            with _COMMUNITY_LOCATION_REPAIR_SCHEDULE_LOCK:
+                _COMMUNITY_LOCATION_REPAIR_SCHEDULED = False
+
+    threading.Thread(target=run, name="community-location-repair", daemon=True).start()
 
 
 def community_local_city_variants(value: str) -> tuple[str, ...]:
@@ -12942,7 +13302,13 @@ def community_local_city_variants(value: str) -> tuple[str, ...]:
                     variants.extend(community_us_city_variants(f"{row['city']}, {row['state']}"))
     except sqlite3.Error:
         pass
-    return tuple(dict.fromkeys(item for item in variants if item))
+    # Each variant becomes both an exact and a prefix condition in the feed
+    # query. A large, dynamically refreshed metro catalogue can otherwise
+    # create hundreds of OR clauses and exceed SQLite's expression limit,
+    # returning a 500 for cities such as Boulder or Littleton. Keep the chosen
+    # city first, then the first metro members; 200 spellings covers up to 100
+    # municipalities while keeping the request well below SQLite's limits.
+    return tuple(dict.fromkeys(item for item in variants if item))[:200]
 
 
 def community_post_rows(
@@ -14667,8 +15033,12 @@ def live_status_for_booking(booking: sqlite3.Row | None) -> dict[str, str]:
         title = "Pickup awaiting approval"
         body = "Your pickup inspection was submitted. Staff will confirm the vehicle release."
     elif status == "RETURN_SUBMITTED":
-        title = "Return awaiting inspection"
-        body = "Your return evidence was submitted. Keep the confirmation until staff completes the review."
+        if row_value(booking, "return_review_status") == "CHARGES_PENDING":
+            title = "Return review in progress"
+            body = "Staff recorded a return issue. Your evidence is available in FairFares while the deposit and any applicable charges are reviewed."
+        else:
+            title = "Return awaiting inspection"
+            body = "Your return evidence was submitted. Keep the confirmation until staff completes the review."
     elif status == "RETURNED":
         title = "Vehicle returned"
         body = "This trip is complete. Documents remain available in your portal."
@@ -18069,9 +18439,15 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
     }
 
 
-def accommodation_post_image_urls(post_id: int, preview_image: str = "", limit: int = 4) -> list[str]:
-    image_urls: list[str] = []
-    if post_id:
+def accommodation_post_image_urls(
+    post_id: int,
+    preview_image: str = "",
+    limit: int = 4,
+    stored_image_urls: list[str] | None = None,
+) -> list[str]:
+    """Return a card's image URLs without reopening SQLite when preloaded."""
+    image_urls: list[str] = list(stored_image_urls or [])
+    if post_id and stored_image_urls is None:
         try:
             with db() as con:
                 image_rows = con.execute(
@@ -18092,8 +18468,19 @@ def accommodation_post_image_urls(post_id: int, preview_image: str = "", limit: 
     return [public_upload_url(image_url) for image_url in image_urls[:4] if image_url]
 
 
-def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
-    images = accommodation_post_image_urls(int(row_value(row, "id") or 0), row_value(row, "preview_image_url"), limit=4)
+def mobile_housing_post_payload(
+    row: sqlite3.Row,
+    *,
+    stored_image_urls: list[str] | None = None,
+    owner_photo: object | None = None,
+    owner_rating_summary: dict[str, object] | None = None,
+) -> dict[str, object]:
+    images = accommodation_post_image_urls(
+        int(row_value(row, "id") or 0),
+        row_value(row, "preview_image_url"),
+        limit=4,
+        stored_image_urls=stored_image_urls,
+    )
     preview_image = images[0] if images else ""
     listing_location = row_value(row, "city_area_zip") or row_value(row, "city") or row_value(row, "area_or_apartment")
     stored_country = str(row_value(row, "country") or "").strip().upper()
@@ -18102,7 +18489,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         currency_code = COUNTRY_CURRENCY_CODES.get(stored_country, stored_country)
         currency_symbol = COUNTRY_CURRENCY_SYMBOLS.get(stored_country, f"{stored_country} ")
     owner_user_id = int(row_value(row, "user_id") or 0)
-    owner_photo = row_value(row, "owner_photo")
+    owner_photo = owner_photo if owner_photo is not None else row_value(row, "owner_photo")
     if owner_user_id and not owner_photo:
         try:
             with db() as con:
@@ -18137,7 +18524,7 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "posterName": row_value(row, "owner_name") or row_value(row, "contact_name") or "FairFares member",
         "posterUserId": owner_user_id,
         "photoUrl": avatar_delivery_path(owner_photo, owner_user_id),
-        "ratingSummary": user_rating_summary(owner_user_id),
+        "ratingSummary": owner_rating_summary if owner_rating_summary is not None else user_rating_summary(owner_user_id),
         "daysLeft": accommodation_days_left(row),
         "expiryLabel": accommodation_expiry_label(row),
         "roommateIntent": bool(int(row_value(row, "roommate_intent") or 0)),
@@ -18177,6 +18564,66 @@ def mobile_housing_post_payload(row: sqlite3.Row) -> dict[str, object]:
         "genderPreferenceValue": row_value(row, "gender_preference"),
         "leaseTermValue": row_value(row, "lease_term"),
     }
+
+
+def mobile_housing_post_payloads(rows: list[sqlite3.Row]) -> list[dict[str, object]]:
+    """Build many housing cards with batched image, profile, and rating reads.
+
+    A feed previously made one image query and up to two rating queries per
+    card. During a brief SQLite writer this turned a 12-card bootstrap into a
+    chain of waits. Keep the public card shape identical while using only a
+    small, bounded set of lookups for the entire result page.
+    """
+    if not rows:
+        return []
+    post_ids = sorted({int(row_value(row, "id") or 0) for row in rows if int(row_value(row, "id") or 0) > 0})
+    owner_ids = sorted({int(row_value(row, "user_id") or 0) for row in rows if int(row_value(row, "user_id") or 0) > 0})
+    images_by_post: dict[int, list[str]] = {post_id: [] for post_id in post_ids}
+    owners_by_id: dict[int, str] = {}
+    rating_summaries: dict[int, dict[str, object]] = {}
+    if post_ids or owner_ids:
+        with db() as con:
+            if post_ids:
+                placeholders = ",".join("?" for _ in post_ids)
+                image_rows = con.execute(
+                    f"""
+                    SELECT post_id, image_url
+                    FROM (
+                        SELECT post_id, image_url,
+                               ROW_NUMBER() OVER (PARTITION BY post_id ORDER BY sort_order ASC, id ASC) AS image_rank
+                        FROM accommodation_post_images
+                        WHERE post_id IN ({placeholders})
+                    )
+                    WHERE image_rank <= 4
+                    ORDER BY post_id ASC, image_rank ASC
+                    """,
+                    post_ids,
+                ).fetchall()
+                for image_row in image_rows:
+                    post_id = int(row_value(image_row, "post_id") or 0)
+                    image_url = str(row_value(image_row, "image_url") or "")
+                    if post_id and image_url:
+                        images_by_post.setdefault(post_id, []).append(image_url)
+            if owner_ids:
+                placeholders = ",".join("?" for _ in owner_ids)
+                owner_rows = con.execute(
+                    f"SELECT id, profile_photo_url FROM users WHERE id IN ({placeholders})",
+                    owner_ids,
+                ).fetchall()
+                owners_by_id = {
+                    int(row_value(owner_row, "id") or 0): str(row_value(owner_row, "profile_photo_url") or "")
+                    for owner_row in owner_rows
+                }
+                rating_summaries = user_rating_summaries(con, owner_ids)
+    return [
+        mobile_housing_post_payload(
+            row,
+            stored_image_urls=images_by_post.get(int(row_value(row, "id") or 0), []),
+            owner_photo=row_value(row, "owner_photo") or owners_by_id.get(int(row_value(row, "user_id") or 0), ""),
+            owner_rating_summary=rating_summaries.get(int(row_value(row, "user_id") or 0)),
+        )
+        for row in rows
+    ]
 
 
 def mobile_housing_posts_for_viewer(posts: list[dict[str, object]], viewer_id: int = 0) -> list[dict[str, object]]:
@@ -20058,7 +20505,12 @@ def mobile_rental_service_booking_payload(
     documents_locked = bool(current_doc.get("locked")) if current_doc else row_value(row, "booking_status") not in {"PICKED_UP", "RETURNED", "CANCELLED"}
     payload.update(
         {
-            "statusLabel": booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status")),
+            "statusLabel": (
+                "Return review in progress"
+                if row_value(row, "booking_status") == "RETURN_SUBMITTED"
+                and row_value(row, "return_review_status") == "CHARGES_PENDING"
+                else booking_status_label(row_value(row, "booking_status"), row_value(row, "payment_status"))
+            ),
             "paymentLabel": payment_status_label(row_value(row, "payment_status")),
             "depositLabel": str(row_value(row, "security_deposit_status") or "NOT_AUTHORIZED").replace("_", " ").title(),
             "totalLabel": format_money(breakdown.get("total")),
@@ -20103,16 +20555,29 @@ def mobile_rental_service_booking_payload(
                 "actualPickupTime": row_value(row, "actual_pickup_time"),
                 "actualReturnDate": row_value(row, "actual_return_date"),
                 "actualReturnTime": row_value(row, "actual_return_time"),
+                "actualReturnLocation": row_value(row, "actual_return_location") or row_value(row, "dropoff_location") or row_value(row, "return_location"),
                 "pickupOdometer": int(row_value(row, "pickup_odometer") or 0),
                 "returnOdometer": int(row_value(row, "return_odometer") or 0),
                 "pickupFuelLevel": row_value(row, "pickup_fuel_level"),
                 "returnFuelLevel": row_value(row, "return_fuel_level"),
+                "returnConditionStatus": row_value(row, "return_condition_status") or "PENDING",
+                "returnKeysConfirmed": row_value(row, "return_keys_confirmed") or "PENDING",
+                "returnCleanlinessStatus": row_value(row, "return_cleanliness_status") or "PENDING",
+                "returnSmokingStatus": row_value(row, "return_smoking_status") or "PENDING",
+                "returnIssueTypes": [value for value in row_value(row, "return_issue_types").split(",") if value],
+                "returnIssueNotes": row_value(row, "post_return_charge_notes"),
+                "returnDamagePhotoCount": sum(bool(row_value(row, field)) for field in RETURN_DAMAGE_PHOTO_FIELDS),
                 "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
                 "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                 "identityStatus": identity_status,
                 "identityTitle": identity_title,
                 "identityMessage": identity_message,
                 "pickupSubmitted": row_value(row, "booking_status") in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"},
+                "pickupAcceptanceStatus": row_value(row, "pickup_acceptance_status") or "NOT_REQUESTED",
+                "pickupAcceptanceRequestedAt": row_value(row, "pickup_acceptance_requested_at") or "",
+                "pickupExistingDamageStatus": row_value(row, "pickup_existing_damage_status") or "NOT_RECORDED",
+                "pickupExistingDamageNotes": row_value(row, "pickup_existing_damage_notes") or "",
+                "pickupExistingDamagePhotoCount": sum(bool(row_value(row, field)) for field in PICKUP_EXISTING_DAMAGE_PHOTO_FIELDS),
                 "returnSubmitted": row_value(row, "booking_status") in {"RETURN_SUBMITTED", "RETURNED"},
             },
         }
@@ -20184,7 +20649,10 @@ def mobile_housing_posts(
     post_public_id: str = "",
 ) -> list[dict[str, object]]:
     schedule_accommodation_post_expiry()
-    repair_active_housing_city_labels()
+    # City normalization is maintenance, not a prerequisite for rendering a
+    # listing. Run it off this hot path so a cold mobile bootstrap remains a
+    # read even when a repair is due.
+    schedule_active_housing_city_label_repair()
     typed_city_region = re.search(
         r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$",
         clean_text_value(city, 120),
@@ -20396,22 +20864,11 @@ def mobile_housing_posts(
     with db() as con:
         rows = con.execute(
             f"""
-            WITH first_images AS (
-                SELECT post_id, image_url
-                FROM (
-                    SELECT post_id, image_url,
-                           ROW_NUMBER() OVER (PARTITION BY post_id ORDER BY sort_order ASC, id ASC) AS image_rank
-                    FROM accommodation_post_images
-                )
-                WHERE image_rank = 1
-            )
             SELECT accommodation_posts.*,
                    users.name AS owner_name,
-                   users.profile_photo_url AS owner_photo,
-                   first_images.image_url AS preview_image_url
+                   users.profile_photo_url AS owner_photo
             FROM accommodation_posts
             LEFT JOIN users ON users.id = accommodation_posts.user_id
-            LEFT JOIN first_images ON first_images.post_id = accommodation_posts.id
             WHERE {where_sql}
             ORDER BY datetime(accommodation_posts.created_at) DESC
             LIMIT ? OFFSET ?
@@ -20430,6 +20887,10 @@ def mobile_housing_posts(
         if "," in city:
             city_terms.append(city.split(",", 1)[0].strip())
         city_terms = [term for term in dict.fromkeys(term for term in city_terms if term)]
+    payloads_by_post_id = {
+        int(row_value(row, "id") or 0): payload
+        for row, payload in zip(rows, mobile_housing_post_payloads(rows))
+    }
     ranked_payloads: list[tuple[int, float, dict[str, object]]] = []
     repaired_coordinates: list[tuple[float, float, int]] = []
     requested_city_name, _requested_region = split_city_state(city or area)
@@ -20455,7 +20916,7 @@ def mobile_housing_posts(
         # Denver, Portland, Springfield, and Columbus.
         if requested_us_state and any(state != requested_us_state for state in listing_states):
             continue
-        item = mobile_housing_post_payload(row)
+        item = dict(payloads_by_post_id.get(int(row_value(row, "id") or 0), {}))
         lat, lng, used_city_fallback = accommodation_post_search_point(row)
         if used_city_fallback and row_value(row, "street_address"):
             precise_point = precise_accommodation_location_point(accommodation_address_label(row))
@@ -22622,7 +23083,10 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
     ).upper()
     is_group = bool(community_public_id) or conversation_kind in {"GROUP", "COMMUNITY"}
     other_user_id = 0 if is_group else int(row_value(row, "other_user_id") or 0)
-    can_rate_other_user = can_rate_chat_member(str(row_value(row, "public_id") or ""), current_user_id, other_user_id)
+    other_is_guest = bool(int(row_value(row, "other_guest_account") or 0)) if not is_group else False
+    # Guest sessions are short-lived, scoped community channels. They are not
+    # public member identities and must never receive a persistent rating.
+    can_rate_other_user = not other_is_guest and can_rate_chat_member(str(row_value(row, "public_id") or ""), current_user_id, other_user_id)
     group_name = community_name or (row_value(row, "subject") if is_group else "") or "FairFares group"
     calculated_unread = max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0
     unread = int(row_value(row, "unread_count", str(calculated_unread)) or 0)
@@ -22648,6 +23112,7 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         # peer merely because that relationship is absent.
         "otherName": group_name if is_group else row_value(row, "other_name") or "FairFares member",
         "otherUserId": other_user_id,
+        "otherIsGuest": other_is_guest,
         "otherRatingSummary": user_rating_summary(other_user_id),
         "canRateOtherUser": can_rate_other_user,
         "otherPhone": canonical_e164_phone(row_value(row, "other_phone"))
@@ -22705,6 +23170,7 @@ def get_chat_conversation_for_user(con: sqlite3.Connection, conversation_id: int
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
+               COALESCE(other_user.guest_account, 0) AS other_guest_account,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -22760,6 +23226,7 @@ def get_chat_conversation_by_public_id(con: sqlite3.Connection, public_id: str, 
                COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
+               COALESCE(other_user.guest_account, 0) AS other_guest_account,
                MAX(other_sessions.last_seen_at) AS other_last_seen_at,
                MAX(CASE WHEN datetime(other_sessions.last_seen_at) >= datetime('now', '-2 minutes') THEN 1 ELSE 0 END) AS other_online
         FROM chat_conversations conversations
@@ -24507,6 +24974,7 @@ def get_chat_conversations_for_user(
                    COALESCE(other_user.name, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.name END) AS other_name,
                    COALESCE(other_user.phone, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.phone END) AS other_phone,
                    COALESCE(other_user.profile_photo_url, CASE WHEN conversations.conversation_type = 'DIRECT' THEN participant_user.profile_photo_url END) AS other_photo_url,
+                   COALESCE(other_user.guest_account, 0) AS other_guest_account,
                    (
                        SELECT MAX(presence.last_seen_at)
                        FROM sessions presence
@@ -24665,6 +25133,18 @@ def get_accommodation_posts_for_user(user_id: int) -> list[sqlite3.Row]:
             """,
             (user_id,),
         ).fetchall()
+
+
+def accommodation_post_count_for_user(user_id: int) -> int:
+    """Return the dashboard total without loading up to 80 listing rows."""
+    if user_id <= 0:
+        return 0
+    with db() as con:
+        row = con.execute(
+            "SELECT COUNT(*) AS total FROM accommodation_posts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return int(row_value(row, "total") or 0)
 
 
 def render_dashboard_housing_rows(posts: list[sqlite3.Row]) -> str:
@@ -27150,6 +27630,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/rentals/bookings":
             self.api_mobile_rental_bookings()
             return
+        if parsed.path == "/api/mobile/rentals/pickup-evidence-photo":
+            self.api_mobile_rental_pickup_evidence_photo(parsed)
+            return
         if parsed.path == "/api/mobile/rentals/policy":
             self.send_json({"ok": True, "policy": mobile_rental_policy_payload()})
             return
@@ -27158,6 +27641,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/admin/pickups":
             self.api_mobile_admin_pickups()
+            return
+        if parsed.path == "/api/mobile/admin/handoff-photo":
+            self.api_mobile_admin_handoff_photo(parsed)
             return
         if parsed.path == "/api/chat/conversations":
             self.api_chat_conversations(parsed)
@@ -27555,6 +28041,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/rentals/support-ticket": self.api_mobile_rental_support_ticket,
             "/api/mobile/rentals/identity-session": self.api_mobile_rental_identity_session,
             "/api/mobile/rentals/pickup-submit": self.api_mobile_rental_pickup_submit,
+            "/api/mobile/rentals/pickup-acceptance": self.api_mobile_rental_pickup_acceptance,
             "/api/mobile/rentals/return-submit": self.api_mobile_rental_return_submit,
             "/api/mobile/student-verification": self.api_mobile_student_verification,
             "/api/mobile/admin/identity/stripe-session": self.api_mobile_admin_stripe_identity_session,
@@ -27587,6 +28074,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/workspace/post/comment": self.comment_workspace_post,
             "/admin/workspace/post/share-slack": self.share_workspace_post_to_slack,
             "/admin/community/moderate": self.moderate_community_content,
+            "/admin/community/metadata": self.update_admin_community_metadata,
             "/admin/chitthi/reports/moderate": self.moderate_chat_report,
             "/admin/users/moderate": self.moderate_user_account,
             "/admin/bookings/status": self.update_admin_booking_status,
@@ -28976,6 +29464,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not post_country:
             self.redirect("/accommodations?error=location")
             return
+        # Store one state-qualified municipality for every U.S. listing.
+        # Members select their neighbourhood/address only; the catalogue and
+        # resolver identify its city and metro for both Housing and Ask.
+        if post_country == "US":
+            with db() as con:
+                canonical_city = housing_community_city_label(con, {
+                    "city": form.get("city"),
+                    "country": post_country,
+                    "zip_code": form.get("zip_code"),
+                    "street_address": form.get("street_address"),
+                    "area_or_apartment": form.get("area_or_apartment"),
+                    "city_area_zip": form.get("city_area_zip") or location_point.get("label"),
+                    "primary_neighborhood": form.get("primary_neighborhood"),
+                    "apartment_name": form.get("apartment_name"),
+                    "work_school_location": form.get("work_school_location"),
+                    "lat": post_lat,
+                    "lng": post_lng,
+                })
+            if not community_us_city_variants(canonical_city):
+                # Publishing with a bare city would create a Housing listing
+                # that cannot be included in its local or national Ask feed.
+                # Ask the member to choose a resolvable address/neighbourhood.
+                self.redirect("/accommodations?error=location")
+                return
+            form["city"] = canonical_city
         city_area_value = (form.get("city_area_zip") or "").strip()
         if mode == "HAVE_PLACE":
             city_bits = [
@@ -32653,9 +33166,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         confirmed_booking = get_booking_by_id(int(row_value(booking, "id") or 0))
         send_rental_booking_push(
             confirmed_booking or booking,
-            "Rental booking confirmed",
-            f"Payment received. Your booking {row_value(booking, 'booking_id')} is confirmed.",
-            "PAYMENT_CONFIRMED",
+            "10% rental hold received",
+            "Your reservation is confirmed. Pay the remaining rental balance before pickup.",
+            "HOLD_PAYMENT_CONFIRMED",
         )
         self.send_json(
             {
@@ -34582,6 +35095,23 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         posts = get_admin_community_posts()
         reports = get_admin_community_reports()
         chat_reports = get_admin_chat_reports()
+        category_labels = {
+            "GENERAL": "General",
+            "NEED_ROOMMATE": "Need roommates",
+            "NEED_PLACE": "Need a place",
+            "HAVE_PLACE": "Have a place",
+            "CARPOOL_RIDE": "Carpool ride",
+            "HOUSING": "Housing",
+            "RIDES": "Rides",
+            "LOCAL": "Local",
+            "STUDENT": "Student",
+            "SERVICES": "Services",
+            "SAFETY": "Safety",
+        }
+        category_options = lambda selected: "".join(
+            f'<option value="{escape(category)}"{ " selected" if category == selected else ""}>{escape(category_labels[category])}</option>'
+            for category in sorted(COMMUNITY_CATEGORIES)
+        )
         post_rows = "".join(
             f"""
             <article class="admin-community-card" data-admin-user-card data-admin-community-card data-search="{escape(' '.join(str(value or '') for value in (row_value(post, 'public_id'), row_value(post, 'title'), row_value(post, 'body'), row_value(post, 'author_name'), row_value(post, 'author_email'), row_value(post, 'city'), row_value(post, 'area'))).lower())}">
@@ -34597,6 +35127,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 <button name="action" value="LOCK" type="submit">Lock</button>
                 <button name="action" value="HIDE" type="submit">Hide</button>
                 <button class="danger-button" name="action" value="DELETE" type="submit">Delete</button>
+              </form>
+              <form method="post" action="/admin/community/metadata" class="admin-community-actions">
+                <input type="hidden" name="post_id" value="{escape(row_value(post, 'public_id'))}">
+                <label>Category <select name="category">{category_options(str(row_value(post, 'category') or 'GENERAL'))}</select></label>
+                <label>City <input name="city" value="{escape(row_value(post, 'city'))}" placeholder="Parker, CO"></label>
+                <label>Area <input name="area" value="{escape(row_value(post, 'area'))}" placeholder="Optional neighbourhood or area"></label>
+                <button type="submit">Save category &amp; location</button>
               </form>
             </article>
             """ for post in posts
@@ -34644,6 +35181,39 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if post:
                 con.execute("UPDATE ask_community_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, int(post["id"])))
                 con.execute("UPDATE ask_community_reports SET status = 'RESOLVED', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE post_id = ? AND status = 'OPEN'", (int(user["id"]), int(post["id"])))
+        self.redirect("/admin/community")
+
+    def update_admin_community_metadata(self) -> None:
+        """Let an owner correct a public post's discovery category and location."""
+        user = self.require_owner_admin("/admin/community")
+        if not user:
+            return
+        form = self.read_form()
+        post_public_id = clean_text_value(form.get("post_id"), 80)
+        category = clean_text_value(form.get("category"), 40).upper()
+        city = clean_text_value(form.get("city"), 120)
+        area = clean_text_value(form.get("area"), 120)
+        if not post_public_id or category not in COMMUNITY_CATEGORIES:
+            self.redirect("/admin/community")
+            return
+        with db() as con:
+            post = con.execute(
+                "SELECT id, title, body, community_id FROM ask_community_posts WHERE public_id = ?",
+                (post_public_id,),
+            ).fetchone()
+            if post:
+                city = community_post_city_label(city, row_value(post, "title"), row_value(post, "body"), area)
+                if not city and not row_value(post, "community_id"):
+                    self.redirect("/admin/community?metadata=location")
+                    return
+                if city and not area:
+                    area = city
+                con.execute(
+                    """UPDATE ask_community_posts
+                       SET category = ?, city = ?, area = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (category, city, area, int(row_value(post, "id") or 0)),
+                )
         self.redirect("/admin/community")
 
     def moderate_chat_report(self) -> None:
@@ -35863,34 +36433,67 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_text("Photo not found.", 404)
             return
         field = str(params.get("field", [""])[0] or "")
-        if field not in RENTAL_HANDOFF_PHOTO_FIELDS:
-            self.send_text("Photo not found.", 404)
-            return
-        booking = get_booking_by_id(booking_id)
-        reference = str(row_value(booking, field) or "") if booking else ""
-        if reference.startswith("data:image/"):
-            image = data_url_upload_parts(
-                reference,
-                f"handoff-{booking_id}-{field}",
-                allowed_mime_types={"image/jpeg", "image/png", "image/webp", "image/gif"},
-                max_bytes=2_000_000,
-            )
-        elif reference.startswith("drive://"):
-            image = google_drive_upload_parts(reference.removeprefix("drive://").strip())
-        elif reference.startswith("r2://"):
-            image = r2_upload_parts(reference, max_bytes=2_000_000)
-        else:
-            image = local_upload_parts(reference)
+        image = rental_handoff_photo_parts(booking_id, field)
         if not image:
             self.send_text("Photo is not available.", 404)
             return
         filename, mime_type, payload = image
-        if mime_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"} or len(payload) > 2_000_000:
-            self.send_text("Photo is not available.", 404)
-            return
         self.send_response(200)
         self.send_header("Content-Type", mime_type)
         self.send_header("Content-Disposition", f'inline; filename="{re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "handoff-photo"}"')
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def api_mobile_rental_pickup_evidence_photo(self, parsed: urllib.parse.ParseResult) -> None:
+        """Expose only the renter's pickup condition photos during acceptance."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        booking = get_mobile_rental_booking_by_identifier(user, (params.get("bookingId", [""])[0] or ""))
+        field = str(params.get("field", [""])[0] or "")
+        # A renter may review their own pickup and return vehicle evidence. Driver
+        # license images remain staff-only and are deliberately not in this set.
+        allowed = set(RENTAL_HANDOFF_PHOTO_FIELDS)
+        if not booking or field not in allowed or str(row_value(booking, "booking_status") or "") not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED", "RETURNED"}:
+            self.send_json({"ok": False, "error": "Pickup evidence not found."}, 404)
+            return
+        image = rental_handoff_photo_parts(int(row_value(booking, "id") or 0), field)
+        if not image:
+            self.send_json({"ok": False, "error": "Photo not found."}, 404)
+            return
+        filename, mime_type, contents = image
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Disposition", f'inline; filename="{re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "pickup-evidence"}"')
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(contents)))
+        self.end_headers()
+        self.wfile.write(contents)
+
+    def api_mobile_admin_handoff_photo(self, parsed: urllib.parse.ParseResult) -> None:
+        """Return one private pickup/return image to an authenticated staff app."""
+        if not self.require_mobile_admin():
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            booking_id = int(params.get("bookingId", ["0"])[0] or 0)
+        except (TypeError, ValueError):
+            booking_id = 0
+        field = str(params.get("field", [""])[0] or "")
+        image = rental_handoff_photo_parts(booking_id, field)
+        if not image:
+            self.send_json({"ok": False, "error": "Photo not found."}, 404)
+            return
+        filename, mime_type, payload = image
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Disposition", f'inline; filename="{re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "handoff-photo"}')
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(payload)))
@@ -36019,39 +36622,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f'<p class="request-notice"><b>Refund result</b><span>{escape(refund_feedback)}</span></p>'
             if refund_feedback and refund_booking_id == int(row_value(row, "id") or 0) else ""
         )
-        booking_status_options = (
-            ("PENDING_HOLD", "Pending 10-min hold"),
-            ("EXPIRED_HOLD", "Expired hold"),
-            ("CONFIRMED", "Confirmed"),
-            ("MODIFIED", "Modification pending"),
-            ("CANCELLATION_REQUESTED", "Cancellation requested"),
-            ("CANCELLED", "Cancelled"),
-            ("PICKUP_SUBMITTED", "Pickup awaiting approval"),
-            ("PICKED_UP", "Picked up"),
-            ("RETURN_SUBMITTED", "Return awaiting inspection"),
-            ("RETURNED", "Returned"),
-        )
-        status_options = "".join(
-            f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{escape(label)}</option>'
-            for status, label in booking_status_options
-        )
-        payment_status_options = (
-            ("HOLD_PENDING", "Hold payment pending"),
-            ("HOLD_EXPIRED", "Expired"),
-            ("HOLD_PAID", "10% hold paid"),
-            ("PAID", "Paid in full"),
-            ("PAY_AT_PICKUP", "Payment pending"),
-            ("REFUND_REVIEW", "Refund review"),
-        )
-        payment_options = "".join(
-            f'<option value="{status}" {"selected" if row["payment_status"] == status else ""}>{escape(label)}</option>'
-            for status, label in payment_status_options
-        )
         request_note = ""
         requested_trip = ""
         if is_request:
             request_type = "Cancellation approval requested" if row["booking_status"] == "CANCELLATION_REQUESTED" else "Modification approval requested"
-            action_copy = "Choose CANCELLED to approve cancellation, or CONFIRMED to keep booking." if row["booking_status"] == "CANCELLATION_REQUESTED" else "Choose CONFIRMED to apply the requested trip, or keep MODIFIED while it is pending."
+            action_copy = "Approve the cancellation or keep the booking." if row["booking_status"] == "CANCELLATION_REQUESTED" else "Approve the requested trip or leave it pending."
             request_note = f'<small class="approval-note"><b>{escape(request_type)}</b>{escape(action_copy)}</small>'
         if row["booking_status"] == "MODIFIED" and modification:
             requested_vehicle = modification.get("carId")
@@ -36064,18 +36639,44 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 f"<br>{escape(str(modification.get('pickupLocation') or row['pickup_location']))} → "
                 f"{escape(str(modification.get('returnLocation') or row['dropoff_location']))}</div>"
             )
-        status_control = f"""
+        if row["booking_status"] == "MODIFIED":
+            approval_options = (
+                ("MODIFIED", "Keep modification pending"),
+                ("CONFIRMED", "Approve requested trip"),
+            )
+        elif row["booking_status"] == "CANCELLATION_REQUESTED":
+            approval_options = (
+                ("CANCELLATION_REQUESTED", "Keep cancellation pending"),
+                ("CONFIRMED", "Keep booking"),
+                ("CANCELLED", "Approve cancellation"),
+            )
+        else:
+            approval_options = ()
+        approval_select = "".join(
+            f'<option value="{status}" {"selected" if row["booking_status"] == status else ""}>{escape(label)}</option>'
+            for status, label in approval_options
+        )
+        payment_display = escape(payment_label)
+        if is_admin_user(user) and approval_options:
+            status_control = f"""
                 <form method="post" action="/admin/bookings/status" class="admin-stack-form">
                     <input type="hidden" name="booking_id" value="{row["id"]}">
-                    <select name="booking_status">{status_options}</select>
-                    <select name="payment_status">{payment_options}</select>
+                    <input type="hidden" name="payment_status" value="{escape(row["payment_status"])}">
+                    <select name="booking_status">{approval_select}</select>
                     <input name="reason" value="{escape(row["cancellation_reason"])}" placeholder="Reason / notes">
                     {request_note}
-                    <button type="submit">Save</button>
+                    <button type="submit">Save decision</button>
                 </form>
-        """ if is_admin_user(user) else """
+            """
+        elif is_admin_user(user):
+            status_control = f"""
+                <small class="approval-note"><b>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</b>
+                Payment: {payment_display}. Use <a href="/admin/pickup">Rental handoffs</a> for pickup and return inspections.</small>
+            """
+        else:
+            status_control = """
                 <small class="approval-note"><b>Owner-admin control</b>Payment and booking-status corrections are restricted. Complete pickup and return in the handoff workspace.</small>
-        """
+            """
         return f"""
         <tr id="booking-{int(row_value(row, 'id') or 0)}" class="{'admin-request-row' if is_request else ''}">
             <td data-label="Booking"><b>{escape(row["booking_id"])}</b><span>{escape(booking_status_label(row["booking_status"], row["payment_status"]))}</span></td>
@@ -37096,12 +37697,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not previous_booking:
             self.send_error(404, "Booking not found.")
             return
+        previous_booking_status = str(row_value(previous_booking, "booking_status") or "")
+        allowed_status_changes = {
+            "MODIFIED": {"MODIFIED", "CONFIRMED"},
+            "CANCELLATION_REQUESTED": {"CANCELLATION_REQUESTED", "CONFIRMED", "CANCELLED"},
+        }.get(previous_booking_status, {previous_booking_status})
+        if booking_status not in allowed_status_changes:
+            self.send_error(
+                409,
+                "This booking status is managed by checkout or the rental handoff workspace. "
+                "Only pending modifications and cancellations can be decided here.",
+            )
+            return
         manual_refund_status_attempt = (
             requested_payment_status == "REFUNDED"
             and row_value(previous_booking, "payment_status") != "REFUNDED"
         )
         if manual_refund_status_attempt:
             payment_status = "REFUND_REVIEW"
+        elif requested_payment_status != row_value(previous_booking, "payment_status"):
+            self.send_error(
+                409,
+                "Payment status is recorded by Stripe and cannot be changed from the booking table.",
+            )
+            return
         approved_modification = (
             row_value(previous_booking, "booking_status") == "MODIFIED"
             and booking_status == "CONFIRMED"
@@ -40313,7 +40932,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 },
                 "features": {"chitthi": chitthi_transfer_features(user_id)},
                 "dashboard": {
-                    "housingPosts": len(get_accommodation_posts_for_user(user_id)) if user_id else 0,
+                    "housingPosts": accommodation_post_count_for_user(user_id),
                     "messages": unread_count,
                 },
                 "hasSubmittedHousingExperience": has_submitted_housing_experience(user_id),
@@ -40367,6 +40986,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "pickupDate": row_value(row, "pickup_date"),
                     "pickupTime": row_value(row, "pickup_time"),
                     "pickupLocation": row_value(row, "pickup_location"),
+                    "returnLocation": row_value(row, "dropoff_location") or row_value(row, "return_location") or row_value(row, "pickup_location"),
                     "returnDate": row_value(row, "dropoff_date"),
                     "returnTime": row_value(row, "dropoff_time"),
                     "bookingStatus": row_value(row, "booking_status"),
@@ -40374,6 +40994,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "depositStatus": row_value(row, "security_deposit_status") or "NOT_AUTHORIZED",
                     "depositAmount": float(row_value(row, "security_deposit_amount") or SECURITY_DEPOSIT_AMOUNT),
                     "returnReviewStatus": row_value(row, "return_review_status") or "PENDING",
+                    "actualReturnLocation": row_value(row, "actual_return_location") or row_value(row, "dropoff_location") or row_value(row, "return_location"),
+                    "returnConditionStatus": row_value(row, "return_condition_status") or "PENDING",
+                    "returnKeysConfirmed": row_value(row, "return_keys_confirmed") or "PENDING",
+                    "returnCleanlinessStatus": row_value(row, "return_cleanliness_status") or "PENDING",
+                    "returnSmokingStatus": row_value(row, "return_smoking_status") or "PENDING",
+                    "returnIssueTypes": [value for value in row_value(row, "return_issue_types").split(",") if value],
+                    "returnIssueNotes": row_value(row, "post_return_charge_notes"),
+                    "returnDamagePhotoCount": sum(bool(row_value(row, field)) for field in RETURN_DAMAGE_PHOTO_FIELDS),
                     # This cancels a Stripe authorization without inspection
                     # evidence, so it is an owner-admin exception.
                     "offlineReturnEligible": offline_return_eligible and is_admin_user(staff_user),
@@ -40384,8 +41012,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "pickupEvidenceComplete": all(row_value(row, field) for field in (
                         "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
                         "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
-                        "pickup_customer_signature",
+                        "pickup_license_front_image", "pickup_license_back_image", "pickup_customer_signature",
                     )),
+                    "pickupAcceptanceStatus": row_value(row, "pickup_acceptance_status") or "NOT_REQUESTED",
+                    "pickupLicenseCaptured": bool(row_value(row, "pickup_license_front_image") and row_value(row, "pickup_license_back_image")),
+                    "pickupExistingDamageStatus": row_value(row, "pickup_existing_damage_status") or "NOT_RECORDED",
+                    "pickupExistingDamageNotes": row_value(row, "pickup_existing_damage_notes") or "",
+                    "pickupExistingDamagePhotoCount": sum(bool(row_value(row, field)) for field in PICKUP_EXISTING_DAMAGE_PHOTO_FIELDS),
                     "returnEvidenceComplete": all(row_value(row, field) for field in (
                         "return_front_image", "return_back_image", "return_left_image", "return_right_image",
                         "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
@@ -40455,7 +41088,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "requested": True, "message": "Identity verification is ready. Ask the renter to open this booking in the FairFares app and complete the secure DL and selfie check on their own phone."})
 
     def api_mobile_admin_handoff_inspection(self) -> None:
-        """Save the staff-only, in-person pickup or return checklist."""
+        """Staff records pickup evidence; the renter must then accept it in their app."""
         admin = self.require_mobile_admin()
         if not admin:
             return
@@ -40480,69 +41113,125 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         staff_signature = clean_text_value(payload.get("staffSignature") or row_value(admin, "name"), 160)
         photos = payload.get("photos") if isinstance(payload.get("photos"), dict) else {}
         photo_keys = ("front", "back", "left", "right", "odometer", "fuel", "interiorFront", "interiorRear")
-        if not all((actual_date, actual_time, odometer > 0, fuel_level, customer_signature, staff_signature)) or any(not photos.get(key) for key in photo_keys):
-            self.send_json({"ok": False, "error": "Date, time, mileage, fuel, both signatures, and all eight vehicle photos are required."}, 400)
+        required_signatures = (staff_signature,) if phase == "pickup" else (customer_signature, staff_signature)
+        if not all((actual_date, actual_time, odometer > 0, fuel_level, *required_signatures)) or any(not photos.get(key) for key in photo_keys):
+            signature_copy = "staff signature" if phase == "pickup" else "both signatures"
+            self.send_json({"ok": False, "error": f"Date, time, mileage, fuel, {signature_copy}, and all eight vehicle photos are required."}, 400)
             return
         if phase == "pickup":
             if row_value(booking, "booking_status") != "CONFIRMED" or row_value(booking, "payment_status") != "PAID":
-                self.send_json({"ok": False, "error": "Only a fully paid confirmed booking can be picked up."}, 409)
+                self.send_json({"ok": False, "error": "Only a fully paid confirmed booking can be inspected for pickup."}, 409)
                 return
             identity = latest_identity_verification(int(row_value(booking, "user_id") or 0), booking_id)
             if row_value(identity, "status") != "VERIFIED":
                 self.send_json({"ok": False, "error": "The renter must complete Stripe Identity before pickup."}, 409)
                 return
+            license_photos = payload.get("licensePhotos") if isinstance(payload.get("licensePhotos"), dict) else {}
+            if not license_photos.get("front") or not license_photos.get("back"):
+                self.send_json({"ok": False, "error": "Capture the renter's driver license front and back before requesting acceptance."}, 400)
+                return
+            damage_status = clean_text_value(payload.get("existingDamageStatus"), 20).upper() or "NONE"
+            if damage_status not in {"NONE", "RECORDED"}:
+                self.send_json({"ok": False, "error": "Choose whether existing damage is present."}, 400)
+                return
+            damage_notes = clean_text_value(payload.get("existingDamageNotes"), 1000)
+            damage_photos = payload.get("existingDamagePhotos") if isinstance(payload.get("existingDamagePhotos"), list) else []
+            if len(damage_photos) > 10:
+                self.send_json({"ok": False, "error": "A pickup record can include up to 10 existing-damage photos."}, 400)
+                return
+            if damage_status == "RECORDED" and (not damage_notes or not damage_photos):
+                self.send_json({"ok": False, "error": "Describe and photograph any existing damage before requesting acceptance."}, 400)
+                return
         elif row_value(booking, "booking_status") != "PICKED_UP":
             self.send_json({"ok": False, "error": "Only a picked-up vehicle can be returned."}, 409)
             return
-        stored = {
-            key: store_rental_handoff_photo(
-                data_url=str(photos.get(key) or ""),
-                fallback_name=f"{row_value(booking, 'booking_id')}-{phase}-{key}",
-            ) for key in photo_keys
-        }
+        stored = {key: store_rental_handoff_photo(data_url=str(photos.get(key) or ""), fallback_name=f"{row_value(booking, 'booking_id')}-{phase}-{key}") for key in photo_keys}
         if not all(stored.values()):
             self.send_json({"ok": False, "error": "A vehicle photo could not be saved. Retake that photo and try again."}, 502)
             return
         if phase == "pickup":
+            stored_license = {key: store_rental_handoff_photo(data_url=str(license_photos.get(key) or ""), fallback_name=f"{row_value(booking, 'booking_id')}-license-{key}") for key in ("front", "back")}
+            stored_damage = [store_rental_handoff_photo(data_url=str(value or ""), fallback_name=f"{row_value(booking, 'booking_id')}-existing-damage-{index + 1}") for index, value in enumerate(damage_photos)]
+            stored_damage += [""] * (10 - len(stored_damage))
+            if not all(stored_license.values()) or (damage_status == "RECORDED" and not any(stored_damage)):
+                self.send_json({"ok": False, "error": "A required pickup photo could not be saved. Retake it and try again."}, 502)
+                return
             with db() as con:
                 con.execute(
                     """UPDATE bookings SET actual_pickup_date=?, actual_pickup_time=?, pickup_odometer=?, pickup_fuel_level=?,
-                    pickup_condition_status='ACCEPTABLE', pickup_customer_signature=?, pickup_staff_signature=?,
-                    pickup_front_image=?, pickup_back_image=?, pickup_left_image=?, pickup_right_image=?, pickup_odometer_image=?,
-                    pickup_fuel_image=?, pickup_interior_front_image=?, pickup_interior_rear_image=?, booking_status='PICKED_UP', status='PICKED_UP'
-                    WHERE id=?""",
-                    (actual_date, actual_time, odometer, fuel_level, customer_signature, staff_signature, stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"], booking_id),
+                    pickup_condition_status='ACCEPTABLE', pickup_staff_signature=?, pickup_license_front_image=?, pickup_license_back_image=?,
+                    pickup_existing_damage_status=?, pickup_existing_damage_notes=?, pickup_existing_damage_1_image=?, pickup_existing_damage_2_image=?, pickup_existing_damage_3_image=?, pickup_existing_damage_4_image=?, pickup_existing_damage_5_image=?, pickup_existing_damage_6_image=?, pickup_existing_damage_7_image=?, pickup_existing_damage_8_image=?, pickup_existing_damage_9_image=?, pickup_existing_damage_10_image=?,
+                    pickup_front_image=?, pickup_back_image=?, pickup_left_image=?, pickup_right_image=?, pickup_odometer_image=?, pickup_fuel_image=?, pickup_interior_front_image=?, pickup_interior_rear_image=?,
+                    pickup_acceptance_status='PENDING', pickup_acceptance_requested_at=CURRENT_TIMESTAMP, pickup_acceptance_signed_at=NULL, pickup_acceptance_signature='', pickup_customer_signature='',
+                    booking_status='PICKUP_SUBMITTED', status='PICKUP_SUBMITTED' WHERE id=?""",
+                    (actual_date, actual_time, odometer, fuel_level, staff_signature, stored_license["front"], stored_license["back"], damage_status, damage_notes, *stored_damage,
+                     stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"], booking_id),
                 )
-                con.execute("UPDATE cars SET status='BOOKED' WHERE id=?", (row_value(booking, "car_id"),))
-            self.send_json({"ok": True, "message": "Pickup inspection saved and vehicle released."})
+            updated = get_booking_by_id(booking_id)
+            send_rental_booking_push(updated or booking, "Pickup condition ready to review", "FairFares staff recorded your vehicle condition. Review and sign it in your rental booking before vehicle release.", "PICKUP_ACCEPTANCE_REQUESTED")
+            self.send_json({"ok": True, "message": "Pickup evidence was saved and the renter was asked to review and e-sign before vehicle release."})
             return
         condition = clean_text_value(payload.get("conditionStatus"), 40).upper() or "ACCEPTABLE"
         damage = clean_text_value(payload.get("newDamageFound"), 10).upper() or "NO"
+        actual_return_location = clean_text_value(payload.get("actualReturnLocation"), 240) or row_value(booking, "dropoff_location") or row_value(booking, "return_location") or row_value(booking, "pickup_location")
+        keys_confirmed = clean_text_value(payload.get("keysConfirmed"), 20).upper() or "RETURNED"
+        cleanliness = clean_text_value(payload.get("cleanlinessStatus"), 30).upper() or "CLEAN"
+        smoking = clean_text_value(payload.get("smokingStatus"), 20).upper() or "NO"
+        issue_types = payload.get("issueTypes") if isinstance(payload.get("issueTypes"), list) else []
+        allowed_issue_types = {"DAMAGE", "FUEL", "CLEANING", "SMOKING", "KEYS_ACCESSORIES", "LATE_RETURN", "TOLLS_TICKETS", "OTHER"}
+        issue_types = sorted({clean_text_value(value, 40).upper() for value in issue_types if clean_text_value(value, 40).upper() in allowed_issue_types})
+        damage_photos = payload.get("returnDamagePhotos") if isinstance(payload.get("returnDamagePhotos"), list) else []
+        if condition not in {"ACCEPTABLE", "DAMAGE_NOTED"} or damage not in {"NO", "YES"}:
+            self.send_json({"ok": False, "error": "Choose a valid return condition and damage result."}, 400)
+            return
+        if keys_confirmed not in {"RETURNED", "MISSING"} or cleanliness not in {"CLEAN", "NEEDS_CLEANING"} or smoking not in {"NO", "YES"}:
+            self.send_json({"ok": False, "error": "Choose the keys, cleanliness, and smoking return checks."}, 400)
+            return
+        if len(damage_photos) > 10:
+            self.send_json({"ok": False, "error": "A return record can include up to 10 damage photos."}, 400)
+            return
         try:
             charges = max(0, round(float(payload.get("chargeAmount") or 0), 2))
         except (TypeError, ValueError):
             charges = 0
         notes = clean_text_value(payload.get("chargeNotes"), 1000)
-        clear = condition == "ACCEPTABLE" and damage == "NO" and charges == 0
+        has_issue = bool(issue_types) or condition != "ACCEPTABLE" or damage != "NO" or keys_confirmed != "RETURNED" or cleanliness != "CLEAN" or smoking != "NO" or charges > 0
+        if has_issue and not notes:
+            self.send_json({"ok": False, "error": "Describe every return issue before saving the inspection."}, 400)
+            return
+        if (damage == "YES" or "DAMAGE" in issue_types) and not damage_photos:
+            self.send_json({"ok": False, "error": "Add at least one damage close-up before saving a damage return."}, 400)
+            return
+        stored_damage = [store_rental_handoff_photo(data_url=str(value or ""), fallback_name=f"{row_value(booking, 'booking_id')}-return-damage-{index + 1}") for index, value in enumerate(damage_photos)]
+        stored_damage += [""] * (10 - len(stored_damage))
+        if damage_photos and not all(stored_damage[:len(damage_photos)]):
+            self.send_json({"ok": False, "error": "A damage photo could not be saved. Retake it and try again."}, 502)
+            return
+        clear = not has_issue
         with db() as con:
             con.execute(
                 """UPDATE bookings SET actual_return_date=?, actual_return_time=?, return_odometer=?, return_fuel_level=?,
-                    return_condition_status=?, new_damage_found=?, damage_resolution=?, return_customer_signature=?, return_staff_signature=?,
-                    return_front_image=?, return_back_image=?, return_left_image=?, return_right_image=?, return_odometer_image=?,
-                    return_fuel_image=?, return_interior_front_image=?, return_interior_rear_image=?, post_return_charge_amount=?, post_return_charge_notes=?,
-                    return_review_status=?, booking_status=?, status=? WHERE id=?""",
-                (actual_date, actual_time, odometer, fuel_level, condition, damage, "NOT_APPLICABLE" if clear else "INSURANCE_REVIEW", customer_signature, staff_signature,
-                 stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"],
-                 charges, notes, "CLEAR_TO_RELEASE" if clear else "CHARGES_PENDING", "RETURNED" if clear else "RETURN_SUBMITTED", "RETURNED" if clear else "RETURN_SUBMITTED", booking_id),
+                actual_return_location=?, return_condition_status=?, new_damage_found=?, return_keys_confirmed=?, return_cleanliness_status=?, return_smoking_status=?, return_issue_types=?, damage_resolution=?, return_customer_signature=?, return_staff_signature=?,
+                return_front_image=?, return_back_image=?, return_left_image=?, return_right_image=?, return_odometer_image=?,
+                return_fuel_image=?, return_interior_front_image=?, return_interior_rear_image=?, return_damage_1_image=?, return_damage_2_image=?, return_damage_3_image=?, return_damage_4_image=?, return_damage_5_image=?, return_damage_6_image=?, return_damage_7_image=?, return_damage_8_image=?, return_damage_9_image=?, return_damage_10_image=?, post_return_charge_amount=?, post_return_charge_notes=?,
+                return_review_status=?, booking_status=?, status=? WHERE id=?""",
+                (actual_date, actual_time, odometer, fuel_level, actual_return_location, condition, damage, keys_confirmed, cleanliness, smoking, ",".join(issue_types), "NOT_APPLICABLE" if clear else "PENDING_REVIEW", customer_signature, staff_signature,
+                 stored["front"], stored["back"], stored["left"], stored["right"], stored["odometer"], stored["fuel"], stored["interiorFront"], stored["interiorRear"], *stored_damage, charges, notes, "CLEAR_TO_RELEASE" if clear else "CHARGES_PENDING", "RETURNED" if clear else "RETURN_SUBMITTED", "RETURNED" if clear else "RETURN_SUBMITTED", booking_id),
             )
             if clear:
                 con.execute("UPDATE cars SET status='AVAILABLE' WHERE id=?", (row_value(booking, "car_id"),))
         updated = get_booking_by_id(booking_id)
+        if not clear:
+            issue_copy = ", ".join(issue.replace("_", " ").lower() for issue in issue_types) or "a return issue"
+            send_rental_booking_push(updated or booking, "Return review started", f"Staff recorded {issue_copy} for your return. Your evidence and deposit outcome are available in FairFares.", "RETURN_REVIEW_STARTED")
+            self.send_json({"ok": True, "message": "Return saved; deposit is held for damage or charge review."})
+            return
+        send_rental_booking_push(updated or booking, "Return inspection complete", "Your vehicle return was recorded. Review the photos and deposit outcome in your FairFares rental booking.", "RETURN_COMPLETED")
         if clear and row_value(updated, "security_deposit_status") == "AUTHORIZED":
             released, message = release_security_deposit_after_clear_return(updated)
             self.send_json({"ok": True, "message": "Return saved. " + ("Deposit released." if released else "Deposit needs review: " + message)})
             return
-        self.send_json({"ok": True, "message": "Return inspection saved." if clear else "Return saved; deposit is held for damage or charge review."})
+        self.send_json({"ok": True, "message": "Return saved. Review your return record in FairFares."})
 
     def api_mobile_admin_handoff_review(self) -> None:
         admin = self.require_mobile_admin()
@@ -40583,15 +41272,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             pickup_evidence_complete = all(row_value(booking, field) for field in (
                 "pickup_front_image", "pickup_back_image", "pickup_left_image", "pickup_right_image",
                 "pickup_odometer_image", "pickup_fuel_image", "pickup_interior_front_image", "pickup_interior_rear_image",
-                "pickup_customer_signature",
+                "pickup_license_front_image", "pickup_license_back_image", "pickup_customer_signature",
             ))
+            pickup_accepted = str(row_value(booking, "pickup_acceptance_status") or "") == "ACCEPTED"
             if (
                 status != "PICKUP_SUBMITTED"
                 or row_value(booking, "payment_status") != "PAID"
                 or not identity_verified
                 or not pickup_evidence_complete
+                or not pickup_accepted
             ):
-                self.send_json({"ok": False, "error": "Verified identity, pickup evidence, and full payment are required."}, 409)
+                self.send_json({"ok": False, "error": "Full payment, verified identity, complete pickup evidence, and renter acceptance are required."}, 409)
                 return
             with db() as con:
                 con.execute(
@@ -40618,6 +41309,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(booking, "car_id"),))
             reviewed = get_booking_by_id(booking_id)
+            send_rental_booking_push(reviewed or booking, "Return review complete", "Your return inspection was approved. Review the final record and deposit outcome in FairFares.", "RETURN_REVIEW_COMPLETED")
             released, release_message = release_security_deposit_after_clear_return(reviewed)
             if not released:
                 self.send_json({"ok": True, "message": f"Return approved. Deposit release needs staff review: {release_message}", "depositReviewRequired": True})
@@ -40630,6 +41322,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             with db() as con:
                 con.execute("UPDATE bookings SET return_staff_signature = ?, return_review_status = 'CHARGES_PENDING' WHERE id = ?", (staff_signature, booking_id))
+            held = get_booking_by_id(booking_id)
+            send_rental_booking_push(held or booking, "Return needs review", "FairFares is reviewing return evidence and the deposit outcome. Open your rental booking for details.", "RETURN_REVIEW_HELD")
             self.send_json({"ok": True, "message": "Return held for damage or charge review."})
             return
         self.send_json({"ok": False, "error": "Choose a valid pickup or return review action."}, 400)
@@ -41205,7 +41899,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (user_id,),
             ).fetchall()
-        listings = mobile_housing_posts_for_viewer([mobile_housing_post_payload(row) for row in rows], 0)
+        listings = mobile_housing_posts_for_viewer(mobile_housing_post_payloads(rows), 0)
         self.send_json({
             "ok": True,
             "profile": {
@@ -41277,25 +41971,35 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "error": "Login is required to view ride activity."}, 401)
             return
         user_id = int(row_value(user, "id") or 0)
+        cache_key = ("rides", "activity", user_id)
+        cached_response = cached_mobile_value(cache_key)
+        if isinstance(cached_response, dict):
+            self.send_json(cached_response, headers={"X-FairFares-Cache": "HIT"})
+            return
         with db() as con:
             own_rows = con.execute(
                 """
-                SELECT ride_posts.*, users.name AS owner_name, users.profile_photo_url AS owner_photo,
-                       (
-                           SELECT COUNT(*)
-                           FROM ride_dispatch_notifications notifications
-                           WHERE notifications.request_ride_post_id = ride_posts.id
-                       ) AS dispatch_notified_count,
-                       (
-                           SELECT MIN(notifications.radius_miles)
-                           FROM ride_dispatch_notifications notifications
-                           WHERE notifications.request_ride_post_id = ride_posts.id
-                       ) AS dispatch_nearest_radius
-                FROM ride_posts
-                JOIN users ON users.id = ride_posts.user_id
-                WHERE ride_posts.user_id = ?
-                ORDER BY datetime(ride_posts.created_at) DESC
-                LIMIT 80
+                WITH own_rides AS (
+                    SELECT *
+                    FROM ride_posts
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 80
+                ), dispatch_summary AS (
+                    SELECT notifications.request_ride_post_id,
+                           COUNT(*) AS dispatch_notified_count,
+                           MIN(notifications.radius_miles) AS dispatch_nearest_radius
+                    FROM ride_dispatch_notifications notifications
+                    JOIN own_rides ON own_rides.id = notifications.request_ride_post_id
+                    GROUP BY notifications.request_ride_post_id
+                )
+                SELECT own_rides.*, users.name AS owner_name, users.profile_photo_url AS owner_photo,
+                       COALESCE(dispatch_summary.dispatch_notified_count, 0) AS dispatch_notified_count,
+                       COALESCE(dispatch_summary.dispatch_nearest_radius, 0) AS dispatch_nearest_radius
+                FROM own_rides
+                JOIN users ON users.id = own_rides.user_id
+                LEFT JOIN dispatch_summary ON dispatch_summary.request_ride_post_id = own_rides.id
+                ORDER BY own_rides.created_at DESC, own_rides.id DESC
                 """,
                 (user_id,),
             ).fetchall()
@@ -41328,7 +42032,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
                 JOIN users rider_users ON rider_users.id = requests.user_id
                 WHERE notifications.driver_user_id = ?
-                ORDER BY datetime(notifications.notified_at) DESC
+                ORDER BY notifications.notified_at DESC, notifications.id DESC
                 LIMIT 80
                 """,
                 (user_id,),
@@ -41344,16 +42048,27 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 request_placeholders = ",".join("?" for _ in rider_request_ids)
                 accepted_rows = con.execute(
                     f"""
+                    WITH latest_dispatch AS (
+                        SELECT notifications.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY notifications.request_ride_post_id
+                                   ORDER BY COALESCE(notifications.responded_at, notifications.notified_at) DESC,
+                                            notifications.id DESC
+                               ) AS response_rank
+                        FROM ride_dispatch_notifications notifications
+                        WHERE notifications.request_ride_post_id IN ({request_placeholders})
+                          AND notifications.status IN ('ACCEPTED', 'DECLINED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
+                    )
                     SELECT notifications.*, notifications.id AS dispatch_notification_id,
                            users.name AS driver_name, driver_posts.public_id AS driver_ride_public_id,
                            driver_posts.license_plate AS driver_license_plate,
                            driver_posts.license_state AS driver_license_state
-                    FROM ride_dispatch_notifications notifications
+                    FROM latest_dispatch notifications
                     JOIN users ON users.id = notifications.driver_user_id
                     JOIN ride_posts driver_posts ON driver_posts.id = notifications.driver_ride_post_id
-                    WHERE notifications.request_ride_post_id IN ({request_placeholders})
-                      AND notifications.status IN ('ACCEPTED', 'DECLINED', 'EN_ROUTE', 'ARRIVED', 'COMPLETED')
-                    ORDER BY datetime(notifications.responded_at) DESC
+                    WHERE notifications.response_rank = 1
+                    ORDER BY COALESCE(notifications.responded_at, notifications.notified_at) DESC,
+                             notifications.id DESC
                     """,
                     rider_request_ids,
                 ).fetchall()
@@ -41486,7 +42201,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 payload["myRating"] = ratings_by_notification.get(int(row_value(row, "dispatch_notification_id") or 0), 0)
                 rides.append(payload)
         rides.sort(key=lambda item: str(item.get("createdAt") or item.get("dispatchNotifiedAt") or ""), reverse=True)
-        self.send_json({"ok": True, "rides": rides[:100]})
+        response = {"ok": True, "rides": rides[:100]}
+        cache_mobile_value(cache_key, response)
+        self.send_json(response, headers={"X-FairFares-Cache": "MISS"})
 
     def api_mobile_ride_dispatch_action(self) -> None:
         user = self.current_user()
@@ -41498,6 +42215,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         action = clean_text_value(payload.get("action"), 40).upper()
         user_id = int(row_value(user, "id") or 0)
         status_code, response = apply_ride_dispatch_action(user_id, ride_public_id, action)
+        if 200 <= status_code < 300:
+            invalidate_mobile_search_cache("rides")
         self.send_json(response, status_code)
 
     def api_mobile_ride_rating(self) -> None:
@@ -41556,6 +42275,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             f"You received a {score}-star rating from a completed FairFares carpool.",
             {"type": "CARPOOL_RATING", "rideId": ride_public_id, "target": "activity"},
         )
+        invalidate_mobile_search_cache("rides")
         self.send_json({"ok": True, "score": score})
 
     def api_mobile_user_rating(self) -> None:
@@ -42371,6 +43091,30 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
     def api_mobile_rental_return_submit(self) -> None:
         self.api_mobile_rental_handoff_submit("return")
 
+    def api_mobile_rental_pickup_acceptance(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to accept pickup condition."}, 401)
+            return
+        payload = self.read_json_body()
+        booking = get_mobile_rental_booking_by_identifier(user, payload.get("bookingId") or payload.get("booking_id"))
+        signature = clean_text_value(payload.get("signature"), 160)
+        accepted = bool(payload.get("accepted"))
+        if not booking:
+            self.send_json({"ok": False, "error": "Pickup record not found."}, 404)
+            return
+        if str(row_value(booking, "booking_status") or "") != "PICKUP_SUBMITTED" or str(row_value(booking, "pickup_acceptance_status") or "") != "PENDING":
+            self.send_json({"ok": False, "error": "This pickup is not awaiting your acceptance."}, 409)
+            return
+        if not accepted or not signature:
+            self.send_json({"ok": False, "error": "Confirm that you reviewed the condition and enter your signature."}, 400)
+            return
+        with db() as con:
+            con.execute("""UPDATE bookings SET pickup_acceptance_status='ACCEPTED', pickup_acceptance_signature=?, pickup_acceptance_signed_at=CURRENT_TIMESTAMP,
+                         pickup_customer_signature=? WHERE id=?""", (signature, signature, row_value(booking, "id")))
+        updated = get_mobile_rental_booking_by_identifier(user, row_value(booking, "booking_id"))
+        self.send_json({"ok": True, "message": "Pickup condition accepted. FairFares staff can now release the vehicle.", "booking": mobile_rental_service_booking_payload(updated, self.public_origin(), int(row_value(user, "id") or 0)) if updated else None})
+
     def api_mobile_rental_handoff_submit(self, phase: str) -> None:
         user = self.current_user()
         if not user:
@@ -43026,6 +43770,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # Keep derived housing projections current without blocking this feed
         # response or the other mobile reads that start with it.
         schedule_housing_community_projection_sync()
+        schedule_unlocated_community_post_repair()
         user = self.current_user()
         guest = None if user else self.current_community_guest()
         viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
@@ -43128,6 +43873,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         detail_limits = {"budget": 40, "moveInDate": 20, "preference": 160, "rent": 40, "availableDate": 20, "roomType": 60, "origin": 120, "destination": 120, "travelDate": 20, "travelTime": 20, "seats": 3}
         details = {key: clean_text_value(raw_details.get(key), limit) for key, limit in detail_limits.items() if clean_text_value(raw_details.get(key), limit)}
         group_public_id = clean_text_value(payload.get("communityId"), 80)
+        city = community_post_city_label(city, title, body, area)
+        if not city and not group_public_id:
+            self.send_json({"ok": False, "error": "Choose a city and state before publishing so nearby members can find your post."}, 400)
+            return
         expires_in_days = max(7, min(int(float_from_value(payload.get("expiresInDays")) or 45), 90))
         expires_at = (datetime.utcnow() + timedelta(days=expires_in_days)).isoformat(timespec="seconds")
         if post_type not in COMMUNITY_POST_TYPES or category not in COMMUNITY_CATEGORIES:
@@ -44013,12 +44762,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     "city": city,
                     "country": post_country,
                     "zip_code": zip_code,
+                    "street_address": street_address,
                     "area_or_apartment": area,
                     "city_area_zip": resolved_location_label,
                     "primary_neighborhood": primary_neighborhood,
+                    "apartment_name": apartment_name,
+                    "work_school_location": work_school_location,
+                    "lat": post_lat,
+                    "lng": post_lng,
                 })
-            if community_us_city_variants(canonical_city):
-                city = canonical_city
+            if not community_us_city_variants(canonical_city):
+                self.send_json({"ok": False, "error": "Choose a city, state, ZIP code, or neighbourhood suggestion that we can place in your local feed."}, 400)
+                return
+            city = canonical_city
         city_area_zip = city
         if mode == "HAVE_PLACE":
             city_area_zip = ", ".join(bit for bit in (city, zip_code) if bit)

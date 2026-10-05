@@ -11,7 +11,7 @@ import { BlurView } from "expo-blur";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
@@ -261,6 +261,7 @@ export default function App() {
 
 function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const systemColorScheme = useColorScheme();
   const [appearancePreference, setAppearancePreference] = useState<AppearancePreference>("light");
   const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
@@ -368,6 +369,7 @@ function FairFaresApp() {
   const authenticatedUserIdRef = useRef(0);
   authenticatedUserIdRef.current = Number(data?.user?.id || 0);
   const [loading, setLoading] = useState(true);
+  const [housingSearchLoading, setHousingSearchLoading] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [identifier, setIdentifier] = useState("");
@@ -415,7 +417,7 @@ function FairFaresApp() {
   const [rideOwnerEditId, setRideOwnerEditId] = useState("");
   const [rideOwnerFocusId, setRideOwnerFocusId] = useState("");
   const [rentalEditBookingId, setRentalEditBookingId] = useState("");
-  const [rentalEditBookingAction, setRentalEditBookingAction] = useState<"balance" | "deposit" | "extension" | "manage">("manage");
+  const [rentalEditBookingAction, setRentalEditBookingAction] = useState<"balance" | "deposit" | "extension" | "extendRequest" | "pickup" | "returnReview" | "manage">("manage");
   const [rideOwnerOpenTarget, setRideOwnerOpenTarget] = useState<"workspace" | "requests" | "listings">("workspace");
   const [rideOwnerReturnTab, setRideOwnerReturnTab] = useState<TabKey | null>(null);
   appReadyForContentLinksRef.current = !loading && Boolean(data);
@@ -461,6 +463,7 @@ function FairFaresApp() {
   const [listingOpen, setListingOpen] = useState(false);
   const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
+  const [listingValidation, setListingValidation] = useState<Record<string, string>>({});
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
@@ -500,7 +503,8 @@ function FairFaresApp() {
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const [characterAvatarBusy, setCharacterAvatarBusy] = useState(false);
   const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
-  const [characterAvatarPickerOpen, setCharacterAvatarPickerOpen] = useState(false);
+  const [characterAvatarPickerOpen, setCharacterAvatarPickerOpen] = useState(true);
+  const [characterAvatarPickerTab, setCharacterAvatarPickerTab] = useState<"look" | "photo" | "scene">("look");
   const [characterAvatarChoice, setCharacterAvatarChoice] = useState<{ seed: string; backgroundColor: string } | null>(null);
   const profileCompletionPromptedUserRef = useRef(0);
   const [housingWelcomeFocusKey, setHousingWelcomeFocusKey] = useState(0);
@@ -933,6 +937,8 @@ function FairFaresApp() {
       if (isAuthenticationRejection(error)) {
         await setAuthToken("");
         setData((current) => current ? { ...current, user: null, chat: { unreadCount: 0, conversations: [], messagedPostIds: [], messagedRideIds: [] } } : current);
+        setAuthMode("login");
+        setLoginOpen(true);
       }
       Alert.alert("FairFares", error instanceof Error ? error.message : "Unable to load FairFares.");
     } finally {
@@ -1283,7 +1289,11 @@ function FairFaresApp() {
       const paymentStatus = String(response?.notification.request.content.data?.paymentStatus || "").toUpperCase();
       const depositStatus = String(response?.notification.request.content.data?.depositStatus || "").toUpperCase();
       const extensionPaymentStatus = String(response?.notification.request.content.data?.extensionPaymentStatus || "").toUpperCase();
-      const rentalAction = extensionPaymentStatus === "PENDING" || (event.includes("EXTENSION") && !event.endsWith("_PAID"))
+      const rentalAction = event.includes("PICKUP_ACCEPTANCE") || event.includes("PICKUP_CONDITION")
+        ? "pickup"
+        : event.includes("RETURN_REVIEW")
+        ? "returnReview"
+        : extensionPaymentStatus === "PENDING" || (event.includes("EXTENSION") && !event.endsWith("_PAID"))
         ? "extension"
         : paymentStatus === "HOLD_PAID"
           ? "balance"
@@ -1905,20 +1915,20 @@ function FairFaresApp() {
     }
     setSelectedNeed(need);
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const posts = await getHousing(city, area, need, selectedCategory, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
       if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Housing search", error instanceof Error ? error.message : "Unable to update listings.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
   async function selectArea(nextArea: string) {
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const options = await getAccommodationLocationOptions(city, nextArea, true);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
@@ -1955,13 +1965,13 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("Location search", error instanceof Error ? error.message : "Unable to search this area.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
   async function runSearch(nextCity = searchCity, nextArea = searchArea, nextRadius = searchRadius, nextNeed = searchNeed) {
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const cleanCity = normalizeCityInput(nextCity);
       const requestedArea = nextArea.trim();
@@ -2017,7 +2027,7 @@ function FairFaresApp() {
     } catch (error) {
       Alert.alert("Search failed", error instanceof Error ? error.message : "Unable to search this location.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
@@ -2033,6 +2043,7 @@ function FairFaresApp() {
 
   function closeListingForm() {
     setListingOpen(false);
+    setListingValidation({});
     setListingOptionalDetailsOpen(false);
     setListingAddressSuggestions([]);
     setListingAddressLoading(false);
@@ -2074,6 +2085,7 @@ function FairFaresApp() {
     };
     listingFormBaselineRef.current = listingFormFingerprint(initialForm, null);
     setListingForm(initialForm);
+    setListingValidation({});
     setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
@@ -2157,6 +2169,7 @@ function FairFaresApp() {
     const initialRoommatePlaceChoice = post.roommateIntent ? havePlace : null;
     listingFormBaselineRef.current = listingFormFingerprint(initialForm, initialRoommatePlaceChoice);
     setListingForm(initialForm);
+    setListingValidation({});
     setRoommatePlaceChoice(initialRoommatePlaceChoice);
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
@@ -2186,6 +2199,12 @@ function FairFaresApp() {
 
   function updateListingForm<K extends keyof MobileHousingPostInput>(key: K, value: MobileHousingPostInput[K]) {
     setListingForm((current) => ({ ...current, [key]: value }));
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next[String(key)];
+      if (key === "zipCode") delete next.location;
+      return next;
+    });
     if (key === "postMode" && value !== listingForm.postMode) {
       setListingAddressSuggestions([]);
       setListingAddressValidated(false);
@@ -2194,6 +2213,7 @@ function FairFaresApp() {
   }
 
   function updateListingIntent(intent: ListingIntent) {
+    setListingValidation({});
     setListingForm((current) => {
       const isHavePlace = intent === "have_place";
       const isRoommateSearch = intent === "need_roommates";
@@ -2223,6 +2243,7 @@ function FairFaresApp() {
 
   function updateRoommatePlaceStatus(hasPlace: boolean) {
     setRoommatePlaceChoice(hasPlace);
+    setListingValidation({});
     setListingForm((current) => ({
       ...current,
       postMode: hasPlace ? "HAVE_PLACE" : "NEED_PLACE",
@@ -2247,6 +2268,12 @@ function FairFaresApp() {
 
   function updateListingLocationField(key: "city" | "streetAddress" | "area" | "primaryNeighborhood", value: string) {
     setListingForm((current) => ({ ...current, [key]: value }));
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next[key];
+      delete next.location;
+      return next;
+    });
     setListingAddressValidated(false);
     setListingValidatedLabel("");
   }
@@ -2267,6 +2294,11 @@ function FairFaresApp() {
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
     setListingValidatedLabel(suggestion.label);
+    setListingValidation((current) => {
+      const next = { ...current };
+      for (const key of ["city", "zipCode", "primaryNeighborhood", "area", "location"]) delete next[key];
+      return next;
+    });
   }
 
   function useEnteredListingLocation() {
@@ -2274,16 +2306,25 @@ function FairFaresApp() {
     const normalizedCity = normalizeCityInput(listingForm.city).trim();
     const zipCode = listingForm.zipCode.trim();
     if (!location || !normalizedCity || !zipCode) {
-      Alert.alert(
-        "Add the location details",
-        "Enter the neighborhood, address, or preferred area together with its city and ZIP code."
-      );
+      setListingValidation((current) => ({
+        ...current,
+        ...(location ? {} : { location: "Enter a neighborhood, address, or preferred area." }),
+        ...(normalizedCity ? {} : { city: "Enter the city and state." }),
+        ...(zipCode ? {} : { zipCode: "Enter the ZIP code." }),
+      }));
       return;
     }
     setListingForm((current) => ({ ...current, city: normalizedCity }));
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
     setListingValidatedLabel(`${location}, ${normalizedCity} ${zipCode}`);
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next.location;
+      delete next.city;
+      delete next.zipCode;
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -2327,35 +2368,30 @@ function FairFaresApp() {
           ? `Looking for roommates in ${listingForm.area.trim() || listingForm.city.trim()}`
           : `Looking for a place in ${listingForm.area.trim() || listingForm.city.trim()}`
     );
-    const requiredFields = [
-      listingIsRoommateSearch && roommatePlaceChoice === null ? "whether you already have a place" : "",
-      !listingForm.city.trim() ? "city" : "",
-      !listingForm.zipCode.trim() ? "ZIP code" : "",
-      !listingForm.description.trim() ? "description" : "",
-      !listingForm.moveInDate.trim() ? (listingHasPropertyDetails ? "available from date" : "move-in date") : "",
-      !listingForm.rentMin.trim() ? (listingHasPropertyDetails ? "rent" : "budget") : "",
-      listingHasPropertyDetails && !listingForm.primaryNeighborhood.trim() ? "neighborhood / locality" : "",
-      listingHasPropertyDetails && !(listingForm.images || []).length ? "valid room/property image" : "",
-      !listingForm.contactName.trim() ? "contact name" : "",
-      !listingForm.contactEmail.trim() ? "contact email" : "",
-      !listingForm.contactPhone.trim() ? "contact phone" : ""
-    ].filter(Boolean);
-    if (requiredFields.length) {
-      Alert.alert("Missing details", `Please add: ${requiredFields.join(", ")}.`);
-      return;
-    }
+    const validation: Record<string, string> = {};
+    if (listingIsRoommateSearch && roommatePlaceChoice === null) validation.roommatePlaceChoice = "Choose whether you already have the place.";
+    if (!listingForm.city.trim()) validation.city = "Enter the city and state.";
+    if (!listingForm.zipCode.trim()) validation.zipCode = "Enter the ZIP code.";
+    if (!listingForm.description.trim()) validation.description = "Add a description so members understand the listing.";
+    if (!listingForm.moveInDate.trim()) validation.moveInDate = listingHasPropertyDetails ? "Select when the place is available." : "Select your move-in date.";
+    if (!listingForm.rentMin.trim()) validation.rentMin = listingHasPropertyDetails ? "Enter the monthly rent." : "Enter your monthly budget.";
+    if (listingHasPropertyDetails && !listingForm.primaryNeighborhood.trim()) validation.primaryNeighborhood = "Enter the neighborhood or locality.";
+    if (listingHasPropertyDetails && !(listingForm.images || []).length) validation.images = "Add at least one clear room or property photo.";
+    if (!listingForm.contactName.trim()) validation.contactName = "Enter a contact name.";
+    if (!listingForm.contactEmail.trim()) validation.contactEmail = "Enter a contact email.";
+    if (!listingForm.contactPhone.trim()) validation.contactPhone = "Enter a contact phone number.";
     const canUseEnteredLocation = Boolean(
       listingLocationInput.trim().length >= 3
       && normalizeCityInput(listingForm.city).trim()
       && listingForm.zipCode.trim()
     );
     if (!listingAddressValidated && !canUseEnteredLocation) {
-      Alert.alert(
-        listingHasPropertyDetails ? "Add the address" : "Add the preferred location",
-        listingHasPropertyDetails
-          ? "Enter the property address together with its city and ZIP code before posting."
-          : "Enter your preferred area, campus, building, or landmark together with its city and ZIP code before posting."
-      );
+      validation.location = listingHasPropertyDetails
+        ? "Select or use the property location with its city and ZIP code."
+        : "Select or use your preferred location with its city and ZIP code.";
+    }
+    if (Object.keys(validation).length) {
+      setListingValidation(validation);
       return;
     }
     const listingPayload: MobileHousingPostInput = {
@@ -2450,6 +2486,11 @@ function FairFaresApp() {
       const picked = await pickCompressedImages(remaining);
       if (picked.length) {
         setListingForm((current) => ({ ...current, images: [...(current.images || []), ...picked].slice(0, 4) }));
+        setListingValidation((current) => {
+          const next = { ...current };
+          delete next.images;
+          return next;
+        });
       }
     } catch (error) {
       Alert.alert("Photos not added", error instanceof Error ? error.message : "Could not add photos.");
@@ -2463,42 +2504,42 @@ function FairFaresApp() {
   async function selectCategory(category: string) {
     setSelectedCategory(category);
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const posts = await getHousing(city, area, selectedNeed, category, selectedGender, selectedBudget, searchRadius, housingSearchCoordinates);
       if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Room type", error instanceof Error ? error.message : "Unable to filter room type.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
   async function selectGender(gender: string) {
     setSelectedGender(gender);
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const posts = await getHousing(city, area, selectedNeed, selectedCategory, gender, selectedBudget, searchRadius, housingSearchCoordinates);
       if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Gender preference", error instanceof Error ? error.message : "Unable to filter by preference.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
   async function selectBudget(budget: string) {
     setSelectedBudget(budget);
     const requestGeneration = ++housingRequestGenerationRef.current;
-    setLoading(true);
+    setHousingSearchLoading(true);
     try {
       const posts = await getHousing(city, area, selectedNeed, selectedCategory, selectedGender, budget, searchRadius, housingSearchCoordinates);
       if (housingRequestGenerationRef.current === requestGeneration) setVisiblePosts(posts);
     } catch (error) {
       Alert.alert("Budget", error instanceof Error ? error.message : "Unable to filter by budget.");
     } finally {
-      if (housingRequestGenerationRef.current === requestGeneration) setLoading(false);
+      if (housingRequestGenerationRef.current === requestGeneration) setHousingSearchLoading(false);
     }
   }
 
@@ -2517,6 +2558,27 @@ function FairFaresApp() {
             <Text style={[styles.choiceText, listingForm[field] === value && styles.choiceTextActive]}>{label}</Text>
           </TouchableOpacity>
         ))}
+      </View>
+    );
+  }
+
+  function listingFieldError(key: string) {
+    return listingValidation[key] ? <Text style={styles.listingFieldError}>{listingValidation[key]}</Text> : null;
+  }
+
+  function renderListingField(
+    label: string,
+    child: React.ReactNode,
+    options: { required?: boolean; hint?: string; errorKey?: string } = {},
+  ) {
+    return (
+      <View style={styles.listingField}>
+        <Text style={styles.listingFieldLabel}>
+          {label} {options.required ? <Text style={styles.listingFieldRequired}>Required</Text> : <Text style={styles.listingFieldOptional}>Optional</Text>}
+        </Text>
+        {options.hint ? <Text style={styles.listingFieldHint}>{options.hint}</Text> : null}
+        {child}
+        {options.errorKey ? listingFieldError(options.errorKey) : null}
       </View>
     );
   }
@@ -3256,6 +3318,7 @@ function FairFaresApp() {
           setSearchOpen(true);
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
+        isSearchRefreshing={housingSearchLoading}
         discoveryLocation={discoveryLocation}
         showSearchResults={activeTab === "housing"}
         onCategorySelect={selectCategory}
@@ -3320,6 +3383,7 @@ function FairFaresApp() {
           setSearchOpen(true);
         }}
         hasExactLocationSearch={hasSearchedHousingLocation}
+        isSearchRefreshing={housingSearchLoading}
         discoveryLocation={discoveryLocation}
         showSearchResults={activeTab === "housing"}
         onCategorySelect={selectCategory}
@@ -3904,47 +3968,47 @@ function FairFaresApp() {
           </View>
         </View>
       </Modal>
-      <Modal visible={profileCompletionOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => setProfileCompletionOpen(false)}>
-        <View style={styles.profileCompletionBackdrop}>
+      <Modal visible={profileCompletionOpen} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={() => undefined}>
+        <View style={[styles.profileCompletionBackdrop, { paddingTop: Math.max(16, safeAreaInsets.top + 8), paddingBottom: Math.max(16, safeAreaInsets.bottom + 8) }]}>
           <ScrollView style={styles.profileCompletionScroll} contentContainerStyle={styles.profileCompletionScrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.profileCompletionCard} accessibilityRole="alert">
-            <AvatarMotion style={styles.profileCompletionAvatar}>
-              <UserAvatar
-                photoUrl={data?.user?.profilePhotoUrl}
-                imageStyle={styles.profileCompletionAvatarImage}
-                fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
-              />
-            </AvatarMotion>
-            <Text style={styles.profileCompletionEyebrow}>Your FairFares profile</Text>
-            <Text style={styles.profileCompletionTitle}>Complete your profile</Text>
-            <Text style={styles.profileCompletionCopy}>Add the missing details so members can recognize and trust who they are connecting with.</Text>
-            {!data?.user?.profilePhotoUrl?.trim() ? (
-              <View style={styles.characterAvatarPicker}>
-                <TouchableOpacity style={styles.characterAvatarPickerToggle} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarPickerOpen((open) => !open)} accessibilityRole="button" accessibilityState={{ expanded: characterAvatarPickerOpen }} accessibilityLabel="Choose a FairFares character">
-                  <Text style={styles.characterAvatarPickerTitle}>Choose a FairFares character</Text>
-                  <Text style={styles.characterAvatarPickerToggleText}>{characterAvatarPickerOpen ? "Hide" : "Choose"}</Text>
-                </TouchableOpacity>
-                {characterAvatarPickerOpen ? <>
-                  <Text style={styles.characterAvatarHint}>Select a look, then save it. You can change it later in Account.</Text>
-                  <View style={styles.characterAvatarGrid}>
-                    {Array.from({ length: 6 }, (_, index) => {
-                      const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`;
-                      const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length];
-                      const selected = characterAvatarChoice?.seed === seed;
-                      return (
-                        <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}>
-                          <UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} />
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  <View style={styles.characterAvatarPickerActions}>
-                    <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button" accessibilityLabel="Show different characters"><Text style={styles.characterAvatarShuffleText}>Shuffle</Text></TouchableOpacity>
-                    <TouchableOpacity style={[styles.characterAvatarSave, (!characterAvatarChoice || characterAvatarBusy) && styles.disabledButton]} disabled={!characterAvatarChoice || characterAvatarBusy} onPress={() => characterAvatarChoice && void selectCharacterAvatar(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor)} accessibilityRole="button" accessibilityLabel="Save selected character"><Text style={styles.characterAvatarSaveText}>{characterAvatarBusy ? "Saving…" : "Save character"}</Text></TouchableOpacity>
-                  </View>
-                </> : null}
+            <View style={styles.profileCompletionAccountHeader}>
+              <AvatarMotion style={styles.profileCompletionAvatar}>
+                <UserAvatar
+                  photoUrl={data?.user?.profilePhotoUrl || characterAvatarPreview(characterAvatarChoice?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0])}
+                  imageStyle={styles.profileCompletionAvatarImage}
+                  fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
+                />
+              </AvatarMotion>
+              <View style={styles.profileCompletionAccountCopy}>
+                <Text style={styles.profileCompletionName} numberOfLines={1}>{data?.user?.name || "Your FairFares profile"}</Text>
+                <View style={styles.profileCompletionVerificationRow}>
+                  {data?.user?.isVerified ? <Text style={styles.profileCompletionVerified}>Email verified</Text> : <Text style={styles.profileCompletionPending}>Email pending</Text>}
+                  <Text style={styles.profileCompletionPhone}>{data?.user?.phone?.trim() ? "Phone on file" : "Add phone"}</Text>
+                </View>
               </View>
-            ) : null}
+              <Text style={styles.profileCompletionAccountLabel}>Account</Text>
+            </View>
+            <View style={styles.profileCompletionDivider} />
+            <View style={styles.profileCompletionCharacterHeader}>
+              <View><Text style={styles.profileCompletionEyebrow}>Character</Text><Text style={styles.profileCompletionTitle}>Choose your look</Text></View>
+              <TouchableOpacity style={styles.profileCompletionChoose} onPress={() => { setCharacterAvatarPickerTab("look"); setCharacterAvatarPickerOpen(true); }} accessibilityRole="button" accessibilityLabel="Choose a FairFares character"><Text style={styles.profileCompletionChooseText}>Choose</Text></TouchableOpacity>
+            </View>
+            <View style={[styles.profileCompletionCharacterStage, { backgroundColor: `#${characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0]}` }]}>
+              <View style={styles.profileCompletionCharacterHaloLarge} /><View style={styles.profileCompletionCharacterHaloSmall} />
+              <AvatarMotion style={styles.profileCompletionCharacterMotion}><UserAvatar photoUrl={data?.user?.profilePhotoUrl || characterAvatarPreview(characterAvatarChoice?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0])} imageStyle={styles.profileCompletionCharacterImage} fallback={<Text style={styles.profileCompletionAvatarText}>F</Text>} /></AvatarMotion>
+            </View>
+            <View style={styles.profileCompletionCharacterTabs} accessibilityRole="tablist">
+              {([['look', 'Looks'], ['photo', 'Photo'], ['scene', 'Background']] as Array<["look" | "photo" | "scene", string]>).map(([tab, label]) => <TouchableOpacity key={tab} style={[styles.profileCompletionCharacterTab, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabSelected]} onPress={() => { setCharacterAvatarPickerTab(tab); setCharacterAvatarPickerOpen(true); }} accessibilityRole="tab" accessibilityState={{ selected: characterAvatarPickerOpen && characterAvatarPickerTab === tab }} accessibilityLabel={`${label} options`}><View style={[styles.profileCompletionCharacterTabMarker, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabMarkerSelected]} /><Text style={[styles.profileCompletionCharacterTabText, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabTextSelected]}>{label}</Text></TouchableOpacity>)}
+            </View>
+            {characterAvatarPickerOpen && characterAvatarPickerTab === "look" ? <View style={styles.characterAvatarPicker}>
+              <Text style={styles.characterAvatarHint}>Pick a look, then save it.</Text>
+              <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`; const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length]; const selected = characterAvatarChoice?.seed === seed; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
+              <View style={styles.characterAvatarPickerActions}><TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button"><Text style={styles.characterAvatarShuffleText}>Shuffle</Text></TouchableOpacity><TouchableOpacity style={[styles.characterAvatarSave, (!characterAvatarChoice || characterAvatarBusy) && styles.disabledButton]} disabled={!characterAvatarChoice || characterAvatarBusy} onPress={() => characterAvatarChoice && void selectCharacterAvatar(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor)} accessibilityRole="button"><Text style={styles.characterAvatarSaveText}>{characterAvatarBusy ? "Saving…" : "Save character"}</Text></TouchableOpacity></View>
+            </View> : null}
+            {characterAvatarPickerOpen && characterAvatarPickerTab === "scene" ? <View style={styles.profileCompletionScenePicker}>{DICEBEAR_AVATAR_BACKGROUNDS.map((backgroundColor) => <TouchableOpacity key={backgroundColor} style={[styles.profileCompletionSceneSwatch, { backgroundColor: `#${backgroundColor}` }, characterAvatarChoice?.backgroundColor === backgroundColor && styles.profileCompletionSceneSwatchSelected]} onPress={() => setCharacterAvatarChoice((current) => ({ seed: current?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, backgroundColor }))} accessibilityRole="button" accessibilityLabel="Choose character background" />)}</View> : null}
+            {characterAvatarPickerOpen && characterAvatarPickerTab === "photo" ? <TouchableOpacity style={styles.profileCompletionPhotoNotice} onPress={() => { setProfileCompletionOpen(false); setProfileCompletionEditRequested(true); }} accessibilityRole="button"><Text style={styles.profileCompletionPhotoNoticeTitle}>Use a profile photo</Text><Text style={styles.profileCompletionPhotoNoticeCopy}>Open Profile details to upload or change your photo.</Text></TouchableOpacity> : null}
+            <Text style={styles.profileCompletionRemainingTitle}>Required to complete your profile</Text>
             <View style={styles.profileCompletionMissingRow}>
               {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Photo or character</Text> : null}
               {!data?.user?.name?.trim() ? <Text style={styles.profileCompletionChip}>Full name</Text> : null}
@@ -3970,9 +4034,6 @@ function FairFaresApp() {
             ) : null}
             <TouchableOpacity style={[styles.profileCompletionPrimary, profileConsentBusy && styles.disabledButton]} disabled={profileConsentBusy} onPress={() => void continueProfileCompletion()}>
               <Text style={styles.profileCompletionPrimaryText}>{profileConsentBusy ? "Saving..." : "Complete profile"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.profileCompletionLater} onPress={() => setProfileCompletionOpen(false)}>
-              <Text style={styles.profileCompletionLaterText}>Not now</Text>
             </TouchableOpacity>
           </View>
           </ScrollView>
@@ -4114,7 +4175,7 @@ function FairFaresApp() {
               <>
                 {renderListingIntentChoices()}
                 {listingIsRoommateSearch ? (
-                  <View style={styles.roommatePathBlock}>
+                  <View style={[styles.roommatePathBlock, listingValidation.roommatePlaceChoice && styles.listingValidationSection]}>
                     <Text style={styles.roommatePathQuestion}>Do you already have the place? *</Text>
                     <View style={styles.choiceRow}>
                       <TouchableOpacity
@@ -4134,6 +4195,7 @@ function FairFaresApp() {
                         <Text style={[styles.choiceText, roommatePlaceChoice === false && styles.choiceTextActive]}>No, search together</Text>
                       </TouchableOpacity>
                     </View>
+                    {listingFieldError("roommatePlaceChoice")}
                   </View>
                 ) : null}
               </>
@@ -4141,12 +4203,12 @@ function FairFaresApp() {
             {renderFormSection(
               "Location *",
               <>
-                <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="City* eg Denver, CO" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Zip code*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                {renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Example: Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.city && styles.listingInputInvalid]} />, { required: true, hint: "Use the city where the place or search is located.", errorKey: "city" })}
+                {renderListingField("ZIP code", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Example: 80202" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { required: true, hint: "This keeps the listing local and improves matching.", errorKey: "zipCode" })}
                 {listingHasPropertyDetails ? (
                   <>
-                    <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Neighborhood / locality* eg Capitol Hill" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
-                    <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Exact address optional — not shown publicly" placeholderTextColor={theme.colors.muted} style={styles.input} autoCorrect={false} />
+                    {renderListingField("Neighborhood or locality", <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Example: Capitol Hill" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.primaryNeighborhood && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, hint: "Use an area people will recognize. Do not use a full street address.", errorKey: "primaryNeighborhood" })}
+                    {renderListingField("Exact address", <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Example: 123 Main Street" placeholderTextColor={theme.colors.muted} style={styles.input} autoCorrect={false} />, { hint: "Private: this is never shown publicly." })}
                     {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
                     {listingAddressSuggestions.length ? (
                       <View style={styles.addressSuggestionPanel}>
@@ -4164,10 +4226,11 @@ function FairFaresApp() {
                     ) : null}
                     {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use this location</Text></TouchableOpacity> : null}
                     {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
+                    {listingFieldError("location")}
                   </>
                 ) : (
                   <>
-                    <TextInput value={listingForm.area} onChangeText={(text) => updateListingLocationField("area", text)} placeholder={listingIsRoommateSearch ? "Preferred area, campus, building, or landmark*" : "Area, campus, building, or landmark*"} placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput]} autoCorrect={false} />
+                    {renderListingField(listingIsRoommateSearch ? "Preferred area" : "Area or landmark", <TextInput value={listingForm.area} onChangeText={(text) => updateListingLocationField("area", text)} placeholder={listingIsRoommateSearch ? "Example: Near CU Denver" : "Example: Capitol Hill or DU"} placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.location && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, hint: listingIsRoommateSearch ? "Tell potential roommates where you want to live." : "Use a neighborhood, campus, building, or landmark.", errorKey: "location" })}
                     {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
                     {listingAddressSuggestions.length ? (
                       <View style={styles.addressSuggestionPanel}>
@@ -4185,7 +4248,7 @@ function FairFaresApp() {
                     ) : null}
                     {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use entered location</Text></TouchableOpacity> : null}
                     {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
-                    <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Work / school / commute target optional" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                    {renderListingField("Work, school, or commute target", <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Example: 20 minutes to CU Denver" placeholderTextColor={theme.colors.muted} style={styles.input} />, { hint: "Add this when commute time matters." })}
                   </>
                 )}
               </>
@@ -4193,13 +4256,14 @@ function FairFaresApp() {
             {renderFormSection(
               `${listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements"}`,
               <>
-                <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Short title optional, eg Sunny room near DU" : listingIsRoommateSearch ? "Short title optional, eg Looking for two roommates" : "Short title optional, eg Looking near downtown"} placeholderTextColor={theme.colors.muted} style={styles.input} />
-                <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Describe the room, property, rules, and who it fits*" : listingIsRoommateSearch ? "Describe your roommate plan, lifestyle, and timing*" : "Describe what kind of place you need*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea]} multiline />
-                <DateTimeField label={listingHasPropertyDetails ? "Available from*" : "Move-in from*"} value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} />
+                {renderListingField("Short title", <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Example: Sunny room near DU" : listingIsRoommateSearch ? "Example: Looking for two roommates" : "Example: Looking near downtown"} placeholderTextColor={theme.colors.muted} style={styles.input} />, { hint: "A clear headline helps the right people open your listing." })}
+                {renderListingField("Description", <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Describe the room, property, rules, and who it suits." : listingIsRoommateSearch ? "Describe your roommate plan, lifestyle, and timing." : "Describe the place you need and your must-haves."} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea, listingValidation.description && styles.listingInputInvalid]} multiline />, { required: true, hint: "Include the important details people need before they message you.", errorKey: "description" })}
+                {renderListingField(listingHasPropertyDetails ? "Available from" : "Move-in from", <DateTimeField label="Choose date" value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} style={listingValidation.moveInDate && styles.listingDateInvalid} />, { required: true, hint: "Choose the earliest date that works for you.", errorKey: "moveInDate" })}
                 <View style={styles.twoCol}>
-                  <TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingHasPropertyDetails ? "Rent*" : "Budget min*"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-                  <TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingHasPropertyDetails ? "Rent max" : "Budget max"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Monthly rent" : "Minimum budget"} <Text style={styles.listingFieldRequired}>Required</Text></Text><TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingHasPropertyDetails ? "Example: 950" : "Example: 800"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.rentMin && styles.listingInputInvalid]} keyboardType="number-pad" /></View>
+                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Highest rent" : "Maximum budget"} <Text style={styles.listingFieldOptional}>Optional</Text></Text><TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingHasPropertyDetails ? "Example: 1100" : "Example: 1000"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" /></View>
                 </View>
+                {listingFieldError("rentMin")}
                 {renderChoiceGroup("rentPeriod", rentPeriods)}
               </>
             )}
@@ -4216,7 +4280,7 @@ function FairFaresApp() {
                     ? "Upload at least 1 valid room/property image. Add up to 4 clear photos. Note: upload a valid image; otherwise the listing may be rejected."
                     : "Photos are optional for roommate posts. Note: if you upload one, use a valid image; otherwise the listing may be rejected."}
                 </Text>
-                <View style={styles.photoGrid}>
+                <View style={[styles.photoGrid, listingValidation.images && styles.listingValidationSection]}>
                   {(listingForm.images || []).map((image, index) => (
                     <View key={`${index}-${image.slice(0, 20)}`} style={styles.photoPreviewWrap}>
                       <Image source={{ uri: image }} style={styles.photoPreview} />
@@ -4233,6 +4297,7 @@ function FairFaresApp() {
                   ) : null}
                 </View>
                 <Text style={styles.photoCount}>{(listingForm.images || []).length}/4 photos selected</Text>
+                {listingFieldError("images")}
               </>
             )}
             <TouchableOpacity
@@ -4251,41 +4316,41 @@ function FairFaresApp() {
             {listingOptionalDetailsOpen ? renderFormSection(
               "Optional details",
               <>
-                {!listingIsRoommateSearch ? renderChoiceGroup("category", listingCategories) : null}
+                {!listingIsRoommateSearch ? renderListingField("Housing type", renderChoiceGroup("category", listingCategories), { hint: "Choose the option that best describes the home you want or offer." }) : null}
                 {listingIsRoommateSearch && !listingRoommateHasPlace ? (
-                  <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates needed" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                  renderListingField("Roommates needed", <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Example: 2" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />)
                 ) : listingIsNeedPlace ? (
-                  <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="People moving" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
+                  renderListingField("People moving", <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="Example: 1" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />)
                 ) : (
                   <View style={styles.twoCol}>
-                    <TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="People accommodated" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
-                    <TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Roommates needed" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" />
+                    <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>People accommodated <Text style={styles.listingFieldOptional}>Optional</Text></Text><TextInput value={listingForm.accommodates} onChangeText={(text) => updateListingForm("accommodates", text)} placeholder="Example: 2" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" /></View>
+                    <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>Roommates needed <Text style={styles.listingFieldOptional}>Optional</Text></Text><TextInput value={listingForm.roommateCount} onChangeText={(text) => updateListingForm("roommateCount", text)} placeholder="Example: 1" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" /></View>
                   </View>
                 )}
-                {listingHasPropertyDetails ? <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Apartment / building name" placeholderTextColor={theme.colors.muted} style={styles.input} /> : null}
-                {renderChoiceGroup("bathroomType", bathroomOptions)}
-                {renderChoiceGroup("genderPreference", genderOptions)}
-                {renderChoiceGroup("leaseTerm", leaseOptions)}
-                {!listingHasPropertyDetails ? <TextInput value={listingForm.commutePreference} onChangeText={(text) => updateListingForm("commutePreference", text)} placeholder="Commute preference / transit notes" placeholderTextColor={theme.colors.muted} style={styles.input} /> : null}
+                {listingHasPropertyDetails ? renderListingField("Apartment or building name", <TextInput value={listingForm.apartmentName} onChangeText={(text) => updateListingForm("apartmentName", text)} placeholder="Example: Parkside Apartments" placeholderTextColor={theme.colors.muted} style={styles.input} />) : null}
+                {renderListingField("Bathroom preference", renderChoiceGroup("bathroomType", bathroomOptions))}
+                {renderListingField("Gender preference", renderChoiceGroup("genderPreference", genderOptions))}
+                {renderListingField("Lease term", renderChoiceGroup("leaseTerm", leaseOptions))}
+                {!listingHasPropertyDetails ? renderListingField("Commute preference", <TextInput value={listingForm.commutePreference} onChangeText={(text) => updateListingForm("commutePreference", text)} placeholder="Example: Near light rail" placeholderTextColor={theme.colors.muted} style={styles.input} />, { hint: "Share transit or commute needs if they matter." }) : null}
                 {listingHasPropertyDetails ? <>
-                  <TextInput value={listingForm.daysAvailable} onChangeText={(text) => updateListingForm("daysAvailable", text)} placeholder="Showing days / availability" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                  <TextInput value={listingForm.deposit} onChangeText={(text) => updateListingForm("deposit", text)} placeholder="Deposit" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />
-                  <View style={styles.choiceRow}>{amenityToggles.map(([field, label]) => <TouchableOpacity key={field} style={[styles.choicePill, listingForm[field] && styles.choicePillActive]} onPress={() => updateListingForm(field, !listingForm[field] as MobileHousingPostInput[typeof field])}><Text style={[styles.choiceText, listingForm[field] && styles.choiceTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+                  {renderListingField("Showing availability", <TextInput value={listingForm.daysAvailable} onChangeText={(text) => updateListingForm("daysAvailable", text)} placeholder="Example: Weekends after 10 AM" placeholderTextColor={theme.colors.muted} style={styles.input} />)}
+                  {renderListingField("Security deposit", <TextInput value={listingForm.deposit} onChangeText={(text) => updateListingForm("deposit", text)} placeholder="Example: 500" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="number-pad" />)}
+                  {renderListingField("Quick amenities", <View style={styles.choiceRow}>{amenityToggles.map(([field, label]) => <TouchableOpacity key={field} style={[styles.choicePill, listingForm[field] && styles.choicePillActive]} onPress={() => updateListingForm(field, !listingForm[field] as MobileHousingPostInput[typeof field])}><Text style={[styles.choiceText, listingForm[field] && styles.choiceTextActive]}>{label}</Text></TouchableOpacity>)}</View>)}
                 </> : null}
-                <TextInput value={listingForm.amenities} onChangeText={(text) => updateListingForm("amenities", text)} placeholder="Amenities, eg WiFi, gym, laundry, parking" placeholderTextColor={theme.colors.muted} style={styles.input} />
+                {renderListingField("Amenities", <TextInput value={listingForm.amenities} onChangeText={(text) => updateListingForm("amenities", text)} placeholder="Example: WiFi, gym, laundry, parking" placeholderTextColor={theme.colors.muted} style={styles.input} />)}
                 {lifestyleOptions.map(([field, label, options]) => <View key={field} style={styles.miniGroup}><Text style={styles.miniLabel}>{label}</Text><View style={styles.choiceRow}>{options.map((option) => <TouchableOpacity key={option} style={[styles.choicePill, listingForm[field] === option && styles.choicePillActive]} onPress={() => updateListingForm(field, option as MobileHousingPostInput[typeof field])}><Text style={[styles.choiceText, listingForm[field] === option && styles.choiceTextActive]}>{option}</Text></TouchableOpacity>)}</View></View>)}
-                <TextInput value={listingForm.aboutYou} onChangeText={(text) => updateListingForm("aboutYou", text)} placeholder={listingHasPropertyDetails ? "House rules / ideal tenant or roommate" : "About you / ideal roommates"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textAreaSmall]} multiline />
-                <TextInput value={listingForm.socialFacebook} onChangeText={(text) => updateListingForm("socialFacebook", text)} placeholder="Facebook URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
-                <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Instagram URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
+                {renderListingField(listingHasPropertyDetails ? "House rules or ideal tenant" : "About you or ideal roommates", <TextInput value={listingForm.aboutYou} onChangeText={(text) => updateListingForm("aboutYou", text)} placeholder={listingHasPropertyDetails ? "Example: No smoking; quiet after 10 PM" : "Example: Student, tidy, and respectful"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textAreaSmall]} multiline />)}
+                {renderListingField("Facebook profile", <TextInput value={listingForm.socialFacebook} onChangeText={(text) => updateListingForm("socialFacebook", text)} placeholder="Paste profile URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />, { hint: "Optional; only share a profile you are comfortable making public." })}
+                {renderListingField("Instagram profile", <TextInput value={listingForm.socialInstagram} onChangeText={(text) => updateListingForm("socialInstagram", text)} placeholder="Paste profile URL" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />, { hint: "Optional; only share a profile you are comfortable making public." })}
               </>
             ) : null}
             {listingNeedsContactDetails ? renderFormSection(
               "Contact details *",
               <>
                 <Text style={styles.contactDetailsHelp}>We use this only to help interested members contact you.</Text>
-                <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Contact name*" placeholderTextColor={theme.colors.muted} style={styles.input} />
-                <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Contact email*" placeholderTextColor={theme.colors.muted} style={styles.input} autoCapitalize="none" />
-                <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Contact phone*" placeholderTextColor={theme.colors.muted} style={styles.input} keyboardType="phone-pad" />
+                {renderListingField("Contact name", <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Example: Taylor Smith" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactName && styles.listingInputInvalid]} />, { required: true, errorKey: "contactName" })}
+                {renderListingField("Email address", <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Example: taylor@email.com" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactEmail && styles.listingInputInvalid]} autoCapitalize="none" />, { required: true, errorKey: "contactEmail" })}
+                {renderListingField("Phone number", <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Example: (303) 555-0123" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactPhone && styles.listingInputInvalid]} keyboardType="phone-pad" />, { required: true, errorKey: "contactPhone" })}
               </>
             ) : <View style={styles.contactDetailsReady}><Text style={styles.contactDetailsReadyText}>✓ Replies will go to Chitthi using your verified FairFares profile.</Text></View>}
             <TouchableOpacity style={[styles.primaryButton, listingSubmitting && { opacity: 0.6 }]} onPress={submitListing} disabled={listingSubmitting}>
@@ -4503,15 +4568,45 @@ const styles = StyleSheet.create({
   listingSuccessSecondary: { minHeight: 48, paddingHorizontal: 24, alignItems: "center", justifyContent: "center", marginTop: 2 },
   listingSuccessSecondaryText: { color: "#dce7e2", fontSize: 14, fontWeight: "900" },
   profileCompletionBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.82)", alignItems: "center", justifyContent: "center", paddingHorizontal: 22 },
-  profileCompletionScroll: { width: "100%", maxWidth: 410 },
-  profileCompletionScrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: 24 },
-  profileCompletionCard: { width: "100%", maxWidth: 410, borderRadius: 28, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: theme.colors.panel, paddingHorizontal: 22, paddingVertical: 24, alignItems: "center", gap: 11 },
-  profileCompletionAvatar: { width: 72, height: 72, borderRadius: 36, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123c27", borderWidth: 2, borderColor: theme.colors.green },
+  profileCompletionScroll: { width: "100%", maxWidth: 382, maxHeight: "100%" },
+  profileCompletionScrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: 8 },
+  profileCompletionCard: { width: "100%", maxWidth: 382, borderRadius: 24, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: "#182a45", paddingHorizontal: 14, paddingVertical: 14, alignItems: "center", gap: 9 },
+  profileCompletionAccountHeader: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10 },
+  profileCompletionAccountCopy: { flex: 1, minWidth: 0 },
+  profileCompletionName: { color: "#fff", fontSize: 16, lineHeight: 20, fontWeight: "900" },
+  profileCompletionVerificationRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7, marginTop: 4 },
+  profileCompletionVerified: { color: "#a6f3d2", backgroundColor: "rgba(51, 180, 123, 0.23)", borderColor: "rgba(132, 234, 187, 0.58)", borderWidth: 1, overflow: "hidden", borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: "900" },
+  profileCompletionPending: { color: "#ffe4a3", backgroundColor: "rgba(204, 147, 31, 0.2)", overflow: "hidden", borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, fontSize: 10, fontWeight: "900" },
+  profileCompletionPhone: { color: "#b8c4d7", fontSize: 11, fontWeight: "800" },
+  profileCompletionAccountLabel: { color: "#b8c4d7", fontSize: 10, fontWeight: "900", letterSpacing: 1.4, textTransform: "uppercase" },
+  profileCompletionDivider: { width: "100%", height: 1, backgroundColor: "rgba(192, 210, 235, 0.18)" },
+  profileCompletionCharacterHeader: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  profileCompletionChoose: { minHeight: 36, paddingHorizontal: 16, borderRadius: 20, backgroundColor: "#5e6d8a", alignItems: "center", justifyContent: "center" },
+  profileCompletionChooseText: { color: "#0c3d27", fontSize: 13, fontWeight: "900" },
+  profileCompletionCharacterStage: { width: "100%", aspectRatio: 1.9, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  profileCompletionCharacterHaloLarge: { position: "absolute", width: "118%", aspectRatio: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.19)", top: "4%", left: "-30%" },
+  profileCompletionCharacterHaloSmall: { position: "absolute", width: "76%", aspectRatio: 1, borderRadius: 999, borderWidth: 20, borderColor: "rgba(255,255,255,0.18)", top: "11%", right: "7%" },
+  profileCompletionCharacterMotion: { width: "62%", aspectRatio: 1, zIndex: 1 },
+  profileCompletionCharacterImage: { width: "100%", height: "100%" },
+  profileCompletionCharacterTabs: { width: "100%", minHeight: 52, borderRadius: 17, padding: 4, backgroundColor: "#2c3f60", flexDirection: "row", alignItems: "center" },
+  profileCompletionCharacterTab: { flex: 1, minHeight: 42, borderRadius: 13, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5 },
+  profileCompletionCharacterTabSelected: { backgroundColor: "rgba(123, 236, 192, 0.17)", borderWidth: 1, borderColor: "rgba(136, 243, 201, 0.58)" },
+  profileCompletionCharacterTabMarker: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#8da2c1" },
+  profileCompletionCharacterTabMarkerSelected: { backgroundColor: "#87edc6" },
+  profileCompletionCharacterTabText: { color: "#d7e1f0", fontSize: 12, fontWeight: "900" },
+  profileCompletionCharacterTabTextSelected: { color: "#a6f3d2" },
+  profileCompletionScenePicker: { width: "100%", flexDirection: "row", justifyContent: "center", gap: 12, paddingVertical: 5 },
+  profileCompletionSceneSwatch: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: "rgba(255,255,255,0.42)" },
+  profileCompletionSceneSwatchSelected: { borderWidth: 4, borderColor: "#a6f3d2", transform: [{ scale: 1.08 }] },
+  profileCompletionPhotoNotice: { width: "100%", borderRadius: 16, backgroundColor: "rgba(255,255,255,0.08)", padding: 13 },
+  profileCompletionPhotoNoticeTitle: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  profileCompletionPhotoNoticeCopy: { color: "#c5d1e1", fontSize: 12, lineHeight: 17, marginTop: 3, fontWeight: "700" },
+  profileCompletionAvatar: { width: 48, height: 48, borderRadius: 24, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123c27", borderWidth: 2, borderColor: "#74d8aa" },
   profileCompletionAvatarImage: { width: "100%", height: "100%" },
   profileCompletionAvatarText: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
-  profileCompletionEyebrow: { color: theme.colors.green, fontSize: 11, lineHeight: 15, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.2, marginTop: 3 },
-  profileCompletionTitle: { color: theme.colors.text, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center" },
-  profileCompletionCopy: { color: theme.colors.muted, fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
+  profileCompletionEyebrow: { color: "#9be7cb", fontSize: 11, lineHeight: 15, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.6 },
+  profileCompletionTitle: { color: "#fff", fontSize: 22, lineHeight: 27, fontWeight: "900" },
+  profileCompletionCopy: { color: "#c5d1e1", fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
   characterAvatarPicker: { width: "100%", alignItems: "center", gap: 9, paddingTop: 2 },
   characterAvatarPickerTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   characterAvatarPickerToggle: { width: "100%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: theme.radius.md, paddingHorizontal: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
@@ -4528,11 +4623,10 @@ const styles = StyleSheet.create({
   characterAvatarSaveText: { color: "#06291e", fontSize: 13, fontWeight: "900" },
   characterAvatarHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, fontWeight: "700", textAlign: "center" },
   profileCompletionMissingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7, marginVertical: 4 },
-  profileCompletionChip: { color: theme.colors.soft, fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, paddingHorizontal: 10, paddingVertical: 6 },
-  profileCompletionPrimary: { width: "100%", minHeight: 52, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 3 },
+  profileCompletionRemainingTitle: { alignSelf: "flex-start", color: "#fff", fontSize: 15, fontWeight: "900", marginTop: 3 },
+  profileCompletionChip: { color: "#d7e1f0", fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(206,224,246,0.25)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 10, paddingVertical: 6 },
+  profileCompletionPrimary: { width: "100%", minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 2 },
   profileCompletionPrimaryText: { color: "#0c1a10", fontSize: 16, fontWeight: "900" },
-  profileCompletionLater: { minHeight: 42, paddingHorizontal: 24, alignItems: "center", justifyContent: "center" },
-  profileCompletionLaterText: { color: theme.colors.soft, fontSize: 14, fontWeight: "800" },
   reviewPromptCard: { width: "100%", maxWidth: 410, alignSelf: "center", padding: 20, gap: 16, borderRadius: 28 },
   reviewPromptHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
   reviewPromptAvatar: { width: 56, height: 56, borderRadius: 28, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "#123C27", borderWidth: 1.5, borderColor: "rgba(86,190,100,0.72)" },
@@ -4599,6 +4693,16 @@ const styles = StyleSheet.create({
   searchModalActions: { gap: theme.spacing.xs, paddingTop: theme.spacing.sm, borderTopWidth: 1, borderTopColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { width: "100%", maxWidth: "100%", alignSelf: "stretch", gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
+  listingInputInvalid: { borderColor: "#dc2626" },
+  listingDateInvalid: { borderWidth: 1.5, borderColor: "#dc2626" },
+  listingValidationSection: { borderWidth: 1.5, borderColor: "#dc2626", borderRadius: 14, padding: 7 },
+  listingField: { gap: 5 },
+  twoColField: { flex: 1, gap: 5 },
+  listingFieldLabel: { color: theme.colors.text, fontSize: 13, lineHeight: 17, fontWeight: "900" },
+  listingFieldRequired: { color: theme.colors.brand, fontSize: 10, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.2 },
+  listingFieldOptional: { color: theme.colors.muted, fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.2 },
+  listingFieldHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17 },
+  listingFieldError: { color: "#dc2626", fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: -6 },
   modalTitle: { color: theme.colors.text, fontSize: 20, lineHeight: 25, fontWeight: "700" },
   modalHeaderRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 42 },
   modalBackButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },

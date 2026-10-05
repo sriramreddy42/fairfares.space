@@ -69,6 +69,7 @@ import {
   reactToChatMessage,
   removeChatGroupMember,
   sendEncryptedChatMessage,
+  sendGuestCommunityChatMessage,
   sendDirectEncryptedChatAttachment,
   submitUserRating,
   sendCommunityGuestMessage,
@@ -5259,6 +5260,26 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
         let pendingIdentity: DeviceIdentity | null = null;
         let pendingEnvelopes: EncryptedOutboxItem["envelopes"] = [];
         try {
+          if (activeConversation?.otherIsGuest) {
+            const response = await sendGuestCommunityChatMessage(activeConversationId, cleanMessage, clientMessageId);
+            ensureSendContext();
+            const sentMessage: ChatMessage = {
+              ...response.message,
+              text: cleanMessage,
+              canEdit: false,
+              canDelete: Boolean(response.message.canDelete),
+              metadata: { ...response.message.metadata, privateReply: privateReplySnapshot || undefined }
+            };
+            setMessages((current) => {
+              const withoutServerDuplicate = current.filter((item) => item.id !== response.message.id || item.localClientMessageId === clientMessageId);
+              const hasOptimistic = withoutServerDuplicate.some((item) => item.localClientMessageId === clientMessageId);
+              return hasOptimistic
+                ? withoutServerDuplicate.map((item) => item.localClientMessageId === clientMessageId ? sentMessage : item)
+                : mergeThreadHistoryMessages(withoutServerDuplicate, [sentMessage]);
+            });
+            playChitthiSentSound();
+            scrollThreadToLatest(false);
+          } else {
           const identity = await ensureChatDeviceIdentity();
           const keyPayload = await getEncryptionKeysForSend(activeConversationId);
           ensureSendContext();
@@ -5290,6 +5311,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           });
           playChitthiSentSound();
           scrollThreadToLatest(false);
+          }
         } catch (error) {
           ensureSendContext();
           if (!isRetryableChatNetworkError(error)) {
@@ -7585,7 +7607,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
               {(isGroupConversation(activeConversation) ? activeConversation?.subject : activeConversation?.otherName) || (pendingPost ? listingPosterName(pendingPost) : "") || (pendingRide ? rideOwnerName(pendingRide) : "") || "Chitthi"}
             </Text>
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
-              {`${presenceLabel(activeConversation)}${!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count ? ` · ⭐ ${activeConversation.otherRatingSummary.label}` : ""} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
+              {activeConversation?.otherIsGuest
+                ? `${presenceLabel(activeConversation)} · Guest reply channel`
+                : `${presenceLabel(activeConversation)}${!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count ? ` · ⭐ ${activeConversation.otherRatingSummary.label}` : ""} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
             </Text>
           </TouchableOpacity>
           {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
@@ -7596,7 +7620,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           <TouchableOpacity style={styles.headerAction} onPress={showChatOptions} accessibilityLabel="Chat options"><DotsIcon /></TouchableOpacity>
         </View>
 
-        {!isGroupConversation(activeConversation) && activeConversation?.canRateOtherUser ? (
+        {!isGroupConversation(activeConversation) && !activeConversation?.otherIsGuest && activeConversation?.canRateOtherUser ? (
           <TouchableOpacity style={styles.ratingPrompt} activeOpacity={0.88} onPress={() => { setRatingScore(0); setRatingComment(""); setRatingOpen(true); }} accessibilityRole="button" accessibilityLabel={`Rate ${activeConversation.otherName || "this member"}`}>
             <View style={styles.ratingPromptIcon}><Text style={styles.ratingPromptIconText}>★</Text></View>
             <View style={styles.ratingPromptCopy}>

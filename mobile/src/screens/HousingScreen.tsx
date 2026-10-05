@@ -65,6 +65,7 @@ type Props = {
   onLinkedCarpoolRideOpened?: () => void;
   discoveryLocation?: string;
   showSearchResults?: boolean;
+  isSearchRefreshing?: boolean;
 };
 
 type CurrentRideLocation = {
@@ -644,7 +645,8 @@ export function HousingScreen({
   onLinkedCarpoolRideOpened,
   discoveryLocation = "",
   hasExactLocationSearch = false,
-  showSearchResults = true
+  showSearchResults = true,
+  isSearchRefreshing = false
 }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
@@ -4119,6 +4121,10 @@ export function HousingScreen({
       </Modal>
 
       {showSearchResults ? <>
+      {isSearchRefreshing ? <View style={styles.housingRefreshNotice} accessibilityRole="progressbar" accessibilityLabel="Refreshing listings">
+        <ActivityIndicator size="small" color={theme.colors.accent} />
+        <Text style={styles.housingRefreshNoticeText}>Refreshing listings…</Text>
+      </View> : null}
       <View style={styles.listingSectionHeader} onLayout={(event) => {
         const nextY = event.nativeEvent.layout.y;
         setListingResultsY((current) => Math.abs(current - nextY) > 1 ? nextY : current);
@@ -4764,6 +4770,8 @@ const styles = StyleSheet.create({
   housingIntentArrow: { position: "absolute", right: 8, bottom: 9, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
   housingIntentArrowText: { color: "#07153f", fontSize: 23, lineHeight: 24, fontWeight: "700", marginTop: -3 },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  housingRefreshNotice: { alignItems: "center", backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", marginBottom: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  housingRefreshNoticeText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
   listingSectionTitle: { flex: 1, minWidth: 0, color: theme.colors.text, ...theme.typography.sectionTitle },
   housingCardRow: { gap: 12, paddingLeft: 10, paddingRight: 20, paddingTop: 4, paddingBottom: 22, alignItems: "flex-start" },
   exactLocationCard: { borderRadius: theme.radius.lg, backgroundColor: "#0b241d", overflow: "hidden" },

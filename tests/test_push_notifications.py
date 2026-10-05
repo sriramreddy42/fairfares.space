@@ -1062,13 +1062,14 @@ class PushNotificationTest(unittest.TestCase):
         with patch.object(app.urllib.request, "urlopen", return_value=response) as mock_open:
             app.send_expo_push(
                 [token],
-                "Rental booking confirmed",
-                "Payment received.",
-                {"type": "RENTAL_BOOKING", "event": "PAYMENT_CONFIRMED", "bookingId": "FF-100"},
+                "Return review started",
+                "Staff recorded return evidence.",
+                {"type": "RENTAL_BOOKING", "event": "RETURN_REVIEW_STARTED", "bookingId": "FF-100"},
             )
         messages = json.loads(mock_open.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(messages[0]["channelId"], "rentals-v2")
         self.assertEqual(messages[0]["data"]["bookingId"], "FF-100")
+        self.assertEqual(messages[0]["data"]["event"], "RETURN_REVIEW_STARTED")
         self.assertNotIn("mutableContent", messages[0])
 
     def test_rental_helper_targets_booking_owner(self):
