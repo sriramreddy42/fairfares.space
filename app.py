@@ -8484,6 +8484,14 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_feed ON ask_community_posts(status, created_at DESC, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_location ON ask_community_posts(city COLLATE NOCASE, area COLLATE NOCASE, status, id DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_posts_author ON ask_community_posts(author_id, id DESC)")
+        # A "Have a place" card is a listing, not a question. Repair the
+        # earlier admin-category edits as the server starts so the label and
+        # the Ask interaction style agree without requiring staff to resave.
+        con.execute(
+            """UPDATE ask_community_posts
+               SET post_type = 'REQUEST', updated_at = CURRENT_TIMESTAMP
+               WHERE category = 'HAVE_PLACE' AND post_type = 'QUESTION'"""
+        )
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_community_posts_source ON ask_community_posts(source_kind, source_public_id) WHERE source_kind != '' AND source_public_id != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_post_images_post_sort ON ask_community_post_images(post_id, sort_order, id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_ask_community_answers_post ON ask_community_answers(post_id, status, id ASC)")
@@ -35210,9 +35218,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     area = city
                 con.execute(
                     """UPDATE ask_community_posts
-                       SET category = ?, city = ?, area = ?, updated_at = CURRENT_TIMESTAMP
+                       SET category = ?, post_type = CASE WHEN ? = 'HAVE_PLACE' THEN 'REQUEST' ELSE post_type END,
+                           city = ?, area = ?, updated_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
-                    (category, city, area, int(row_value(post, "id") or 0)),
+                    (category, category, city, area, int(row_value(post, "id") or 0)),
                 )
         self.redirect("/admin/community")
 
@@ -43882,6 +43891,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if post_type not in COMMUNITY_POST_TYPES or category not in COMMUNITY_CATEGORIES:
             self.send_json({"ok": False, "error": "Choose a valid post type and category."}, 400)
             return
+        if category == "HAVE_PLACE":
+            # A housing offer is a listing request in Ask, even when an older
+            # client still submits its default QUESTION post type.
+            post_type = "REQUEST"
         if len(title) < 6 or len(body) < 12:
             self.send_json({"ok": False, "error": "Add a clear title and at least 12 characters of detail."}, 400)
             return
