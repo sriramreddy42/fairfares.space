@@ -65,6 +65,9 @@ export type HousingPost = {
   bathroomTypeValue?: string;
   genderPreferenceValue?: string;
   leaseTermValue?: string;
+  /** A lightweight public Ask offer rendered inside Housing discovery. */
+  sourceKind?: "ASK_COMMUNITY";
+  sourceId?: string;
   sample?: boolean;
 };
 

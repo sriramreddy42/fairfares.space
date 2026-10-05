@@ -107,6 +107,45 @@ class HousingLocationSearchTest(unittest.TestCase):
         refreshed_listing = next(item for item in refreshed if item["id"] == "PROFILE-PHOTO")
         self.assertEqual(refreshed_listing["photoUrl"], updated_photo)
 
+    def test_public_ask_have_place_offer_is_visible_in_housing(self):
+        """A lightweight Ask offer must be discoverable without fake listing data."""
+        with app.db() as con:
+            con.execute(
+                """
+                INSERT INTO ask_community_posts
+                (public_id, author_id, post_type, title, body, category, city, area,
+                 details_json, fulfillment_status, status, expires_at)
+                VALUES (?, ?, 'REQUEST', ?, ?, 'HAVE_PLACE', 'Denver, CO', 'Capitol Hill',
+                        ?, 'OPEN', 'PUBLISHED', '2099-12-31 23:59:59')
+                """,
+                (
+                    "FFC-ASK-OFFER",
+                    self.user_id,
+                    "Room available near downtown",
+                    "Private room available in a shared apartment close to transit.",
+                    '{"rent":"$950 per month","availableDate":"2026-11-01","roomType":"Private room"}',
+                ),
+            )
+
+        posts = app.mobile_housing_posts(city="Denver, CO", need="need_place", limit=20)
+        offer = next(item for item in posts if item["id"] == "ASK-FFC-ASK-OFFER")
+        self.assertEqual(offer["sourceKind"], "ASK_COMMUNITY")
+        self.assertEqual(offer["sourceId"], "FFC-ASK-OFFER")
+        self.assertEqual(offer["rent"], "$950 per month")
+        self.assertEqual(offer["moveIn"], "2026-11-01")
+        self.assertEqual(offer["location"], "Capitol Hill, Denver, CO")
+        self.assertNotIn("ASK-FFC-ASK-OFFER", {
+            item["id"]
+            for item in app.mobile_housing_posts(city="Denver, CO", need="have_place", limit=20)
+        })
+
+        with app.db() as con:
+            con.execute("UPDATE ask_community_posts SET fulfillment_status = 'FILLED' WHERE public_id = 'FFC-ASK-OFFER'")
+        self.assertNotIn("ASK-FFC-ASK-OFFER", {
+            item["id"]
+            for item in app.mobile_housing_posts(city="Denver, CO", need="need_place", limit=20)
+        })
+
     def test_formatted_street_address_is_not_repeated_with_city_and_zip(self):
         self.assertEqual(
             app.accommodation_address_label({

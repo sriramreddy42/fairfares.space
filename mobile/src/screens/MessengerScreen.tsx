@@ -3829,7 +3829,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
       let cancelled = false;
       setThreadLoading(false);
-      void openChatForPost(pendingPost.id)
+      void (pendingPost.sourceKind === "ASK_COMMUNITY"
+        ? openChatWithPerson(Number(pendingPost.posterUserId || 0))
+        : openChatForPost(pendingPost.id))
         .then(async (response) => {
           if (cancelled) return;
           const conversation = response.conversation;
@@ -5288,7 +5290,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
           const envelopes = encryptForDevices(encryptedText, identity, keyPayload.keys, cleanMessage);
           pendingIdentity = identity;
           pendingEnvelopes = envelopes;
-          const response = await sendEncryptedChatMessage(activeConversationId, envelopes, clientMessageId, false, replyToMessageId, pendingPost?.id || "", mentionIdsSnapshot);
+          const response = await sendEncryptedChatMessage(
+            activeConversationId,
+            envelopes,
+            clientMessageId,
+            false,
+            replyToMessageId,
+            pendingPost?.sourceKind === "ASK_COMMUNITY" ? "" : pendingPost?.id || "",
+            mentionIdsSnapshot,
+          );
           ensureSendContext();
           const sentMessage: ChatMessage = {
             ...response.message,

@@ -23,6 +23,7 @@ type Props = {
 
 export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, height, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
   const isLight = useColorScheme() === "light";
+  const isAskCommunityOffer = post.sourceKind === "ASK_COMMUNITY";
   const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
   const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
@@ -115,7 +116,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
           {ownListing ? (
             <View style={styles.ownListingRow}>
               <View style={styles.ownListingCheck}><Text style={styles.ownListingCheckText}>✓</Text></View>
-              <View style={styles.ownListingCopy}><Text style={styles.ownListingTitle}>Your listing</Text><Text style={styles.ownListingHint}>Manage it from Activity</Text></View>
+              <View style={styles.ownListingCopy}><Text style={styles.ownListingTitle}>{isAskCommunityOffer ? "Your Ask offer" : "Your listing"}</Text><Text style={styles.ownListingHint}>{isAskCommunityOffer ? "Manage it in Ask" : "Manage it from Activity"}</Text></View>
             </View>
           ) : messageSent ? (
             <>

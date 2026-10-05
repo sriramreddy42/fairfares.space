@@ -62,6 +62,7 @@ type Props = {
   onLinkedHousingPostOpened?: () => void;
   onHousingDetailClosed?: () => void;
   onManageHousingListing?: (post: HousingPost) => void;
+  onOpenAskCommunity?: () => void;
   onLinkedCarpoolRideOpened?: () => void;
   discoveryLocation?: string;
   showSearchResults?: boolean;
@@ -642,6 +643,7 @@ export function HousingScreen({
   onLinkedHousingPostOpened,
   onHousingDetailClosed,
   onManageHousingListing,
+  onOpenAskCommunity,
   onLinkedCarpoolRideOpened,
   discoveryLocation = "",
   hasExactLocationSearch = false,
@@ -4400,8 +4402,17 @@ export function HousingScreen({
                     </View>
                   </View>
                 ) : null}
-                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, detailPost.sample && styles.detailMessageDisabled, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManage]} onPress={() => Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? onManageHousingListing?.(detailPost) : !detailPost.sample && onMessage(detailPost)} disabled={detailPost.sample}>
-                  <Text style={[styles.detailMessageText, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManageText]}>{detailPost.sample ? "Sample preview — no poster yet" : Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? "Edit listing" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
+                <TouchableOpacity style={[styles.detailMessage, sentPostIds.includes(detailPost.id) && styles.detailMessageSent, detailPost.sample && styles.detailMessageDisabled, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManage]} onPress={() => {
+                  const ownPost = Number(detailPost.posterUserId) === Number(data?.user?.id || 0);
+                  if (ownPost && detailPost.sourceKind === "ASK_COMMUNITY") {
+                    closeHousingDetail();
+                    onOpenAskCommunity?.();
+                    return;
+                  }
+                  if (ownPost) onManageHousingListing?.(detailPost);
+                  else if (!detailPost.sample) onMessage(detailPost);
+                }} disabled={detailPost.sample}>
+                  <Text style={[styles.detailMessageText, Number(detailPost.posterUserId) === Number(data?.user?.id || 0) && styles.detailManageText]}>{detailPost.sample ? "Sample preview — no poster yet" : Number(detailPost.posterUserId) === Number(data?.user?.id || 0) ? detailPost.sourceKind === "ASK_COMMUNITY" ? "Manage in Ask" : "Edit listing" : sentPostIds.includes(detailPost.id) ? "✓ Message sent" : "Message"}</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : null}

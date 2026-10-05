@@ -18644,6 +18644,184 @@ def mobile_housing_posts_for_viewer(posts: list[dict[str, object]], viewer_id: i
     return visible_posts
 
 
+def mobile_ask_housing_offer_posts(
+    *,
+    city: str = "",
+    area: str = "",
+    need: str = "",
+    category: str = "",
+    gender: str = "",
+    budget: str = "",
+    radius: float = 0,
+    center_lat: float = 0,
+    center_lng: float = 0,
+    limit: int = 50,
+) -> list[tuple[int, float, dict[str, object]]]:
+    """Represent public Ask ``Have a place`` offers in Housing discovery.
+
+    Ask intentionally has a lightweight form, so these are not copied into
+    ``accommodation_posts`` with invented ZIP codes, dates, rent, or property
+    photos.  They remain one source of truth in Ask and are rendered as a
+    community housing offer in the Housing feed.  A real accommodation listing
+    continues to project in the opposite direction into Ask.
+    """
+    if need in {"have_place", "need_roommates"} or category or gender:
+        return []
+    requested_budget = float_from_value(budget)
+    selected_cities = {
+        item.casefold()
+        for item in community_local_city_variants(city)
+        if item
+    }
+    if not selected_cities and city:
+        selected_cities.add(clean_text_value(city, 120).casefold())
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT posts.*, users.name AS author_name, users.profile_photo_url AS author_photo,
+                   GROUP_CONCAT(images.image_url, char(31)) AS image_urls
+            FROM ask_community_posts posts
+            JOIN users ON users.id = posts.author_id AND COALESCE(users.guest_account, 0) = 0
+            LEFT JOIN chat_communities communities ON communities.id = posts.community_id
+            LEFT JOIN ask_community_post_images images ON images.post_id = posts.id
+            WHERE posts.category = 'HAVE_PLACE'
+              AND COALESCE(posts.source_kind, '') = ''
+              AND posts.status = 'PUBLISHED'
+              AND posts.fulfillment_status = 'OPEN'
+              AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))
+              AND (posts.community_id IS NULL OR communities.visibility = 'PUBLIC')
+            GROUP BY posts.id
+            ORDER BY datetime(posts.created_at) DESC
+            LIMIT 160
+            """
+        ).fetchall()
+        rating_summaries = user_rating_summaries(
+            con,
+            (int(row_value(row, "author_id") or 0) for row in rows),
+        )
+
+    search_radius = max(0.0, min(100.0, float_from_value(radius) or 0.0))
+    area_search = bool(area.strip())
+    results: list[tuple[int, float, dict[str, object]]] = []
+    for row in rows:
+        post_city = clean_text_value(row_value(row, "city"), 120)
+        if selected_cities and post_city.casefold() not in selected_cities:
+            continue
+        try:
+            details = json.loads(str(row_value(row, "details_json") or "{}"))
+        except (TypeError, ValueError):
+            details = {}
+        if not isinstance(details, dict):
+            details = {}
+        rent = clean_text_value(details.get("rent"), 40)
+        rent_value = float_from_value(rent)
+        if requested_budget and (not rent_value or rent_value > requested_budget):
+            continue
+        point = accommodation_location_point(post_city, allow_refresh=False) if post_city else {}
+        lat = float(point.get("lat") or 0)
+        lng = float(point.get("lng") or 0)
+        distance = None
+        if center_lat and center_lng and lat and lng:
+            distance = round(distance_miles_between(center_lat, center_lng, lat, lng), 1)
+        if (area_search or search_radius) and center_lat and center_lng:
+            max_distance = search_radius or 60.0
+            if distance is None or distance > max_distance:
+                continue
+        image_urls = [
+            public_upload_url(item)
+            for item in str(row_value(row, "image_urls") or "").split(chr(31))
+            if item
+        ][:4]
+        post_id = str(row_value(row, "public_id") or "")
+        author_id = int(row_value(row, "author_id") or 0)
+        location = ", ".join(part for part in (clean_text_value(row_value(row, "area"), 120), post_city) if part) or post_city or "Location shared in Ask"
+        remaining_days = 0
+        try:
+            expires_at = datetime.fromisoformat(str(row_value(row, "expires_at") or "").replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            remaining_days = max(0, math.ceil((expires_at - datetime.now(timezone.utc)).total_seconds() / 86400))
+        except ValueError:
+            pass
+        results.append((
+            1,
+            float(distance if distance is not None else 9999),
+            {
+                # Prefixing keeps this card distinct from a true accommodation
+                # listing while sourceId preserves the Ask post identity.
+                "id": f"ASK-{post_id}",
+                "sourceKind": "ASK_COMMUNITY",
+                "sourceId": post_id,
+                "title": clean_text_value(row_value(row, "title"), 140) or "Community housing offer",
+                "description": clean_multiline_text_value(row_value(row, "body"), 3000),
+                "mode": "HAVE_PLACE",
+                "modeLabel": "Community offer",
+                "category": "community_offer",
+                "categoryLabel": clean_text_value(details.get("roomType"), 60) or "Community offer",
+                "location": location,
+                "addressLabel": location,
+                "country": inferred_location_country(post_city),
+                "area": clean_text_value(row_value(row, "area"), 120),
+                "workLocation": "",
+                "moveIn": clean_text_value(details.get("availableDate"), 40),
+                "rent": rent,
+                "rentValue": rent_value,
+                "currencyCode": accommodation_currency(post_city)[0],
+                "currencySymbol": accommodation_currency(post_city)[1],
+                "radiusMiles": 0,
+                "distanceMiles": distance,
+                "locationApproximate": bool(lat and lng),
+                "lat": lat,
+                "lng": lng,
+                "imageUrl": image_urls[0] if image_urls else "",
+                "images": image_urls,
+                "posterName": clean_text_value(row_value(row, "author_name"), 120) or "FairFares member",
+                "posterUserId": author_id,
+                "photoUrl": avatar_delivery_path(row_value(row, "author_photo"), author_id),
+                "ratingSummary": rating_summaries.get(author_id, {"average": 0, "count": 0, "label": "New member"}),
+                "daysLeft": remaining_days,
+                "expiryLabel": f"{remaining_days} days left" if remaining_days else "Community post",
+                "roommateIntent": False,
+                "genderPreference": "Open",
+                "leaseTerm": "Flexible",
+                "bathroomType": "Open",
+                "accommodates": 0,
+                "roommateCount": 0,
+                "amenities": [],
+                "city": post_city,
+                "streetAddress": "",
+                "zipCode": "",
+                "primaryNeighborhood": "",
+                "apartmentName": "",
+                "rentMin": rent_value,
+                "rentMax": 0,
+                "rentPeriod": "MONTH",
+                "aboutYou": "",
+                "commutePreference": "",
+                "deposit": 0,
+                "daysAvailable": "",
+                "vegetarianPreference": "",
+                "smokingPolicy": "",
+                "petFriendly": "",
+                "furnished": False,
+                "privateBath": False,
+                "parking": False,
+                "utilitiesIncluded": False,
+                "contactName": "",
+                "contactEmail": "",
+                "contactPhone": "",
+                "socialFacebook": "",
+                "socialX": "",
+                "socialInstagram": "",
+                "socialYoutube": "",
+                "bathroomTypeValue": "",
+                "genderPreferenceValue": "open",
+                "leaseTermValue": "flexible",
+            },
+        ))
+    return results[:max(1, min(limit, 50))]
+
+
 RIDE_TYPE_LABELS = {
     "SCHEDULED_REQUEST": "Scheduled ride",
     "GENERAL_REQUEST": "Ride request",
@@ -21015,6 +21193,25 @@ def mobile_housing_posts(
                 "UPDATE accommodation_posts SET lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 repaired_coordinates,
             )
+    # A lightweight Ask offer has already passed city validation and is a real
+    # housing opportunity, even if its author has not completed the fuller
+    # Housing form.  Merge it here so a member searching for a place sees both
+    # sources in one result set.  The offer keeps its Ask identity and does
+    # not become a fake accommodation row.
+    ranked_payloads.extend(
+        mobile_ask_housing_offer_posts(
+            city=city,
+            area=area,
+            need=need,
+            category=category,
+            gender=gender,
+            budget=budget,
+            radius=search_radius_miles,
+            center_lat=center_lat,
+            center_lng=center_lng,
+            limit=limit,
+        )
+    )
     ranked_payloads.sort(key=lambda entry: (entry[0], entry[1]))
     ranked_page = ranked_payloads[offset:offset + limit] if area or radius_search else ranked_payloads[:limit]
     matched_posts = [item for _, _, item in ranked_page]
@@ -35189,6 +35386,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if post:
                 con.execute("UPDATE ask_community_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, int(post["id"])))
                 con.execute("UPDATE ask_community_reports SET status = 'RESOLVED', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE post_id = ? AND status = 'OPEN'", (int(user["id"]), int(post["id"])))
+        invalidate_mobile_search_cache("housing")
         self.redirect("/admin/community")
 
     def update_admin_community_metadata(self) -> None:
@@ -35223,6 +35421,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        WHERE id = ?""",
                     (category, category, city, area, int(row_value(post, "id") or 0)),
                 )
+        invalidate_mobile_search_cache("housing")
         self.redirect("/admin/community")
 
     def moderate_chat_report(self) -> None:
@@ -43951,6 +44150,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 image_url = save_data_url_payload_locally(folder_name="community", data_url=image_data, fallback_name=f"{public_id.lower()}-{index}", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
                 if image_url:
                     con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order, created_at) VALUES (?, ?, ?, ?)", (database_id, image_url, index, now))
+        if category == "HAVE_PLACE":
+            invalidate_mobile_search_cache("housing")
         row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
         self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"]))}, 201)
 
@@ -44521,6 +44722,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not cursor.rowcount:
             self.send_json({"ok": False, "error": "You can only edit your own active post."}, 403)
             return
+        # This is inexpensive and avoids a recently changed housing offer
+        # remaining stale in the short-lived Housing discovery cache.
+        invalidate_mobile_search_cache("housing")
         self.send_json({"ok": True})
 
     def api_mobile_delete_community_post(self) -> None:
@@ -44534,6 +44738,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not cursor.rowcount:
             self.send_json({"ok": False, "error": "You can only delete your own post."}, 403)
             return
+        invalidate_mobile_search_cache("housing")
         self.send_json({"ok": True})
 
     def api_mobile_update_community_status(self) -> None:
@@ -44561,6 +44766,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "That status does not match this post type."}, 400)
                 return
             con.execute("UPDATE ask_community_posts SET fulfillment_status = ?, expires_at = CASE WHEN ? = 'OPEN' THEN datetime('now', '+45 days') ELSE expires_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (requested, requested, int(post["id"])))
+        invalidate_mobile_search_cache("housing")
         self.send_json({"ok": True, "status": requested})
 
     def api_mobile_create_housing(self) -> None:

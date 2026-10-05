@@ -1638,7 +1638,9 @@ function FairFaresApp() {
     }
     if (Number(post.posterUserId || 0) === Number(data.user.id || 0)) return;
     try {
-      const opened = await openChatForPost(post.id);
+      const opened = post.sourceKind === "ASK_COMMUNITY"
+        ? await openChatWithPerson(Number(post.posterUserId || 0))
+        : await openChatForPost(post.id);
       setData((current) => current ? {
         ...current,
         chat: {
@@ -1676,11 +1678,20 @@ function FairFaresApp() {
       await awaitChatIdentityRecovery(userId);
       const identity = await getOrCreateDeviceIdentity(userId);
       await registerChatDeviceKey(identity.deviceId, identity.publicKey, identity.signingPublicKey || "");
-      const opened = await openChatForPost(post.id);
+      const opened = post.sourceKind === "ASK_COMMUNITY"
+        ? await openChatWithPerson(Number(post.posterUserId || 0))
+        : await openChatForPost(post.id);
       const keys = await getChatDeviceKeys(opened.conversation.id);
       if (!(keys.canSend ?? keys.ready) || !keys.keys.length) throw new Error(keys.warning || "The seller's encrypted chat is not ready yet.");
       const envelopes = encryptForDevices(message, identity, keys.keys);
-      await sendEncryptedChatMessage(opened.conversation.id, envelopes, undefined, false, 0, post.id);
+      await sendEncryptedChatMessage(
+        opened.conversation.id,
+        envelopes,
+        undefined,
+        false,
+        0,
+        post.sourceKind === "ASK_COMMUNITY" ? "" : post.id,
+      );
       markCardMessageSent({ postId: post.id, name: post.posterName, photoUrl: post.photoUrl, listingTitle: post.title });
     } catch (error) {
       Alert.alert("Message not sent", error instanceof Error ? error.message : "Could not send this message.");
@@ -3345,6 +3356,7 @@ function FairFaresApp() {
           setHousingDetailReturnTab(null);
         }}
         onManageHousingListing={editHousingListing}
+        onOpenAskCommunity={() => setActiveTab("community")}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
@@ -3410,6 +3422,7 @@ function FairFaresApp() {
           setHousingDetailReturnTab(null);
         }}
         onManageHousingListing={editHousingListing}
+        onOpenAskCommunity={() => setActiveTab("community")}
         onLinkedCarpoolRideOpened={() => setLinkedCarpoolRide(null)}
         onRideOwnerClosed={() => {
           if (rideOwnerReturnTab) setActiveTab(rideOwnerReturnTab);
