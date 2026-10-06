@@ -250,6 +250,32 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         geocode.assert_called_once_with(label, "Denver, CO")
         self.assertEqual(point, resolved)
 
+    def test_carpool_places_uses_catalogue_before_google_and_google_only_after_miss(self):
+        local_place = {
+            "label": "Union Station, Denver, CO",
+            "lat": 39.7527,
+            "lng": -105.0002,
+            "source": "offline-catalogue",
+        }
+        with patch.object(app, "static_location_suggestions", return_value=[]), patch.object(
+            app, "location_catalog_suggestions", return_value=[local_place]
+        ), patch.object(
+            app, "google_ride_place_predictions", side_effect=AssertionError("catalogue hit must not call Places")
+        ) as places:
+            suggestions = app.ride_place_suggestions("Denver, CO", "Union Station")
+        places.assert_not_called()
+        self.assertEqual(suggestions[0]["source"], "offline-catalogue")
+        self.assertEqual((suggestions[0]["lat"], suggestions[0]["lng"]), (39.7527, -105.0002))
+
+        google_place = {"label": "Ent Credit Union, Parker, CO", "placeId": "ChIJEntCreditUnion"}
+        with patch.object(app, "static_location_suggestions", return_value=[]), patch.object(
+            app, "location_catalog_suggestions", return_value=[]
+        ), patch.object(app, "google_ride_place_predictions", return_value=[google_place]) as places:
+            suggestions = app.ride_place_suggestions("The Pinery, CO", "Ent Credit Union Parker CO")
+        places.assert_called_once()
+        self.assertEqual(suggestions[0]["source"], "google")
+        self.assertEqual(suggestions[0]["placeId"], "ChIJEntCreditUnion")
+
     def test_business_name_with_city_resolves_without_a_selected_suggestion(self):
         """A common business destination must not fall through to a generic error."""
         query = "Ent Credit Union Parker CO"
