@@ -941,7 +941,10 @@ export function HousingScreen({
     }
   }
   const rideDefaultCity = data?.location.city || discoveryLocation || "";
-  const rideDefaultPickup = currentRideLocation?.label || selectedLocationText || data?.location.suggested || rideDefaultCity || "Your location";
+  // Keep the display fallback separate from the actual route value. "Your
+  // location" is useful copy, but it is never a valid address to plan from.
+  const rideResolvedPickup = currentRideLocation?.label || selectedLocationText || data?.location.suggested || rideDefaultCity;
+  const rideDefaultPickup = rideResolvedPickup || "Your location";
   const activeSearchPhrases =
     mode === "ride"
       ? rideSearchPhrases
@@ -1500,7 +1503,7 @@ export function HousingScreen({
   }
 
   function openRidePlanner() {
-    const initialOrigin = rideDefaultPickup;
+    const initialOrigin = rideResolvedPickup;
     rideAutoOriginRef.current = initialOrigin;
     ridePlanSubmittingRef.current = false;
     rideEditorRequestRef.current += 1;
@@ -1601,7 +1604,7 @@ export function HousingScreen({
   function openRideOfferPlanner() {
     const offerSurface = rideOfferSurfaces.find((item) => item.key === "carpool") || rideOfferSurfaces[0];
     ridePlanSubmittingRef.current = false;
-    rideAutoOriginRef.current = rideDefaultPickup;
+    rideAutoOriginRef.current = rideResolvedPickup;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
@@ -1620,7 +1623,7 @@ export function HousingScreen({
     setRideForm({
       ...initialRideForm,
       city: rideDefaultCity || "",
-      origin: rideDefaultPickup,
+      origin: rideResolvedPickup,
       originLat: currentRideLocation?.coords.latitude ?? null,
       originLng: currentRideLocation?.coords.longitude ?? null,
       rideType: "CARPOOL_OFFER",
@@ -1668,7 +1671,7 @@ export function HousingScreen({
 
   function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
     ridePlanSubmittingRef.current = false;
-    rideAutoOriginRef.current = rideDefaultPickup;
+    rideAutoOriginRef.current = rideResolvedPickup;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = place.label;
     selectedRideLabelsRef.current = { origin: "", destination: place.label };
@@ -1686,7 +1689,7 @@ export function HousingScreen({
     const plannedForm: RideInput = {
       ...initialRideForm,
       city: rideDefaultCity,
-      origin: rideDefaultPickup,
+      origin: rideResolvedPickup,
       originLat: currentRideLocation?.coords.latitude ?? null,
       originLng: currentRideLocation?.coords.longitude ?? null,
       destination: place.label,
@@ -1697,7 +1700,7 @@ export function HousingScreen({
     setRideForm(plannedForm);
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
-    void useCurrentRideLocationForOrigin(rideDefaultPickup);
+    void useCurrentRideLocationForOrigin(rideResolvedPickup);
   }
 
   function ridePlanComplete() {
@@ -3004,6 +3007,8 @@ export function HousingScreen({
 
   function renderRidePlannerModal() {
     const activeRideInput = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
+    const showingRideLocalSuggestions = rideLocalSuggestionsBusy
+      || (activeRideInput.trim().length >= 2 && activeRideInput.trim() !== selectedRideSuggestionRef.current);
     const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER");
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const mapRouteOrigin = selectedDriverOffer?.origin || rideForm.origin;
@@ -3137,6 +3142,28 @@ export function HousingScreen({
                 </TouchableOpacity>
               </View>
 
+              {showingRideLocalSuggestions ? (
+                <View style={styles.rideSuggestionList}>
+                  <Text style={styles.rideSuggestionHelp}>FairFares location suggestions</Text>
+                  {rideLocalSuggestionsBusy ? <View style={styles.rideSuggestionLoading} accessibilityRole="progressbar"><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.rideSuggestionHelp}>Searching saved places…</Text></View> : null}
+                  {!rideLocalSuggestionsBusy && !rideLocalSuggestions.length ? (
+                    <Text style={styles.rideSuggestionHelp}>No saved place yet. Enter the full address and continue.</Text>
+                  ) : null}
+                  {rideLocalSuggestions.slice(0, 5).map((place) => (
+                    <TouchableOpacity key={`${place.label}-${place.source}`} style={styles.rideSuggestionRow} onPress={() => chooseLocalRidePlace(place)}>
+                      <View style={styles.rideSuggestionDistance}>
+                        <Text style={styles.rideSuggestionIcon}>{place.main.toLowerCase().includes("airport") ? "✈" : place.main.toLowerCase().includes("station") ? "▤" : "⌖"}</Text>
+                        <Text style={styles.rideSuggestionMiles}>{place.distanceMiles !== null ? `${place.distanceMiles} mi` : ""}</Text>
+                      </View>
+                      <View style={styles.rideSuggestionCopy}>
+                        <Text style={styles.rideSuggestionTitle}>{place.main}</Text>
+                        <Text style={styles.rideSuggestionMeta} numberOfLines={1}>{place.secondary}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
               {listingRide && rideDestinationPicked ? (
                 <View style={styles.rideTripDetails}>
                   <Text style={styles.rideTripDetailsTitle}>When are you traveling?</Text>
@@ -3269,7 +3296,6 @@ export function HousingScreen({
                   style={styles.rideSavedItem}
                   onPress={() => {
                     setRideFocusedField("origin");
-                    updateRideForm("origin", rideDefaultPickup);
                     void useCurrentRideLocationForOrigin();
                   }}
                 >
@@ -3277,7 +3303,9 @@ export function HousingScreen({
                   <View>
                     <Text style={styles.rideSavedTitle}>Your location</Text>
                     <Text style={styles.rideSavedMeta} numberOfLines={1}>
-                      {currentRideLocationBusy ? "Detecting current address..." : rideDefaultPickup}
+                      {currentRideLocationBusy
+                        ? "Detecting current address..."
+                        : currentRideLocation?.label || "Tap to detect your current address"}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -3285,23 +3313,7 @@ export function HousingScreen({
 
               <View style={styles.rideSuggestionList}>
                 {currentRideLocationError ? <Text style={styles.rideSuggestionHelp}>{currentRideLocationError}</Text> : null}
-                <Text style={styles.rideSuggestionHelp}>Suggestions come from FairFares locations. Full addresses are verified when you continue.</Text>
-                {rideLocalSuggestionsBusy ? <View style={styles.rideSuggestionLoading} accessibilityRole="progressbar"><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.rideSuggestionHelp}>Searching saved places…</Text></View> : null}
-                {!rideLocalSuggestionsBusy && activeRideInput.trim().length >= 2 && activeRideInput.trim() !== selectedRideSuggestionRef.current && !rideLocalSuggestions.length ? (
-                  <Text style={styles.rideSuggestionHelp}>No saved place yet. Enter the full address and continue.</Text>
-                ) : null}
-                {rideLocalSuggestions.map((place) => (
-                  <TouchableOpacity key={`${place.label}-${place.source}`} style={styles.rideSuggestionRow} onPress={() => chooseLocalRidePlace(place)}>
-                    <View style={styles.rideSuggestionDistance}>
-                      <Text style={styles.rideSuggestionIcon}>{place.main.toLowerCase().includes("airport") ? "✈" : place.main.toLowerCase().includes("station") ? "▤" : "⌖"}</Text>
-                      <Text style={styles.rideSuggestionMiles}>{place.distanceMiles !== null ? `${place.distanceMiles} mi` : ""}</Text>
-                    </View>
-                    <View style={styles.rideSuggestionCopy}>
-                      <Text style={styles.rideSuggestionTitle}>{place.main}</Text>
-                      <Text style={styles.rideSuggestionMeta} numberOfLines={1}>{place.secondary}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                {!showingRideLocalSuggestions ? <Text style={styles.rideSuggestionHelp}>Suggestions come from FairFares locations. Full addresses are verified when you continue.</Text> : null}
                 {!listingRide ? (
                   <>
                     <TouchableOpacity
