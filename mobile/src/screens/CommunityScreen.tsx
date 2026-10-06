@@ -216,6 +216,68 @@ function communityPostLocation(area: string, city: string) {
   if (areaKey === cityKey || areaKey.includes(cityKey)) return cleanArea;
   return `${cleanArea} · ${cleanCity}`;
 }
+
+const housingCommunityCategories = new Set<CommunityPost["category"]>([
+  "HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE", "HOUSING",
+]);
+
+const communityFactLabels: Record<string, string> = {
+  rent: "Monthly rent",
+  budget: "Monthly budget",
+  availableDate: "Available from",
+  moveIn: "Move-in date",
+  moveInDate: "Move-in date",
+  roomType: "Room type",
+  leaseTerm: "Lease term",
+  bathroomType: "Bathroom",
+  genderPreference: "Who it suits",
+  preference: "Preferences",
+  location: "Location",
+  neighborhood: "Neighborhood",
+};
+
+type CommunityFact = { id: string; label: string; value: string; wide?: boolean };
+
+function isHousingCommunityPost(post: CommunityPost) {
+  return post.sourceKind === "HOUSING" || housingCommunityCategories.has(post.category);
+}
+
+function communityPostFacts(post: CommunityPost): CommunityFact[] {
+  const details = post.details || {};
+  const values = Object.entries(details)
+    .map(([key, value]) => [key, String(value || "").trim()] as const)
+    .filter(([, value]) => Boolean(value));
+  if (!isHousingCommunityPost(post)) {
+    return values.slice(0, 6).map(([key, value]) => ({
+      id: key,
+      label: communityFactLabels[key] || key.replace(/([A-Z])/g, " $1").trim(),
+      value,
+    }));
+  }
+
+  const locationDetail = values.find(([key]) => key === "location" || key === "neighborhood")?.[1] || "";
+  const location = communityPostLocation(locationDetail || post.area, post.city);
+  const orderedKeys = ["rent", "budget", "availableDate", "moveInDate", "moveIn", "roomType", "leaseTerm", "bathroomType", "genderPreference", "preference"];
+  const detailsByKey = new Map(values);
+  const facts: CommunityFact[] = [];
+  for (const key of orderedKeys) {
+    const value = detailsByKey.get(key);
+    if (!value) continue;
+    facts.push({ id: key, label: communityFactLabels[key] || key, value });
+    detailsByKey.delete(key);
+  }
+  for (const [key, value] of detailsByKey) {
+    if (key === "location" || key === "neighborhood") continue;
+    facts.push({ id: key, label: communityFactLabels[key] || key.replace(/([A-Z])/g, " $1").trim(), value });
+  }
+  // Location is intentionally part of the listing facts. It is where people
+  // compare rent, availability, and room type—not a crowded piece of the
+  // poster identity line. Exact home addresses remain excluded from Ask.
+  return [
+    ...facts.slice(0, location ? 6 : 7),
+    ...(location ? [{ id: "listing-location", label: "Location", value: location, wide: true }] : []),
+  ];
+}
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
@@ -1340,18 +1402,20 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     </View>;
   };
 
-  const renderPost = (post: CommunityPost) => (
+  const renderPost = (post: CommunityPost) => {
+    const facts = communityPostFacts(post);
+    return (
     <View key={post.id} style={[styles.postCard, isLight && styles.postCardLight]}>
       <TouchableOpacity activeOpacity={0.92} style={styles.postOpenArea} onPress={() => void openDetail(post)} accessible={false}>
       <View style={styles.postHead}>
         <TouchableOpacity onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} /></TouchableOpacity>
-        <TouchableOpacity style={styles.postAuthor} onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><View style={styles.authorLine}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]} numberOfLines={1}>{post.author.name}</Text>{post.author.ratingSummary?.count ? <Text style={styles.authorRatingBadge}>⭐ {post.author.ratingSummary.label}</Text> : null}</View><Text style={[styles.meta, isLight && styles.textSecondaryLight]}>{post.community?.name || communityPostLocation(post.area, post.city) || "FairFares Community"} · {relativeTime(post.createdAt)}</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.postAuthor} onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><View style={styles.authorLine}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]} numberOfLines={1}>{post.author.name}</Text>{post.author.ratingSummary?.count ? <Text style={styles.authorRatingBadge}>⭐ {post.author.ratingSummary.label}</Text> : null}</View><Text style={[styles.meta, isLight && styles.textSecondaryLight]}>{post.community?.name || (isHousingCommunityPost(post) ? "Housing listing" : communityPostLocation(post.area, post.city) || "FairFares Community")} · {relativeTime(post.createdAt)}</Text></TouchableOpacity>
         <View style={styles.typeBadge}><Text style={[styles.typeBadgeText, styles.postBadgeSoft]}>{post.sourceKind === "HOUSING" ? "🏠 HOUSING" : post.type === "QUESTION" ? "QUESTION" : post.type}</Text></View>
       </View>
       <Text style={[styles.postTitle, styles.postTitleSoft, isLight && styles.textPrimaryLight]}>{post.title}</Text>
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
-      {Object.keys(post.details || {}).length ? <View style={styles.detailFacts}>{Object.entries(post.details).filter(([, value]) => value).slice(0, 6).map(([key, value]) => <View key={key} style={styles.fact}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{key.replace(/([A-Z])/g, " $1")}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]}>{value}</Text></View>)}</View> : null}
+      {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
       {renderPostImages(post.images)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </TouchableOpacity>
@@ -1363,7 +1427,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         {post.sourceKind === "HOUSING" && post.sourceId ? <TouchableOpacity style={[styles.viewListingButton, compactPostActions && styles.compactPostAction]} onPress={(event) => { event.stopPropagation(); onOpenHousing(post.sourceId); }} accessibilityRole="button" accessibilityLabel={`View housing details: ${post.title}`}><Text style={[styles.viewListingIcon, compactPostActions && styles.compactFooterIcon]}>⌂</Text><Text numberOfLines={1} style={[styles.viewListingButtonText, compactPostActions && styles.compactViewListingButtonText, isLight && styles.textBodyLight]}>Details</Text><Text style={[styles.viewListingArrow, compactPostActions && styles.compactViewListingArrow, isLight && styles.textSecondaryLight]}>›</Text></TouchableOpacity> : null}
       </View>
     </View>
-  );
+    );
+  };
 
   const renderLowestRental = () => lowestRental ? (
     <TouchableOpacity
@@ -1719,7 +1784,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 const styles = StyleSheet.create({
   unifiedFeed: { gap: 3 }, feedRowSeparator: { height: 3 }, housingSection: { gap: 3 }, housingPostCard: { backgroundColor: theme.colors.panel, borderTopColor: theme.colors.line, borderBottomColor: theme.colors.line, borderTopWidth: 1, borderBottomWidth: 1, paddingHorizontal: 13, paddingVertical: 16, gap: 12 }, housingPostBadge: { maxWidth: 128, backgroundColor: "#173a2d", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6 }, housingPostBadgeText: { color: "#8ee4bf", fontWeight: "900", fontSize: 9, textTransform: "uppercase" }, housingPostImage: { width: 280, height: 190, borderRadius: 5, backgroundColor: theme.colors.panel2 }, housingPostPhotoFallback: { height: 126, borderRadius: 5, alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: "#122d24", borderWidth: 1, borderColor: "#244c3d" }, housingPostPhotoIcon: { fontSize: 35 }, housingPostPhotoCopy: { color: "#9dd9c2", fontWeight: "800", fontSize: 12 }, housingFacts: { flexDirection: "row", flexWrap: "wrap", gap: 7 }, housingFact: { maxWidth: "48%", minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 10 }, housingFactIcon: { fontSize: 12 }, housingFactText: { flexShrink: 1, color: theme.colors.soft, fontWeight: "700", fontSize: 11 }, housingPostActions: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 11 }, housingDetailsButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.brand, paddingHorizontal: 15 }, housingDetailsButtonText: { color: "#06291e", fontWeight: "900", fontSize: 12 }, housingShareButton: { minHeight: 37, justifyContent: "center", borderRadius: 8, backgroundColor: theme.colors.panel2, paddingHorizontal: 13 }, housingShareButtonText: { color: theme.colors.soft, fontWeight: "800", fontSize: 12 }, housingExpiry: { marginLeft: "auto", color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, housingCopy: { flex: 1 }, housingArrow: { color: theme.colors.muted, fontSize: 28, fontWeight: "300" }, addHousingCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, padding: 11, marginTop: 8, borderRadius: 14, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.brand, backgroundColor: "rgba(24,168,120,.08)" }, addHousingIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, addHousingPlus: { color: "#06291e", fontSize: 25, fontWeight: "700" }, addHousingTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, addHousingBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
   heroGlow: { position: "absolute", right: -40, bottom: -70, width: 260, height: 150, borderRadius: 130, backgroundColor: "rgba(16,108,87,.18)" }, accentLeft: { position: "absolute", left: 25, top: 19, color: "#ffad24", fontSize: 25, fontWeight: "900", transform: [{ rotate: "-25deg" }] }, accentRight: { position: "absolute", right: 87, top: 17, color: "#18a681", fontSize: 21, fontWeight: "900", transform: [{ rotate: "20deg" }] }, askBadgeTail: { position: "absolute", left: 9, bottom: -7, width: 18, height: 18, backgroundColor: "#ef3e42", transform: [{ rotate: "25deg" }] }, communityTagStitch: { position: "absolute", top: 4, bottom: 4, left: 5, right: 5, borderWidth: 1, borderStyle: "dashed", borderColor: "#ed9d38", borderRadius: 7 }, subtitleAccent: { color: theme.colors.brand, fontWeight: "900" },
-  resolvedBadge: { alignSelf: "flex-start", borderRadius: 999, backgroundColor: "#173b2d", paddingHorizontal: 11, paddingVertical: 6 }, resolvedText: { color: "#8ce6bf", fontWeight: "800", fontSize: 12 }, detailFacts: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, fact: { minWidth: "30%", flexGrow: 1, borderRadius: 12, backgroundColor: theme.colors.panel2, padding: 10 }, factLabel: { color: theme.colors.muted, fontSize: 9, textTransform: "uppercase" }, factValue: { color: theme.colors.text, fontWeight: "800", fontSize: 12, marginTop: 3 }, inlineFields: { flexDirection: "row", gap: 8 }, inlineInput: { flex: 1 },
+  resolvedBadge: { alignSelf: "flex-start", borderRadius: 999, backgroundColor: "#173b2d", paddingHorizontal: 11, paddingVertical: 6 }, resolvedText: { color: "#8ce6bf", fontWeight: "800", fontSize: 12 }, detailFacts: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, fact: { minWidth: "30%", flexGrow: 1, borderRadius: 12, backgroundColor: theme.colors.panel2, padding: 10 }, factWide: { width: "100%", flexGrow: 0 }, factLabel: { color: theme.colors.muted, fontSize: 9, textTransform: "uppercase" }, factValue: { color: theme.colors.text, fontWeight: "800", fontSize: 12, marginTop: 3 }, inlineFields: { flexDirection: "row", gap: 8 }, inlineInput: { flex: 1 },
   postAuthorSoft: { fontWeight: "700" }, postTitleSoft: { fontWeight: "700" }, postBadgeSoft: { fontWeight: "600" },
   authorLine: { flexDirection: "row", alignItems: "center", gap: 6 },
   authorRatingBadge: { color: "#8b5a00", backgroundColor: "rgba(255,191,0,0.18)", borderRadius: 999, overflow: "hidden", paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, lineHeight: 11, fontWeight: "900" },
