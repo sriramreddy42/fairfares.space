@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
-  AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share,
+  AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share,
   StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View,
 } from "react-native";
 import {
@@ -278,6 +278,55 @@ function communityPostFacts(post: CommunityPost): CommunityFact[] {
     ...(location ? [{ id: "listing-location", label: "Location", value: location, wide: true }] : []),
   ];
 }
+
+function ZoomableCommunityPhoto({ uri }: { uri: string }) {
+  const scaleValue = useRef(new Animated.Value(1)).current;
+  const translateXValue = useRef(new Animated.Value(0)).current;
+  const translateYValue = useRef(new Animated.Value(0)).current;
+  const gesture = useRef({ scale: 1, x: 0, y: 0, width: 1, height: 1, mode: "none" as "none" | "pan" | "pinch", startX: 0, startY: 0, startPanX: 0, startPanY: 0, startDistance: 1, startScale: 1, anchorX: 0, anchorY: 0 }).current;
+  const updateTransform = (scale: number, x: number, y: number) => {
+    const nextScale = Math.max(1, Math.min(4, scale));
+    const maxX = (nextScale - 1) * gesture.width / 2;
+    const maxY = (nextScale - 1) * gesture.height / 2;
+    gesture.scale = nextScale;
+    gesture.x = Math.max(-maxX, Math.min(maxX, x));
+    gesture.y = Math.max(-maxY, Math.min(maxY, y));
+    scaleValue.setValue(gesture.scale); translateXValue.setValue(gesture.x); translateYValue.setValue(gesture.y);
+  };
+  const beginPan = (touch: { pageX: number; pageY: number }) => { gesture.mode = "pan"; gesture.startX = touch.pageX; gesture.startY = touch.pageY; gesture.startPanX = gesture.x; gesture.startPanY = gesture.y; };
+  const beginPinch = (touches: ReadonlyArray<{ pageX: number; pageY: number; locationX: number; locationY: number }>) => {
+    if (touches.length < 2) return;
+    gesture.mode = "pinch";
+    gesture.startDistance = Math.max(1, Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY));
+    gesture.startScale = gesture.scale;
+    const midpointX = (touches[0].locationX + touches[1].locationX) / 2;
+    const midpointY = (touches[0].locationY + touches[1].locationY) / 2;
+    gesture.anchorX = (midpointX - gesture.width / 2 - gesture.x) / gesture.scale;
+    gesture.anchorY = (midpointY - gesture.height / 2 - gesture.y) / gesture.scale;
+  };
+  const responder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true, onMoveShouldSetPanResponder: () => true, onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (event) => { const touches = event.nativeEvent.touches; if (touches.length >= 2) beginPinch(touches); else if (touches[0]) beginPan(touches[0]); },
+    onPanResponderStart: (event) => { if (event.nativeEvent.touches.length >= 2) beginPinch(event.nativeEvent.touches); },
+    onPanResponderMove: (event) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) {
+        if (gesture.mode !== "pinch") beginPinch(touches);
+        const distance = Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+        const nextScale = gesture.startScale * distance / gesture.startDistance;
+        const midpointX = (touches[0].locationX + touches[1].locationX) / 2;
+        const midpointY = (touches[0].locationY + touches[1].locationY) / 2;
+        updateTransform(nextScale, midpointX - gesture.width / 2 - nextScale * gesture.anchorX, midpointY - gesture.height / 2 - nextScale * gesture.anchorY);
+      } else if (touches[0] && gesture.scale > 1) {
+        if (gesture.mode !== "pan") beginPan(touches[0]);
+        updateTransform(gesture.scale, gesture.startPanX + touches[0].pageX - gesture.startX, gesture.startPanY + touches[0].pageY - gesture.startY);
+      }
+    },
+    onPanResponderRelease: () => { gesture.mode = "none"; if (gesture.scale < 1.02) updateTransform(1, 0, 0); },
+    onPanResponderTerminate: () => { gesture.mode = "none"; },
+  })).current;
+  return <View style={styles.photoViewerStage} onLayout={(event) => { gesture.width = event.nativeEvent.layout.width; gesture.height = event.nativeEvent.layout.height; }} accessibilityLabel="Listing photo. Pinch with two fingers to zoom." {...responder.panHandlers}><Animated.Image source={{ uri: absoluteUrl(uri) }} style={[styles.photoViewerImage, { transform: [{ translateX: translateXValue }, { translateY: translateYValue }, { scale: scaleValue }] }]} resizeMode="contain" /></View>;
+}
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
@@ -410,6 +459,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number } | null>(null);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
   const [answer, setAnswer] = useState("");
@@ -1387,7 +1437,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (!visible.length) return null;
     return <View style={[styles.postMediaGrid, visible.length === 1 && styles.postMediaGridSingle]}>
       {visible.map((image, index) => (
-        <View key={`${image}-${index}`} style={[
+        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={(event) => { event.stopPropagation(); setPhotoViewer({ images, index }); }} style={[
           styles.postMediaCell,
           visible.length === 1 && styles.postMediaCellSingle,
           visible.length === 2 && styles.postMediaCellTwo,
@@ -1397,7 +1447,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         ]}>
           <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
           {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
-        </View>
+        </TouchableOpacity>
       ))}
     </View>;
   };
@@ -1747,6 +1797,15 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </ScrollView></View>
     </Modal>
 
+    <Modal visible={Boolean(photoViewer)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setPhotoViewer(null)}>
+      <View style={styles.photoViewerBackdrop}>
+        <View style={[styles.photoViewerHeader, { paddingTop: Math.max(safeAreaInsets.top, 12) }]}><TouchableOpacity style={styles.photoViewerClose} onPress={() => setPhotoViewer(null)} accessibilityRole="button" accessibilityLabel="Close photos"><Text style={styles.photoViewerCloseText}>Close</Text></TouchableOpacity><Text style={styles.photoViewerCounter}>{photoViewer ? `${photoViewer.index + 1} of ${photoViewer.images.length}` : ""}</Text><View style={styles.photoViewerHeaderSpacer} /></View>
+        {photoViewer ? <ZoomableCommunityPhoto uri={photoViewer.images[photoViewer.index]} /> : null}
+        {photoViewer && photoViewer.images.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoViewerThumbs}>{photoViewer.images.map((image, index) => <TouchableOpacity key={`${image}-${index}`} onPress={() => setPhotoViewer((current) => current ? { ...current, index } : current)} style={[styles.photoViewerThumb, index === photoViewer.index && styles.photoViewerThumbActive]} accessibilityRole="button" accessibilityLabel={`View photo ${index + 1}`}><Image source={{ uri: absoluteUrl(image) }} style={styles.photoViewerThumbImage} /></TouchableOpacity>)}</ScrollView> : null}
+        <Text style={styles.photoViewerHint}>Pinch with two fingers to zoom · Drag to move</Text>
+      </View>
+    </Modal>
+
     <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={handleDetailDismiss}>
       <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}>{expandedReactionTarget ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}<View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={() => setDetail(null)}><Text style={[styles.cancel, isLight && styles.textBodyLight]}>Close</Text></TouchableOpacity><Text style={[styles.modalTitle, isLight && styles.textPrimaryLight]}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
       <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
@@ -1835,6 +1894,7 @@ const styles = StyleSheet.create({
   postMediaCellThreeSmall: { width: "49.5%", height: "41%", flexGrow: 1 },
   postMediaCellFour: { width: "49.5%", height: "49.5%", flexGrow: 1 },
   postMediaImage: { width: "100%", height: "100%" },
+  photoViewerBackdrop: { flex: 1, backgroundColor: "#050807" }, photoViewerHeader: { minHeight: 58, paddingHorizontal: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, photoViewerClose: { minWidth: 64, minHeight: 36, justifyContent: "center" }, photoViewerCloseText: { color: "#fff", fontSize: 16, fontWeight: "800" }, photoViewerCounter: { color: "#fff", fontSize: 14, fontWeight: "800" }, photoViewerHeaderSpacer: { width: 64 }, photoViewerStage: { flex: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" }, photoViewerImage: { width: "100%", height: "100%" }, photoViewerThumbs: { alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 7 }, photoViewerThumb: { width: 58, height: 58, borderRadius: 9, overflow: "hidden", opacity: .55, borderWidth: 2, borderColor: "transparent" }, photoViewerThumbActive: { opacity: 1, borderColor: theme.colors.brand }, photoViewerThumbImage: { width: "100%", height: "100%" }, photoViewerHint: { color: "rgba(255,255,255,.72)", fontSize: 12, fontWeight: "700", textAlign: "center", paddingHorizontal: 20, paddingTop: 5, paddingBottom: 22 },
   postMediaMore: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,.48)" },
   postMediaMoreText: { color: "#fff", fontSize: 28, fontWeight: "900" },
   viewListingButton: { marginLeft: "auto", minHeight: 36, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, borderRadius: 9 }, viewListingIcon: { color: theme.colors.brand, fontSize: 18, lineHeight: 20 }, viewListingButtonText: { color: theme.colors.soft, fontSize: 14, lineHeight: 19, fontWeight: "800", flexShrink: 1 }, compactViewListingButtonText: { fontSize: 11, lineHeight: 16 }, viewListingArrow: { color: theme.colors.muted, fontSize: 20, lineHeight: 21, marginTop: -1 }, compactViewListingArrow: { fontSize: 16, lineHeight: 18 },
