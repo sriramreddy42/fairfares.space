@@ -1450,7 +1450,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
           {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
         </>;
-        return interactive ? <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={(event) => { event.stopPropagation(); setPhotoViewer({ images, index }); }} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
+        return interactive ? <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={() => setPhotoViewer({ images, index })} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
       })}
     </View>;
   };
