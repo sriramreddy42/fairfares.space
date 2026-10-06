@@ -698,6 +698,8 @@ export function HousingScreen({
   const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
   const [ridePlannerStage, setRidePlannerStage] = useState<"plan" | "choices">("plan");
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
+  const [rideLocalSuggestions, setRideLocalSuggestions] = useState<RidePlaceSuggestion[]>([]);
+  const [rideLocalSuggestionsBusy, setRideLocalSuggestionsBusy] = useState(false);
   const [rideEditorLoading, setRideEditorLoading] = useState(false);
   const [ridePopularPlaces, setRidePopularPlaces] = useState<RidePlaceSuggestion[]>([]);
   const [failedRidePopularImages, setFailedRidePopularImages] = useState<Record<string, boolean>>({});
@@ -1329,6 +1331,34 @@ export function HousingScreen({
   }, [rideOwnerOpenToken]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!ridePlannerOpen || ridePlannerStage !== "plan") {
+      setRideLocalSuggestions([]);
+      setRideLocalSuggestionsBusy(false);
+      return;
+    }
+    const query = (rideFocusedField === "origin" ? rideForm.origin : rideForm.destination).trim();
+    if (query.length < 2 || query === selectedRideSuggestionRef.current) {
+      setRideLocalSuggestions([]);
+      setRideLocalSuggestionsBusy(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setRideLocalSuggestionsBusy(true);
+      const cityBias = rideForm.city || data?.location.city || discoveryLocation || "";
+      // This endpoint is deliberately local-only unless resolveExact is true.
+      // Typing can therefore show FairFares suggestions without Google spend.
+      void getRidePlaceSuggestions(cityBias, query, Boolean(cityBias))
+        .then((places) => {
+          if (!cancelled) setRideLocalSuggestions(places.filter((place) => place.source !== "google"));
+        })
+        .catch(() => { if (!cancelled) setRideLocalSuggestions([]); })
+        .finally(() => { if (!cancelled) setRideLocalSuggestionsBusy(false); });
+    }, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [data?.location.city, discoveryLocation, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage]);
+
+  useEffect(() => {
     // Popular cities belong to the user's current country. Housing and ride
     // searches must never retarget this discovery rail.
     const selectedCity = currentRideLocation?.label || discoveryLocation || data?.location.city || "";
@@ -1615,6 +1645,25 @@ export function HousingScreen({
     }
     rideOwnerPlannerEntryRef.current = fromOwnerEntry;
     openRideOfferPlanner();
+  }
+
+  function chooseLocalRidePlace(place: RidePlaceSuggestion) {
+    const selectedField = rideFocusedField;
+    const hasCoordinates = hasRideCoordinates(place.lat, place.lng);
+    selectedRideSuggestionRef.current = place.label;
+    selectedRideLabelsRef.current[selectedField] = place.label;
+    setRideLocalSuggestions([]);
+    setRideForm((current) => ({
+      ...current,
+      [selectedField]: place.label,
+      ...(selectedField === "origin"
+        ? { city: place.label, originLat: hasCoordinates ? place.lat : null, originLng: hasCoordinates ? place.lng : null }
+        : { destinationLat: hasCoordinates ? place.lat : null, destinationLng: hasCoordinates ? place.lng : null })
+    }));
+    if (selectedField === "origin") {
+      setRideFocusedField("destination");
+      requestAnimationFrame(() => rideDestinationInputRef.current?.focus());
+    }
   }
 
   function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
@@ -2954,6 +3003,7 @@ export function HousingScreen({
   }
 
   function renderRidePlannerModal() {
+    const activeRideInput = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
     const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER");
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const mapRouteOrigin = selectedDriverOffer?.origin || rideForm.origin;
@@ -3235,7 +3285,23 @@ export function HousingScreen({
 
               <View style={styles.rideSuggestionList}>
                 {currentRideLocationError ? <Text style={styles.rideSuggestionHelp}>{currentRideLocationError}</Text> : null}
-                <Text style={styles.rideSuggestionHelp}>Enter complete pickup and destination addresses. We verify them when you continue.</Text>
+                <Text style={styles.rideSuggestionHelp}>Suggestions come from FairFares locations. Full addresses are verified when you continue.</Text>
+                {rideLocalSuggestionsBusy ? <View style={styles.rideSuggestionLoading} accessibilityRole="progressbar"><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.rideSuggestionHelp}>Searching saved places…</Text></View> : null}
+                {!rideLocalSuggestionsBusy && activeRideInput.trim().length >= 2 && activeRideInput.trim() !== selectedRideSuggestionRef.current && !rideLocalSuggestions.length ? (
+                  <Text style={styles.rideSuggestionHelp}>No saved place yet. Enter the full address and continue.</Text>
+                ) : null}
+                {rideLocalSuggestions.map((place) => (
+                  <TouchableOpacity key={`${place.label}-${place.source}`} style={styles.rideSuggestionRow} onPress={() => chooseLocalRidePlace(place)}>
+                    <View style={styles.rideSuggestionDistance}>
+                      <Text style={styles.rideSuggestionIcon}>{place.main.toLowerCase().includes("airport") ? "✈" : place.main.toLowerCase().includes("station") ? "▤" : "⌖"}</Text>
+                      <Text style={styles.rideSuggestionMiles}>{place.distanceMiles !== null ? `${place.distanceMiles} mi` : ""}</Text>
+                    </View>
+                    <View style={styles.rideSuggestionCopy}>
+                      <Text style={styles.rideSuggestionTitle}>{place.main}</Text>
+                      <Text style={styles.rideSuggestionMeta} numberOfLines={1}>{place.secondary}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
                 {!listingRide ? (
                   <>
                     <TouchableOpacity
