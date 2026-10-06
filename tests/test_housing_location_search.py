@@ -1340,6 +1340,16 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertFalse(options["googlePlacesEnabled"])
         self.assertIn("Denver, CO", options["suggested"])
 
+    def test_housing_never_reports_places_enabled_when_geocoding_is_configured(self):
+        with patch.dict(
+            os.environ,
+            {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_MAPS_API_KEY": "geocoding-key"},
+        ), patch.object(
+            app, "google_ride_place_predictions", side_effect=AssertionError("housing must not call Places")
+        ):
+            options = app.accommodation_location_options("Denver, CO", "RiNo")
+        self.assertFalse(options["googlePlacesEnabled"])
+
     def test_mobile_housing_committed_search_skips_google_when_local_point_exists(self):
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("local points must not refresh Google")

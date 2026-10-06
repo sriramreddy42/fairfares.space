@@ -21636,7 +21636,9 @@ def accommodation_location_options(
         "zips": zips[:12],
         "lat": float(point.get("lat") or 0),
         "lng": float(point.get("lng") or 0),
-        "googlePlacesEnabled": google_enabled and not backend_only,
+        # Housing never uses Places. Geocoding may establish a committed
+        # search center, but it is not autocomplete or a Places result.
+        "googlePlacesEnabled": False,
         "source": "google" if google_refreshed_metro else "offline-catalogue" if catalogue_suggestions else "static" if fallback_from_group else str(point.get("source") or "cache"),
     }
 
