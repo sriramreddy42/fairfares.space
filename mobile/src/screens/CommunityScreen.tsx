@@ -1458,9 +1458,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const renderPost = (post: CommunityPost) => {
     const facts = communityPostFacts(post);
     const housingPost = isHousingCommunityPost(post);
+    const showingPostDetail = detail?.id === post.id;
+    const PostOpenContainer: React.ElementType = showingPostDetail ? View : TouchableOpacity;
+    const postOpenProps = showingPostDetail ? {} : { activeOpacity: 0.92, onPress: () => void openDetail(post), accessible: false };
     return (
     <View key={post.id} style={[styles.postCard, isLight && styles.postCardLight]}>
-      <TouchableOpacity activeOpacity={0.92} style={styles.postOpenArea} onPress={() => void openDetail(post)} accessible={false}>
+      <PostOpenContainer style={styles.postOpenArea} {...postOpenProps}>
       <View style={styles.postHead}>
         <TouchableOpacity onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} /></TouchableOpacity>
         <TouchableOpacity style={styles.postAuthor} onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]} numberOfLines={1}>{post.author.name}</Text><View style={styles.authorMetaLine}>{post.author.ratingSummary?.count ? <Text style={styles.authorRatingBadge}>⭐ {post.author.ratingSummary.label}</Text> : null}<Text style={[styles.meta, styles.postMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{post.community?.name || (isHousingCommunityPost(post) ? "Housing listing" : communityPostLocation(post.area, post.city) || "FairFares Community")} · {relativeTime(post.createdAt)}</Text></View></TouchableOpacity>
@@ -1470,9 +1473,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
-      {renderPostImages(post.images, Boolean(detail && detail.id === post.id))}
+      {renderPostImages(post.images, showingPostDetail)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
-      </TouchableOpacity>
+      </PostOpenContainer>
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
       <View style={[styles.postActions, compactPostActions && styles.postActionsCompact, isLight && styles.postActionsLight]}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction), false, compactPostActions)}
