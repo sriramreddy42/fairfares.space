@@ -484,6 +484,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const fallbackNationalOffset = useRef(0);
   const manualFeedCity = useRef(false);
   const feedCityStorageKey = `fairfares.ask.feed-city.${Number(user?.id || 0) || "guest"}`;
+  useEffect(() => { if (!detail) setPhotoViewer(null); }, [detail]);
   const lowestRental = useMemo(() => cars.reduce<Car | null>((lowest, car) => {
     const price = Number(car.daily_price);
     if (!Number.isFinite(price) || price <= 0 || !car.image_url) return lowest;
@@ -1432,23 +1433,25 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const communityInsertIndex = Math.min(3, posts.length - 1);
 
-  const renderPostImages = (images: string[]) => {
+  const renderPostImages = (images: string[], interactive = false) => {
     const visible = images.slice(0, 4);
     if (!visible.length) return null;
     return <View style={[styles.postMediaGrid, visible.length === 1 && styles.postMediaGridSingle]}>
-      {visible.map((image, index) => (
-        <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={(event) => { event.stopPropagation(); setPhotoViewer({ images, index }); }} style={[
+      {visible.map((image, index) => {
+        const cellStyle = [
           styles.postMediaCell,
           visible.length === 1 && styles.postMediaCellSingle,
           visible.length === 2 && styles.postMediaCellTwo,
           visible.length === 3 && index === 0 && styles.postMediaCellThreeHero,
           visible.length === 3 && index > 0 && styles.postMediaCellThreeSmall,
           visible.length === 4 && styles.postMediaCellFour,
-        ]}>
+        ];
+        const imageCell = <>
           <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
           {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
-        </TouchableOpacity>
-      ))}
+        </>;
+        return interactive ? <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={(event) => { event.stopPropagation(); setPhotoViewer({ images, index }); }} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
+      })}
     </View>;
   };
 
@@ -1467,7 +1470,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
-      {renderPostImages(post.images)}
+      {renderPostImages(post.images, Boolean(detail && detail.id === post.id))}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </TouchableOpacity>
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
@@ -1797,15 +1800,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </ScrollView></View>
     </Modal>
 
-    <Modal visible={Boolean(photoViewer)} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setPhotoViewer(null)}>
-      <View style={styles.photoViewerBackdrop}>
-        <View style={[styles.photoViewerHeader, { paddingTop: Math.max(safeAreaInsets.top, 12) }]}><TouchableOpacity style={styles.photoViewerClose} onPress={() => setPhotoViewer(null)} accessibilityRole="button" accessibilityLabel="Close photos"><Text style={styles.photoViewerCloseText}>Close</Text></TouchableOpacity><Text style={styles.photoViewerCounter}>{photoViewer ? `${photoViewer.index + 1} of ${photoViewer.images.length}` : ""}</Text><View style={styles.photoViewerHeaderSpacer} /></View>
-        {photoViewer ? <ZoomableCommunityPhoto uri={photoViewer.images[photoViewer.index]} /> : null}
-        {photoViewer && photoViewer.images.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoViewerThumbs}>{photoViewer.images.map((image, index) => <TouchableOpacity key={`${image}-${index}`} onPress={() => setPhotoViewer((current) => current ? { ...current, index } : current)} style={[styles.photoViewerThumb, index === photoViewer.index && styles.photoViewerThumbActive]} accessibilityRole="button" accessibilityLabel={`View photo ${index + 1}`}><Image source={{ uri: absoluteUrl(image) }} style={styles.photoViewerThumbImage} /></TouchableOpacity>)}</ScrollView> : null}
-        <Text style={styles.photoViewerHint}>Pinch with two fingers to zoom · Drag to move</Text>
-      </View>
-    </Modal>
-
     <Modal visible={Boolean(detail)} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetail(null)} onDismiss={handleDetailDismiss}>
       <KeyboardAvoidingView style={styles.modal} behavior={Platform.OS === "ios" ? "padding" : "height"}>{expandedReactionTarget ? <Pressable style={styles.reactionDismissLayer} onPress={() => { reactionLongPressTarget.current = ""; setExpandedReactionTarget(""); }} accessibilityLabel="Close reactions" /> : null}<View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={() => setDetail(null)}><Text style={[styles.cancel, isLight && styles.textBodyLight]}>Close</Text></TouchableOpacity><Text style={[styles.modalTitle, isLight && styles.textPrimaryLight]}>Community post</Text><TouchableOpacity onPress={() => detail && (detail.canEdit ? managePost(detail) : report(detail))}><Text style={detail?.canEdit ? styles.publish : styles.danger}>{detail?.canEdit ? "Manage" : "Report"}</Text></TouchableOpacity></View>
       <ScrollView contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>{detail ? <>
@@ -1827,6 +1821,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <TouchableOpacity style={styles.guestBenefitsSecondary} onPress={() => beginGuestAuth("login")}><Text style={styles.guestBenefitsSecondaryText}>Already registered? Log in</Text></TouchableOpacity>
         </View>
       </View> : null}
+      {photoViewer ? <View style={styles.photoViewerBackdrop}><View style={[styles.photoViewerHeader, { paddingTop: Math.max(safeAreaInsets.top, 12) }]}><TouchableOpacity style={styles.photoViewerClose} onPress={() => setPhotoViewer(null)} accessibilityRole="button" accessibilityLabel="Close photos"><Text style={styles.photoViewerCloseText}>Close</Text></TouchableOpacity><Text style={styles.photoViewerCounter}>{photoViewer.index + 1} of {photoViewer.images.length}</Text><View style={styles.photoViewerHeaderSpacer} /></View><ZoomableCommunityPhoto uri={photoViewer.images[photoViewer.index]} />{photoViewer.images.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoViewerThumbs}>{photoViewer.images.map((image, index) => <TouchableOpacity key={`${image}-${index}`} onPress={() => setPhotoViewer((current) => current ? { ...current, index } : current)} style={[styles.photoViewerThumb, index === photoViewer.index && styles.photoViewerThumbActive]} accessibilityRole="button" accessibilityLabel={`View photo ${index + 1}`}><Image source={{ uri: absoluteUrl(image) }} style={styles.photoViewerThumbImage} /></TouchableOpacity>)}</ScrollView> : null}<Text style={styles.photoViewerHint}>Pinch with two fingers to zoom · Drag to move</Text></View> : null}
       </KeyboardAvoidingView>
     </Modal>
 
@@ -1894,7 +1889,7 @@ const styles = StyleSheet.create({
   postMediaCellThreeSmall: { width: "49.5%", height: "41%", flexGrow: 1 },
   postMediaCellFour: { width: "49.5%", height: "49.5%", flexGrow: 1 },
   postMediaImage: { width: "100%", height: "100%" },
-  photoViewerBackdrop: { flex: 1, backgroundColor: "#050807" }, photoViewerHeader: { minHeight: 58, paddingHorizontal: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, photoViewerClose: { minWidth: 64, minHeight: 36, justifyContent: "center" }, photoViewerCloseText: { color: "#fff", fontSize: 16, fontWeight: "800" }, photoViewerCounter: { color: "#fff", fontSize: 14, fontWeight: "800" }, photoViewerHeaderSpacer: { width: 64 }, photoViewerStage: { flex: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" }, photoViewerImage: { width: "100%", height: "100%" }, photoViewerThumbs: { alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 7 }, photoViewerThumb: { width: 58, height: 58, borderRadius: 9, overflow: "hidden", opacity: .55, borderWidth: 2, borderColor: "transparent" }, photoViewerThumbActive: { opacity: 1, borderColor: theme.colors.brand }, photoViewerThumbImage: { width: "100%", height: "100%" }, photoViewerHint: { color: "rgba(255,255,255,.72)", fontSize: 12, fontWeight: "700", textAlign: "center", paddingHorizontal: 20, paddingTop: 5, paddingBottom: 22 },
+  photoViewerBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "#050807" }, photoViewerHeader: { minHeight: 58, paddingHorizontal: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, photoViewerClose: { minWidth: 64, minHeight: 36, justifyContent: "center" }, photoViewerCloseText: { color: "#fff", fontSize: 16, fontWeight: "800" }, photoViewerCounter: { color: "#fff", fontSize: 14, fontWeight: "800" }, photoViewerHeaderSpacer: { width: 64 }, photoViewerStage: { flex: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" }, photoViewerImage: { width: "100%", height: "100%" }, photoViewerThumbs: { alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 7 }, photoViewerThumb: { width: 58, height: 58, borderRadius: 9, overflow: "hidden", opacity: .55, borderWidth: 2, borderColor: "transparent" }, photoViewerThumbActive: { opacity: 1, borderColor: theme.colors.brand }, photoViewerThumbImage: { width: "100%", height: "100%" }, photoViewerHint: { color: "rgba(255,255,255,.72)", fontSize: 12, fontWeight: "700", textAlign: "center", paddingHorizontal: 20, paddingTop: 5, paddingBottom: 22 },
   postMediaMore: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,.48)" },
   postMediaMoreText: { color: "#fff", fontSize: 28, fontWeight: "900" },
   viewListingButton: { marginLeft: "auto", minHeight: 36, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, borderRadius: 9 }, viewListingIcon: { color: theme.colors.brand, fontSize: 18, lineHeight: 20 }, viewListingButtonText: { color: theme.colors.soft, fontSize: 14, lineHeight: 19, fontWeight: "800", flexShrink: 1 }, compactViewListingButtonText: { fontSize: 11, lineHeight: 16 }, viewListingArrow: { color: theme.colors.muted, fontSize: 20, lineHeight: 21, marginTop: -1 }, compactViewListingArrow: { fontSize: 16, lineHeight: 18 },
