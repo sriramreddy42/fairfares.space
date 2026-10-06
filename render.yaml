@@ -37,8 +37,9 @@ services:
         sync: false
       - key: GOOGLE_GEOCODING_API_KEY
         sync: false
-      # Used only by carpool pickup/destination autocomplete and Place
-      # Details. Housing, gas prices, city search, and maps never use it.
+      # Used only to resolve a submitted carpool pickup or destination after
+      # a member taps Find rides or List ride. Typing uses the FairFares
+      # catalogue; housing, gas prices, city search, and maps never use it.
       - key: GOOGLE_PLACES_API_KEY
         sync: false
       - key: FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK

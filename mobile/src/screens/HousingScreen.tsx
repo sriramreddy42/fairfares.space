@@ -313,7 +313,7 @@ const rideServicePosters: Array<{
     tint: "#243b73",
     glyph: "general",
     register: "Enter pickup, destination, date/time, seats, luggage, and notes.",
-    works: ["Search both places with Google Places.", "Review the route and suggested contribution.", "Use Chitthi before requesting or accepting to confirm details."],
+    works: ["Choose pickup and destination from FairFares suggestions.", "Review the route and suggested contribution.", "Use Chitthi before requesting or accepting to confirm details."],
     access: "Choose this for one ride inside or near the city.",
     available: false
   },
