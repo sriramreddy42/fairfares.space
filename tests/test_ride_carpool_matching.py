@@ -250,6 +250,23 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         geocode.assert_called_once_with(label, "Denver, CO")
         self.assertEqual(point, resolved)
 
+    def test_business_name_with_city_resolves_without_a_selected_suggestion(self):
+        """A common business destination must not fall through to a generic error."""
+        query = "Ent Credit Union Parker CO"
+        resolved_point = {
+            "label": "Ent Credit Union, Parker, CO",
+            "lat": 39.5181,
+            "lng": -104.7614,
+        }
+        self.assertTrue(app.ride_query_should_geocode_directly(query, "The Pinery, CO"))
+        with patch.object(app, "ride_point", return_value={}), patch.object(
+            app, "precise_accommodation_location_point", return_value=resolved_point
+        ):
+            resolved = app.ride_place_suggestions("The Pinery, CO", query, resolve_exact=True)
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0]["label"], "Ent Credit Union, Parker, CO")
+        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.5181, -104.7614))
+
     def test_google_prediction_resolves_by_place_id_not_cached_city_point(self):
         label = "Coors Field, 2001 Blake St, Denver, CO"
         place_id = "ChIJ1234567890Denver"

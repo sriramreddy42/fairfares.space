@@ -18900,6 +18900,18 @@ def ride_query_should_geocode_directly(query: str, city: str = "") -> bool:
         return True
     if re.search(r"\b(airport|airfield)\b", clean_query, flags=re.IGNORECASE):
         return True
+    # A member often enters a destination as a business name plus its city,
+    # for example "Ent Credit Union Parker CO". It is specific enough for an
+    # exact geocode even though it contains neither a street number nor commas.
+    # Without this, it bypassed both the catalogue and Places Details, then
+    # failed only after the person pressed Find rides.
+    if re.search(
+        r"\b(?:credit\s+union|bank|grocery|supermarket|pharmacy|restaurant|cafe|coffee|"
+        r"store|shop|gym|fitness|church|temple|mosque|library|school|clinic|medical)\b",
+        clean_query,
+        flags=re.IGNORECASE,
+    ):
+        return True
     if not re.search(r"\b(university|college|airport|international|amtrak|terminal|station|mall|hotel|apartments?)\b", clean_query, flags=re.IGNORECASE):
         return len(clean_query.split()) <= 3
     return False
@@ -19310,7 +19322,19 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 requested_state and resolved_state and requested_state != resolved_state
             ):
                 point = {}
-            if point and point_name and point_name != query_name:
+            # A provider commonly reformats "Ent Credit Union Parker CO" as
+            # "Ent Credit Union, Parker, CO". Treat a venue-name prefix as the
+            # same requested place; still reject an unrelated city-center
+            # fallback such as "Parker, CO" for that business query.
+            query_describes_point = bool(
+                point_name
+                and query_name
+                # One-word city labels such as "Denver" must never validate
+                # a venue merely because its name begins with that city.
+                and len(point_name.split()) >= 2
+                and (query_name.startswith(point_name) or point_name.startswith(query_name))
+            )
+            if point and point_name and point_name != query_name and not query_describes_point:
                 is_broad_city_label = len(point_label.split(",")) <= 3 and not re.search(r"\d|\b(?:airport|station|university|hotel|mall)\b", point_label, re.I)
                 if is_broad_city_label:
                     city_center = static_accommodation_point(point_label)

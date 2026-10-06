@@ -42,7 +42,10 @@ services:
       - key: FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH
         value: "0"
       - key: FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK
-        value: "0"
+        # Autocomplete, Place Details, and exact geocoding are needed for
+        # rider-entered destinations such as a bank or business name. Broad
+        # Text Search remains disabled above.
+        value: "1"
       - key: FAIRFARES_REQUIRE_LOCATION_CATALOG
         value: "1"
       # Google ID tokens created by the native apps use the server/Web OAuth
