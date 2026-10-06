@@ -17253,7 +17253,7 @@ _GOOGLE_PLACES_ISSUE_LOGGED_AT: dict[tuple[str, str, str], float] = {}
 
 def log_google_places_issue(operation: str, status: str, error_message: str = "") -> None:
     """Log provider failure categories without keys, searches, or locations."""
-    safe_operation = operation if operation in {"autocomplete", "details"} else "unknown"
+    safe_operation = operation if operation in {"search"} else "unknown"
     safe_status = status if status in {
         "REQUEST_DENIED", "OVER_QUERY_LIMIT", "ZERO_RESULTS", "INVALID_REQUEST",
         "UNKNOWN_ERROR", "EMPTY_PREDICTIONS", "INVALID_RESPONSE", "EXCEPTION",
@@ -17282,103 +17282,77 @@ def log_google_places_issue(operation: str, status: str, error_message: str = ""
     print(f"Google Places {safe_operation}: status={safe_status} category={category}", flush=True)
 
 
-def google_ride_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False, session_token: str = "") -> list[dict[str, str]]:
-    """Places Autocomplete exclusively for carpool pickup and destination fields."""
+def google_ride_place_text_search(city: str, query: str, *, use_city_bias: bool = True) -> dict[str, object]:
+    """Resolve one submitted carpool location with Places API (New).
+
+    This intentionally runs only after the member submits a ride plan. Typing
+    never contacts Google: FairFares' own location catalogue remains the only
+    live suggestion source.
+    """
     if not google_ride_places_enabled():
-        return []
+        return {}
     api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     city = normalize_accommodation_place_label(city)
-    area = normalize_accommodation_place_label(area)
-    city_root = city.split(",", 1)[0].strip().lower()
-    if not api_key or not area or (city and (area.lower() == city_root or area.lower() == city.lower())):
-        return []
-    # Keep the user's place text intact. The city coordinates below are only a
-    # proximity bias for neighborhood-style queries; appending the pickup city
-    # here turned destinations such as "Cincinnati" into "Cincinnati Denver, CO".
-    input_text = area or city
-    params: dict[str, str] = {
-        "input": input_text,
-        "key": api_key,
-    }
-    if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session_token):
-        params["sessiontoken"] = session_token
+    query = normalize_accommodation_place_label(query)
+    if not api_key or not query:
+        return {}
+
+    # A bare destination category needs a local context. Preserve explicit
+    # addresses and named places exactly as the member entered them.
+    generic_place_query = bool(re.fullmatch(
+        r"(?:airports?|stations?|train stations?|bus stations?|malls?|hotels?|universit(?:y|ies)|colleges)",
+        query,
+        flags=re.IGNORECASE,
+    ))
+    text_query = f"{query} near {city}" if generic_place_query and city else query
+    payload: dict[str, object] = {"textQuery": text_query, "maxResultCount": 1, "languageCode": "en"}
     city_point = accommodation_location_point(city, allow_refresh=False) if use_city_bias and city else {}
     city_lat = float(city_point.get("lat") or 0)
     city_lng = float(city_point.get("lng") or 0)
-    if use_city_bias and city_lat and city_lng:
-        params["location"] = f"{city_lat},{city_lng}"
-        params["radius"] = "96560"
+    if city_lat and city_lng:
+        payload["locationBias"] = {
+            "circle": {
+                "center": {"latitude": city_lat, "longitude": city_lng},
+                "radius": 96560.0,
+            }
+        }
     try:
-        payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{urllib.parse.urlencode(params)}")
-    except urllib.error.HTTPError as exc:
-        log_google_places_issue("autocomplete", f"HTTP_{exc.code}")
-        return []
-    except Exception as exc:
-        status = "TIMEOUT" if isinstance(exc, (TimeoutError, socket.timeout)) else "NETWORK_ERROR" if isinstance(exc, urllib.error.URLError) else "EXCEPTION"
-        log_google_places_issue("autocomplete", status)
-        return []
-    if not isinstance(payload, dict):
-        log_google_places_issue("autocomplete", "INVALID_RESPONSE")
-        return []
-    if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
-        log_google_places_issue("autocomplete", str(payload.get("status") or ""), str(payload.get("error_message") or ""))
-        return []
-    if payload.get("status") == "ZERO_RESULTS" or not payload.get("predictions"):
-        log_google_places_issue("autocomplete", "ZERO_RESULTS" if payload.get("status") == "ZERO_RESULTS" else "EMPTY_PREDICTIONS")
-    suggestions: list[dict[str, str]] = []
-    seen: set[str] = set()
-    blocked_types = {"hospital", "stadium", "local_government_office"}
-    for prediction in payload.get("predictions") or []:
-        if not isinstance(prediction, dict):
-            continue
-        types = set(str(item) for item in (prediction.get("types") or []))
-        if not include_all_types and types & blocked_types:
-            continue
-        label = clean_google_place_prediction(str(prediction.get("description") or ""))
-        if not label or label.lower() in seen:
-            continue
-        seen.add(label.lower())
-        suggestions.append({"label": label, "placeId": str(prediction.get("place_id") or "").strip()})
-        if len(suggestions) >= limit:
-            break
-    return suggestions
+        response = google_api_post_json(
+            "https://places.googleapis.com/v1/places:searchText",
+            payload,
+            {
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "places.formattedAddress,places.location",
+            },
+            timeout=4,
+        )
+    except GoogleApiError as exc:
+        status = f"HTTP_{exc.status_code}" if exc.status_code else (
+            "TIMEOUT" if exc.category == "timeout" else "NETWORK_ERROR" if exc.category == "connection" else "EXCEPTION"
+        )
+        log_google_places_issue("search", status, exc.reason)
+        return {}
+    except (TypeError, ValueError):
+        log_google_places_issue("search", "INVALID_RESPONSE")
+        return {}
 
-
-def google_ride_place_details(place_id: str, session_token: str = "") -> dict[str, object]:
-    """Fetch the selected prediction's geometry, never a similarly named city."""
-    if not google_ride_places_enabled():
+    places = response.get("places") if isinstance(response.get("places"), list) else []
+    if not places or not isinstance(places[0], dict):
+        log_google_places_issue("search", "ZERO_RESULTS")
         return {}
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    place_id = str(place_id or "").strip()
-    if not api_key or not re.fullmatch(r"[A-Za-z0-9_-]{8,256}", place_id):
-        return {}
-    detail_params = {"place_id": place_id, "fields": "geometry,name,formatted_address", "key": api_key}
-    if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", session_token):
-        detail_params["sessiontoken"] = session_token
-    params = urllib.parse.urlencode(detail_params)
-    try:
-        payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/details/json?{params}")
-    except urllib.error.HTTPError as exc:
-        log_google_places_issue("details", f"HTTP_{exc.code}")
-        return {}
-    except Exception as exc:
-        status = "TIMEOUT" if isinstance(exc, (TimeoutError, socket.timeout)) else "NETWORK_ERROR" if isinstance(exc, urllib.error.URLError) else "EXCEPTION"
-        log_google_places_issue("details", status)
-        return {}
-    if not isinstance(payload, dict):
-        log_google_places_issue("details", "INVALID_RESPONSE")
-        return {}
-    if payload.get("status") != "OK" or not isinstance(payload.get("result"), dict):
-        log_google_places_issue("details", str(payload.get("status") or "INVALID_RESPONSE"), str(payload.get("error_message") or ""))
-        return {}
-    result = payload["result"]
-    geometry = result.get("geometry") if isinstance(result.get("geometry"), dict) else {}
-    location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
-    lat = float(location.get("lat") or 0)
-    lng = float(location.get("lng") or 0)
+    place = places[0]
+    location = place.get("location") if isinstance(place.get("location"), dict) else {}
+    lat = float(location.get("latitude") or 0)
+    lng = float(location.get("longitude") or 0)
     if not valid_ride_coordinate_pair(lat, lng):
+        log_google_places_issue("search", "INVALID_RESPONSE")
         return {}
-    return {"lat": lat, "lng": lng, "source": "google-place-details"}
+    return {
+        "label": clean_google_place_prediction(str(place.get("formattedAddress") or query)),
+        "lat": lat,
+        "lng": lng,
+        "source": "google-place-search",
+    }
 
 
 def keep_mobile_accommodation_suggestion(label: str) -> bool:
@@ -19169,14 +19143,13 @@ def ride_known_popular_cities(query: str, city: str, limit: int = 8, *, exact: b
     return matches
 
 
-def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False, place_id: str = "", session_token: str = "") -> list[dict[str, object]]:
+def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_city_bias: bool = True, cities_only: bool = False, resolve_exact: bool = False) -> list[dict[str, object]]:
     city = normalize_accommodation_place_label(city)
     query = normalize_accommodation_place_label(query)
     city_point = ride_point(city, allow_refresh=False)
     selected_country = inferred_location_country(city) if cities_only and city else ""
     labels: list[tuple[str, str]] = []
     popular_points: dict[str, dict[str, object]] = {}
-    prediction_place_ids: dict[str, str] = {}
 
     # Selection and final submission use this narrow path. It turns the exact
     # text the member chose into a coordinate-bearing route point instead of
@@ -19184,25 +19157,18 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
     # legacy Places response).
     if resolve_exact and query:
         point: dict[str, object] = {}
-        if place_id:
-            point = google_ride_place_details(place_id, session_token)
-        else:
-            # Suggestions from our catalogue already carry exact coordinates.
-            # Resolve those locally before considering a paid geocode.
-            point = ride_point(query, city, allow_refresh=False)
+        # First resolve saved FairFares locations without a provider call.
+        # There is no paid autocomplete or Place Details request in this flow.
+        point = ride_point(query, city, allow_refresh=False)
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and (known_cities := ride_known_popular_cities(query, city, limit=1, exact=True)):
             point = known_cities[0]
-        if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")) and ride_query_should_geocode_directly(query, city):
-            point = precise_accommodation_location_point(query)
-            if ride_airport_resolution_is_broad(query, point):
-                point = {}
+        # One paid lookup, and only after the member taps Find rides/List ride.
         if not valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
-            point = ride_point(query, city, allow_refresh=True)
-            if ride_airport_resolution_is_broad(query, point):
-                point = {}
-        # A geocoder can return a city's center for a selected venue. Keep
-        # the member's chosen label, but never attach that unrelated point.
-        # Place Details has no label here, so its exact geometry is unaffected.
+            point = google_ride_place_text_search(city, query, use_city_bias=use_city_bias)
+        # Do not fall through to Geocoding or a cache refresh here. The single
+        # Places Text Search above is the only paid fallback for this submit.
+        # A non-result asks the member for a fuller address instead of risking
+        # a broad city-center coordinate for a named venue.
         if valid_ride_coordinate_pair(point.get("lat"), point.get("lng")):
             point_label = normalize_accommodation_place_label(str(point.get("label") or ""))
             point_name = point_label.split(",", 1)[0].casefold()
@@ -19239,7 +19205,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                     ) <= 5
                     if near_city_center or not re.search(r"\b(?:airport|airfield)\b", query, re.I):
                         point = {}
-        label = query if place_id else ride_display_label(query, point, city)
+        label = ride_display_label(query, point, city)
         lat = float(point.get("lat") or 0)
         lng = float(point.get("lng") or 0)
         if label and lat and lng:
@@ -19252,7 +19218,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 "lat": lat,
                 "lng": lng,
                 "source": "geocoded",
-                "placeId": place_id,
+                "placeId": "",
                 "icon": ride_place_icon_source(label),
                 "imageUrl": "",
             }]
@@ -19311,58 +19277,17 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 popular_points[label.lower()] = place
 
     if google_query and labels:
-        # Cities, towns, and known neighborhoods are complete route points in
-        # the offline catalogue. Do not spend Places quota for the same input.
+        # Live suggestions are entirely local and do not spend Places quota.
         pass
-    elif google_query and len(google_query) < 3:
-        # Match the mobile threshold at the API boundary so direct callers
-        # cannot spend Places quota on an input too short to identify a place.
+    elif google_query:
+        # A typed route point is verified only when the member submits the
+        # planner (resolve_exact=True). Keep this response local for all
+        # older clients that still request suggestions while typing.
         for place in ride_known_popular_cities(query, city, limit=limit):
             label = str(place.get("label") or "")
             add_label(label, "country-fallback")
             if label:
                 popular_points[label.lower()] = place
-    elif google_query:
-        # A bare category has no destination of its own. Scope it in the text
-        # sent to Places so an unavailable city geocode cannot make Google's
-        # server/IP location supply an unrelated airport or station.
-        generic_place_query = bool(re.fullmatch(
-            r"(?:airports?|stations?|train stations?|bus stations?|malls?|hotels?|universit(?:y|ies)|colleges)",
-            google_query,
-            flags=re.IGNORECASE,
-        ))
-        scoped_query = f"{google_query} near {city}" if use_city_bias and city and generic_place_query else google_query
-        predictions = google_ride_place_predictions(
-            city, scoped_query, limit=limit * 2,
-            use_city_bias=use_city_bias and scoped_query == google_query,
-            include_all_types=True,
-            session_token=session_token,
-        )
-        # Legacy autocomplete can return ZERO_RESULTS with a location/radius
-        # even for an explicitly named destination. Retry without that bias;
-        # do not do this for bare categories, which would return unrelated POIs.
-        if not predictions and use_city_bias and scoped_query == google_query:
-            predictions = google_ride_place_predictions(
-                city, google_query, limit=limit * 2, use_city_bias=False, include_all_types=True, session_token=session_token
-            )
-        if use_city_bias and city and predictions:
-            city_name = city.split(",", 1)[0].strip()
-            if city_name:
-                predictions = sorted(
-                    predictions,
-                    key=lambda item: 0 if re.search(rf"\b{re.escape(city_name)}\b", str(item.get("label") or ""), re.I) else 1,
-                )
-        for prediction in predictions:
-            label = prediction["label"]
-            add_label(label, "google")
-            if prediction.get("placeId"):
-                prediction_place_ids.setdefault(label.lower(), prediction["placeId"])
-        if not labels:
-            for place in ride_known_popular_cities(query, city, limit=limit):
-                label = str(place.get("label") or "")
-                add_label(label, "country-fallback")
-                if label:
-                    popular_points[label.lower()] = place
     else:
         popular_loader = google_ride_popular_cities if cities_only else google_ride_popular_places
         for place in popular_loader(
@@ -19390,10 +19315,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
 
     suggestions: list[dict[str, object]] = []
     for label, source in labels:
-        place_id = prediction_place_ids.get(label.lower(), "")
-        # Autocomplete has no geometry, even when its place ID is missing.
-        # Never let a cached city center masquerade as this suggestion's point.
-        point = {} if source == "google" else popular_points.get(label.lower())
+        point = popular_points.get(label.lower())
         if point is None:
             try:
                 point = ride_point(label, city, allow_refresh=False)
@@ -19416,7 +19338,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
                 "lat": lat,
                 "lng": lng,
                 "source": source,
-                "placeId": place_id,
+                "placeId": "",
                 "icon": ride_place_icon_source(label),
                 "imageUrl": str(point.get("imageUrl") or ""),
             }
@@ -41525,8 +41447,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = clean_text_value((params.get("city", [""])[0] or ""), 120)
         query = clean_text_value((params.get("q", params.get("query", [""]))[0] or ""), 180)
-        place_id = clean_text_value((params.get("placeId", [""])[0] or ""), 256)
-        session_token = clean_text_value((params.get("sessionToken", [""])[0] or ""), 64)
         try:
             limit = int(params.get("limit", ["10"])[0] or 10)
         except ValueError:
@@ -41536,14 +41456,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         resolve_exact = str(params.get("resolve", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
         suggestions = ride_place_suggestions(
             city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only,
-            resolve_exact=resolve_exact, place_id=place_id if resolve_exact else "", session_token=session_token,
+            resolve_exact=resolve_exact,
         )
-        # Older mobile builds require choosing an autocomplete row before a
-        # housing address can be posted. Keep those builds usable after Maps
-        # is disabled by returning a clearly local, coordinate-free row for a
-        # conventional typed street address. Ride planners reject this row
-        # during their coordinate-resolution step, so it cannot create an
-        # approximate or incorrect carpool route.
+        # Older mobile builds can still display a local row for a conventional
+        # typed street address. Current planners verify the address only on
+        # submission, so this branch never triggers a Google lookup.
         if (
             not suggestions
             and not resolve_exact

@@ -118,30 +118,32 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         airport = "Denver International Airport (DEN), 8500 Peña Blvd, Denver, CO"
         point = {"label": "Denver", "lat": 39.8563486, "lng": -104.6764061}
         self.assertEqual(app.ride_display_label(airport, point, "Denver, CO"), airport)
-        with patch.object(app, "precise_accommodation_location_point", return_value=point):
+        with patch.object(app, "google_ride_place_text_search", return_value=point):
             suggestions = app.ride_place_suggestions("Denver, CO", airport, resolve_exact=True)
         self.assertEqual(suggestions[0]["label"], airport)
         self.assertAlmostEqual(suggestions[0]["lat"], 39.8563486)
 
-    def test_google_airport_suggestions_resolve_across_us_and_india(self):
-        airports = (
-            ("Denver, CO", "Denver International Airport (DEN), Denver, CO", "ChIJDenverAirport01", 39.8561, -104.6737),
-            ("New York, NY", "John F. Kennedy International Airport, Queens, NY", "ChIJNewYorkAirport01", 40.6413, -73.7781),
-            ("Hyderabad, Telangana, India", "Rajiv Gandhi International Airport, Hyderabad, Telangana, India", "ChIJHyderabadAirport01", 17.2403, 78.4294),
-        )
-        with patch.object(app, "ride_point", side_effect=fake_ride_point):
-            for city, label, place_id, lat, lng in airports:
-                with self.subTest(city=city), patch.object(
-                    app, "google_ride_place_predictions", return_value=[{"label": label, "placeId": place_id}]
-                ), patch.object(app, "google_ride_place_details", return_value={"lat": lat, "lng": lng, "source": "google-place-details"}):
-                    suggestions = app.ride_place_suggestions(city, "airport")
-                    selected = next(item for item in suggestions if item["label"] == label)
-                    self.assertEqual(selected["source"], "google")
-                    self.assertEqual(selected["placeId"], place_id)
-                    self.assertEqual((selected["lat"], selected["lng"]), (0.0, 0.0))
-                    resolved = app.ride_place_suggestions("", label, resolve_exact=True, place_id=place_id)
-                    self.assertEqual(len(resolved), 1)
-                    self.assertEqual((resolved[0]["label"], resolved[0]["lat"], resolved[0]["lng"]), (label, lat, lng))
+    def test_typed_locations_never_call_google_before_submit(self):
+        with patch.object(app, "google_ride_place_text_search", side_effect=AssertionError("typing must not call Places")):
+            results = app.ride_place_suggestions("Denver, CO", "Union Station")
+        self.assertTrue(all(item["source"] != "google" for item in results))
+
+    def test_local_catalogue_resolves_without_google_on_submit(self):
+        local_point = {"label": "Union Station, Denver, CO", "lat": 39.7527, "lng": -105.0002}
+        with patch.object(app, "ride_point", return_value=local_point), patch.object(
+            app, "google_ride_place_text_search", side_effect=AssertionError("saved point must not call Places")
+        ):
+            resolved = app.ride_place_suggestions("Denver, CO", "Union Station, Denver, CO", resolve_exact=True)
+        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.7527, -105.0002))
+
+    def test_submitted_unknown_location_uses_one_places_new_text_search(self):
+        resolved_point = {"label": "Ent Credit Union, Parker, CO", "lat": 39.5181, "lng": -104.7614}
+        with patch.object(app, "ride_point", return_value={}), patch.object(
+            app, "ride_known_popular_cities", return_value=[]
+        ), patch.object(app, "google_ride_place_text_search", return_value=resolved_point) as search:
+            resolved = app.ride_place_suggestions("The Pinery, CO", "Ent Credit Union Parker CO", resolve_exact=True)
+        search.assert_called_once_with("The Pinery, CO", "Ent Credit Union Parker CO", use_city_bias=True)
+        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.5181, -104.7614))
 
     @patch.object(app, "send_mobile_push_for_users")
     def test_first_time_driver_can_list_without_profile_or_insurance(self, _mock_push):
@@ -173,181 +175,6 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
-
-    @patch.object(app, "google_ride_place_predictions", return_value=[])
-    def test_no_denver_only_airport_suggestion_when_google_is_unavailable(self, _mock_places):
-        with patch.object(app, "ride_point", side_effect=fake_ride_point):
-            suggestions = app.ride_place_suggestions("Denver, CO", "airport")
-        self.assertFalse(any("denver international airport" in item["label"].lower() for item in suggestions))
-
-    def test_generic_airport_search_is_scoped_to_requested_city(self):
-        city = "Hyderabad, Telangana, India"
-        airport = "Rajiv Gandhi International Airport (HYD), Hyderabad, Telangana, India"
-        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_ride_place_predictions",
-            return_value=[{"label": airport, "placeId": "ChIJHyderabadAirport01"}],
-        ) as predictions:
-            results = app.ride_place_suggestions(city, "airport")
-        self.assertEqual(results[0]["label"], airport)
-        self.assertEqual(predictions.call_count, 1)
-        self.assertEqual(predictions.call_args.args[:2], (city, f"airport near {city}"))
-        self.assertFalse(predictions.call_args.kwargs["use_city_bias"])
-
-    def test_generic_airport_search_does_not_retry_unscoped_results(self):
-        city = "Hyderabad, Telangana, India"
-        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_ride_place_predictions", return_value=[]
-        ) as predictions:
-            results = app.ride_place_suggestions(city, "airport")
-        self.assertEqual(results, [])
-        self.assertEqual(predictions.call_count, 1)
-
-    def test_biased_named_place_retries_globally_without_changing_text(self):
-        city = "Denver, CO, USA"
-        airport = "Denver International Airport (DEN), Denver, CO"
-        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_ride_place_predictions",
-            side_effect=[[], [{"label": airport, "placeId": "ChIJDenverAirport01"}]],
-        ) as predictions:
-            results = app.ride_place_suggestions(city, "Denver International Airport")
-        self.assertEqual(results[0]["label"], airport)
-        self.assertEqual([call.kwargs["use_city_bias"] for call in predictions.call_args_list], [True, False])
-        self.assertTrue(all(call.args[1] == "Denver International Airport" for call in predictions.call_args_list))
-
-    def test_biased_ambiguous_place_prioritizes_current_city(self):
-        city = "San Francisco, CA, USA"
-        places = [
-            {"label": "Union Square, Manhattan, New York, NY", "placeId": "ChIJNewYorkUnion01"},
-            {"label": "Union Square, San Francisco, CA", "placeId": "ChIJSanFrancisco01"},
-        ]
-        with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_ride_place_predictions", return_value=places
-        ):
-            results = app.ride_place_suggestions(city, "Union Square")
-        self.assertEqual(results[0]["label"], "Union Square, San Francisco, CA")
-        self.assertEqual(len(results), 2)
-
-    def test_selected_place_keeps_its_name_and_coordinates_for_any_poi(self):
-        examples = (
-            ("Coors Field, 2001 Blake St, Denver, CO", 39.7559, -104.9942),
-            ("Denver Union Station, 1701 Wynkoop St, Denver, CO", 39.7527, -105.0002),
-            ("UCHealth University of Colorado Hospital, Aurora, CO", 39.7427, -104.8411),
-        )
-        with patch.object(app, "ride_point") as geocode:
-            for label, lat, lng in examples:
-                with self.subTest(label=label):
-                    point = app.ride_submission_point(label, "Denver, CO", lat, lng)
-                    self.assertEqual(point["label"], label)
-                    self.assertEqual((point["lat"], point["lng"]), (lat, lng))
-                    self.assertEqual(app.ride_display_label(label, point, "Denver, CO"), label)
-            geocode.assert_not_called()
-
-    def test_typed_place_without_coordinates_is_still_geocoded(self):
-        label = "Coors Field, 2001 Blake St, Denver, CO"
-        resolved = {"label": "Coors Field, Denver, CO", "lat": 39.7559, "lng": -104.9942}
-        with patch.object(app, "ride_point", return_value=resolved) as geocode:
-            point = app.ride_submission_point(label, "Denver, CO", 0, 0)
-        geocode.assert_called_once_with(label, "Denver, CO")
-        self.assertEqual(point, resolved)
-
-    def test_carpool_places_uses_catalogue_before_google_and_google_only_after_miss(self):
-        local_place = {
-            "label": "Union Station, Denver, CO",
-            "lat": 39.7527,
-            "lng": -105.0002,
-            "source": "offline-catalogue",
-        }
-        with patch.object(app, "static_location_suggestions", return_value=[]), patch.object(
-            app, "location_catalog_suggestions", return_value=[local_place]
-        ), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("catalogue hit must not call Places")
-        ) as places:
-            suggestions = app.ride_place_suggestions("Denver, CO", "Union Station")
-        places.assert_not_called()
-        self.assertEqual(suggestions[0]["source"], "offline-catalogue")
-        self.assertEqual((suggestions[0]["lat"], suggestions[0]["lng"]), (39.7527, -105.0002))
-
-        google_place = {"label": "Ent Credit Union, Parker, CO", "placeId": "ChIJEntCreditUnion"}
-        with patch.object(app, "static_location_suggestions", return_value=[]), patch.object(
-            app, "location_catalog_suggestions", return_value=[]
-        ), patch.object(app, "google_ride_place_predictions", return_value=[google_place]) as places:
-            suggestions = app.ride_place_suggestions("The Pinery, CO", "Ent Credit Union Parker CO")
-        places.assert_called_once()
-        self.assertEqual(suggestions[0]["source"], "google")
-        self.assertEqual(suggestions[0]["placeId"], "ChIJEntCreditUnion")
-
-    def test_business_name_with_city_resolves_without_a_selected_suggestion(self):
-        """A common business destination must not fall through to a generic error."""
-        query = "Ent Credit Union Parker CO"
-        resolved_point = {
-            "label": "Ent Credit Union, Parker, CO",
-            "lat": 39.5181,
-            "lng": -104.7614,
-        }
-        self.assertTrue(app.ride_query_should_geocode_directly(query, "The Pinery, CO"))
-        with patch.object(app, "ride_point", return_value={}), patch.object(
-            app, "precise_accommodation_location_point", return_value=resolved_point
-        ):
-            resolved = app.ride_place_suggestions("The Pinery, CO", query, resolve_exact=True)
-        self.assertEqual(len(resolved), 1)
-        self.assertEqual(resolved[0]["label"], "Ent Credit Union, Parker, CO")
-        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.5181, -104.7614))
-
-    def test_google_prediction_resolves_by_place_id_not_cached_city_point(self):
-        label = "Coors Field, 2001 Blake St, Denver, CO"
-        place_id = "ChIJ1234567890Denver"
-        city_point = {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
-
-        def google_response(url):
-            if "/autocomplete/" in url:
-                return {"status": "OK", "predictions": [{"description": label, "place_id": place_id, "types": ["stadium"]}]}
-            if "/details/" in url:
-                return {"status": "OK", "result": {"geometry": {"location": {"lat": 39.7559, "lng": -104.9942}}}}
-            self.fail(f"Unexpected Google URL: {url}")
-
-        with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_accommodation_geocode", return_value=None), patch.object(app, "google_api_get", side_effect=google_response), patch.object(app, "ride_point", return_value=city_point):
-            suggestions = app.ride_place_suggestions("Denver, CO", "Coors Field")
-            self.assertEqual(suggestions[0]["placeId"], place_id)
-            self.assertEqual(suggestions[0]["lat"], 0)
-            self.assertIsNone(suggestions[0]["distanceMiles"])
-            resolved = app.ride_place_suggestions("Denver, CO", label, resolve_exact=True, place_id=place_id)
-        self.assertEqual(resolved[0]["label"], label)
-        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.7559, -104.9942))
-
-    def test_failed_place_details_does_not_fall_back_to_city_center(self):
-        city_point = {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
-        with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_api_get", return_value={"status": "ZERO_RESULTS"}), patch.object(app, "precise_accommodation_location_point", return_value=city_point), patch.object(app, "ride_point", return_value=city_point):
-            resolved = app.ride_place_suggestions("Denver, CO", "Coors Field, Denver, CO", resolve_exact=True, place_id="ChIJ1234567890Denver")
-        self.assertEqual(resolved, [])
-
-    def test_selected_venue_cannot_take_city_center_even_without_city_bias(self):
-        city_point = {"label": "Denver, CO", "lat": 39.7392, "lng": -104.9903}
-        with patch.object(app, "google_ride_place_details", return_value={}), patch.object(app, "precise_accommodation_location_point", return_value=city_point), patch.object(app, "ride_point", return_value=city_point):
-            self.assertEqual(app.ride_place_suggestions("", "Coors Field, Denver, CO", resolve_exact=True, place_id="ChIJ1234567890Denver"), [])
-            self.assertEqual(app.ride_place_suggestions("", "Coors Field, Denver, CO", resolve_exact=True), [])
-            self.assertEqual(app.ride_place_suggestions("", "Denver Union Station, Denver, CO", resolve_exact=True), [])
-
-    def test_exact_ride_place_rejects_wrong_country_or_state(self):
-        with patch.object(app, "precise_accommodation_location_point", return_value={"label": "Hyderabad city, AK", "lat": 61.2181, "lng": -149.9003}), patch.object(app, "ride_point", return_value={"label": "Hyderabad city, AK", "lat": 61.2181, "lng": -149.9003}):
-            self.assertEqual(app.ride_place_suggestions("", "Hyderabad, Telangana, India", resolve_exact=True), [])
-        with patch.object(app, "precise_accommodation_location_point", return_value={"label": "Springfield, IL", "lat": 39.7817, "lng": -89.6501}), patch.object(app, "ride_point", return_value={"label": "Springfield, IL", "lat": 39.7817, "lng": -89.6501}):
-            self.assertEqual(app.ride_place_suggestions("", "Springfield, MO", resolve_exact=True), [])
-
-    def test_failed_place_details_uses_exact_text_geocode_without_renaming_destination(self):
-        label = "Denver International Airport (DEN), 8500 Peña Blvd, Denver, CO"
-        airport_point = {"label": "Denver International Airport, Denver, CO", "lat": 39.8561, "lng": -104.6737}
-        with patch.object(app, "google_ride_place_details", return_value={}), patch.object(app, "precise_accommodation_location_point", return_value=airport_point):
-            resolved = app.ride_place_suggestions("Denver, CO", label, resolve_exact=True, place_id="ChIJ1234567890Denver")
-        self.assertEqual(resolved[0]["label"], label)
-        self.assertEqual((resolved[0]["lat"], resolved[0]["lng"]), (39.8561, -104.6737))
-
-    def test_google_prediction_without_place_id_is_still_searchable(self):
-        label = "Boulder, CO, USA"
-        with patch.object(app, "google_ride_place_predictions", return_value=[{"label": label, "placeId": ""}]), patch.object(app, "ride_point", return_value={"label": label, "lat": 40.015, "lng": -105.2705}):
-            suggestions = app.ride_place_suggestions("Denver, CO", "Boulder")
-        self.assertEqual(suggestions[0]["label"], label)
-        self.assertEqual(suggestions[0]["placeId"], "")
-        self.assertEqual((suggestions[0]["lat"], suggestions[0]["lng"]), (0, 0))
 
     @patch.object(app, "send_mobile_push_for_users")
     def test_ride_post_and_activity_keep_selected_place_name_and_point(self, _mock_push):
@@ -1571,45 +1398,36 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    @patch.object(app, "google_ride_place_predictions", return_value=[])
-    def test_missing_carpool_city_does_not_fall_back_to_denver(self, _mock_places):
+    def test_missing_carpool_city_does_not_fall_back_to_denver(self):
         suggestions = app.ride_place_suggestions("", "unin", limit=10)
         self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))
 
     def test_short_ride_location_query_never_calls_google_places(self):
-        with patch.object(app, "google_ride_place_predictions", side_effect=AssertionError("short input must stay local")):
+        with patch.object(app, "google_ride_place_text_search", side_effect=AssertionError("typing must stay local")):
             suggestions = app.ride_place_suggestions("Denver, CO", "De")
         self.assertTrue(all("denver" in str(item.get("label") or "").lower() for item in suggestions))
 
-    @patch.object(app, "google_accommodation_geocode")
-    def test_ride_exact_resolve_prefers_typed_address_over_stale_city_bias(self, mock_geocode):
-        def fake_geocode(query):
-            if "12480 Ardwick" in query:
-                return {
-                    "formatted_address": "12480 Ardwick Ln, Bridgeton, MO 63044, USA",
-                    "geometry": {"location": {"lat": 38.7479, "lng": -90.4232}},
-                    "address_components": [],
-                }
-            if "Denver" in query:
-                return {
-                    "formatted_address": "Denver, CO, USA",
-                    "geometry": {"location": {"lat": 39.7392, "lng": -104.9903}},
-                    "address_components": [],
-                }
-            return None
-
-        mock_geocode.side_effect = fake_geocode
-
-        suggestions = app.ride_place_suggestions(
-            "825 Logan St, Denver, CO 80203, USA",
-            "12480 Ardwick Ln, St. Louis, MO",
-            resolve_exact=True,
-        )
-
+    def test_ride_exact_resolve_prefers_typed_address_over_stale_city_bias(self):
+        typed_address = "12480 Ardwick Ln, St. Louis, MO"
+        resolved_address = {
+            "label": "12480 Ardwick Ln, Bridgeton, MO 63044, USA",
+            "lat": 38.7479,
+            "lng": -90.4232,
+        }
+        with patch.object(app, "ride_point", return_value={}), patch.object(
+            app, "ride_known_popular_cities", return_value=[]
+        ), patch.object(app, "google_ride_place_text_search", return_value=resolved_address) as search:
+            suggestions = app.ride_place_suggestions(
+                "825 Logan St, Denver, CO 80203, USA",
+                typed_address,
+                resolve_exact=True,
+            )
+        search.assert_called_once_with("825 Logan St, Denver, CO 80203, USA", typed_address, use_city_bias=True)
         self.assertEqual(len(suggestions), 1)
         self.assertEqual(suggestions[0]["label"], "12480 Ardwick Ln, Bridgeton, MO 63044, USA")
         self.assertAlmostEqual(suggestions[0]["lat"], 38.7479)
         self.assertAlmostEqual(suggestions[0]["lng"], -90.4232)
+
 
     @patch.object(app, "send_mobile_push_for_users")
     def test_concurrent_driver_acceptance_has_exactly_one_winner(self, _mock_push):

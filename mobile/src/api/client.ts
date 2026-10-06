@@ -847,16 +847,13 @@ export type RidePlaceSuggestion = {
   lat: number;
   lng: number;
   source: string;
-  placeId?: string;
   imageUrl?: string;
 };
 
-export async function getRidePlaceSuggestions(city: string, query = "", useCityBias = true, citiesOnly = false, resolveExact = false, placeId = "", sessionToken = "") {
+export async function getRidePlaceSuggestions(city: string, query = "", useCityBias = true, citiesOnly = false, resolveExact = false) {
   const params = new URLSearchParams({ city, q: query, limit: "12", cityBias: useCityBias ? "1" : "0" });
   if (citiesOnly) params.set("citiesOnly", "1");
   if (resolveExact) params.set("resolve", "1");
-  if (resolveExact && placeId) params.set("placeId", placeId);
-  if (sessionToken) params.set("sessionToken", sessionToken);
   const payload = await request<{ ok: boolean; suggestions: RidePlaceSuggestion[] }>(`/api/mobile/ride-places?${params.toString()}`);
   return payload.suggestions || [];
 }

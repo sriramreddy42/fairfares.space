@@ -223,17 +223,6 @@ function looksLikeBroadRideCityQuery(value: string) {
   return text.split(/\s+/).length <= 3;
 }
 
-// A Places session token only correlates the current typing interaction with
-// the selected place. It is never an account or authentication credential.
-function createRidePlacesSessionToken() {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 const budgetValues = [700, 900, 1200, 1600, 2000];
 const renterAgeOptions = ["21-24", "25+"];
 const rideModes: Array<{ type: RideType; title: string; copy: string }> = [
@@ -709,9 +698,6 @@ export function HousingScreen({
   const [ridePlannerOpen, setRidePlannerOpen] = useState(false);
   const [ridePlannerStage, setRidePlannerStage] = useState<"plan" | "choices">("plan");
   const [rideFocusedField, setRideFocusedField] = useState<"origin" | "destination">("destination");
-  const [rideSuggestions, setRideSuggestions] = useState<RidePlaceSuggestion[]>([]);
-  const [rideSuggestionsBusy, setRideSuggestionsBusy] = useState(false);
-  const [rideSuggestionsEnabled, setRideSuggestionsEnabled] = useState(false);
   const [rideEditorLoading, setRideEditorLoading] = useState(false);
   const [ridePopularPlaces, setRidePopularPlaces] = useState<RidePlaceSuggestion[]>([]);
   const [failedRidePopularImages, setFailedRidePopularImages] = useState<Record<string, boolean>>({});
@@ -744,8 +730,6 @@ export function HousingScreen({
   const rideAutoOriginRef = useRef("");
   const selectedRideSuggestionRef = useRef("");
   const selectedRideLabelsRef = useRef({ origin: "", destination: "" });
-  const selectedRidePlaceIdsRef = useRef({ origin: "", destination: "" });
-  const ridePlacesSessionTokensRef = useRef({ origin: "", destination: "" });
   const lastRideOwnerOpenTokenRef = useRef(0);
   const rideEditorRequestRef = useRef(0);
   const rideOwnerLocationSubscription = useRef<Location.LocationSubscription | null>(null);
@@ -867,16 +851,11 @@ export function HousingScreen({
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
-    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
-    ridePlacesSessionTokensRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
     setRidePlanBusy(false);
     setRideEditorLoading(false);
-    setRideSuggestionsEnabled(false);
-    setRideSuggestions([]);
-    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setRideOwnerOpen(false);
     setMode("ride");
@@ -1283,8 +1262,6 @@ export function HousingScreen({
       const requestId = rideEditorRequestRef.current + 1;
       rideEditorRequestRef.current = requestId;
       setRideEditorLoading(true);
-      setRideSuggestionsEnabled(false);
-      setRideSuggestions([]);
       onBottomTabsHiddenChange?.(true);
       void getRideActivity().then((rows) => {
         if (rideEditorRequestRef.current !== requestId) return;
@@ -1297,8 +1274,6 @@ export function HousingScreen({
         setEditingRideId(ride.id);
         rideAutoOriginRef.current = "";
         selectedRideLabelsRef.current = { origin: "", destination: "" };
-        selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
-        ridePlacesSessionTokensRef.current = { origin: "", destination: "" };
         setRideForm({
           rideType: ride.type,
           city: ride.city || data?.location.city || discoveryLocation || "",
@@ -1352,49 +1327,6 @@ export function HousingScreen({
     setRideOwnerRequestsAfterListing(false);
     onBottomTabsHiddenChange?.(false);
   }, [rideOwnerOpenToken]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!ridePlannerOpen || ridePlannerStage !== "plan" || !rideSuggestionsEnabled) {
-      setRideSuggestions([]);
-      setRideSuggestionsBusy(false);
-      return;
-    }
-    const query = (rideFocusedField === "origin" ? rideForm.origin : rideForm.destination).trim();
-    // Google recommends waiting for at least three characters. It prevents
-    // one- and two-letter abandoned sessions while people get the same
-    // meaningful suggestions as soon as the query identifies a place.
-    if (query.length < 3 || query === selectedRideSuggestionRef.current) {
-      setRideSuggestions([]);
-      setRideSuggestionsBusy(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      setRideSuggestionsBusy(true);
-      void (async () => {
-        const cityBias = rideForm.city || data?.location.city || discoveryLocation || "";
-        const sessionToken = ridePlacesSessionTokensRef.current[rideFocusedField]
-          || createRidePlacesSessionToken();
-        ridePlacesSessionTokensRef.current[rideFocusedField] = sessionToken;
-        const biasedPlaces = await getRidePlaceSuggestions(
-          cityBias,
-          query,
-          Boolean(cityBias),
-          false,
-          false,
-          "",
-          sessionToken
-        );
-        if (biasedPlaces.length || query.length < 3) return biasedPlaces;
-        const exactPlace = await getRidePlaceSuggestions("", query, false, false, true, "", sessionToken);
-        return exactPlace;
-      })()
-        .then((places) => { if (!cancelled) setRideSuggestions(places); })
-        .catch(() => { if (!cancelled) setRideSuggestions([]); })
-        .finally(() => { if (!cancelled) setRideSuggestionsBusy(false); });
-    }, 260);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [data?.location.city, rideFocusedField, rideForm.city, rideForm.destination, rideForm.origin, ridePlannerOpen, ridePlannerStage, rideSuggestionsEnabled]);
 
   useEffect(() => {
     // Popular cities belong to the user's current country. Housing and ride
@@ -1544,19 +1476,14 @@ export function HousingScreen({
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
-    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
-    ridePlacesSessionTokensRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
     setRidePlanBusy(false);
     setRideEditorLoading(false);
-    setRideSuggestionsEnabled(false);
     setMode("ride");
     setRidePlannerStage("plan");
     setRideFocusedField("destination");
-    setRideSuggestions([]);
-    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
     setRideForm({
@@ -1578,16 +1505,11 @@ export function HousingScreen({
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
-    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
-    ridePlacesSessionTokensRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
     setRidePlanBusy(false);
     setRideEditorLoading(false);
-    setRideSuggestionsEnabled(false);
-    setRideSuggestions([]);
-    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
     setRidePlannerOpen(false);
@@ -1653,20 +1575,16 @@ export function HousingScreen({
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = "";
     selectedRideLabelsRef.current = { origin: "", destination: "" };
-    selectedRidePlaceIdsRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
     setRidePlanBusy(false);
     setRideEditorLoading(false);
-    setRideSuggestionsEnabled(false);
     setMode("ride");
     setRideOwnerOpen(false);
     setSelectedRideService(offerSurface.key);
     setRidePlannerStage("plan");
     setRideFocusedField("destination");
-    setRideSuggestions([]);
-    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
     setRideForm({
@@ -1699,87 +1617,21 @@ export function HousingScreen({
     openRideOfferPlanner();
   }
 
-  function selectRidePlace(place: RidePlaceSuggestion) {
-    const selectedField = rideFocusedField;
-    const sessionToken = ridePlacesSessionTokensRef.current[selectedField];
-    ridePlacesSessionTokensRef.current[selectedField] = "";
-    if (selectedField === "origin") rideAutoOriginRef.current = "";
-    const trustedCoordinates = hasRideCoordinates(place.lat, place.lng) && !place.placeId;
-    const startRequest = selectedField === "destination" && rideForm.rideType !== "CARPOOL_OFFER" && !editingRideId;
-    selectedRideSuggestionRef.current = place.label;
-    selectedRideLabelsRef.current[selectedField] = place.label;
-    selectedRidePlaceIdsRef.current[selectedField] = place.placeId || "";
-    setRideSuggestionsEnabled(false);
-    setRideSuggestions([]);
-    setRideForm((current) => ({
-      ...current,
-      [selectedField]: place.label,
-      ...(selectedField === "origin"
-        ? {
-            city: place.label,
-            originLat: trustedCoordinates ? place.lat : null,
-            originLng: trustedCoordinates ? place.lng : null
-          }
-        : {
-            destinationLat: trustedCoordinates ? place.lat : null,
-            destinationLng: trustedCoordinates ? place.lng : null
-          })
-    }));
-    // Cached coordinates attached to a Google prediction may belong to its
-    // enclosing city. Its place ID must be resolved before a route is saved.
-    if (!trustedCoordinates) {
-      const selectedLabel = place.label;
-      void getRidePlaceSuggestions("", selectedLabel, false, false, true, place.placeId || "", sessionToken)
-        .then(([resolved]) => {
-          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) {
-            if (selectedRideLabelsRef.current[selectedField] === selectedLabel && selectedRidePlaceIdsRef.current[selectedField] === (place.placeId || "")) {
-              Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
-            }
-            return;
-          }
-          if (selectedRideLabelsRef.current[selectedField] !== selectedLabel || selectedRidePlaceIdsRef.current[selectedField] !== (place.placeId || "")) return;
-          setRideForm((current) => {
-            if (current[selectedField] !== selectedLabel || selectedRideLabelsRef.current[selectedField] !== selectedLabel || selectedRidePlaceIdsRef.current[selectedField] !== (place.placeId || "")) return current;
-            return selectedField === "origin"
-              ? { ...current, origin: selectedLabel, city: selectedLabel, originLat: resolved.lat, originLng: resolved.lng }
-              : { ...current, destination: selectedLabel, destinationLat: resolved.lat, destinationLng: resolved.lng };
-          });
-          if (startRequest) void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST");
-        })
-        .catch(() => {
-          if (selectedRideLabelsRef.current[selectedField] === selectedLabel && selectedRidePlaceIdsRef.current[selectedField] === (place.placeId || "")) {
-            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
-          }
-        });
-    }
-    if (selectedField === "origin") {
-      setRideFocusedField("destination");
-    } else if (startRequest && trustedCoordinates) {
-      setRideSuggestions([]);
-      void planRideRoute(place, "CARPOOL_REQUEST");
-    }
-  }
-
   function openRidePlannerWithSuggestion(place: RidePlaceSuggestion) {
     ridePlanSubmittingRef.current = false;
     rideAutoOriginRef.current = rideDefaultPickup;
     rideEditorRequestRef.current += 1;
     selectedRideSuggestionRef.current = place.label;
     selectedRideLabelsRef.current = { origin: "", destination: place.label };
-    selectedRidePlaceIdsRef.current = { origin: "", destination: place.placeId || "" };
-    ridePlacesSessionTokensRef.current = { origin: "", destination: "" };
     setEditingRideId("");
     setRidePosted(false);
     setRideBusy(false);
     setRidePlanBusy(false);
     setRideEditorLoading(false);
-    setRideSuggestionsEnabled(false);
     setMode("ride");
     setSelectedRideService("carpool");
     setRidePlannerStage("plan");
     setRideFocusedField("destination");
-    setRideSuggestions([]);
-    setRideSuggestionsBusy(false);
     setRideRequestStatus("");
     setSelectedRideChoice("");
     const plannedForm: RideInput = {
@@ -1789,32 +1641,14 @@ export function HousingScreen({
       originLat: currentRideLocation?.coords.latitude ?? null,
       originLng: currentRideLocation?.coords.longitude ?? null,
       destination: place.label,
-      destinationLat: place.placeId ? null : place.lat,
-      destinationLng: place.placeId ? null : place.lng,
+      destinationLat: place.lat,
+      destinationLng: place.lng,
       rideType: "CARPOOL_REQUEST"
     };
     setRideForm(plannedForm);
     setRidePlannerOpen(true);
     onBottomTabsHiddenChange?.(true);
     void useCurrentRideLocationForOrigin(rideDefaultPickup);
-    if (place.placeId) {
-      void getRidePlaceSuggestions("", place.label, false, false, true, place.placeId)
-        .then(([resolved]) => {
-          if (!resolved || !hasRideCoordinates(resolved.lat, resolved.lng)) {
-            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
-            return;
-          }
-          if (selectedRideLabelsRef.current.destination !== place.label || selectedRidePlaceIdsRef.current.destination !== place.placeId) return;
-          void planRideRoute({ ...place, placeId: "", lat: resolved.lat, lng: resolved.lng }, "CARPOOL_REQUEST", plannedForm);
-        })
-        .catch(() => {
-          if (selectedRideLabelsRef.current.destination === place.label && selectedRidePlaceIdsRef.current.destination === place.placeId) {
-            Alert.alert("Place not found", "Choose the place again or enter a fuller address.");
-          }
-        });
-    } else {
-      void planRideRoute(place, "CARPOOL_REQUEST", plannedForm);
-    }
   }
 
   function ridePlanComplete() {
@@ -1975,7 +1809,7 @@ export function HousingScreen({
         // Otherwise an international route such as Hyderabad -> Chennai can
         // be geocoded against a previous US discovery location.
         if (!originPoint) {
-          const originMatches = await getRidePlaceSuggestions(formSnapshot.city, effectiveOrigin, false, false, true, selectedRideLabelsRef.current.origin === effectiveOrigin ? selectedRidePlaceIdsRef.current.origin : "");
+          const originMatches = await getRidePlaceSuggestions(formSnapshot.city, effectiveOrigin, false, false, true);
           originPoint = originMatches[0];
           if (originPoint?.label && selectedRideLabelsRef.current.origin !== effectiveOrigin) effectiveOrigin = originPoint.label;
         }
@@ -1983,21 +1817,17 @@ export function HousingScreen({
       const routeCity = effectiveOrigin;
       let destinationPoint: RidePlaceSuggestion | undefined = selectedDestination;
       if (!destinationAlreadyPicked) {
-        const selectedDestinationPlaceId = selectedRideLabelsRef.current.destination === effectiveDestination
-          ? selectedRidePlaceIdsRef.current.destination
-          : "";
         const broadDestination = looksLikeBroadRideCityQuery(effectiveDestination);
         let destinationMatches = await getRidePlaceSuggestions(
           broadDestination ? "" : routeCity,
           effectiveDestination,
           false,
           false,
-          true,
-          selectedDestinationPlaceId
+          true
         );
-        if (!destinationMatches.length && !selectedDestinationPlaceId && broadDestination) {
+        if (!destinationMatches.length && broadDestination) {
           destinationMatches = await getRidePlaceSuggestions(routeCity, effectiveDestination, false, false, true);
-        } else if (!destinationMatches.length && !selectedDestinationPlaceId) {
+        } else if (!destinationMatches.length) {
           destinationMatches = await getRidePlaceSuggestions("", effectiveDestination, false, false, true);
         }
         destinationPoint = destinationMatches[0];
@@ -3051,11 +2881,9 @@ export function HousingScreen({
     if (key === "origin") {
       rideAutoOriginRef.current = "";
       selectedRideLabelsRef.current.origin = "";
-      selectedRidePlaceIdsRef.current.origin = "";
     }
     if (key === "destination") {
       selectedRideLabelsRef.current.destination = "";
-      selectedRidePlaceIdsRef.current.destination = "";
     }
     setRideForm((current) => {
       const next = { ...current, [key]: value };
@@ -3126,8 +2954,6 @@ export function HousingScreen({
   }
 
   function renderRidePlannerModal() {
-    const activeInputValue = rideFocusedField === "origin" ? rideForm.origin : rideForm.destination;
-    const selectedSuggestionSettled = activeInputValue.trim() === selectedRideSuggestionRef.current;
     const driverOffers = rideRows.filter((ride) => ride.role === "DRIVER");
     const selectedDriverOffer = driverOffers.find((ride) => `offer:${ride.id}` === selectedRideChoice) || null;
     const mapRouteOrigin = selectedDriverOffer?.origin || rideForm.origin;
@@ -3223,12 +3049,11 @@ export function HousingScreen({
                   <TextInput
                     ref={rideOriginInputRef}
                     value={rideForm.origin}
-                    onFocus={() => { setRideFocusedField("origin"); setRideSuggestionsEnabled(true); }}
+                    onFocus={() => setRideFocusedField("origin")}
                     onChangeText={(text) => {
                       selectedRideSuggestionRef.current = "";
                       setRideFocusedField("origin");
-                      setRideSuggestionsEnabled(true);
-                      updateRideForm("origin", text);
+                        updateRideForm("origin", text);
                     }}
                     placeholder={listingRide ? "Starting point" : "Pickup location"}
                     placeholderTextColor="#9da1a8"
@@ -3237,12 +3062,11 @@ export function HousingScreen({
                   <TextInput
                     ref={rideDestinationInputRef}
                     value={rideForm.destination}
-                    onFocus={() => { setRideFocusedField("destination"); setRideSuggestionsEnabled(true); }}
+                    onFocus={() => setRideFocusedField("destination")}
                     onChangeText={(text) => {
                       selectedRideSuggestionRef.current = "";
                       setRideFocusedField("destination");
-                      setRideSuggestionsEnabled(true);
-                      updateRideForm("destination", text);
+                        updateRideForm("destination", text);
                     }}
                     onSubmitEditing={() => void planRideRoute()}
                     placeholder={listingRide ? "Where are you going?" : "Where to?"}
@@ -3256,7 +3080,6 @@ export function HousingScreen({
                   accessibilityLabel="Enter destination"
                   onPress={() => {
                     setRideFocusedField("destination");
-                    setRideSuggestionsEnabled(true);
                     rideDestinationInputRef.current?.focus();
                   }}
                 >
@@ -3412,24 +3235,7 @@ export function HousingScreen({
 
               <View style={styles.rideSuggestionList}>
                 {currentRideLocationError ? <Text style={styles.rideSuggestionHelp}>{currentRideLocationError}</Text> : null}
-                {rideSuggestionsBusy ? <View style={styles.rideSuggestionLoading} accessibilityRole="progressbar"><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.rideSuggestionHelp}>Loading nearby places…</Text></View> : null}
-                {!rideSuggestionsBusy && !rideSuggestions.length && activeInputValue.trim() && !selectedSuggestionSettled ? (
-                  <Text style={styles.rideSuggestionHelp}>No exact places yet. Try a landmark like Union Station or an address.</Text>
-                ) : null}
-                {rideSuggestions.map((place) => (
-                  <TouchableOpacity key={`${place.label}-${place.source}`} style={styles.rideSuggestionRow} onPress={() => selectRidePlace(place)}>
-                    <View style={styles.rideSuggestionDistance}>
-                      <Text style={styles.rideSuggestionIcon}>
-                        {place.source === "recent" ? "◷" : place.main.toLowerCase().includes("airport") ? "✈" : place.main.toLowerCase().includes("station") ? "▤" : "⌖"}
-                      </Text>
-                      <Text style={styles.rideSuggestionMiles}>{place.distanceMiles !== null ? `${place.distanceMiles} mi` : ""}</Text>
-                    </View>
-                    <View style={styles.rideSuggestionCopy}>
-                      <Text style={styles.rideSuggestionTitle}>{place.main}</Text>
-                      <Text style={styles.rideSuggestionMeta} numberOfLines={1}>{place.secondary}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                <Text style={styles.rideSuggestionHelp}>Enter complete pickup and destination addresses. We verify them when you continue.</Text>
                 {!listingRide ? (
                   <>
                     <TouchableOpacity
@@ -3437,12 +3243,11 @@ export function HousingScreen({
                       onPress={() => {
                         updateRideForm("city", "");
                         setRideFocusedField("origin");
-                        setRideSuggestionsEnabled(true);
                         rideOriginInputRef.current?.focus();
                       }}
                     >
                       <Text style={styles.rideUtilityIcon}>◎</Text>
-                      <Text style={styles.rideUtilityText}>Search in a different city</Text>
+                      <Text style={styles.rideUtilityText}>Use a different pickup city</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.rideUtilityRow} onPress={openRideGoogleMaps}>
                       <Text style={styles.rideUtilityIcon}>⌖</Text>

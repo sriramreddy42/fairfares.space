@@ -1262,7 +1262,7 @@ class HousingLocationSearchTest(unittest.TestCase):
                     self.assertEqual(suggestions[0]["label"], label)
 
     def test_known_city_ride_autocomplete_and_typed_search_survive_places_outage(self):
-        with patch.object(app, "google_ride_place_predictions", return_value=[]), patch.object(
+        with patch.object(app, "google_ride_place_text_search", return_value=[]), patch.object(
             app, "google_accommodation_geocode", return_value=None
         ):
             denver_suggestions = app.ride_place_suggestions("Denver, CO", "New York")
@@ -1286,7 +1286,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         self.assertEqual(stats, [{"name": "Capitol Hill", "averageRent": 1450, "listingCount": 2, "currencySymbol": "$"}])
 
     def test_backend_only_housing_locations_do_not_call_google(self):
-        with patch.object(app, "google_ride_place_predictions", side_effect=AssertionError("unexpected Google lookup")), patch.object(
+        with patch.object(app, "google_ride_place_text_search", side_effect=AssertionError("unexpected Google lookup")), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("unexpected Google refresh")
         ), patch.object(app, "accommodation_city_suggestions", wraps=app.accommodation_city_suggestions) as cities:
             options = app.accommodation_location_options("Denver, CO", backend_only=True)
@@ -1321,7 +1321,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             con.execute("UPDATE accommodation_posts SET primary_neighborhood = 'LoDo' WHERE public_id = 'LOCATION-LIVE'")
 
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("disabled fallback must not call Google")
+            app, "google_ride_place_text_search", side_effect=AssertionError("disabled fallback must not call Google")
         ), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("disabled fallback must not refresh Google")
         ):
@@ -1332,7 +1332,7 @@ class HousingLocationSearchTest(unittest.TestCase):
 
     def test_mobile_housing_typing_uses_static_options_without_google(self):
         with patch.dict(os.environ, {"GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("disabled fallback must not autocomplete with Google")
+            app, "google_ride_place_text_search", side_effect=AssertionError("disabled fallback must not autocomplete with Google")
         ), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("typing must not refresh locations")
         ):
@@ -1345,7 +1345,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             os.environ,
             {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_MAPS_API_KEY": "geocoding-key"},
         ), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("housing must not call Places")
+            app, "google_ride_place_text_search", side_effect=AssertionError("housing must not call Places")
         ):
             options = app.accommodation_location_options("Denver, CO", "RiNo")
         self.assertFalse(options["googlePlacesEnabled"])
@@ -1395,7 +1395,7 @@ class HousingLocationSearchTest(unittest.TestCase):
             )
         enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
         with patch.dict(os.environ, enabled), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google autocomplete must not run")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google autocomplete must not run")
         ), patch.object(
             app, "refresh_accommodation_location_cache", side_effect=AssertionError("Google geocode must not run")
         ):
@@ -1432,7 +1432,7 @@ class HousingLocationSearchTest(unittest.TestCase):
         ), patch.object(
             app, "accommodation_location_point", return_value={"label": "Unknown", "lat": 0, "lng": 0, "source": "needs_geocode"}
         ), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("housing must not call carpool Places")
+            app, "google_ride_place_text_search", side_effect=AssertionError("housing must not call carpool Places")
         ) as google_suggestions:
             options = app.accommodation_location_options("Denver, CO", "Unknown Place")
         google_suggestions.assert_not_called()
@@ -1470,9 +1470,9 @@ class HousingLocationSearchTest(unittest.TestCase):
     def test_denver_16th_street_aliases_resolve_locally_for_housing_and_carpool(self):
         enabled = {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}
         with patch.dict(os.environ, enabled), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google autocomplete must not run")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google autocomplete must not run")
         ), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google suggestions must not run")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google suggestions must not run")
         ), patch.object(
             app, "google_accommodation_geocode", side_effect=AssertionError("Google geocode must not run")
         ):
@@ -1497,9 +1497,9 @@ class HousingLocationSearchTest(unittest.TestCase):
             "17th Street": "17th Street, Denver, CO",
         }
         with patch.dict(os.environ, enabled), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google autocomplete must not run")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google autocomplete must not run")
         ), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google suggestions must not run")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google suggestions must not run")
         ), patch.object(
             app, "google_accommodation_geocode", side_effect=AssertionError("Google geocode must not run")
         ):
@@ -1583,7 +1583,7 @@ class HousingLocationSearchTest(unittest.TestCase):
                 """
             )
         with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google must not be called")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google must not be called")
         ):
             suggestions = app.ride_place_suggestions("Denver, CO", "Dallas", limit=5)
         self.assertEqual(suggestions[0]["label"], "Dallas, TX")
@@ -1611,7 +1611,7 @@ class HousingLocationSearchTest(unittest.TestCase):
                 (airport_id,),
             )
         with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "0"}), patch.object(
-            app, "google_ride_place_predictions", side_effect=AssertionError("Google must not be called")
+            app, "google_ride_place_text_search", side_effect=AssertionError("Google must not be called")
         ):
             code_results = app.ride_place_suggestions("Dallas, TX", "DFW", limit=5)
             name_results = app.ride_place_suggestions("Dallas, TX", "Dallas airport", limit=5)
