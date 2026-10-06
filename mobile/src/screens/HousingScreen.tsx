@@ -1802,7 +1802,9 @@ export function HousingScreen({
       return;
     }
     ridePlanSubmittingRef.current = true;
-    let effectiveOrigin = formSnapshot.origin.trim() || selectedLocationText || formSnapshot.city || discoveryLocation;
+    // A discovery city (for example, Denver) is only a search context. It is
+    // never a pickup address, especially for a driver publishing an offer.
+    let effectiveOrigin = formSnapshot.origin.trim();
     if (!effectiveOrigin) {
       ridePlanSubmittingRef.current = false;
       Alert.alert("Current location needed", "Allow location access or enter your pickup location.");
