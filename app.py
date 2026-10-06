@@ -41454,6 +41454,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         use_city_bias = str(params.get("cityBias", ["1"])[0] or "1").strip().lower() not in {"0", "false", "no"}
         cities_only = str(params.get("citiesOnly", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
         resolve_exact = str(params.get("resolve", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes"}
+        # Local catalogue suggestions are free and may be requested while
+        # typing. Exact resolution is the one branch that can use Places, so
+        # protect that narrow paid operation even for anonymous ride searches.
+        if resolve_exact:
+            identity = self.request_rate_limit_identity()
+            retry_after = max(
+                api_rate_limit_retry_after("ride-place-resolve", identity, 12, 60),
+                api_rate_limit_retry_after("ride-place-resolve:ip", "ip:" + self.client_ip(), 60, 60),
+            )
+            if retry_after:
+                self.send_json(
+                    {"ok": False, "retryable": True, "error": "Too many address verifications. Please wait a moment."},
+                    429,
+                    {"Retry-After": str(retry_after)},
+                )
+                return
         suggestions = ride_place_suggestions(
             city, query, limit=limit, use_city_bias=use_city_bias, cities_only=cities_only,
             resolve_exact=resolve_exact,
