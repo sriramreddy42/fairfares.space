@@ -138,7 +138,7 @@ export function GasStationsScreen({ onBack }: Props) {
         setShowingCached(true);
         restoredCache = true;
         // Nearby fuel results are already location-validated and recent.
-        // Reopening this screen must not issue another Places request until
+        // Reopening this screen must not repeat the provider request until
         // the user explicitly refreshes or the ten-minute cache expires.
         return;
       } else if (!refresh) {

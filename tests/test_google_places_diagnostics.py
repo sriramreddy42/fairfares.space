@@ -1,5 +1,7 @@
 import unittest
-from unittest.mock import patch
+import urllib.parse
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import app
 
@@ -91,6 +93,28 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
             suggestions = app.ride_place_suggestions("Denver, CO", "", cities_only=True)
         self.assertEqual(len(suggestions), 4)
         self.assertTrue(all(item["source"] == "static-popular" for item in suggestions))
+
+    def test_places_service_is_declared_only_for_carpool_text_resolution(self):
+        source = Path(app.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("https://places.googleapis.com/"), 1)
+        self.assertIn("https://places.googleapis.com/v1/places:searchText", source)
+        self.assertNotIn("places.googleapis.com/v1/places:searchNearby", source)
+
+    def test_exact_resolution_is_rate_limited_before_places_can_run(self):
+        handler = object.__new__(app.FairFaresHandler)
+        handler.headers = {}
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.send_json = Mock()
+        handler.request_rate_limit_identity = Mock(return_value="guest")
+        parsed = urllib.parse.urlparse("/api/mobile/ride-places?city=Denver%2C%20CO&q=Unknown%20Address&resolve=1")
+        with patch.object(app, "api_rate_limit_retry_after", return_value=8), patch.object(
+            app, "ride_place_suggestions", side_effect=AssertionError("Places resolution must not run after a rate limit")
+        ):
+            handler.api_mobile_ride_places(parsed)
+        payload, status, headers = handler.send_json.call_args.args
+        self.assertEqual(status, 429)
+        self.assertTrue(payload["retryable"])
+        self.assertEqual(headers["Retry-After"], "8")
 
 
 if __name__ == "__main__":
