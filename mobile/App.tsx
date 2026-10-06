@@ -523,7 +523,8 @@ function FairFaresApp() {
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const pushTokenRef = useRef("");
   const pushRegistrationRunningRef = useRef(false);
-  const guestPushRegistrationAttemptedRef = useRef(false);
+  const guestPushRegistrationRunningRef = useRef(false);
+  const guestPushRegistrationCompleteRef = useRef(false);
   const lastPushRegistrationSyncRef = useRef(0);
   const notificationPermissionPromptShownRef = useRef(false);
   const startupChatKeyRegistrationRef = useRef({ userId: 0, running: false, registeredAt: 0 });
@@ -855,8 +856,8 @@ function FairFaresApp() {
     // Ask only after a guest has posted a comment. Browsing Ask Community must
     // remain possible without a permission prompt, and a guest is never given
     // the normal member-message capability.
-    if (Platform.OS === "web" || authenticatedUserIdRef.current || guestPushRegistrationAttemptedRef.current) return false;
-    guestPushRegistrationAttemptedRef.current = true;
+    if (Platform.OS === "web" || authenticatedUserIdRef.current || guestPushRegistrationRunningRef.current || guestPushRegistrationCompleteRef.current) return false;
+    guestPushRegistrationRunningRef.current = true;
     try {
       if (Platform.OS === "android") {
         await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.updates, {
@@ -873,18 +874,26 @@ function FairFaresApp() {
           ios: { allowAlert: true, allowBadge: true, allowSound: true }
         });
       }
-      if (permission.status !== "granted") return false;
+      if (permission.status !== "granted") {
+        // Do not repeatedly prompt after an intentional refusal. A later app
+        // reinstall or Settings change creates a fresh app session.
+        guestPushRegistrationCompleteRef.current = true;
+        return false;
+      }
       const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
       if (!projectId) throw new Error("Expo project ID is unavailable.");
       const token = await Notifications.getExpoPushTokenAsync({ projectId });
       if (!token.data || authenticatedUserIdRef.current) return false;
       await registerCommunityGuestPushToken(token.data, Platform.OS, Device.modelName || Device.deviceName || "Guest mobile device");
+      guestPushRegistrationCompleteRef.current = true;
       return true;
     } catch (error) {
       // A guest comment is already saved. Push setup is intentionally
       // best-effort and never interrupts the public discussion flow.
       console.warn("[FairFares notifications] Guest reply registration failed", error);
       return false;
+    } finally {
+      guestPushRegistrationRunningRef.current = false;
     }
   }
 
@@ -1227,7 +1236,16 @@ function FairFaresApp() {
     handledNotificationResponseRef.current = responseKey;
     const type = String(response?.notification.request.content.data?.type || "");
     const diagnosticNotification = Boolean(response?.notification.request.content.data?.diagnosticId);
-    if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
+    if (type === "COMMUNITY_GUEST_MESSAGE") {
+      // Guest comment threads live in the scoped Ask Community inbox, not in
+      // the authenticated Chitthi transport. Never turn this notification
+      // into a login request.
+      setNotificationConversationId("");
+      setNotificationMessageId(0);
+      setPendingPost(null);
+      setPendingRide(null);
+      setActiveTab("messenger");
+    } else if (type === "CHITTHI_MESSAGE" || type === "FCHAT_MESSAGE" || type === "CHITTHI_REACTION") {
       setNotificationConversationId(diagnosticNotification ? "" : String(response?.notification.request.content.data?.conversationId || ""));
       setNotificationMessageId(diagnosticNotification ? 0 : Number(response?.notification.request.content.data?.messageId || 0));
       setPendingPost(null);

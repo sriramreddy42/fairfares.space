@@ -106,6 +106,22 @@ class CommunityFeatureTest(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def form_request(self, path, token, payload):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}{path}",
+            data=urllib.parse.urlencode(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
     def create_post(self, token="owner-token", **updates):
         payload = {
             "type": "QUESTION", "category": "HOUSING", "title": "Where is good housing near Dayton?",
@@ -431,6 +447,98 @@ class CommunityFeatureTest(unittest.TestCase):
                 "SELECT id FROM mobile_push_outbox WHERE user_id = ?",
                 (self.owner_id,),
             ).fetchone())
+
+    def test_owner_chitthi_message_notifies_guest_commenter(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, session = self.request(
+            "POST", "/api/mobile/community/guest-session",
+            payload={"installationId": "test-guest-chitthi-owner-message-0001"},
+        )
+        guest_token = session["token"]
+        status, guest_comment = self.guest_request(
+            "POST", "/api/mobile/community/answer", guest_token,
+            {"postId": post_id, "body": "Can I learn more about this place?"},
+        )
+        self.assertEqual(status, 201)
+        push_token = "ExpoPushToken[guest-chitthi-owner-message-device]"
+        status, _registered = self.guest_request(
+            "POST", "/api/mobile/push-token", guest_token,
+            {"token": push_token, "platform": "ios", "deviceLabel": "Guest iPhone", "enabled": True},
+        )
+        self.assertEqual(status, 200)
+
+        with mock.patch.object(app, "send_expo_push", return_value={
+            push_token: {"status": "ACCEPTED", "ticketId": "guest-chitthi-owner-message-ticket", "error": ""},
+        }):
+            status, sent = self.form_request(
+                "/api/chat/messages", "owner-token",
+                {
+                    "conversation_id": guest_comment["conversationId"],
+                    "message": "Yes, it is still available.",
+                    "client_message_id": "owner-guest-push-proof",
+                },
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(sent["ok"])
+        with app.db() as con:
+            row = con.execute(
+                "SELECT title, body, data_json FROM mobile_push_outbox WHERE token = ? ORDER BY id DESC LIMIT 1",
+                (push_token,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "New reply in Chitthi")
+        self.assertIn("Yes, it is still available.", row["body"])
+        payload = json.loads(row["data_json"])
+        self.assertEqual(payload["type"], "COMMUNITY_GUEST_MESSAGE")
+        self.assertTrue(payload["guestReplyChannel"])
+        self.assertEqual(payload["conversationId"], guest_comment["conversationId"])
+
+    def test_guest_push_registration_recovers_an_immediate_owner_reply(self):
+        _, created = self.create_post()
+        post_id = created["post"]["id"]
+        _, session = self.request(
+            "POST", "/api/mobile/community/guest-session",
+            payload={"installationId": "test-guest-chitthi-registration-race-0001"},
+        )
+        guest_token = session["token"]
+        status, guest_comment = self.guest_request(
+            "POST", "/api/mobile/community/answer", guest_token,
+            {"postId": post_id, "body": "Please let me know whether this is open."},
+        )
+        self.assertEqual(status, 201)
+        # This is the real race: the owner replies while iOS/Android is still
+        # obtaining the guest's Expo token, so the original send has no target.
+        status, sent = self.form_request(
+            "/api/chat/messages", "owner-token",
+            {
+                "conversation_id": guest_comment["conversationId"],
+                "message": "It is open; I just sent the details.",
+                "client_message_id": "owner-before-guest-push-registration",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(sent["ok"])
+        push_token = "ExpoPushToken[guest-chitthi-registration-race-device]"
+        with mock.patch.object(app, "send_expo_push", return_value={
+            push_token: {"status": "ACCEPTED", "ticketId": "guest-registration-race-ticket", "error": ""},
+        }):
+            status, registered = self.guest_request(
+                "POST", "/api/mobile/push-token", guest_token,
+                {"token": push_token, "platform": "android", "deviceLabel": "Guest Android", "enabled": True},
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(registered["enabled"])
+        with app.db() as con:
+            row = con.execute(
+                "SELECT body, data_json FROM mobile_push_outbox WHERE token = ? ORDER BY id DESC LIMIT 1",
+                (push_token,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIn("It is open", row["body"])
+        payload = json.loads(row["data_json"])
+        self.assertEqual(payload["type"], "COMMUNITY_GUEST_MESSAGE")
+        self.assertEqual(payload["conversationId"], guest_comment["conversationId"])
 
     def test_guest_reply_registers_a_scoped_alert_without_opening_direct_chat(self):
         _, created = self.create_post()

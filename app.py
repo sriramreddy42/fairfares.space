@@ -24381,7 +24381,7 @@ def push_idempotency_key(data: dict[str, object], title: str, body: str) -> str:
 
 def mobile_push_category(data: dict[str, object] | None) -> str:
     notification_type = str((data or {}).get("type") or "").upper()
-    if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE"} or notification_type.startswith(("CHITTHI_", "FCHAT_")):
+    if notification_type in {"CHITTHI_MESSAGE", "FCHAT_MESSAGE", "COMMUNITY_GUEST_MESSAGE"} or notification_type.startswith(("CHITTHI_", "FCHAT_")):
         return "chitthi"
     if notification_type.startswith("CARPOOL_"):
         return "carpool"
@@ -24394,6 +24394,80 @@ def mobile_push_category(data: dict[str, object] | None) -> str:
     if notification_type == "FAIRFARES_PROMO":
         return "marketing"
     return "mandatory"
+
+
+def guest_chitthi_notification(
+    conversation_public_id: object,
+    message_id: object,
+    sender_name: object,
+    preview: object,
+) -> tuple[str, str, dict[str, object]]:
+    """Build the notification for a guest's scoped Ask Community reply channel.
+
+    Guests can reply only to the owner of the Ask Community post they commented
+    on. Their inbox is not the signed-in Chitthi transport, so use a distinct
+    action type that opens the guest inbox instead of a login prompt.
+    """
+    sender = clean_text_value(sender_name, 120) or "A FairFares member"
+    body = clean_text_value(preview, 240) or "Sent you a message"
+    return (
+        "New reply in Chitthi",
+        f"{sender}: {body}",
+        {
+            "type": "COMMUNITY_GUEST_MESSAGE",
+            "conversationId": clean_text_value(conversation_public_id, 80),
+            "messageId": int(float_from_value(message_id) or 0),
+            "senderName": sender,
+            "target": "guest_chitthi",
+            "guestReplyChannel": True,
+            "isGroup": False,
+        },
+    )
+
+
+def queue_pending_guest_chitthi_notification(user_id: int, token: str) -> int:
+    """Catch a reply sent while a guest's first push registration was running."""
+    if not user_id or not token:
+        return 0
+    with db() as con:
+        row = con.execute(
+            """
+            SELECT messages.id, messages.message_text, conversations.public_id,
+                   senders.name AS sender_name
+            FROM chat_messages messages
+            JOIN chat_conversations conversations ON conversations.id = messages.conversation_id
+            JOIN chat_participants recipient ON recipient.conversation_id = conversations.id
+            JOIN users senders ON senders.id = messages.sender_id
+            WHERE recipient.user_id = ?
+              AND messages.sender_id != ?
+              AND messages.deleted_at IS NULL
+              AND datetime(messages.created_at) >= datetime('now', '-15 minutes')
+              AND EXISTS (
+                  SELECT 1 FROM chat_messages seeded
+                  WHERE seeded.conversation_id = conversations.id
+                    AND seeded.context_type = 'COMMUNITY'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM mobile_push_outbox queued
+                  WHERE queued.user_id = ?
+                    AND queued.token = ?
+                    AND json_valid(queued.data_json)
+                    AND json_extract(queued.data_json, '$.type') = 'COMMUNITY_GUEST_MESSAGE'
+                    AND CAST(json_extract(queued.data_json, '$.messageId') AS INTEGER) = messages.id
+              )
+            ORDER BY messages.id DESC
+            LIMIT 1
+            """,
+            (user_id, user_id, user_id, token),
+        ).fetchone()
+    if not row:
+        return 0
+    title, body, data = guest_chitthi_notification(
+        row_value(row, "public_id"), row_value(row, "id"),
+        row_value(row, "sender_name"), row_value(row, "message_text"),
+    )
+    return enqueue_mobile_pushes([(user_id, token)], title, body, data, dispatch_immediately=True)
 
 
 def notification_preferences_payload(row: sqlite3.Row | dict[str, object] | None) -> dict[str, bool]:
@@ -30252,6 +30326,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             notification_preview = stored_preview or "Sent you a message"
         for recipient in recipients:
             recipient_id = int(row_value(recipient, "id") or 0)
+            recipient_is_guest = bool(int(row_value(recipient, "guest_account") or 0))
             preference = con.execute("SELECT chitthi_enabled FROM mobile_notification_preferences WHERE user_id = ?", (recipient_id,)).fetchone() if recipient_id else None
             chitthi_enabled = preference is None or bool(int(row_value(preference, "chitthi_enabled") or 0))
             is_mention = recipient_id in mentioned_user_ids
@@ -30292,6 +30367,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         "nativeGroupEnrichment": True,
                         "badge": unread_badge,
                         "isMention": is_mention,
+                        "guestReplyChannel": recipient_is_guest,
                     }))
         if push_jobs:
             sender_id = int(row_value(sender, "id") or 0)
@@ -30335,22 +30411,34 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for token, encrypted_preview in push_jobs:
                 recipient_user_id = int(encrypted_preview.get("recipientUserId") or 0)
                 is_mention = bool(encrypted_preview.get("isMention"))
+                is_guest_reply_channel = bool(encrypted_preview.get("guestReplyChannel"))
+                title = push_title
+                body = "Mentioned you in a group message" if is_mention else push_body
+                payload = {
+                    **common_data,
+                    **encrypted_preview,
+                    **({"mentionText": "Mentioned you in a group message"} if is_mention else {}),
+                    **({
+                        "communicationRecipients": [
+                            participant
+                            for participant in communication_participants
+                            if int(participant.get("id") or 0) != recipient_user_id
+                        ][:8],
+                    } if is_group else {}),
+                }
+                if is_guest_reply_channel:
+                    title, body, guest_payload = guest_chitthi_notification(
+                        row_value(conversation, "public_id"),
+                        row_value(message, "id"),
+                        sender_display_name,
+                        notification_preview,
+                    )
+                    payload = {**payload, **guest_payload}
                 enqueue_mobile_pushes(
                     [(recipient_user_id, token)],
-                    push_title,
-                    "Mentioned you in a group message" if is_mention else push_body,
-                    {
-                        **common_data,
-                        **encrypted_preview,
-                        **({"mentionText": "Mentioned you in a group message"} if is_mention else {}),
-                        **({
-                            "communicationRecipients": [
-                                participant
-                                for participant in communication_participants
-                                if int(participant.get("id") or 0) != recipient_user_id
-                            ][:8],
-                        } if is_group else {}),
-                    },
+                    title,
+                    body,
+                    payload,
                     # A Chitthi letter is a person-to-person alert. Hand it to
                     # Expo in the send request rather than waiting for the
                     # best-effort outbox worker, which can be delayed after a
@@ -40476,6 +40564,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         response = {"ok": True, "enabled": enabled}
         if already_current:
             response["unchanged"] = True
+        if enabled and guest:
+            # A post owner may reply immediately after the guest comment is
+            # saved, before the device has obtained an Expo token. Recover
+            # that missed alert after this token is durable.
+            queue_pending_guest_chitthi_notification(current_user_id, token)
         self.send_json(response)
 
     def api_mobile_notification_preferences(self) -> None:
