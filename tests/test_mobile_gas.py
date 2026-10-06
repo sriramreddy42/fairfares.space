@@ -98,7 +98,7 @@ class MobileGasPriceTests(unittest.TestCase):
         self.assertEqual(station["currency"], "USD")
         self.assertLess(station["distanceMiles"], 0.1)
 
-    def test_nearby_search_sorts_prices_without_storing_places_content(self):
+    def test_nearby_search_is_disabled_even_when_a_places_key_exists(self):
         response = {
             "places": [
                 {"id": "high", "displayName": {"text": "High"}, "formattedAddress": "A", "location": {"latitude": 39.74, "longitude": -104.99}, "fuelOptions": {"fuelPrices": [{"type": "REGULAR_UNLEADED", "price": {"currencyCode": "USD", "units": "4"}}]}},
@@ -109,14 +109,13 @@ class MobileGasPriceTests(unittest.TestCase):
         with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_api_post_json", return_value=response) as request:
             first = app.google_nearby_gas_prices(39.7392, -104.9903, 10, "regular")
             second = app.google_nearby_gas_prices(39.7392, -104.9903, 10, "regular")
-        self.assertEqual([row["id"] for row in first["stations"]], ["low", "high", "unknown"])
-        self.assertNotIn("cache", first)
-        self.assertNotIn("cache", second)
-        self.assertEqual(request.call_count, 2)
-        headers = request.call_args.args[2]
-        self.assertIn("places.fuelOptions", headers["X-Goog-FieldMask"])
+        self.assertFalse(first["configured"])
+        self.assertEqual(first["stations"], [])
+        self.assertEqual(first["source"], "local")
+        self.assertEqual(second, first)
+        request.assert_not_called()
 
-    def test_nearby_search_tries_maps_key_after_places_key_is_rejected(self):
+    def test_nearby_search_never_falls_back_to_maps_or_places_keys(self):
         with patch.dict(
             os.environ,
             {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "places-key", "GOOGLE_MAPS_API_KEY": "maps-key"},
@@ -127,15 +126,14 @@ class MobileGasPriceTests(unittest.TestCase):
         ) as request:
             result = app.google_nearby_gas_prices(39.7392, -104.9903, 10, "regular")
         self.assertEqual(result["stations"], [])
-        self.assertEqual(request.call_count, 2)
-        self.assertEqual(request.call_args_list[0].args[2]["X-Goog-Api-Key"], "places-key")
-        self.assertEqual(request.call_args_list[1].args[2]["X-Goog-Api-Key"], "maps-key")
+        self.assertFalse(result["configured"])
+        request.assert_not_called()
 
-    def test_twenty_five_mile_search_does_not_silently_shrink_radius(self):
+    def test_nearby_search_never_calls_google_for_any_supported_radius(self):
         with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "test-key"}), patch.object(app, "google_api_post_json", return_value={"places": []}) as request:
-            app.google_nearby_gas_prices(39.7392, -104.9903, 25, "regular")
-        radius = request.call_args.args[1]["locationRestriction"]["circle"]["radius"]
-        self.assertAlmostEqual(radius, 25 * 1609.344)
+            result = app.google_nearby_gas_prices(39.7392, -104.9903, 25, "regular")
+        self.assertFalse(result["configured"])
+        request.assert_not_called()
 
     def test_missing_key_returns_safe_unconfigured_payload(self):
         with patch.dict(os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "", "GOOGLE_MAPS_API_KEY": ""}, clear=False):

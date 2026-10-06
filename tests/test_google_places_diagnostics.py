@@ -21,7 +21,7 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
         with patch.dict(app.os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "private-key"}), patch.object(
             app, "google_accommodation_geocode", return_value=None
         ), patch.object(app, "google_api_get", return_value=payload), patch("builtins.print") as log:
-            self.assertEqual(app.google_accommodation_place_predictions("San Francisco, CA", "Dayton"), [])
+            self.assertEqual(app.google_ride_place_predictions("San Francisco, CA", "Dayton"), [])
         line = log.call_args.args[0]
         self.assertIn("status=REQUEST_DENIED", line)
         self.assertIn("category=key_restriction", line)
@@ -50,7 +50,7 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
         with patch.dict(app.os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "private-key"}), patch.object(
             app, "google_accommodation_geocode", return_value=None
         ), patch.object(app, "google_api_get", side_effect=error), patch("builtins.print") as log:
-            self.assertEqual(app.google_accommodation_place_predictions("San Francisco, CA", "Dayton"), [])
+            self.assertEqual(app.google_ride_place_predictions("San Francisco, CA", "Dayton"), [])
         line = log.call_args.args[0]
         self.assertIn("status=HTTP_403", line)
         self.assertNotIn("private-key", line)
@@ -64,12 +64,27 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
         with patch.dict(app.os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "private-key"}), patch.object(
             app, "google_accommodation_geocode"
         ) as geocode, patch.object(app, "google_api_get", return_value=payload) as get:
-            results = app.google_accommodation_place_predictions(
+            results = app.google_ride_place_predictions(
                 "Denver, CO", "Denver International Airport", use_city_bias=False
             )
         self.assertEqual(results[0]["placeId"], "ChIJDenverAirport01")
         geocode.assert_not_called()
         self.assertNotIn("location=", get.call_args.args[0])
+
+    def test_carpool_places_requires_its_dedicated_key(self):
+        """A general Maps key must not make Places available to another flow."""
+        with patch.dict(
+            app.os.environ,
+            {
+                "FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1",
+                "GOOGLE_PLACES_API_KEY": "",
+                "GOOGLE_MAPS_API_KEY": "maps-only-key",
+            },
+            clear=False,
+        ), patch.object(app, "google_api_get", side_effect=AssertionError("Places must not be called")) as request:
+            results = app.google_ride_place_predictions("Denver, CO", "Union Station")
+        self.assertEqual(results, [])
+        request.assert_not_called()
 
     def test_ride_place_session_token_pairs_autocomplete_and_selected_details(self):
         urls = []
@@ -91,7 +106,7 @@ class GooglePlacesDiagnosticsTest(unittest.TestCase):
         with patch.dict(app.os.environ, {"FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK": "1", "GOOGLE_PLACES_API_KEY": "private-key"}), patch.object(
             app, "accommodation_location_point", return_value={}
         ), patch.object(app, "google_api_get", side_effect=google_response):
-            suggestions = app.google_accommodation_place_predictions("Denver, CO", "Union Station", session_token=token)
+            suggestions = app.google_ride_place_predictions("Denver, CO", "Union Station", session_token=token)
             details = app.google_ride_place_details(suggestions[0]["placeId"], token)
 
         self.assertEqual(details["lat"], 39.7527)

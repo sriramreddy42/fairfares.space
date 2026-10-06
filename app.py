@@ -14466,8 +14466,23 @@ def truthy_env(value: str | None) -> bool:
 
 
 def google_location_fallback_enabled() -> bool:
-    """Maps is an explicit fallback, never the source for normal app screens."""
+    """Google geocoding is an explicit fallback, never normal app content."""
     return truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK"))
+
+
+def google_geocoding_enabled() -> bool:
+    """Allow address/reverse geocoding without enabling the Places API."""
+    return google_location_fallback_enabled() and bool(
+        os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    )
+
+
+def google_ride_places_enabled() -> bool:
+    """Places is deliberately limited to carpool origin and destination search."""
+    return google_location_fallback_enabled() and bool(
+        os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    )
 
 
 
@@ -17149,9 +17164,9 @@ def inferred_location_country(place: str) -> str:
 
 
 def google_accommodation_geocode(query: str) -> dict[str, object] | None:
-    if not google_location_fallback_enabled():
+    if not google_geocoding_enabled():
         return None
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    api_key = os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     query = (query or "").strip()
     if not api_key or not query:
         return None
@@ -17221,39 +17236,9 @@ def precise_accommodation_location_point(query: str) -> dict[str, object]:
 
 
 def google_accommodation_nearby_areas(query: str, lat: float, lng: float) -> list[dict[str, object]]:
-    # The housing catalogue supplies neighborhood choices locally. Do not let
-    # a broad background enrichment fan out into three paid Text Searches.
-    if not truthy_env(os.environ.get("FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH")):
-        return []
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    if not api_key or not query or not lat or not lng:
-        return []
-    places: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for text_query in (f"cities near {query}", f"neighborhoods near {query}", f"apartments and neighborhoods near {query}"):
-        params = {
-            "query": text_query,
-            "key": api_key,
-            "location": f"{lat},{lng}",
-            "radius": "96560",
-        }
-        try:
-            payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}")
-        except Exception:
-            continue
-        if payload.get("status") not in {"OK", "ZERO_RESULTS"}:
-            continue
-        for place in payload.get("results") or []:
-            if not isinstance(place, dict):
-                continue
-            name = normalize_accommodation_place_label(str(place.get("name") or ""))
-            if not name or name.lower() in seen:
-                continue
-            seen.add(name.lower())
-            places.append(place)
-            if len(places) >= 18:
-                return places
-    return places
+    # Housing uses the FairFares location catalogue only. Places Text Search
+    # is reserved out of this flow so search volume cannot create API spend.
+    return []
 
 
 def clean_google_place_prediction(description: str) -> str:
@@ -17297,14 +17282,11 @@ def log_google_places_issue(operation: str, status: str, error_message: str = ""
     print(f"Google Places {safe_operation}: status={safe_status} category={category}", flush=True)
 
 
-def google_accommodation_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False, session_token: str = "") -> list[dict[str, str]]:
-    if not google_location_fallback_enabled():
+def google_ride_place_predictions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True, include_all_types: bool = False, session_token: str = "") -> list[dict[str, str]]:
+    """Places Autocomplete exclusively for carpool pickup and destination fields."""
+    if not google_ride_places_enabled():
         return []
-    # Ride entry can start with a completely new route, before a city has
-    # been chosen. A Maps key that is permitted for Places must work here too;
-    # requiring a separate Places-only variable made autocomplete silently
-    # empty for otherwise configured deployments.
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     city = normalize_accommodation_place_label(city)
     area = normalize_accommodation_place_label(area)
     city_root = city.split(",", 1)[0].strip().lower()
@@ -17362,15 +17344,11 @@ def google_accommodation_place_predictions(city: str, area: str = "", limit: int
     return suggestions
 
 
-def google_accommodation_place_suggestions(city: str, area: str = "", limit: int = 10, *, use_city_bias: bool = True) -> list[str]:
-    return [prediction["label"] for prediction in google_accommodation_place_predictions(city, area, limit, use_city_bias=use_city_bias)]
-
-
 def google_ride_place_details(place_id: str, session_token: str = "") -> dict[str, object]:
     """Fetch the selected prediction's geometry, never a similarly named city."""
-    if not google_location_fallback_enabled():
+    if not google_ride_places_enabled():
         return {}
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     place_id = str(place_id or "").strip()
     if not api_key or not re.fullmatch(r"[A-Za-z0-9_-]{8,256}", place_id):
         return {}
@@ -17594,8 +17572,8 @@ def location_catalog_suggestions(
     return results
 
 
-def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google: bool = True) -> list[str]:
-    """Return city labels from the location cache, optionally enriching with Places."""
+def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google: bool = False) -> list[str]:
+    """Return city labels from FairFares' location cache and local fallbacks."""
     query = normalize_accommodation_place_label(query)
     if len(query) < 2:
         return []
@@ -17611,32 +17589,10 @@ def accommodation_city_suggestions(query: str, limit: int = 8, *, include_google
         if len(suggestions) >= limit:
             return suggestions
 
-    # A partial local result is still a successful result. Do not call Places
-    # merely to fill unused suggestion slots; Google is reserved for a true
-    # catalogue/cache miss.
+    # A partial local result is still a successful result. City selection does
+    # not make a Places request; Places is restricted to carpool routes.
     if suggestions:
         return suggestions[:limit]
-
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    if include_google and api_key and google_location_fallback_enabled():
-        params = urllib.parse.urlencode({"input": query, "types": "(cities)", "key": api_key})
-        try:
-            payload = google_api_get(f"https://maps.googleapis.com/maps/api/place/autocomplete/json?{params}")
-        except Exception:
-            payload = {}
-        if payload.get("status") in {"OK", "ZERO_RESULTS"}:
-            for prediction in payload.get("predictions") or []:
-                if not isinstance(prediction, dict):
-                    continue
-                label = clean_google_place_prediction(str(prediction.get("description") or ""))
-                if len(label) < 2:
-                    continue
-                key = label.lower()
-                if key not in seen:
-                    seen.add(key)
-                    suggestions.append(label)
-                if len(suggestions) >= limit:
-                    return suggestions
 
     try:
         with db() as con:
@@ -17875,75 +17831,14 @@ def normalize_google_gas_station(place: object, latitude: float, longitude: floa
 
 
 def google_nearby_gas_prices(latitude: float, longitude: float, radius_miles: float, fuel: str) -> dict[str, object]:
-    if not google_location_fallback_enabled():
-        return {"configured": False, "stations": [], "fuel": fuel.lower() if fuel.lower() in GAS_FUEL_TYPES else "regular", "source": "local"}
-    api_keys: list[str] = []
-    for candidate in (
-        os.environ.get("GOOGLE_PLACES_API_KEY", "").strip(),
-        os.environ.get("GOOGLE_MAPS_API_KEY", "").strip(),
-    ):
-        if candidate and candidate not in api_keys:
-            api_keys.append(candidate)
     fuel_key = fuel.lower() if fuel.lower() in GAS_FUEL_TYPES else "regular"
-    google_fuel_type = GAS_FUEL_TYPES[fuel_key]
-    if not api_keys:
-        return {"configured": False, "stations": [], "fuel": fuel_key, "source": "google-places"}
-    radius_miles = max(1.0, min(float(radius_miles or 10), 25.0))
-    payload = {
-        "includedTypes": ["gas_station"],
-        # Fuel options are one of the heavier Places payloads. Ten nearby
-        # stations keeps the request inside the mobile origin response budget
-        # while still providing a useful price comparison.
-        "maxResultCount": 10,
-        "rankPreference": "DISTANCE",
-        "locationRestriction": {
-            "circle": {
-                "center": {"latitude": latitude, "longitude": longitude},
-                "radius": min(50_000.0, radius_miles * 1609.344),
-            }
-        },
-    }
-    field_mask = ",".join([
-        "places.id", "places.displayName", "places.formattedAddress", "places.location",
-        "places.fuelOptions", "places.googleMapsUri",
-    ])
-    response: dict[str, object] | None = None
-    last_error: GoogleApiError | None = None
-    for api_key in api_keys:
-        try:
-            response = google_api_post_json(
-                "https://places.googleapis.com/v1/places:searchNearby",
-                payload,
-                {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": field_mask},
-                # Keep this below the public origin's idle-response window. A
-                # slow provider must yield a controlled response. Authorization
-                # failures return immediately, allowing the alternate key.
-                timeout=3.0,
-            )
-            break
-        except GoogleApiError as exc:
-            last_error = exc
-            if exc.category != "authorization":
-                raise
-    if response is None:
-        raise last_error or GoogleApiError("authorization", 403)
-    stations = [
-        station for station in (
-            normalize_google_gas_station(place, latitude, longitude, google_fuel_type)
-            for place in response.get("places") or []
-        ) if station
-    ]
-    stations.sort(key=lambda item: (
-        item.get("price") is None,
-        float(item.get("price") or 9999),
-        float(item.get("distanceMiles") or 9999),
-    ))
+    # Nearby fuel pricing used Places Nearby Search. It is intentionally
+    # unavailable while the Places key is reserved for carpool route entry.
     return {
-        "configured": True,
-        "stations": stations,
+        "configured": False,
+        "stations": [],
         "fuel": fuel_key,
-        "source": "google-places",
-        "fetchedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source": "local",
     }
 
 
@@ -17976,7 +17871,6 @@ def google_directions_key() -> str:
         os.environ.get("GOOGLE_DIRECTIONS_API_KEY", "").strip()
         or os.environ.get("GOOGLE_ROUTES_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-        or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     )
 
 
@@ -19029,12 +18923,11 @@ def google_reverse_location_label(lat: float, lng: float) -> str:
         if cached and cached[0] > now:
             _RIDE_REVERSE_GEOCODE_CACHE.move_to_end(cache_key)
             return cached[1]
-    if not google_location_fallback_enabled():
+    if not google_geocoding_enabled():
         return ""
     maps_key = (
         os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
         or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-        or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     )
     if not maps_key or not lat or not lng:
         return ""
@@ -19439,7 +19332,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
             flags=re.IGNORECASE,
         ))
         scoped_query = f"{google_query} near {city}" if use_city_bias and city and generic_place_query else google_query
-        predictions = google_accommodation_place_predictions(
+        predictions = google_ride_place_predictions(
             city, scoped_query, limit=limit * 2,
             use_city_bias=use_city_bias and scoped_query == google_query,
             include_all_types=True,
@@ -19449,7 +19342,7 @@ def ride_place_suggestions(city: str, query: str = "", limit: int = 10, *, use_c
         # even for an explicitly named destination. Retry without that bias;
         # do not do this for bare categories, which would return unrelated POIs.
         if not predictions and use_city_bias and scoped_query == google_query:
-            predictions = google_accommodation_place_predictions(
+            predictions = google_ride_place_predictions(
                 city, google_query, limit=limit * 2, use_city_bias=False, include_all_types=True, session_token=session_token
             )
         if use_city_bias and city and predictions:
@@ -21582,10 +21475,7 @@ def accommodation_location_options(
 ) -> dict[str, object]:
     query = normalize_accommodation_place_label(query)
     area = normalize_accommodation_place_label(area)
-    google_enabled = google_location_fallback_enabled() and bool(
-        os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-        or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    )
+    google_enabled = google_geocoding_enabled()
     catalogue_query = area or query
     city_point = accommodation_location_point(query, allow_refresh=False)
     catalogue_country = accommodation_country_code(query) if area else ""
@@ -21616,15 +21506,10 @@ def accommodation_location_options(
         (area and any(float(place.get("lat") or 0) and float(place.get("lng") or 0) for place in catalogue_suggestions))
         or (not area and float(city_point.get("lat") or 0) and float(city_point.get("lng") or 0))
     )
-    # Typing must be cheap: the local catalogue is immediate, while Places is
-    # used only for a meaningful area query. A committed search performs one
-    # geocode to establish its exact center, without the former three broad
-    # nearby Text Searches.
-    autocomplete_suggestions = (
-        google_accommodation_place_suggestions(query, area, limit=limit, use_city_bias=enrich)
-        if google_enabled and not backend_only and not enrich and len(area) >= 3 and not catalogue_suggestions
-        else []
-    )
+    # Housing location choices come only from the FairFares catalogue. A
+    # committed search may use address geocoding to establish its center, but
+    # never Places Autocomplete or Text Search.
+    autocomplete_suggestions: list[str] = []
     enrichment_query = area or query
     google_refreshed_metro = (
         refresh_accommodation_location_cache(enrichment_query, force=True, include_nearby_areas=False)
@@ -41685,10 +41570,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "city": city,
                 "query": query,
                 "suggestions": suggestions,
-                "placesEnabled": google_location_fallback_enabled() and bool(
-                    os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-                    or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-                ),
+                "placesEnabled": google_ride_places_enabled(),
             }
         )
 
@@ -41711,11 +41593,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "lat": lat,
                 "lng": lng,
                 "source": source,
-                "mapsEnabled": google_location_fallback_enabled() and bool(
-                    os.environ.get("GOOGLE_GEOCODING_API_KEY", "").strip()
-                    or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-                    or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-                ),
+                "mapsEnabled": google_geocoding_enabled(),
             }
         )
 
@@ -41913,7 +41791,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         maps_key = (
             os.environ.get("GOOGLE_STATIC_MAPS_API_KEY", "").strip()
             or os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-            or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
         )
         if maps_key and origin_lat and origin_lng and dest_lat and dest_lng:
             map_params: list[tuple[str, str]] = [

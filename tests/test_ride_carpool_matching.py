@@ -132,7 +132,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         with patch.object(app, "ride_point", side_effect=fake_ride_point):
             for city, label, place_id, lat, lng in airports:
                 with self.subTest(city=city), patch.object(
-                    app, "google_accommodation_place_predictions", return_value=[{"label": label, "placeId": place_id}]
+                    app, "google_ride_place_predictions", return_value=[{"label": label, "placeId": place_id}]
                 ), patch.object(app, "google_ride_place_details", return_value={"lat": lat, "lng": lng, "source": "google-place-details"}):
                     suggestions = app.ride_place_suggestions(city, "airport")
                     selected = next(item for item in suggestions if item["label"] == label)
@@ -174,7 +174,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    @patch.object(app, "google_accommodation_place_predictions", return_value=[])
+    @patch.object(app, "google_ride_place_predictions", return_value=[])
     def test_no_denver_only_airport_suggestion_when_google_is_unavailable(self, _mock_places):
         with patch.object(app, "ride_point", side_effect=fake_ride_point):
             suggestions = app.ride_place_suggestions("Denver, CO", "airport")
@@ -184,7 +184,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         city = "Hyderabad, Telangana, India"
         airport = "Rajiv Gandhi International Airport (HYD), Hyderabad, Telangana, India"
         with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_accommodation_place_predictions",
+            app, "google_ride_place_predictions",
             return_value=[{"label": airport, "placeId": "ChIJHyderabadAirport01"}],
         ) as predictions:
             results = app.ride_place_suggestions(city, "airport")
@@ -196,7 +196,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
     def test_generic_airport_search_does_not_retry_unscoped_results(self):
         city = "Hyderabad, Telangana, India"
         with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_accommodation_place_predictions", return_value=[]
+            app, "google_ride_place_predictions", return_value=[]
         ) as predictions:
             results = app.ride_place_suggestions(city, "airport")
         self.assertEqual(results, [])
@@ -206,7 +206,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
         city = "Denver, CO, USA"
         airport = "Denver International Airport (DEN), Denver, CO"
         with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_accommodation_place_predictions",
+            app, "google_ride_place_predictions",
             side_effect=[[], [{"label": airport, "placeId": "ChIJDenverAirport01"}]],
         ) as predictions:
             results = app.ride_place_suggestions(city, "Denver International Airport")
@@ -221,7 +221,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             {"label": "Union Square, San Francisco, CA", "placeId": "ChIJSanFrancisco01"},
         ]
         with patch.object(app, "ride_point", side_effect=fake_ride_point), patch.object(
-            app, "google_accommodation_place_predictions", return_value=places
+            app, "google_ride_place_predictions", return_value=places
         ):
             results = app.ride_place_suggestions(city, "Union Square")
         self.assertEqual(results[0]["label"], "Union Square, San Francisco, CA")
@@ -317,7 +317,7 @@ class RideCarpoolMatchingTest(unittest.TestCase):
 
     def test_google_prediction_without_place_id_is_still_searchable(self):
         label = "Boulder, CO, USA"
-        with patch.object(app, "google_accommodation_place_predictions", return_value=[{"label": label, "placeId": ""}]), patch.object(app, "ride_point", return_value={"label": label, "lat": 40.015, "lng": -105.2705}):
+        with patch.object(app, "google_ride_place_predictions", return_value=[{"label": label, "placeId": ""}]), patch.object(app, "ride_point", return_value={"label": label, "lat": 40.015, "lng": -105.2705}):
             suggestions = app.ride_place_suggestions("Denver, CO", "Boulder")
         self.assertEqual(suggestions[0]["label"], label)
         self.assertEqual(suggestions[0]["placeId"], "")
@@ -1545,13 +1545,13 @@ class RideCarpoolMatchingTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    @patch.object(app, "google_accommodation_place_predictions", return_value=[])
+    @patch.object(app, "google_ride_place_predictions", return_value=[])
     def test_missing_carpool_city_does_not_fall_back_to_denver(self, _mock_places):
         suggestions = app.ride_place_suggestions("", "unin", limit=10)
         self.assertFalse(any("denver" in str(item.get("label") or "").lower() for item in suggestions))
 
     def test_short_ride_location_query_never_calls_google_places(self):
-        with patch.object(app, "google_accommodation_place_predictions", side_effect=AssertionError("short input must stay local")):
+        with patch.object(app, "google_ride_place_predictions", side_effect=AssertionError("short input must stay local")):
             suggestions = app.ride_place_suggestions("Denver, CO", "De")
         self.assertTrue(all("denver" in str(item.get("label") or "").lower() for item in suggestions))
 

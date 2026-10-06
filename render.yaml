@@ -35,16 +35,15 @@ services:
         sync: false
       - key: GOOGLE_MAPS_API_KEY
         sync: false
+      - key: GOOGLE_GEOCODING_API_KEY
+        sync: false
+      # Used only by carpool pickup/destination autocomplete and Place
+      # Details. Housing, gas prices, city search, and maps never use it.
       - key: GOOGLE_PLACES_API_KEY
         sync: false
-      # Broad Places Text Search is intentionally off. Housing
-      # use FairFares-backed data unless this is explicitly approved later.
-      - key: FAIRFARES_ENABLE_GOOGLE_TEXT_SEARCH
-        value: "0"
       - key: FAIRFARES_ENABLE_GOOGLE_LOCATION_FALLBACK
-        # Autocomplete, Place Details, and exact geocoding are needed for
-        # rider-entered destinations such as a bank or business name. Broad
-        # Text Search remains disabled above.
+        # Enables explicit Google geocoding and the carpool-only Places
+        # integration above. It does not enable Places in any other feature.
         value: "1"
       - key: FAIRFARES_REQUIRE_LOCATION_CATALOG
         value: "1"
