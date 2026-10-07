@@ -779,7 +779,10 @@ export async function getHousing(
   coordinates: { lat?: number | null; lng?: number | null } = {},
   offset = 0
 ) {
-  const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "24", offset: String(Math.max(0, offset)) });
+  // Housing has no separate pagination control. Fetch the server's complete
+  // bounded discovery page so active metro listings do not disappear after
+  // the first 24 cards.
+  const query = new URLSearchParams({ city, area, need, category, gender, budget, radius, limit: "50", offset: String(Math.max(0, offset)) });
   addFiniteParam(query, "lat", coordinates.lat);
   addFiniteParam(query, "lng", coordinates.lng);
   const payload = await request<{ ok: boolean; posts: HousingPost[] }>(`/api/mobile/housing?${query}`);

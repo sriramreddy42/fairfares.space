@@ -20828,7 +20828,29 @@ def mobile_housing_posts(
     # A radius is geographic, not a city-name text filter. Nearby suburbs such
     # as Parker must reach the distance pass for a Denver radius search even
     # though their stored city field does not contain "Denver".
-    raw_search_terms = () if post_public_id or (area or "").strip() or radius_search else (city,)
+    # A city chosen in Housing represents its local metro, just as it does in
+    # Ask.  A radius or a specific area remains an explicit narrow search, but
+    # the default city browse must not silently discard listings in known
+    # member cities such as Aurora, Englewood, Lone Tree, or Parker.
+    metro_city_labels: tuple[str, ...] = ()
+    if city and not post_public_id and not (area or "").strip() and not radius_search:
+        canonical_metro_cities: list[str] = []
+        for variant in community_local_city_variants(city):
+            city_name, _region = split_city_state(variant)
+            state = explicit_us_state_from_label(variant)
+            if city_name and state:
+                canonical_metro_cities.append(f"{city_name}, {state}")
+        # The city column is canonicalized on write/maintenance.  Limiting the
+        # SQL expansion keeps a large refreshed metro catalogue safely below
+        # SQLite's expression limit.
+        metro_city_labels = tuple(dict.fromkeys(canonical_metro_cities))[:100]
+        if metro_city_labels:
+            metro_checks: list[str] = []
+            for label in metro_city_labels:
+                metro_checks.extend(("city = ? COLLATE NOCASE", "city LIKE ? COLLATE NOCASE"))
+                values.extend((label, f"{label},%"))
+            clauses.append(f"({' OR '.join(metro_checks)})")
+    raw_search_terms = () if post_public_id or (area or "").strip() or radius_search or metro_city_labels else (city,)
     for raw_term in raw_search_terms:
         term = (raw_term or "").strip()
         if not term:

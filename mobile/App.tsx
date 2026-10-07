@@ -444,7 +444,9 @@ function FairFaresApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCity, setSearchCity] = useState("");
   const [searchArea, setSearchArea] = useState("");
-  const [searchRadius, setSearchRadius] = useState("10");
+  // A selected city is a metro browse by default. Radius is opt-in when the
+  // member is intentionally looking near one particular place.
+  const [searchRadius, setSearchRadius] = useState("");
   const [searchNeed, setSearchNeed] = useState("need_place");
   const [searchSuggestions, setSearchSuggestions] = useState<string[]>([]);
   const [searchCitySuggestions, setSearchCitySuggestions] = useState<string[]>([]);
@@ -923,6 +925,23 @@ function FairFaresApp() {
       setDiscoveryLocation((current) => current || payload.location.city || requestedCity);
       if (payload.location.city && payload.location.city.trim() !== requestedCity.trim()) void getHousingAreaStats(payload.location.city);
       setVisiblePosts(payload.housing);
+      // Bootstrap deliberately carries a small housing page so the app can
+      // paint quickly. Refresh the complete metro page after that first paint;
+      // otherwise a member who opens Housing without touching a filter can
+      // only ever see the first twelve listings.
+      const housingCity = payload.location.city || requestedCity;
+      if (housingCity.trim()) {
+        const housingGeneration = ++housingRequestGenerationRef.current;
+        setTimeout(() => {
+          void getHousing(housingCity, "", "", "", "", "", "", {})
+            .then((posts) => {
+              if (bootstrapGenerationRef.current !== generation || housingRequestGenerationRef.current !== housingGeneration) return;
+              setVisiblePosts(posts);
+              setData((current) => current ? { ...current, housing: posts } : current);
+            })
+            .catch(() => undefined);
+        }, 600);
+      }
       // The home screen has enough verified data to render once bootstrap
       // returns. Car inventory and site services are independent extras, so
       // never keep the launch screen visible while either slow request runs.
@@ -2009,7 +2028,9 @@ function FairFaresApp() {
       // An area chosen under a previous city must not determine coordinates for
       // a newly entered city in another state.
       const cleanArea = cityRegion && areaRegion && cityRegion !== areaRegion ? "" : requestedArea;
-      const cleanRadius = String(Math.max(1, Math.min(Number(nextRadius || 10) || 10, 100)));
+      const cleanRadius = nextRadius
+        ? String(Math.max(1, Math.min(Number(nextRadius) || 10, 100)))
+        : "";
       const options = await getAccommodationLocationOptions(cleanCity, cleanArea, true);
       if (housingRequestGenerationRef.current !== requestGeneration) return;
       // Keep the place the user typed or selected; backend records do not
@@ -4516,11 +4537,12 @@ function FairFaresApp() {
                 </TouchableOpacity>
               </View>
               <View style={styles.miniGroup}>
-                <Text style={styles.miniLabel}>Radius when searching near a place</Text>
+                <Text style={styles.miniLabel}>Search scope</Text>
+                <Text style={styles.suggestionHint}>Metro shows listings across the selected city’s local area. Choose a radius to search near a specific place.</Text>
                 <View style={styles.chipRow}>
-                  {["5", "10", "20", "60"].map((chip) => (
+                  {["", "5", "10", "20", "60"].map((chip) => (
                     <TouchableOpacity key={chip} style={[styles.chip, searchRadius === chip && styles.chipActive]} onPress={() => setSearchRadius(chip)}>
-                      <Text style={[styles.chipText, searchRadius === chip && styles.chipTextActive]}>{chip} mi</Text>
+                      <Text style={[styles.chipText, searchRadius === chip && styles.chipTextActive]}>{chip ? `${chip} mi` : "Metro"}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>

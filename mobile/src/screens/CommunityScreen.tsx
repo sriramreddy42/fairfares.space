@@ -116,6 +116,7 @@ type CommunityFeedRow =
   | { key: string; kind: "post"; post: CommunityPost }
   | { key: string; kind: "communities" }
   | { key: string; kind: "local-empty" }
+  | { key: string; kind: "local-more" }
   | { key: string; kind: "national-heading" }
   | { key: string; kind: "testimonial" }
   | { key: string; kind: "rental" }
@@ -1576,6 +1577,15 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     );
   };
 
+  const renderLocalMore = () => {
+    const label = posts.length ? `Show more posts near ${groupSuggestionCity.split(",", 1)[0] || "you"}` : "Show more posts";
+    return (
+      <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()} accessibilityRole="button" accessibilityLabel={label}>
+        <Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : label}</Text>
+      </TouchableOpacity>
+    );
+  };
+
   const feedRows = useMemo<CommunityFeedRow[]>(() => {
     const rows: CommunityFeedRow[] = [];
     posts.forEach((post, index) => {
@@ -1584,6 +1594,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     });
     if (category === "ALL" && posts.length === 0) rows.push({ key: "community-suggestions", kind: "communities" });
     if (!posts.length) rows.push({ key: "local-empty", kind: "local-empty" });
+    // Put paging directly after local posts. Previously users had to scroll
+    // through the nationwide section before they could discover the next page
+    // of listings from their own metro.
+    if (!selectedGroup && posts.length && hasMore) rows.push({ key: "local-more", kind: "local-more" });
     if (!selectedGroup && nationalPosts.length) {
       rows.push({ key: "national-heading", kind: "national-heading" });
       rows.push({ key: "community-testimonial", kind: "testimonial" });
@@ -1597,7 +1611,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     }
     if (!posts.length && !nationalPosts.length) rows.push({ key: "feed-empty", kind: "empty" });
     return rows;
-  }, [category, communityInsertIndex, lowestRental, nationalPosts, posts, selectedGroup]);
+  }, [category, communityInsertIndex, hasMore, lowestRental, nationalPosts, posts, selectedGroup]);
 
   // The detail sheet is intentionally stateful, but opening a comment must not
   // replace FlatList's render callback. On iOS that made every visible card
@@ -1606,6 +1620,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     renderPost: (post: CommunityPost) => React.ReactElement;
     renderCommunitySuggestions: () => React.ReactElement | null;
     renderCommunityReview: () => React.ReactElement;
+    renderLocalMore: () => React.ReactElement;
     renderLowestRental: () => React.ReactElement | null;
     groupSuggestionCity: string;
     acrossCountryName: string;
@@ -1614,6 +1629,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     renderPost,
     renderCommunitySuggestions,
     renderCommunityReview,
+    renderLocalMore,
     renderLowestRental,
     groupSuggestionCity,
     acrossCountryName,
@@ -1625,6 +1641,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (item.kind === "post") return context.renderPost(item.post);
     if (item.kind === "communities") return context.renderCommunitySuggestions();
     if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {context.groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
+    if (item.kind === "local-more") return context.renderLocalMore();
     if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across {context.acrossCountryName === "India" ? "India" : "the USA"}</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>{context.acrossCountryName === "India" ? "🇮🇳" : "🇺🇸"}</Text></View>;
     if (item.kind === "testimonial") return context.renderCommunityReview();
     if (item.kind === "rental") return context.renderLowestRental();
@@ -1729,7 +1746,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={groupSuggestionCity ? `Change feed city. Currently ${groupSuggestionCity}` : "Choose a feed city or use current location"}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>{groupSuggestionCity ? `Near ${groupSuggestionCity.split(",", 1)[0]}` : "Choose your location"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category !== "ALL" ? categoryLabels[category] : locationResolving && !groupSuggestionCity ? "Finding your current city…" : groupSuggestionCity ? "Current-city posts and listings · Tap to change" : "Use current location or choose a city"}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
       </>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
-      ListFooterComponent={hasMore ? <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()}><Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : "Load more conversations"}</Text></TouchableOpacity> : null}
+      ListFooterComponent={hasMore && (selectedGroup || !posts.length) ? renderLocalMore() : null}
     />
     {actionNotice ? <View pointerEvents="box-none" style={[styles.actionNoticeOverlay, { bottom: layout.navClearance + 8 }]}>
       <Animated.View style={[styles.actionNotice, isLight && styles.actionNoticeLight, {

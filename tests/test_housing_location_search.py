@@ -138,13 +138,32 @@ class HousingLocationSearchTest(unittest.TestCase):
             item["id"]
             for item in app.mobile_housing_posts(city="Denver, CO", need="have_place", limit=20)
         })
-
         with app.db() as con:
             con.execute("UPDATE ask_community_posts SET fulfillment_status = 'FILLED' WHERE public_id = 'FFC-ASK-OFFER'")
         self.assertNotIn("ASK-FFC-ASK-OFFER", {
             item["id"]
             for item in app.mobile_housing_posts(city="Denver, CO", need="need_place", limit=20)
         })
+
+    def test_city_browse_includes_known_metro_listing_without_radius(self):
+        """The normal Denver browse must include its known metro cities."""
+        with app.db() as con:
+            metro_id = app.upsert_accommodation_metro(
+                con, "Denver Metro Area", country="US", state="CO", center_city="Denver"
+            )
+            app.upsert_accommodation_local_area(
+                con, metro_id, "Denver, CO", city="Denver", state="CO"
+            )
+            app.upsert_accommodation_local_area(
+                con, metro_id, "Parker, CO", city="Parker", state="CO"
+            )
+        self.insert_filter_post("PARKER-METRO-LISTING", city="Parker, CO")
+
+        ids = {
+            item["id"]
+            for item in app.mobile_housing_posts(city="Denver, CO", need="need_place", limit=50)
+        }
+        self.assertIn("PARKER-METRO-LISTING", ids)
 
     def test_formatted_street_address_is_not_repeated_with_city_and_zip(self):
         self.assertEqual(
