@@ -1450,7 +1450,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
           {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
         </>;
-        return interactive ? <TouchableOpacity key={`${image}-${index}`} activeOpacity={0.92} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={() => setPhotoViewer({ images, index })} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
+        return interactive ? <Pressable key={`${image}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} onPress={() => setPhotoViewer({ images, index })} style={({ pressed }) => [...cellStyle, pressed && styles.postMediaCellPressed]}>{imageCell}</Pressable> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
       })}
     </View>;
   };
@@ -1886,6 +1886,7 @@ const styles = StyleSheet.create({
   postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaGridSingle: { height: 330 },
   postMediaCell: { width: "49.5%", height: "49.5%", overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  postMediaCellPressed: { opacity: .78 },
   postMediaCellSingle: { width: "100%", height: "100%" },
   postMediaCellTwo: { width: "49.5%", height: "100%", flexGrow: 1 },
   postMediaCellThreeHero: { width: "100%", height: "58%" },
