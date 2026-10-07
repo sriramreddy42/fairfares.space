@@ -659,6 +659,7 @@ ACCOMMODATION_METRO_GROUPS = {
             "Westminster, CO",
             "Englewood, CO",
             "Aurora, CO",
+            "Greenwood Village, CO",
             "Dupont, CO",
             "Littleton, CO",
             "Henderson, CO",

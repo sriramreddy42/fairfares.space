@@ -791,6 +791,7 @@ class CommunityFeatureTest(unittest.TestCase):
             con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-DENVER-SUFFIX', ?, 'UPDATE', 'Denver listing with country suffix', 'Local Denver update with a country-qualified city.', 'GENERAL', 'Denver, CO, United States', 'Denver', 'PUBLISHED', 'OPEN')", (self.owner_id,))
             con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-DENVER-NC', ?, 'UPDATE', 'Denver North Carolina update', 'This must not appear in Colorado local results.', 'GENERAL', 'Denver, NC', 'Denver', 'PUBLISHED', 'OPEN')", (self.owner_id,))
             con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-PARKER-CO', ?, 'UPDATE', 'Parker metro update', 'This should appear in the Denver metro feed.', 'GENERAL', 'Parker, CO', 'Parker', 'PUBLISHED', 'OPEN')", (self.owner_id,))
+            con.execute("INSERT INTO ask_community_posts (public_id, author_id, post_type, title, body, category, city, area, status, fulfillment_status) VALUES ('FFC-GREENWOOD-VILLAGE-CO', ?, 'UPDATE', 'Greenwood Village metro update', 'This should appear in the Denver metro feed.', 'GENERAL', 'Greenwood Village, CO', 'Greenwood Village', 'PUBLISHED', 'OPEN')", (self.owner_id,))
             con.execute("UPDATE ask_community_posts SET fulfillment_status = 'RESOLVED' WHERE public_id = ?", (resolved["post"]["id"],))
             group = con.execute(
                 "INSERT INTO chat_communities (public_id, kind, name, description, area_label, visibility, created_by_user_id) VALUES ('FFG-PRIVATE-USA', 'GROUP', 'Private USA', '', 'Dallas, TX', 'PRIVATE', ?)",
@@ -819,6 +820,7 @@ class CommunityFeatureTest(unittest.TestCase):
         denver_local_ids = {post["id"] for post in denver_feed["sections"]["local"]["posts"]}
         self.assertIn("FFC-DENVER-SUFFIX", denver_local_ids)
         self.assertIn("FFC-PARKER-CO", denver_local_ids)
+        self.assertIn("FFC-GREENWOOD-VILLAGE-CO", denver_local_ids)
         self.assertNotIn("FFC-DENVER-NC", denver_local_ids)
 
         status, empty_local_feed = self.request("GET", "/api/mobile/community?city=Boston%2C%20MA&layered=1&limit=20")
