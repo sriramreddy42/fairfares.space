@@ -459,9 +459,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
-  const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number } | null>(null);
+  const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number; returnToPost: CommunityPost } | null>(null);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
+  const pendingPhotoViewerRef = useRef<{ images: string[]; index: number; returnToPost: CommunityPost } | null>(null);
+  const pendingPhotoReturnRef = useRef<CommunityPost | null>(null);
   const [answer, setAnswer] = useState("");
   const [answerReplyTarget, setAnswerReplyTarget] = useState<{ id: string; name: string } | null>(null);
   const [editingAnswerId, setEditingAnswerId] = useState("");
@@ -677,6 +679,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     }
     memberProfileSheetRef.current?.open(author);
   }, [detail]);
+
+  const openPostPhoto = (post: CommunityPost, images: string[], index: number) => {
+    const viewer = { images, index, returnToPost: post };
+    // The Community post is an iOS page sheet. Present the full-screen photo
+    // only after that sheet is gone, just as we do for a member profile.
+    if (Platform.OS === "ios" && detail) {
+      pendingPhotoViewerRef.current = viewer;
+      setDetail(null);
+      return;
+    }
+    setPhotoViewer(viewer);
+  };
 
   const load = useCallback(async (quiet = false) => {
     const requestedFeedGeneration = feedLoadGeneration.current + 1;
@@ -1366,10 +1380,28 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const handleDetailDismiss = () => {
     finishGuestAuth();
+    const photo = pendingPhotoViewerRef.current;
+    pendingPhotoViewerRef.current = null;
+    if (photo) {
+      requestAnimationFrame(() => setPhotoViewer(photo));
+      return;
+    }
     const author = pendingMemberProfileRef.current;
     pendingMemberProfileRef.current = null;
     if (!author) return;
     requestAnimationFrame(() => memberProfileSheetRef.current?.open(author));
+  };
+
+  const closePhotoViewer = () => {
+    pendingPhotoReturnRef.current = Platform.OS === "ios" ? photoViewer?.returnToPost || null : null;
+    setPhotoViewer(null);
+  };
+
+  const handlePhotoViewerDismiss = () => {
+    if (Platform.OS !== "ios") return;
+    const post = pendingPhotoReturnRef.current;
+    pendingPhotoReturnRef.current = null;
+    if (post) requestAnimationFrame(() => setDetail(post));
   };
 
   const completedStatus = (post: CommunityPost): CommunityPost["fulfillmentStatus"] => post.category === "HAVE_PLACE" ? "FILLED" : post.category === "CARPOOL_RIDE" ? "ARRANGED" : post.category === "NEED_PLACE" || post.category === "NEED_ROOMMATE" ? "FOUND" : "RESOLVED";
@@ -1433,7 +1465,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const communityInsertIndex = Math.min(3, posts.length - 1);
 
-  const renderPostImages = (images: string[], interactive = false) => {
+  const renderPostImages = (post: CommunityPost, interactive = false) => {
+    const images = post.images;
     const visible = images.slice(0, 4);
     if (!visible.length) return null;
     return <View style={[styles.postMediaGrid, visible.length === 1 && styles.postMediaGridSingle]}>
@@ -1450,7 +1483,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
           {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
         </>;
-        return interactive ? <TouchableOpacity key={`${image}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} activeOpacity={0.78} onPress={() => setPhotoViewer({ images, index })} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
+        return interactive ? <TouchableOpacity key={`${image}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} activeOpacity={0.78} onPress={() => openPostPhoto(post, images, index)} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
       })}
     </View>;
   };
@@ -1473,7 +1506,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
-      {renderPostImages(post.images, showingPostDetail)}
+      {renderPostImages(post, showingPostDetail)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </PostOpenContainer>
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
@@ -1824,8 +1857,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <TouchableOpacity style={styles.guestBenefitsSecondary} onPress={() => beginGuestAuth("login")}><Text style={styles.guestBenefitsSecondaryText}>Already registered? Log in</Text></TouchableOpacity>
         </View>
       </View> : null}
-      {photoViewer ? <View style={styles.photoViewerBackdrop}><View style={[styles.photoViewerHeader, { paddingTop: Math.max(safeAreaInsets.top, 12) }]}><TouchableOpacity style={styles.photoViewerClose} onPress={() => setPhotoViewer(null)} accessibilityRole="button" accessibilityLabel="Close photos"><Text style={styles.photoViewerCloseText}>Close</Text></TouchableOpacity><Text style={styles.photoViewerCounter}>{photoViewer.index + 1} of {photoViewer.images.length}</Text><View style={styles.photoViewerHeaderSpacer} /></View><ZoomableCommunityPhoto uri={photoViewer.images[photoViewer.index]} />{photoViewer.images.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoViewerThumbs}>{photoViewer.images.map((image, index) => <TouchableOpacity key={`${image}-${index}`} onPress={() => setPhotoViewer((current) => current ? { ...current, index } : current)} style={[styles.photoViewerThumb, index === photoViewer.index && styles.photoViewerThumbActive]} accessibilityRole="button" accessibilityLabel={`View photo ${index + 1}`}><Image source={{ uri: absoluteUrl(image) }} style={styles.photoViewerThumbImage} /></TouchableOpacity>)}</ScrollView> : null}<Text style={styles.photoViewerHint}>Pinch with two fingers to zoom · Drag to move</Text></View> : null}
       </KeyboardAvoidingView>
+    </Modal>
+
+    <Modal visible={Boolean(photoViewer)} animationType="fade" presentationStyle="fullScreen" statusBarTranslucent onRequestClose={closePhotoViewer} onDismiss={handlePhotoViewerDismiss}>
+      <View style={styles.photoViewerBackdrop}>
+        <View style={[styles.photoViewerHeader, { paddingTop: Math.max(safeAreaInsets.top, 12) }]}><TouchableOpacity style={styles.photoViewerClose} onPress={closePhotoViewer} accessibilityRole="button" accessibilityLabel="Close photos"><Text style={styles.photoViewerCloseText}>Close</Text></TouchableOpacity><Text style={styles.photoViewerCounter}>{photoViewer ? `${photoViewer.index + 1} of ${photoViewer.images.length}` : ""}</Text><View style={styles.photoViewerHeaderSpacer} /></View>
+        {photoViewer ? <ZoomableCommunityPhoto uri={photoViewer.images[photoViewer.index]} /> : null}
+        {photoViewer && photoViewer.images.length > 1 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoViewerThumbs}>{photoViewer.images.map((image, index) => <TouchableOpacity key={`${image}-${index}`} onPress={() => setPhotoViewer((current) => current ? { ...current, index } : current)} style={[styles.photoViewerThumb, index === photoViewer.index && styles.photoViewerThumbActive]} accessibilityRole="button" accessibilityLabel={`View photo ${index + 1}`}><Image source={{ uri: absoluteUrl(image) }} style={styles.photoViewerThumbImage} /></TouchableOpacity>)}</ScrollView> : null}
+        <Text style={styles.photoViewerHint}>Pinch with two fingers to zoom · Drag to move</Text>
+      </View>
     </Modal>
 
     <MemberProfileSheet
