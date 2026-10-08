@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("profile", choices=PROFILE_USERS)
     parser.add_argument("--k6", default=os.environ.get("K6_BIN", "k6"))
     parser.add_argument("--summary", type=Path)
+    parser.add_argument("--preauth", action="store_true", help="seed authenticated sessions to isolate in-app traffic from password verification")
     return parser.parse_args()
 
 
@@ -75,6 +76,11 @@ def main():
                   "Colorado Springs, CO", 38.8339, -104.8214, "Denver, CO", pickup, "8:00 AM", 3)
                  for i, uid in enumerate(ids[: min(users, 500)], 1)],
             )
+            if args.preauth:
+                con.executemany(
+                    "INSERT INTO sessions (token, user_id) VALUES (?, ?)",
+                    [(f"k6-preauth-{index:04d}", user_id) for index, user_id in enumerate(ids, 1)],
+                )
             for city in ("Denver, CO", "St. Louis, MO", "Menlo Park, CA", "Miami, FL"):
                 con.execute(
                     "INSERT INTO chat_communities (public_id,name,description,area_label,visibility,created_by_user_id) VALUES (?,?,?,?, 'PUBLIC', ?)",
@@ -89,6 +95,8 @@ def main():
         summary.parent.mkdir(parents=True, exist_ok=True)
         command = [args.k6, "run", "--summary-export", str(summary), "-e", f"PROFILE={args.profile}",
                    "-e", f"BASE_URL=http://127.0.0.1:{server.server_port}", str(SCRIPT)]
+        if args.preauth:
+            command[4:4] = ["-e", "PREAUTH_TOKEN_PREFIX=k6-preauth-"]
         print(json.dumps({"profile": args.profile, "users": users, "baseUrl": f"http://127.0.0.1:{server.server_port}", "summary": str(summary)}))
         try:
             result = subprocess.run(command, cwd=ROOT, check=False)

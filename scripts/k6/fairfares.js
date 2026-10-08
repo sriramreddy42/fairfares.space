@@ -7,6 +7,7 @@ const baseUrl = (__ENV.BASE_URL || 'http://127.0.0.1:8120').replace(/\/$/, '');
 const profile = (__ENV.PROFILE || 'smoke').toLowerCase();
 const password = __ENV.LOAD_PASSWORD || 'FairFaresK6!';
 const userPrefix = __ENV.LOAD_USER_PREFIX || 'k6.user';
+const preAuthTokenPrefix = __ENV.PREAUTH_TOKEN_PREFIX || '';
 const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(baseUrl);
 const dangerous = ['high', 'stress', 'spike'].includes(profile);
 
@@ -89,6 +90,10 @@ function request(label, path, trend) {
 function authenticate() {
   if (token) return;
   const id = exec.vu.idInTest;
+  if (preAuthTokenPrefix) {
+    token = `${preAuthTokenPrefix}${String(id).padStart(4, '0')}`;
+    return;
+  }
   const response = http.post(`${baseUrl}/api/mobile/login`, JSON.stringify({
     identifier: `${userPrefix}.${String(id).padStart(4, '0')}@example.test`, password,
   }), { headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, tags: { journey: 'auth' } });
