@@ -103,9 +103,18 @@ def nonnegative_int_env(name: str, default: int) -> int:
         return default
 
 
+def nonnegative_float_env(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.environ.get(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
 SESSION_IDLE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_IDLE_DAYS", 14)
 SESSION_ABSOLUTE_TIMEOUT_DAYS = positive_int_env("FAIRFARES_SESSION_MAX_DAYS", 30)
 SESSION_TOUCH_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_TOUCH_SECONDS", 5 * 60)
+SESSION_TOUCH_BATCH_SIZE = positive_int_env("FAIRFARES_SESSION_TOUCH_BATCH_SIZE", 500)
+SESSION_TOUCH_COALESCE_SECONDS = nonnegative_float_env("FAIRFARES_SESSION_TOUCH_COALESCE_SECONDS", 0.1)
 MAX_PROFILE_PHOTO_DATA_URL_LENGTH = 2_500_000
 _dicebear_avatar_origin = os.environ.get("FAIRFARES_DICEBEAR_API_ORIGIN", "").strip().rstrip("/")
 # Render Blueprint service references provide an internal `host:port` value.
@@ -213,6 +222,8 @@ _FEEDBACK_SUBMISSIONS: dict[str, list[float]] = {}
 _FEEDBACK_SUBMISSIONS_LOCK = threading.Lock()
 _SESSION_TOUCHES: dict[str, float] = {}
 _SESSION_TOUCHES_LOCK = threading.Lock()
+_SESSION_TOUCH_PENDING: set[str] = set()
+_SESSION_TOUCH_WORKER_SCHEDULED = False
 _CHAT_TYPING: dict[tuple[int, int], float] = {}
 _CHAT_TYPING_LOCK = threading.Lock()
 _CHAT_LINK_PREVIEW_CACHE: OrderedDict[str, tuple[float, dict[str, str]]] = OrderedDict()
@@ -263,6 +274,10 @@ _APPLICATION_SECRET_LOCK = threading.Lock()
 _APPLICATION_SECRET_CACHE = ""
 OPERATIONAL_ALERT_THROTTLE_SECONDS = positive_int_env("FAIRFARES_ALERT_THROTTLE_SECONDS", 5 * 60)
 SLOW_REQUEST_THRESHOLD_MS = positive_int_env("FAIRFARES_SLOW_REQUEST_MS", 5_000)
+# Successful request events are high-volume diagnostic data. Keep failures and
+# slow requests visible by default; enable every successful request only while
+# actively diagnosing a deployment.
+REQUEST_EVENT_LOGS_ENABLED = os.environ.get("FAIRFARES_REQUEST_EVENT_LOGS", "0").strip().lower() in {"1", "true", "yes", "on"}
 MOBILE_SEARCH_CACHE_SECONDS = positive_int_env("FAIRFARES_SEARCH_CACHE_SECONDS", 30)
 MOBILE_SEARCH_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_SEARCH_CACHE_MAX_ENTRIES", 5_000)
 POPULAR_CITY_CACHE_SECONDS = positive_int_env("FAIRFARES_POPULAR_CITY_CACHE_SECONDS", 6 * 60 * 60)
@@ -3107,18 +3122,50 @@ def db(busy_timeout_ms: int | None = None) -> sqlite3.Connection:
     return connection
 
 
+def schedule_session_last_seen_touch(session_token: str) -> None:
+    """Coalesce session activity updates so a burst of reads does not create a burst of SQLite writers."""
+    global _SESSION_TOUCH_WORKER_SCHEDULED
+    if not session_token:
+        return
+    with _SESSION_TOUCHES_LOCK:
+        _SESSION_TOUCH_PENDING.add(session_token)
+        if _SESSION_TOUCH_WORKER_SCHEDULED:
+            return
+        _SESSION_TOUCH_WORKER_SCHEDULED = True
+
+    def run() -> None:
+        global _SESSION_TOUCH_WORKER_SCHEDULED
+        # Let simultaneous app launches join one write transaction. This never
+        # delays the customer request that authenticated the session.
+        if SESSION_TOUCH_COALESCE_SECONDS:
+            time.sleep(SESSION_TOUCH_COALESCE_SECONDS)
+        while True:
+            with _SESSION_TOUCHES_LOCK:
+                batch = list(_SESSION_TOUCH_PENDING)[:max(1, SESSION_TOUCH_BATCH_SIZE)]
+                for token in batch:
+                    _SESSION_TOUCH_PENDING.discard(token)
+                if not batch:
+                    _SESSION_TOUCH_WORKER_SCHEDULED = False
+                    return
+            try:
+                with db(busy_timeout_ms=50) as con:
+                    con.executemany(
+                        "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
+                        [(token,) for token in batch],
+                    )
+            except sqlite3.OperationalError:
+                # Session activity is best effort. A later request will retry;
+                # do not turn bookkeeping into a tight writer-contention loop.
+                with _SESSION_TOUCHES_LOCK:
+                    for token in batch:
+                        _SESSION_TOUCHES.pop(token, None)
+
+    threading.Thread(target=run, name="session-last-seen", daemon=True).start()
+
+
 def touch_session_last_seen_best_effort(session_token: str) -> None:
-    """Refresh session activity without allowing auth reads to queue behind writers."""
-    try:
-        with db(busy_timeout_ms=50) as con:
-            con.execute(
-                "UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token = ?",
-                (session_token,),
-            )
-    except sqlite3.OperationalError:
-        # Missing one activity refresh is harmless; a later request will retry.
-        with _SESSION_TOUCHES_LOCK:
-            _SESSION_TOUCHES.pop(session_token, None)
+    """Compatibility wrapper for callers that refresh session activity."""
+    schedule_session_last_seen_touch(session_token)
 
 
 class FairFaresHTTPServer(ThreadingHTTPServer):
@@ -27498,20 +27545,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 backend_duration_ms = round((response_ready_at - self.request_started_at) * 1000, 1)
                 response_transfer_ms = round(max(0.0, finished_at - response_ready_at) * 1000, 1)
                 method = str(getattr(self, "command", ""))
-                print(json.dumps({
-                    "event": "http_request",
-                    "request_id": self.request_id,
-                    "method": method,
-                    "path": path[:300],
-                    "status": status,
-                    "duration_ms": duration_ms,
-                    "backend_duration_ms": backend_duration_ms,
-                    "response_transfer_ms": response_transfer_ms,
-                }, separators=(",", ":")), flush=True)
                 alerts_enabled = (
                     not getattr(self, "suppress_operational_alerts", False)
                     and not getattr(self, "client_disconnected", False)
                 )
+                if REQUEST_EVENT_LOGS_ENABLED or status >= 400 or backend_duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+                    print(json.dumps({
+                        "event": "http_request",
+                        "request_id": self.request_id,
+                        "method": method,
+                        "path": path[:300],
+                        "status": status,
+                        "duration_ms": duration_ms,
+                        "backend_duration_ms": backend_duration_ms,
+                        "response_transfer_ms": response_transfer_ms,
+                    }, separators=(",", ":")), flush=True)
                 if alerts_enabled and path != "/api/health" and status >= 500:
                     send_operational_alert(
                         f"http-5xx:{method}:{path}:{status}",
@@ -28479,7 +28527,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # Authentication itself remains read-only. A contended activity refresh
         # must never delay login checks, conversation lists, or message sends.
         if user and should_touch:
-            touch_session_last_seen_best_effort(authenticated_session_token)
+            schedule_session_last_seen_touch(authenticated_session_token)
         return user
 
     def current_community_guest(self) -> sqlite3.Row | None:
