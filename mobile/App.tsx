@@ -1207,23 +1207,24 @@ function FairFaresApp() {
     if (!userId) return;
     let cancelled = false;
     let refreshRunning = false;
+    let appActive = AppState.currentState === "active";
     const refreshUnread = async () => {
-      if (refreshRunning) return;
+      if (!appActive || refreshRunning) return;
       refreshRunning = true;
       try {
         const conversations = await getChatConversations();
         if (cancelled) return;
         const unreadCount = conversations.reduce((total, conversation) => total + Math.max(0, Number(conversation.unread) || 0), 0);
-        const nextConversations = conversations.slice(0, 10);
         setData((current) => {
           if (current?.user?.id !== userId) return current;
-          const currentConversations = current.chat.conversations || [];
-          const conversationsUnchanged = currentConversations.length === nextConversations.length
-            && JSON.stringify(currentConversations) === JSON.stringify(nextConversations);
-          if (conversationsUnchanged && current.chat.unreadCount === unreadCount && current.dashboard.messages === unreadCount) return current;
+          // The full inbox belongs to MessengerScreen and is refreshed when
+          // that tab mounts. Updating the bootstrap conversation list here
+          // re-rendered whichever image-heavy tab was open every 12 seconds,
+          // even where no unread state changed.
+          if (current.chat.unreadCount === unreadCount && current.dashboard.messages === unreadCount) return current;
           return {
             ...current,
-            chat: { ...current.chat, unreadCount, conversations: nextConversations },
+            chat: { ...current.chat, unreadCount },
             dashboard: { ...current.dashboard, messages: unreadCount }
           };
         });
@@ -1238,9 +1239,14 @@ function FairFaresApp() {
     };
     void refreshUnread();
     const interval = setInterval(() => void refreshUnread(), 12_000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      appActive = state === "active";
+      if (appActive) void refreshUnread();
+    });
     return () => {
       cancelled = true;
       clearInterval(interval);
+      subscription.remove();
     };
   }, [data?.user?.id]);
 
