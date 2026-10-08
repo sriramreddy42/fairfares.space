@@ -149,6 +149,48 @@ const communityReviewFallback: BootstrapPayload["testimonials"][number] = {
   message: "I like it very nice app helpful in relocating"
 };
 
+type CommunityReview = BootstrapPayload["testimonials"][number];
+
+// Keep this card static while a user is reading the feed. Rotating a
+// testimonial every few seconds repeatedly committed the image-heavy Ask
+// screen and was visible as a small scroll hitch on slower phones.
+const CommunityReviewCard = React.memo(function CommunityReviewCard({ reviews, city, isLight }: { reviews: CommunityReview[]; city: string; isLight: boolean }) {
+  const reviewCount = reviews.length;
+  const featuredReview = reviews[0] || communityReviewFallback;
+  const visibleReviewDots = Math.min(reviewCount, 5);
+  const activeReviewIndex = 0;
+  const rating = Math.max(1, Math.min(5, Math.round(Number(featuredReview.rating || 5))));
+  const photoUrl = featuredReview.photoUrl ? absoluteAssetUrl(featuredReview.photoUrl) : "";
+
+  return (
+    <View style={[styles.communityReviewCard, isLight && styles.communityReviewCardLight]}>
+      <View style={styles.communityReviewAvatarWrap}>
+        <UserAvatar
+          photoUrl={photoUrl}
+          style={styles.communityReviewAvatar}
+          imageStyle={styles.communityReviewAvatarImage}
+          fallback={<Text style={styles.communityReviewAvatarFallback}>{featuredReview.avatarEmoji || avatarInitials(featuredReview.name || "FairFares", "FF")}</Text>}
+        />
+      </View>
+      <View style={styles.communityReviewCopy}>
+        <View style={styles.communityReviewTop}>
+          <Text style={[styles.communityReviewName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{featuredReview.name || "FairFares member"}</Text>
+          <Text style={styles.communityReviewStars}>{Array.from({ length: rating }).map(() => "★").join("")}</Text>
+        </View>
+        <Text style={styles.communityReviewLocation} numberOfLines={1}>📍 {featuredReview.city || city || "FairFares community"}</Text>
+        <Text style={[styles.communityReviewQuote, isLight && styles.textPrimaryLight]} numberOfLines={2}>“{String(featuredReview.message || communityReviewFallback.message).replace(/^“|”$/g, "")}”</Text>
+      </View>
+      {reviewCount > 1 ? (
+        <View style={styles.communityReviewDots} pointerEvents="none">
+          {reviews.slice(0, visibleReviewDots).map((review, index) => (
+            <View key={`${review.id || index}-dot`} style={[styles.communityReviewDot, index === activeReviewIndex && styles.communityReviewDotActive]} />
+          ))}
+        </View>
+      ) : <View style={styles.communityReviewPill} />}
+    </View>
+  );
+});
+
 function communityFeedSnapshotKey(userId: number, city: string, category: string, query: string, groupId: string) {
   return [userId || "guest", normalizedLocationLabel(city).toLocaleLowerCase(), category, query.trim().toLocaleLowerCase(), groupId].join("|");
 }
@@ -432,7 +474,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [appliedQuery, setAppliedQuery] = useState("");
   const [selectedGroup, setSelectedGroup] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [communityReviewIndex, setCommunityReviewIndex] = useState(0);
   const [actionNotice, setActionNotice] = useState<CommunityActionNotice | null>(null);
   const [actionNoticeRefreshKey, setActionNoticeRefreshKey] = useState(0);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
@@ -497,7 +538,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const usable = testimonials.filter((item) => Number(item.rating || 0) >= 4 && String(item.message || "").trim().length > 0);
     return usable.length ? usable.slice(0, 8) : [communityReviewFallback];
   }, [testimonials]);
-  const featuredReview = communityReviews[communityReviewIndex % communityReviews.length] || communityReviewFallback;
   const acrossCountryName = /,\s*india\b|\bindia\b/i.test(city) ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
 
@@ -659,14 +699,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       lastFeedScrollOffset.current = currentOffset;
     }
   }, [setActionNoticeVisibility]);
-
-  useEffect(() => {
-    if (communityReviews.length <= 1) return undefined;
-    const timer = setInterval(() => {
-      setCommunityReviewIndex((current) => (current + 1) % communityReviews.length);
-    }, 3500);
-    return () => clearInterval(timer);
-  }, [communityReviews.length]);
 
   const openMemberProfile = useCallback((author: MemberProfileTarget) => {
     if (!author.id) return;
@@ -1543,39 +1575,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     </TouchableOpacity>
   ) : null;
 
-  const renderCommunityReview = () => {
-    const visibleReviewDots = Math.min(communityReviews.length, 5);
-    const activeReviewIndex = communityReviewIndex % visibleReviewDots;
-    const rating = Math.max(1, Math.min(5, Math.round(Number(featuredReview.rating || 5))));
-    const photoUrl = featuredReview.photoUrl ? absoluteAssetUrl(featuredReview.photoUrl) : "";
-    return (
-      <View style={[styles.communityReviewCard, isLight && styles.communityReviewCardLight]}>
-        <View style={styles.communityReviewAvatarWrap}>
-          <UserAvatar
-            photoUrl={photoUrl}
-            style={styles.communityReviewAvatar}
-            imageStyle={styles.communityReviewAvatarImage}
-            fallback={<Text style={styles.communityReviewAvatarFallback}>{featuredReview.avatarEmoji || avatarInitials(featuredReview.name || "FairFares", "FF")}</Text>}
-          />
-        </View>
-        <View style={styles.communityReviewCopy}>
-          <View style={styles.communityReviewTop}>
-            <Text style={[styles.communityReviewName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{featuredReview.name || "FairFares member"}</Text>
-            <Text style={styles.communityReviewStars}>{Array.from({ length: rating }).map(() => "★").join("")}</Text>
-          </View>
-          <Text style={styles.communityReviewLocation} numberOfLines={1}>📍 {featuredReview.city || city || "FairFares community"}</Text>
-          <Text style={[styles.communityReviewQuote, isLight && styles.textPrimaryLight]} numberOfLines={2}>“{String(featuredReview.message || communityReviewFallback.message).replace(/^“|”$/g, "")}”</Text>
-        </View>
-        {communityReviews.length > 1 ? (
-          <View style={styles.communityReviewDots} pointerEvents="none">
-            {communityReviews.slice(0, visibleReviewDots).map((review, index) => (
-              <View key={`${review.id || index}-dot`} style={[styles.communityReviewDot, index === activeReviewIndex && styles.communityReviewDotActive]} />
-            ))}
-          </View>
-        ) : <View style={styles.communityReviewPill} />}
-      </View>
-    );
-  };
+  const renderCommunityReview = () => <CommunityReviewCard reviews={communityReviews} city={city} isLight={isLight} />;
 
   const renderLocalMore = () => {
     const label = posts.length ? `Show more posts near ${groupSuggestionCity.split(",", 1)[0] || "you"}` : "Show more posts";

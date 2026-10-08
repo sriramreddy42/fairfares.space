@@ -7,17 +7,16 @@ const ts = require('typescript');
 const file = require('node:path').join(__dirname, '../src/screens/MessengerScreen.tsx');
 const text = fs.readFileSync(file, 'utf8');
 const ast = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let handler, nativeHandler, receiptEffect;
+let handler, receiptEffect;
 const pickerHandlers = [];
 function visit(node) {
-  if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect' && node.arguments[0]?.getText(ast).includes('const acknowledge = async')) receiptEffect = node.arguments[0].getText(ast);
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect' && node.arguments[0]?.getText(ast).includes('markChatRead(')) receiptEffect = node.arguments[0].getText(ast);
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'sendMessage') handler = node.getText(ast);
-  else if (ts.isFunctionDeclaration(node) && node.name?.text === 'enqueueNativeAttachments') nativeHandler = node.getText(ast);
   else if (ts.isFunctionDeclaration(node) && ['chooseAndSendImage', 'chooseAndSendFile', 'takeAndSendPhoto'].includes(node.name?.text)) pickerHandlers.push(node.getText(ast));
   else ts.forEachChild(node, visit);
 }
-visit(ast); assert.ok(handler);
-const compiled = ts.transpileModule(nativeHandler + '\n' + handler + '\n' + pickerHandlers.join('\n') + '\nexport const runReceiptEffect = ' + receiptEffect + ';\nexport { sendMessage, enqueueNativeAttachments, chooseAndSendImage, chooseAndSendFile, takeAndSendPhoto };', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+visit(ast); assert.ok(handler); assert.ok(receiptEffect, 'read-receipt effect must remain covered');
+const compiled = ts.transpileModule(handler + '\n' + pickerHandlers.join('\n') + '\nexport const runReceiptEffect = ' + receiptEffect + ';\nexport { sendMessage, chooseAndSendImage, chooseAndSendFile, takeAndSendPhoto };', { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
 const ref = current => ({ current });
 const noop = () => {};
 function attachment(kind, name, extra = {}) { return { kind, name, uri: `/picker/${name}`, mimeType: kind === 'IMAGE' ? 'image/jpeg' : kind === 'VIDEO' ? 'video/mp4' : 'application/pdf', size: 100, ...extra }; }
@@ -29,10 +28,10 @@ function harness(items) {
     exports: {}, importingAttachmentsRef: ref(false), pendingMediaSelectionGenerationRef: ref(0), AbortController, Error, Promise, Set, Map, Date, Math, JSON, Number, Object,
     pendingImages: items.filter(item => item.kind !== 'FILE'), pendingAttachment: items.find(item => item.kind === 'FILE') || null,
     messageText: 'caption', mentionedUserIds: [], groupMembers: [], pendingPost: null, pendingRide: null,
-    signedIn: true, currentUserId: 7, activeConversationId: 'chat', activeConversation: { subject: 'Chat' },
+    signedIn: true, currentUserId: 7, activeConversationId: 'chat', hydratedConversationId: 'chat', isAppActive: true, activeConversation: { subject: 'Chat' },
     messengerUserIdRef: ref(7), activeConversationIdRef: ref('chat'), userTouchedThreadRef: ref(false), shouldAutoScrollToEndRef: ref(false),
     activeAttachmentSendKeysRef: ref(new Set()), activeAttachmentSourceUrisRef: ref(new Map()), activeMediaTransferCountRef: ref(0),
-    attachmentCryptoAbortRef: ref(null), activeAttachmentSendsRef: ref(new Map()), nextOptimisticAttachmentIdRef: ref(-1), messagesConversationIdRef: ref('chat'),
+    attachmentCryptoAbortRef: ref(null), activeAttachmentSendsRef: ref(new Map()), nextOptimisticAttachmentIdRef: ref(-1), messagesConversationIdRef: ref('chat'), lastReadAcknowledgementRef: ref({}),
     effectiveAttachmentLimitBytes: 100000000, effectiveAttachmentLimitMb: 100, nativeLongMediaAvailable: true, JAVASCRIPT_MEDIA_SAFE_BYTES: 6000000, CHAT_HD_VIDEO_PREPARE_MIN_BYTES: 5000000,
     Platform: { OS: 'ios' }, data: { user: { id: 7, name: 'Sender' } }, messages: [],
     FileSystem: { cacheDirectory: '/cache/', getFreeDiskStorageAsync: async () => 1000000000, deleteAsync: async () => {} },
@@ -41,6 +40,7 @@ function harness(items) {
       prepareVideo: async (_, uri) => ({ outputSize: 75, mimeType: 'video/mp4' }),
     },
     Alert: { alert: (...args) => alerts.push(args) },
+    containsExactMention: () => false,
     updateChatTyping: async () => {}, logDevelopmentPerformance: noop, onMediaTransferActiveChange: noop,
     onRequireLogin: noop, publishMediaProgress: noop, scrollThreadToLatest: noop, playChitthiSentSound: noop,
     onCardMessageSent: noop, onClearPendingPost: noop, onClearPendingRide: noop,
@@ -77,6 +77,7 @@ function harness(items) {
     },
     discardQueuedEncryptedChatAttachment: async () => {},
   };
+  context.releaseComposerAttachments = items => context.releasePendingAttachments(items);
   for (const state of ['AttachmentMenuOpen', 'PendingPreviewIndex', 'AttachmentSending', 'AttachmentStatusCancelable', 'AttachmentStatus', 'PendingImages', 'PendingAttachment', 'PendingPhotoPreviewOpen', 'MessageText', 'Messages', 'EncryptionReady', 'LocalMediaMessageIds']) {
     const key = state[0].toLowerCase() + state.slice(1);
     context[`set${state}`] = value => { context[key] = typeof value === 'function' ? value(context[key] ?? []) : value; };
@@ -87,25 +88,27 @@ function harness(items) {
 let count = 0;
 async function test(label, run) { await run(); count++; console.log(`PASS ${label}`); }
 (async () => {
-  await test('backgrounding between delivery and read does not acknowledge a hidden conversation', async () => {
-    const h = harness([]), calls = []; let resolve;
-    Object.assign(h.context, { AppState: { currentState: 'active' }, isVisible: true, visibleReceiptIds: [1],
-      receiptAcknowledgements: ref(new Set()), messages: [{ id: 1, mine: false, type: 'IMAGE' }],
-      setInterval: () => 1, clearInterval: noop,
-      acknowledgeChatMessages: async (_, ids, state) => { calls.push(state); if (state === 'delivered') await new Promise(done => { resolve = done; }); }
+  await test('backgrounded threads do not mark messages read, then acknowledge when foregrounded', async () => {
+    const h = harness([]), calls = [];
+    Object.assign(h.context, {
+      isAppActive: false,
+      messages: [{ id: 1, mine: false, type: 'IMAGE' }],
+      markChatRead: async (...args) => { calls.push(args); },
     });
-    const cleanup = h.context.exports.runReceiptEffect();
-    assert.deepEqual(calls, ['delivered']);
-    h.context.AppState.currentState = 'background'; resolve();
-    await new Promise(done => setImmediate(done)); cleanup();
-    assert.deepEqual(calls, ['delivered']);
+    h.context.exports.runReceiptEffect();
+    assert.deepEqual(calls, []);
+    h.context.isAppActive = true;
+    h.context.exports.runReceiptEffect();
+    await new Promise(done => setImmediate(done));
+    assert.deepEqual(calls, [['chat', '1']]);
   });
   await test('all pickers reject results after navigation or account change', async () => {
-    for (const [handler, picker, singular] of [['chooseAndSendImage', 'pickChatMedia', false], ['chooseAndSendFile', 'pickChatFiles', false], ['takeAndSendPhoto', 'takeChatPhoto', true]]) {
+    for (const [handler, picker, singular] of [['chooseAndSendImage', 'pickChatMedia', false], ['chooseAndSendFile', 'pickChatFile', true], ['takeAndSendPhoto', 'takeChatPhoto', true]]) {
       const h = harness([]); let resolve;
       h.context[picker] = () => new Promise(done => { resolve = done; });
       let released = 0; h.context.releasePendingAttachments = items => { released += items.length; };
       const work = h.context.exports[handler]();
+      assert.equal(typeof resolve, 'function', `${handler} did not open its picker: ${JSON.stringify(h.alerts)}`);
       h.context.activeConversationIdRef.current = 'other-chat'; h.context.messengerUserIdRef.current = 8;
       const item = attachment('IMAGE', 'new.jpg'); resolve(singular ? item : [item]); await work;
       assert.equal(h.context.pendingImages.length, 0); assert.equal(released, 1);
@@ -117,37 +120,13 @@ async function test(label, run) { await run(); count++; console.log(`PASS ${labe
     await h.context.exports.takeAndSendPhoto();
     assert.equal(h.context.pendingImages.length, 2); assert.equal(h.context.pendingImages[0].name, 'video.mp4');
   });
-  await test('native composer waits for durable import and rejects a duplicate tap', async () => {
-    const h = harness([attachment('IMAGE', 'one.jpg')]);
-    let release, imports = 0;
-    h.context.enqueueAttachmentBatch = async () => { imports++; await new Promise(resolve => { release = resolve; }); return [{ state: 'queued' }]; };
-    const first = h.context.exports.enqueueNativeAttachments(h.context.pendingImages, 'caption', 'chat', 7);
-    await h.context.exports.enqueueNativeAttachments(h.context.pendingImages, 'caption', 'chat', 7);
-    assert.equal(imports, 1);
-    assert.equal(h.context.pendingImages.length, 1, 'import must not clear selection early');
-    assert.equal(h.context.activeAttachmentSourceUrisRef.current.size, 1, 'navigation cannot delete an importing source');
-    release(); await first;
-    assert.equal(h.context.pendingImages.length, 0);
-    assert.equal(h.context.activeAttachmentSourceUrisRef.current.size, 0);
-  });
-  await test('failed manifest commit retains the native composer', async () => {
-    const h = harness([attachment('FILE', 'doc.pdf')]);
-    h.context.enqueueAttachmentBatch = async () => { throw new Error('disk full'); };
-    await h.context.exports.enqueueNativeAttachments([h.context.pendingAttachment], 'caption', 'chat', 7);
-    assert.equal(h.context.pendingAttachment.name, 'doc.pdf');
-    assert.equal(h.context.messageText, 'caption');
-    assert.equal(h.context.importingAttachmentsRef.current, false);
-  });
-  await test('native screen hands the whole mixed selection to the persistent outbox once', async () => {
-    const h = harness([attachment('VIDEO', 'video.mp4'), attachment('IMAGE', 'one.jpg'), attachment('FILE', 'doc.pdf')]);
-    let handedOff;
-    h.context.enqueueNativeAttachments = async (items, caption, conversation, owner) => { handedOff = { items, caption, conversation, owner }; return true; };
+  await test('native sender encrypts and uploads a mixed photo/file batch once', async () => {
+    const h = harness([attachment('IMAGE', 'one.jpg'), attachment('IMAGE', 'two.jpg'), attachment('FILE', 'doc.pdf')]);
     await h.send();
-    assert.equal(handedOff.items.length, 3);
-    assert.equal(handedOff.caption, 'caption');
-    assert.equal(handedOff.owner, 7);
-    assert.equal(handedOff.conversation, 'chat');
-    assert.equal(h.sent.length, 0, 'screen must not also run a second native pipeline');
+    assert.equal(h.sent.length, 3, JSON.stringify(h.alerts));
+    assert.deepEqual(h.events.filter((event) => event.startsWith('upload:')), ['upload:one.jpg', 'upload:two.jpg', 'upload:doc.pdf']);
+    assert.equal(h.context.pendingImages.length, 0);
+    assert.equal(h.context.pendingAttachment, null);
   });
   await test('browser batches encrypt and upload one item at a time', async () => {
     const h = harness([attachment('IMAGE', 'one.jpg', { blob: {} }), attachment('IMAGE', 'two.jpg', { blob: {} })]);

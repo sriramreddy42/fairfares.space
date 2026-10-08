@@ -2278,6 +2278,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
   const [hydratedConversationId, setHydratedConversationId] = useState("");
+  const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === "active");
   const [activeSubject, setActiveSubject] = useState(initialDirectConversation?.subject || initialDirectConversation?.otherName || pendingPost?.title || rideContextLabel(pendingRide) || "");
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(initialDirectConversation);
   const activeCommunityIdRef = useRef(activeConversation?.communityId || "");
@@ -4006,6 +4007,14 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [signedIn, activeConversationId, activeConversation?.communityId]);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      setIsAppActive(nextState === "active");
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!isAppActive) return;
     if (!activeConversationId || hydratedConversationId !== activeConversationId) return;
     const newestIncomingId = messages.reduce((latest, message) => !message.mine && message.id > latest ? message.id : latest, 0);
     if (!newestIncomingId || newestIncomingId <= (lastReadAcknowledgementRef.current[activeConversationId] || 0)) return;
@@ -4016,7 +4025,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     void markChatRead(activeConversationId, String(newestIncomingId)).catch(() => {
       delete lastReadAcknowledgementRef.current[activeConversationId];
     });
-  }, [activeConversationId, hydratedConversationId, messages]);
+  }, [activeConversationId, hydratedConversationId, isAppActive, messages]);
 
   useEffect(() => () => {
     if (typingTimer.current) clearTimeout(typingTimer.current);
@@ -6141,11 +6150,17 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
+    const pickerConversationId = activeConversationId;
+    const pickerUserId = messengerUserIdRef.current;
     try {
       setAttachmentStatus("Preparing selected media…");
       const media = await pickChatMedia(20, 1280, 0.62, 350_000, effectiveAttachmentLimitBytes, true);
-      setAttachmentStatus("");
       if (!media.length) return;
+      if (activeConversationIdRef.current !== pickerConversationId || messengerUserIdRef.current !== pickerUserId) {
+        releaseComposerAttachments(media);
+        return;
+      }
+      setAttachmentStatus("");
       const canPrepareVideo = Platform.OS === "ios" && (FairFaresCrypto.videoPreparationAvailable || FairFaresCrypto.videoOptimizationAvailable);
       const uniqueMedia = media.filter((item, index, items) =>
         items.findIndex((candidate) => (candidate.pickerAssetId && candidate.pickerAssetId === item.pickerAssetId) || candidate.uri === item.uri) === index
@@ -6208,13 +6223,21 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
+    const pickerConversationId = activeConversationId;
+    const pickerUserId = messengerUserIdRef.current;
     try {
       const photo = await takeChatPhoto();
       if (!photo) return;
+      if (activeConversationIdRef.current !== pickerConversationId || messengerUserIdRef.current !== pickerUserId) {
+        releaseComposerAttachments([{ ...photo, kind: "IMAGE" }]);
+        return;
+      }
       pendingMediaSelectionGenerationRef.current += 1;
-      releaseComposerAttachments(pendingImages);
-      setPendingImages([{ ...photo, kind: "IMAGE" }]);
-      setPendingPreviewIndex(0);
+      // Taking a photo is an addition to the current review selection. It
+      // must not silently discard photos, videos, or a mixed batch already
+      // chosen from the library.
+      setPendingImages((current) => [...current, { ...photo, kind: "IMAGE" }]);
+      setPendingPreviewIndex(pendingImages.length);
       setPendingPhotoPreviewOpen(true);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Could not take this photo.";
@@ -6272,9 +6295,15 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       Alert.alert("Opening Chitthi", "Wait a moment while FairFares verifies the conversation.");
       return;
     }
+    const pickerConversationId = activeConversationId;
+    const pickerUserId = messengerUserIdRef.current;
     try {
       const file = await pickChatFile(effectiveAttachmentLimitBytes);
       if (!file) return;
+      if (activeConversationIdRef.current !== pickerConversationId || messengerUserIdRef.current !== pickerUserId) {
+        releaseComposerAttachments([{ kind: "FILE", ...file }]);
+        return;
+      }
       pendingMediaSelectionGenerationRef.current += 1;
       // A document is shown in its own composer row. Replacing it must not
       // discard the media currently being reviewed.

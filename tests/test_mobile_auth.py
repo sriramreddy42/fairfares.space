@@ -568,7 +568,7 @@ class MobileAuthTest(unittest.TestCase):
             base_payload = {
                 "postMode": "NEED_PLACE", "category": "single_room", "title": "Need a room",
                 "description": "Looking near campus", "city": "Denver, CO", "zipCode": "80203",
-                "area": "Capitol Hill", "moveInDate": "2026-09-15", "rentMin": "700",
+                "area": "Capitol Hill", "moveInDate": "2099-09-15", "rentMin": "700",
                 "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Housing Owner",
                 "contactEmail": "housing-owner@example.com", "contactPhone": "+13035550123",
             }
@@ -1199,7 +1199,12 @@ class MobileAuthTest(unittest.TestCase):
                 "email_verified": True,
                 "name": "Legacy Social Member",
             }
-            with mock.patch.object(app, "verify_google_identity_token", return_value=claims):
+            # The grace path is intentionally time limited in production. Make
+            # this compatibility test state that it is exercising that path,
+            # rather than depending on a calendar date in the module default.
+            with mock.patch.object(app, "LEGACY_SOCIAL_CONSENT_GRACE_ENABLED", True), mock.patch.object(
+                app, "LEGACY_SOCIAL_CONSENT_GRACE_UNTIL", "2099-12-31T00:00:00Z"
+            ), mock.patch.object(app, "verify_google_identity_token", return_value=claims):
                 status, social = self.post_json(server, "/api/mobile/auth/oauth", {
                     "provider": "google",
                     "identityToken": "verified-google-token",
