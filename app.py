@@ -35296,6 +35296,24 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_owner_admin()
         if not user:
             return
+        metadata_result = clean_text_value(
+            (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("metadata") or [""])[0],
+            30,
+        )
+        metadata_notices = {
+            "location": (
+                "is-error",
+                "Location was not saved. Enter a city and state in the City field, for example Denver, CO. Put a neighbourhood, apartment, or area such as Dayton in the Area field.",
+            ),
+            "saved": ("is-success", "Category and location saved. This post can now appear in the matching local feed."),
+            "missing": ("is-error", "That community post could not be found, so no changes were saved."),
+        }
+        notice = metadata_notices.get(metadata_result)
+        metadata_notice = (
+            f'<p class="admin-status-notice {notice[0]}" role="status">{escape(notice[1])}</p>'
+            if notice
+            else ""
+        )
         posts = get_admin_community_posts()
         reports = get_admin_community_reports()
         chat_reports = get_admin_chat_reports()
@@ -35364,6 +35382,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             admin_nav=self.render_admin_nav(user, "community"),
             post_count=escape(str(len(posts))),
             open_report_count=escape(str(sum(1 for report in reports if row_value(report, "status") == "OPEN") + sum(1 for report in chat_reports if row_value(report, "status") in {"OPEN", "ESCALATED"}))),
+            community_metadata_notice=metadata_notice,
             ask_community_posts=post_rows,
             ask_community_reports=report_rows,
             chitthi_reports=chat_report_rows,
@@ -35401,6 +35420,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not post_public_id or category not in COMMUNITY_CATEGORIES:
             self.redirect("/admin/community")
             return
+        was_saved = False
         with db() as con:
             post = con.execute(
                 "SELECT id, title, body, community_id FROM ask_community_posts WHERE public_id = ?",
@@ -35420,8 +35440,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                        WHERE id = ?""",
                     (category, category, city, area, int(row_value(post, "id") or 0)),
                 )
+                was_saved = True
         invalidate_mobile_search_cache("housing")
-        self.redirect("/admin/community")
+        self.redirect("/admin/community?metadata=saved" if was_saved else "/admin/community?metadata=missing")
 
     def moderate_chat_report(self) -> None:
         user = self.require_owner_admin("/admin/community")

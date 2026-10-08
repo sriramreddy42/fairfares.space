@@ -3453,6 +3453,16 @@
   color: var(--navy);
   font-weight: 850;
 }
+.admin-status-notice.is-error {
+  border-color: #e9a3a3;
+  background: #fff3f3;
+  color: #9d1e1e;
+}
+.admin-status-notice.is-success {
+  border-color: #9ed8b8;
+  background: #f0fbf4;
+  color: #176a3b;
+}
 .admin-users-list {
   display: grid;
   gap: 12px;
