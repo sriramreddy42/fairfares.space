@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account Deletion Requests | FairFares Admin</title>
+  $stylesheet_links
+  <script defer src="/static/js/app.js?v=54"></script>
+</head>
+<body class="admin-screen">
+  <header class="admin-shell-header">
+    <a class="logo-lockup" href="/admin"><img src="/static/img/fairfares-logo-20260708.webp" alt="FairFares logo"></a>
+    $admin_nav
+  </header>
+  <main class="admin-layout">
+    <section class="admin-hero ticket-hero">
+      <div>
+        <p class="eyebrow">Privacy operations</p>
+        <h1>Account deletion requests</h1>
+        <span>Review verified member requests and document the privacy outcome. Signed-in requests are due within 30 days.</span>
+      </div>
+    </section>
+    <section class="admin-card deletion-requests-panel">
+      <div class="admin-card-head">
+        <div>
+          <h2>Deletion queue</h2>
+          <p>Keep this separate from support tickets. Completion records the privacy review; hard account removal remains a deliberate action in Users.</p>
+        </div>
+      </div>
+      $notice
+      <div class="deletion-requests-list">$requests</div>
+    </section>
+  </main>
+</body>
+</html>

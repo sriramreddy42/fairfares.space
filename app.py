@@ -12049,6 +12049,9 @@ def get_admin_nav_badge_counts(user: sqlite3.Row | None) -> dict[str, int]:
                     "requests": con.execute(
                         "SELECT COUNT(*) AS total FROM staff_account_requests WHERE status = 'PENDING'"
                     ).fetchone()["total"],
+                    "deletions": con.execute(
+                        "SELECT COUNT(*) AS total FROM account_deletion_requests WHERE status IN ('PENDING', 'IN_PROGRESS')"
+                    ).fetchone()["total"],
                     "community": con.execute(
                         """
                         SELECT
@@ -12072,6 +12075,7 @@ ADMIN_NAV_ICONS = {
     "Commercials": "&#127916;",
     "Customers": "&#128100;",
     "Dashboard": "&#127968;",
+    "Deletion Requests": "&#128274;",
     "Discounts": "&#127991;",
     "Documents": "&#128196;",
     "Email Marketing": "&#9993;",
@@ -15297,6 +15301,29 @@ def get_admin_tickets() -> list[sqlite3.Row]:
                      support_tickets.urgent DESC,
                      support_tickets.id DESC
             LIMIT 100
+            """
+        ).fetchall()
+
+
+def get_admin_account_deletion_requests() -> list[sqlite3.Row]:
+    """Return deletion work even when the member profile is later removed."""
+    with db() as con:
+        return con.execute(
+            """
+            SELECT account_deletion_requests.*, users.name AS user_name, users.email AS current_user_email
+            FROM account_deletion_requests
+            LEFT JOIN users ON users.id = account_deletion_requests.user_id
+            ORDER BY
+                CASE account_deletion_requests.status
+                    WHEN 'PENDING' THEN 0
+                    WHEN 'IN_PROGRESS' THEN 1
+                    WHEN 'COMPLETED' THEN 2
+                    WHEN 'CANCELLED' THEN 3
+                    ELSE 4
+                END,
+                account_deletion_requests.requested_at ASC,
+                account_deletion_requests.id DESC
+            LIMIT 200
             """
         ).fetchall()
 
@@ -27978,6 +28005,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/cars/detail": self.admin_car_detail_page,
             "/admin/bookings": self.admin_bookings_page,
             "/admin/users": self.admin_users_page,
+            "/admin/account-deletions": self.admin_account_deletions_page,
             "/admin/community": self.admin_community_page,
             "/admin/requests": self.admin_requests_page,
             "/admin/tickets": self.admin_tickets_page,
@@ -28344,6 +28372,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/admin/identity/idscan": self.run_admin_idscan_check,
             "/admin/tickets/update": self.update_admin_ticket,
             "/admin/tickets/escalate": self.escalate_admin_ticket,
+            "/admin/account-deletions/update": self.update_admin_account_deletion_request,
             "/admin/backups/create": self.create_admin_backup,
             "/admin/drive/migrate": self.migrate_admin_drive_uploads,
         }
@@ -34694,7 +34723,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             ("workspace", "Workspace", "/admin", [("workspace", "/admin", "Workspace")]),
             ("fleet", "Fleet", "/admin/inventory", [("portal", "/admin/inventory", "Inventory"), ("roi", "/admin/roi", "ROI")]),
             ("operations", "Operations", "/admin/bookings", [("bookings", "/admin/bookings", "Booked Cars"), ("tickets", "/admin/tickets", "Tickets"), ("oncall", "/admin/oncall", "On-call"), ("pickup", "/admin/pickup", "User Pickup")]),
-            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("community", "/admin/community", "Community"), ("requests", "/admin/requests", "Staff Requests")]),
+            ("people", "People", "/admin/users", [("users", "/admin/users", "Users"), ("community", "/admin/community", "Community"), ("deletions", "/admin/account-deletions", "Deletion Requests"), ("requests", "/admin/requests", "Staff Requests")]),
             ("marketing", "Marketing", "/admin/analytics", [("analytics", "/admin/analytics", "Product Analytics"), ("discounts", "/admin/discounts", "Discounts"), ("commercials", "/admin/commercials", "Commercials"), ("email", "/admin/email-marketing", "Email Marketing")]),
             ("knowledge", "Knowledge", "/admin/wiki", [("wiki", "/admin/wiki", "Wiki")]),
             ("system", "System", "/admin/system", [("system", "/admin/system", "System")]),
@@ -36228,6 +36257,31 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         )
         self.send_html(body)
 
+    def admin_account_deletions_page(self) -> None:
+        user = self.require_owner_admin("/admin/users")
+        if not user:
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        notice_key = clean_text_value(query.get("status", [""])[0], 40)
+        notices = {
+            "saved": ("Request review saved. The member received a status email.", "success"),
+            "missing": ("That account deletion request was not found.", "error"),
+            "note_required": ("Add a staff note before marking a deletion request completed.", "error"),
+            "invalid": ("Choose a valid deletion-request status.", "error"),
+        }
+        notice = ""
+        if notice_key in notices:
+            message, kind = notices[notice_key]
+            notice = f'<p class="admin-status-notice is-{kind}">{escape(message)}</p>'
+        requests = "\n".join(self.render_account_deletion_request_card(row) for row in get_admin_account_deletion_requests())
+        self.send_html(render_template(
+            "admin_account_deletions.html",
+            admin_name=escape(row_value(user, "name")),
+            admin_nav=self.render_admin_nav(user, "deletions"),
+            notice=notice,
+            requests=requests or '<p class="admin-empty">No account deletion requests.</p>',
+        ))
+
     def admin_oncall_page(self) -> None:
         user = self.require_owner_admin()
         if not user:
@@ -36389,6 +36443,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 </article>
             </td>
         </tr>
+        """
+
+    def render_account_deletion_request_card(self, row: sqlite3.Row) -> str:
+        status = clean_text_value(row_value(row, "status"), 30).upper() or "PENDING"
+        status_options = "".join(
+            f'<option value="{value}" {"selected" if value == status else ""}>{label}</option>'
+            for value, label in (
+                ("PENDING", "Pending review"),
+                ("IN_PROGRESS", "In progress"),
+                ("COMPLETED", "Completed"),
+                ("CANCELLED", "Cancelled"),
+            )
+        )
+        member_name = row_value(row, "user_name") or "Member profile unavailable"
+        email = row_value(row, "email_snapshot") or row_value(row, "current_user_email") or "No email snapshot"
+        status_class = status.lower().replace("_", "-")
+        return f"""
+        <article class="deletion-request-card">
+          <header class="deletion-request-head">
+            <div>
+              <p class="eyebrow">Account deletion request</p>
+              <h2>{escape(row_value(row, "request_id"))}</h2>
+              <span>{escape(row_value(row, "requested_at"))} · {escape(row_value(row, "source"))}</span>
+            </div>
+            <span class="deletion-request-status status-{escape(status_class)}">{escape(status.replace("_", " ").title())}</span>
+          </header>
+          <div class="deletion-request-grid">
+            <section><span>Member</span><b>{escape(member_name)}</b><small>{escape(email)}</small></section>
+            <section><span>Due by</span><b>{escape(row_value(row, "deletion_due_at"))} UTC</b><small>30-day deletion response deadline</small></section>
+            <section><span>Current review</span><b>{escape(row_value(row, "admin_note") or "Not reviewed yet")}</b><small>{escape(row_value(row, "retained_data_summary") or "No retained-data exception recorded")}</small></section>
+          </div>
+          <form method="post" action="/admin/account-deletions/update" class="deletion-request-form">
+            <input type="hidden" name="request_id" value="{escape(row_value(row, "id"))}">
+            <label><span>Status</span><select name="status">{status_options}</select></label>
+            <label><span>Staff note</span><textarea name="admin_note" rows="2" maxlength="1500" placeholder="What was reviewed or completed">{escape(row_value(row, "admin_note"))}</textarea></label>
+            <label><span>Retained-data summary</span><textarea name="retained_data_summary" rows="2" maxlength="1500" placeholder="Only records that must be retained, if any">{escape(row_value(row, "retained_data_summary"))}</textarea></label>
+            <button type="submit">Save review</button>
+          </form>
+          <p class="deletion-request-help">Complete this privacy review only after checking active bookings, payments, safety, tax, insurance, fraud-prevention, and dispute records. A completed review does not hard-delete the member from this page.</p>
+        </article>
         """
 
     def render_admin_user_card(self, row: sqlite3.Row) -> str:
@@ -38237,6 +38331,61 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
             )
         self.redirect("/admin/tickets")
+
+    def update_admin_account_deletion_request(self) -> None:
+        user = self.require_owner_admin("/admin/account-deletions")
+        if not user:
+            return
+        form = self.read_form()
+        request_id = int_from_form(form, "request_id", 0)
+        status = clean_text_value(form.get("status"), 30).upper()
+        admin_note = clean_multiline_text_value(form.get("admin_note"), 1500)
+        retained_data_summary = clean_multiline_text_value(form.get("retained_data_summary"), 1500)
+        if request_id <= 0:
+            self.redirect("/admin/account-deletions?status=missing")
+            return
+        if status not in {"PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"}:
+            self.redirect("/admin/account-deletions?status=invalid")
+            return
+        if status == "COMPLETED" and not admin_note:
+            self.redirect("/admin/account-deletions?status=note_required")
+            return
+        with db() as con:
+            request = con.execute(
+                "SELECT * FROM account_deletion_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if not request:
+                self.redirect("/admin/account-deletions?status=missing")
+                return
+            con.execute(
+                """
+                UPDATE account_deletion_requests
+                SET status = ?,
+                    admin_note = ?,
+                    retained_data_summary = ?,
+                    completed_at = CASE WHEN ? = 'COMPLETED' THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END,
+                    cancelled_at = CASE WHEN ? = 'CANCELLED' THEN COALESCE(cancelled_at, CURRENT_TIMESTAMP) ELSE NULL END
+                WHERE id = ?
+                """,
+                (status, admin_note, retained_data_summary, status, status, request_id),
+            )
+            updated = con.execute(
+                "SELECT * FROM account_deletion_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        email = normalize_email(row_value(updated, "email_snapshot")) if updated else ""
+        if email:
+            status_label = status.replace("_", " ").title()
+            retained_text = retained_data_summary or "No retained-data exception was recorded."
+            body = (
+                f"Your FairFares account deletion request {row_value(updated, 'request_id')} is now {status_label}.\n\n"
+                f"Staff note: {admin_note or 'No additional note.'}\n"
+                f"Retained-data summary: {retained_text}\n\n"
+                "Contact hello@fairfare.space if you have questions about this request."
+            )
+            send_with_resend(email, f"FairFares account deletion request {status_label}", body, "<p>" + escape(body).replace("\n", "<br>") + "</p>")
+        self.redirect("/admin/account-deletions?status=saved")
 
     def escalate_admin_ticket(self) -> None:
         user = self.require_admin()
