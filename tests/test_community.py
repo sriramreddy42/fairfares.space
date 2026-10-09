@@ -157,7 +157,6 @@ class CommunityFeatureTest(unittest.TestCase):
             elapsed = time.monotonic() - started_at
             self.assertEqual(status, 200)
             self.assertLess(elapsed, 0.5)
-            self.assertTrue(started.wait(timeout=1))
             release.set()
 
     def test_feed_batches_author_rating_summaries(self):

@@ -294,6 +294,7 @@ except ValueError:
     NATIVE_ANALYTICS_COALESCE_SECONDS = 0.2
 ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
 COMMUNITY_LOCATION_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_COMMUNITY_LOCATION_REPAIR_SECONDS", 10 * 60)
+COMMUNITY_HOUSING_SYNC_READ_INTERVAL_SECONDS = positive_int_env("FAIRFARES_COMMUNITY_HOUSING_SYNC_READ_SECONDS", 5 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
 ROLE_EMPLOYEE = "EMPLOYEE"
 ROLE_ADMIN = "ADMIN"
@@ -13106,6 +13107,7 @@ _COMMUNITY_HOUSING_SYNC_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK = threading.Lock()
 _COMMUNITY_HOUSING_SYNC_SCHEDULED = False
 _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = False
+_COMMUNITY_HOUSING_SYNC_LAST_READ_SCHEDULED = 0.0
 
 
 def housing_community_projection_needs_sync() -> bool:
@@ -13144,18 +13146,26 @@ def ensure_housing_community_projection_current() -> None:
             sync_housing_into_community()
 
 
-def schedule_housing_community_projection_sync() -> None:
+def schedule_housing_community_projection_sync(*, force: bool = False) -> None:
     """Refresh derived housing cards without making an Ask feed read wait.
 
-    Writes may arrive while a sync is already running.  Record one coalesced
-    retry in that case: dropping it behind a time throttle left a newly saved
-    Housing post absent from Ask for up to a minute.
+    Housing writes request a prompt reconciliation. Ask reads only provide a
+    periodic recovery path for old records created before this scheduler
+    existed; they must not repeatedly start or rerun a database-wide writer.
     """
-    global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED
+    global _COMMUNITY_HOUSING_SYNC_SCHEDULED, _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED, _COMMUNITY_HOUSING_SYNC_LAST_READ_SCHEDULED
+    now = time.monotonic()
     with _COMMUNITY_HOUSING_SYNC_SCHEDULE_LOCK:
         if _COMMUNITY_HOUSING_SYNC_SCHEDULED:
-            _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = True
+            # Only a committed Housing write needs another pass. A burst of
+            # feed reads used to make every read request a full rerun.
+            if force:
+                _COMMUNITY_HOUSING_SYNC_RERUN_REQUESTED = True
             return
+        if not force and now - _COMMUNITY_HOUSING_SYNC_LAST_READ_SCHEDULED < COMMUNITY_HOUSING_SYNC_READ_INTERVAL_SECONDS:
+            return
+        if not force:
+            _COMMUNITY_HOUSING_SYNC_LAST_READ_SCHEDULED = now
         _COMMUNITY_HOUSING_SYNC_SCHEDULED = True
 
     def run() -> None:
@@ -44292,8 +44302,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
-        # Keep derived housing projections current without blocking this feed
-        # response or the other mobile reads that start with it.
+        # Reads provide a bounded recovery path for legacy projections. New
+        # and changed Housing listings schedule their own prompt sync after
+        # the write commits.
         schedule_housing_community_projection_sync()
         schedule_unlocated_community_post_repair()
         user = self.current_user()
@@ -45494,7 +45505,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         invalidate_mobile_search_cache("housing")
         # Start the derived Ask card update as soon as the listing transaction
         # is committed, rather than making the next Ask feed request perform it.
-        schedule_housing_community_projection_sync()
+        schedule_housing_community_projection_sync(force=True)
         if not existing_listing:
             event_name = (
                 "housing_have_place_listed" if mode == "HAVE_PLACE"
@@ -45537,7 +45548,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (int(row_value(post, "id") or 0),),
             )
         invalidate_mobile_search_cache("housing")
-        schedule_housing_community_projection_sync()
+        schedule_housing_community_projection_sync(force=True)
         record_native_request_product_event(
             "housing_connection_confirmed",
             installation_id=self.request_installation_id(),
