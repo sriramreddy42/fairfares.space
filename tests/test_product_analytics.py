@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -133,13 +134,51 @@ class ProductAnalyticsTest(unittest.TestCase):
             self.assertEqual(self.get_json(server, "/api/mobile/housing?city=Denver%2C%20CO&limit=1", headers)[0], 200)
             self.assertEqual(self.get_json(server, "/api/mobile/housing?city=Denver%2C%20CO&limit=1", headers)[0], 200)
             self.assertEqual(self.get_json(server, "/api/mobile/housing?postId=FFH-READ&limit=1", headers)[0], 200)
-            with app.db() as con:
-                rows = con.execute(
-                    "SELECT event_name, metadata_json FROM product_analytics_events ORDER BY event_name"
-                ).fetchall()
+            rows = []
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                with app.db() as con:
+                    rows = con.execute(
+                        "SELECT event_name, metadata_json FROM product_analytics_events ORDER BY event_name"
+                    ).fetchall()
+                if len(rows) == 2:
+                    break
+                time.sleep(0.05)
             self.assertEqual([row["event_name"] for row in rows], ["housing_listing_view", "housing_search"])
             self.assertEqual(json.loads(rows[0]["metadata_json"]), {"resultCount": "1", "source": "housing_api"})
         finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_housing_read_does_not_wait_for_analytics_writer_lock(self):
+        with app.db() as con:
+            owner_id = con.execute(
+                "INSERT INTO users (name, email, password_hash, role, guest_account) VALUES ('Owner', 'locked-owner@example.com', 'x', 'CUSTOMER', 0)"
+            ).lastrowid
+            con.execute(
+                "INSERT INTO accommodation_posts (public_id, user_id, post_mode, visibility_status) VALUES ('FFH-LOCK', ?, 'HAVE_PLACE', 'ACTIVE')",
+                (owner_id,),
+            )
+        server, thread = self.start_server()
+        writer = app.db()
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            status, _payload = self.get_json(
+                server,
+                "/api/mobile/housing?city=Denver%2C%20CO&limit=1",
+                {
+                    "X-FairFares-Install-ID": "locked-native-install",
+                    "X-FairFares-Client-Platform": "ios",
+                },
+            )
+            elapsed = time.monotonic() - started
+            self.assertEqual(status, 200)
+            self.assertLess(elapsed, 1.0)
+        finally:
+            writer.rollback()
+            writer.close()
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)

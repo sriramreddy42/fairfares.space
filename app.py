@@ -258,6 +258,9 @@ _CHITTHI_MESSAGE_CLEANUP_LAST_RUN: dict[str, float] = {}
 _MOBILE_SEARCH_CACHE_LOCK = threading.Lock()
 _SESSION_CLEANUP_LOCK = threading.Lock()
 _SESSION_CLEANUP_LAST_RUN = 0.0
+_NATIVE_ANALYTICS_QUEUE_LOCK = threading.Lock()
+_NATIVE_ANALYTICS_PENDING: dict[str, tuple[str, str, int | None, str, str, str]] = {}
+_NATIVE_ANALYTICS_WORKER_SCHEDULED = False
 _PUSH_OUTBOX_WORKER_LOCK = threading.Lock()
 _PUSH_OUTBOX_WAKE_EVENT = threading.Event()
 _PUSH_TOKEN_REGISTRATION_LOCK = threading.Lock()
@@ -285,6 +288,10 @@ RIDE_LIVE_ROUTE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_LIVE_ROUTE_CACH
 RIDE_REVERSE_GEOCODE_CACHE_SECONDS = positive_int_env("FAIRFARES_RIDE_REVERSE_GEOCODE_CACHE_SECONDS", 24 * 60 * 60)
 RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES = positive_int_env("FAIRFARES_RIDE_REVERSE_GEOCODE_CACHE_MAX_ENTRIES", 10_000)
 SESSION_CLEANUP_INTERVAL_SECONDS = positive_int_env("FAIRFARES_SESSION_CLEANUP_SECONDS", 10 * 60)
+try:
+    NATIVE_ANALYTICS_COALESCE_SECONDS = max(0.0, min(float(os.environ.get("FAIRFARES_NATIVE_ANALYTICS_COALESCE_SECONDS", "0.2")), 5.0))
+except ValueError:
+    NATIVE_ANALYTICS_COALESCE_SECONDS = 0.2
 ACCOMMODATION_CITY_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_HOUSING_CITY_REPAIR_SECONDS", 10 * 60)
 COMMUNITY_LOCATION_REPAIR_INTERVAL_SECONDS = positive_int_env("FAIRFARES_COMMUNITY_LOCATION_REPAIR_SECONDS", 10 * 60)
 ROLE_CUSTOMER = "CUSTOMER"
@@ -27361,6 +27368,91 @@ def record_native_request_product_event(
     )
 
 
+def schedule_native_read_product_event(
+    event_name: str,
+    *,
+    installation_id: object,
+    platform: object,
+    user_id: int | None = None,
+    metadata: dict[str, object] | None = None,
+) -> bool:
+    """Queue a deduplicated read-analytics event outside the customer response.
+
+    Native Housing search used to write a daily analytics row synchronously.
+    SQLite has one writer, so a burst of otherwise read-only feeds could hold
+    up Chitthi, rides, bootstrap, and rentals. These metrics are observational;
+    a small batched delay is preferable to making a feed wait for the writer.
+    """
+    clean_event_name = clean_text_value(event_name, 60).lower()
+    clean_installation_id = clean_text_value(installation_id, 100)
+    clean_platform = clean_text_value(platform, 20).lower()
+    if (
+        clean_event_name not in PRODUCT_ANALYTICS_EVENTS
+        or not clean_installation_id
+        or clean_platform not in {"ios", "android"}
+    ):
+        return False
+    clean_metadata: dict[str, str] = {}
+    for key in ("carId", "resultCount", "source"):
+        value = (metadata or {}).get(key)
+        if isinstance(value, (str, int, float, bool)):
+            clean_metadata[key] = str(value)[:80]
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    dedupe_key = f"server:{today}:{clean_installation_id}:{clean_event_name}"
+    event = (
+        clean_event_name,
+        clean_installation_id,
+        int(user_id or 0) or None,
+        clean_platform,
+        json.dumps(clean_metadata, separators=(",", ":")),
+        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    global _NATIVE_ANALYTICS_WORKER_SCHEDULED
+    with _NATIVE_ANALYTICS_QUEUE_LOCK:
+        # Keep one event per installation/day/event even before SQLite gets a
+        # chance to apply its own unique dedupe constraint.
+        _NATIVE_ANALYTICS_PENDING[dedupe_key] = event
+        if _NATIVE_ANALYTICS_WORKER_SCHEDULED:
+            return True
+        _NATIVE_ANALYTICS_WORKER_SCHEDULED = True
+
+    def run() -> None:
+        global _NATIVE_ANALYTICS_WORKER_SCHEDULED
+        if NATIVE_ANALYTICS_COALESCE_SECONDS:
+            time.sleep(NATIVE_ANALYTICS_COALESCE_SECONDS)
+        while True:
+            with _NATIVE_ANALYTICS_QUEUE_LOCK:
+                batch = list(_NATIVE_ANALYTICS_PENDING.items())[:500]
+                for key, _event in batch:
+                    _NATIVE_ANALYTICS_PENDING.pop(key, None)
+                if not batch:
+                    _NATIVE_ANALYTICS_WORKER_SCHEDULED = False
+                    return
+            try:
+                # Keep analytics from sitting behind a long staff upload or
+                # inspection transaction. If the writer is busy, retry later;
+                # no member request is blocked or failed by this bookkeeping.
+                with db(busy_timeout_ms=250) as con:
+                    con.executemany(
+                        """INSERT OR IGNORE INTO product_analytics_events
+                           (event_name, anonymous_id, user_id, platform, app_version, build_version,
+                            session_id, metadata_json, dedupe_key, occurred_at)
+                           VALUES (?, ?, ?, ?, '', '', '', ?, ?, ?)""",
+                        [
+                            (name, anonymous_id, queued_user_id, queued_platform, metadata_json, key, occurred_at)
+                            for key, (name, anonymous_id, queued_user_id, queued_platform, metadata_json, occurred_at) in batch
+                        ],
+                    )
+            except sqlite3.Error:
+                with _NATIVE_ANALYTICS_QUEUE_LOCK:
+                    for key, event_value in batch:
+                        _NATIVE_ANALYTICS_PENDING.setdefault(key, event_value)
+                time.sleep(0.5)
+
+    threading.Thread(target=run, name="native-read-analytics", daemon=True).start()
+    return True
+
+
 def product_analytics_summary(days: int = 30) -> dict[str, object]:
     days = days if days in {1, 7, 30, 90} else 30
     window = f"-{days} days"
@@ -42148,7 +42240,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             # the dashboard begins measuring real use before every customer
             # has installed the newer binary. One event per person per day
             # keeps pagination and retries from inflating the funnel.
-            record_native_request_product_event(
+            schedule_native_read_product_event(
                 event_name,
                 installation_id=installation_id,
                 user_id=viewer_id or None,
