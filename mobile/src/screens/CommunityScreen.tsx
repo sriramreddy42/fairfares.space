@@ -370,6 +370,24 @@ function ZoomableCommunityPhoto({ uri }: { uri: string }) {
   })).current;
   return <View style={styles.photoViewerStage} onLayout={(event) => { gesture.width = event.nativeEvent.layout.width; gesture.height = event.nativeEvent.layout.height; }} accessibilityLabel="Listing photo. Pinch with two fingers to zoom." {...responder.panHandlers}><Animated.Image source={{ uri: absoluteUrl(uri) }} style={[styles.photoViewerImage, { transform: [{ translateX: translateXValue }, { translateY: translateYValue }, { scale: scaleValue }] }]} resizeMode="contain" /></View>;
 }
+
+/**
+ * A single post photo should keep its own proportions. The feed used to put
+ * every photo into the same 330px-tall box, which cut off the top or bottom of
+ * flyers and portrait images. Photo sets still use the compact grid below.
+ */
+function CommunitySinglePostPhoto({ image, interactive, onPress, label }: { image: string; interactive: boolean; onPress: () => void; label: string }) {
+  const [aspectRatio, setAspectRatio] = useState(1);
+  const handleLoad = useCallback((event: { nativeEvent: { source?: { width?: number; height?: number } } }) => {
+    const { width = 0, height = 0 } = event.nativeEvent.source || {};
+    if (width > 0 && height > 0) setAspectRatio(width / height);
+  }, []);
+  const photo = <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaSingleImage} resizeMode="cover" onLoad={handleLoad} />;
+  const containerStyle = [styles.postMediaSingle, { aspectRatio }];
+  return interactive
+    ? <TouchableOpacity style={containerStyle} activeOpacity={0.78} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>{photo}</TouchableOpacity>
+    : <View style={containerStyle}>{photo}</View>;
+}
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
@@ -1502,11 +1520,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const images = post.images;
     const visible = images.slice(0, 4);
     if (!visible.length) return null;
-    return <View style={[styles.postMediaGrid, visible.length === 1 && styles.postMediaGridSingle]}>
+    if (visible.length === 1) {
+      return <CommunitySinglePostPhoto
+        image={visible[0]}
+        interactive={interactive}
+        label={`Open listing photo 1 of ${images.length}`}
+        onPress={() => openPostPhoto(post, images, 0)}
+      />;
+    }
+    return <View style={styles.postMediaGrid}>
       {visible.map((image, index) => {
         const cellStyle = [
           styles.postMediaCell,
-          visible.length === 1 && styles.postMediaCellSingle,
           visible.length === 2 && styles.postMediaCellTwo,
           visible.length === 3 && index === 0 && styles.postMediaCellThreeHero,
           visible.length === 3 && index > 0 && styles.postMediaCellThreeSmall,
@@ -1942,15 +1967,15 @@ const styles = StyleSheet.create({
   answerAuthorButton: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
-  postMediaGridSingle: { height: 330 },
+  postMediaSingle: { width: "100%", borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaCell: { width: "49.5%", height: "49.5%", overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaCellPressed: { opacity: .78 },
-  postMediaCellSingle: { width: "100%", height: "100%" },
   postMediaCellTwo: { width: "49.5%", height: "100%", flexGrow: 1 },
   postMediaCellThreeHero: { width: "100%", height: "58%" },
   postMediaCellThreeSmall: { width: "49.5%", height: "41%", flexGrow: 1 },
   postMediaCellFour: { width: "49.5%", height: "49.5%", flexGrow: 1 },
   postMediaImage: { width: "100%", height: "100%" },
+  postMediaSingleImage: { width: "100%", height: "100%" },
   photoViewerBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "#050807" }, photoViewerHeader: { minHeight: 58, paddingHorizontal: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, photoViewerClose: { minWidth: 64, minHeight: 36, justifyContent: "center" }, photoViewerCloseText: { color: "#fff", fontSize: 16, fontWeight: "800" }, photoViewerCounter: { color: "#fff", fontSize: 14, fontWeight: "800" }, photoViewerHeaderSpacer: { width: 64 }, photoViewerStage: { flex: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" }, photoViewerImage: { width: "100%", height: "100%" }, photoViewerThumbs: { alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 7 }, photoViewerThumb: { width: 58, height: 58, borderRadius: 9, overflow: "hidden", opacity: .55, borderWidth: 2, borderColor: "transparent" }, photoViewerThumbActive: { opacity: 1, borderColor: theme.colors.brand }, photoViewerThumbImage: { width: "100%", height: "100%" }, photoViewerHint: { color: "rgba(255,255,255,.72)", fontSize: 12, fontWeight: "700", textAlign: "center", paddingHorizontal: 20, paddingTop: 5, paddingBottom: 22 },
   postMediaMore: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,.48)" },
   postMediaMoreText: { color: "#fff", fontSize: 28, fontWeight: "900" },
