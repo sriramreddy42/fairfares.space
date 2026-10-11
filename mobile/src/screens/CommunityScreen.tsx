@@ -378,11 +378,25 @@ function ZoomableCommunityPhoto({ uri }: { uri: string }) {
  */
 function CommunitySinglePostPhoto({ image, interactive, onPress, label }: { image: string; interactive: boolean; onPress: () => void; label: string }) {
   const [aspectRatio, setAspectRatio] = useState(1);
-  const handleLoad = useCallback((event: { nativeEvent: { source?: { width?: number; height?: number } } }) => {
-    const { width = 0, height = 0 } = event.nativeEvent.source || {};
+  const uri = absoluteUrl(image);
+  const setLoadedAspectRatio = useCallback((width: number, height: number) => {
     if (width > 0 && height > 0) setAspectRatio(width / height);
   }, []);
-  const photo = <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaSingleImage} resizeMode="cover" onLoad={handleLoad} />;
+  useEffect(() => {
+    let mounted = true;
+    // Image.onLoad is not consistently called again for an image already held
+    // in the native cache. Ask for its dimensions explicitly so cached flyers
+    // still receive the correct height.
+    Image.getSize(uri, (width, height) => {
+      if (mounted) setLoadedAspectRatio(width, height);
+    }, () => undefined);
+    return () => { mounted = false; };
+  }, [uri, setLoadedAspectRatio]);
+  const handleLoad = useCallback((event: { nativeEvent: { source?: { width?: number; height?: number } } }) => {
+    const { width = 0, height = 0 } = event.nativeEvent.source || {};
+    setLoadedAspectRatio(width, height);
+  }, [setLoadedAspectRatio]);
+  const photo = <Image source={{ uri }} style={styles.postMediaSingleImage} resizeMode="cover" onLoad={handleLoad} />;
   const containerStyle = [styles.postMediaSingle, { aspectRatio }];
   return interactive
     ? <TouchableOpacity style={containerStyle} activeOpacity={0.78} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>{photo}</TouchableOpacity>
