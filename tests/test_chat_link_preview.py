@@ -103,15 +103,21 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn("/android/i.test(navigator.userAgent)", script)
         self.assertIn("Install FairFares", script)
 
-    def test_share_landing_photo_uses_a_public_upload_url(self):
+    def test_share_landing_photo_uses_public_upload_urls_in_a_swipe_gallery(self):
         markup = app.share_landing_photo_html(
-            "local://uploads/community/listing-photo.jpg",
+            [
+                "local://uploads/community/listing-photo.jpg",
+                "local://uploads/community/listing-photo-two.jpg",
+            ],
             "Private room available",
         )
         self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo.jpg"', markup)
+        self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo-two.jpg"', markup)
         self.assertIn('alt="Private room available"', markup)
-        self.assertIn("object-fit:contain", markup)
-        self.assertEqual(app.share_landing_photo_html("data:image/png;base64,secret", "Private"), "")
+        self.assertIn("scroll-snap-type:x mandatory", markup)
+        self.assertIn("Swipe through 2 photos", markup)
+        self.assertNotIn("background:#10291f", markup)
+        self.assertEqual(app.share_landing_photo_html(["data:image/png;base64,secret"], "Private"), "")
 
     def test_render_origin_is_never_published_as_share_origin(self):
         with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://fairfares.onrender.com"}, clear=False):

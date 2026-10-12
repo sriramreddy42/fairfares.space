@@ -25730,23 +25730,38 @@ def absolute_public_url(value: str, fallback: str = "/static/img/appicon.png") -
     return f"{schema_origin()}/{value.lstrip('/')}"
 
 
-def share_landing_photo_html(image: object, alt: str) -> str:
-    """Render a public listing photo on an app-install landing page.
+def share_landing_photo_html(images: object, alt: str) -> str:
+    """Render the public photos for a shared listing as a touch gallery.
 
-    Social cards already use the first photo as artwork. The browser landing
-    page should show the same useful preview instead of only the FairFares
-    logo and text. Never put data URLs or missing media into a public page.
+    The landing page has no reason to crop a room photo into a branded frame.
+    Keep each photo at its natural aspect ratio, and let a visitor swipe across
+    every public image attached to the post (the app caps these at four).
     """
-    source = str(image or "").strip()
-    if not source or source.startswith("data:"):
+    candidates = [images] if isinstance(images, str) else list(images or []) if isinstance(images, (list, tuple)) else []
+    image_urls: list[str] = []
+    for candidate in candidates[:4]:
+        source = str(candidate or "").strip()
+        if not source or source.startswith("data:"):
+            continue
+        image_url = absolute_public_url(source)
+        if image_url not in image_urls:
+            image_urls.append(image_url)
+    if not image_urls:
         return ""
-    image_url = absolute_public_url(source)
-    return (
-        '<figure style="margin:22px 0 0;border-radius:20px;overflow:hidden;'
-        'background:#10291f;border:1px solid rgba(126,226,184,.28)">'
+    image_tags = "".join(
         f'<img src="{html.escape(image_url, quote=True)}" alt="{html.escape(alt, quote=True)}" '
-        'style="display:block;width:100%;max-height:300px;object-fit:contain;background:#10291f">'
-        '</figure>'
+        'style="display:block;flex:0 0 100%;width:100%;height:auto;border-radius:20px;scroll-snap-align:center">'
+        for image_url in image_urls
+    )
+    if len(image_urls) == 1:
+        return f'<figure style="margin:22px 0 0">{image_tags}</figure>'
+    return (
+        '<section aria-label="Listing photos" style="margin:22px 0 0">'
+        '<div style="display:flex;align-items:flex-start;overflow-x:auto;scroll-snap-type:x mandatory;'
+        '-webkit-overflow-scrolling:touch;scrollbar-width:none">'
+        f'{image_tags}</div>'
+        f'<p style="color:#9fb1c8;font-size:13px;font-weight:700;margin:9px 0 0">Swipe through {len(image_urls)} photos</p>'
+        '</section>'
     )
 
 
@@ -29009,7 +29024,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             share_image = f"{schema_origin()}/api/share-card?kind=housing&id={urllib.parse.quote(post_id)}"
             share_image_alt = f"{headline} on FairFares"
             subcopy = share_description
-            listing_photo_html = share_landing_photo_html((shared_payload.get("images") or [""])[0], headline)
+            listing_photo_html = share_landing_photo_html(shared_payload.get("images") or [], headline)
         else:
             headline = "Find housing on FairFares"
             share_title = "FairFares Housing | Rooms, Roommates, and Rentals"
@@ -44271,7 +44286,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             share_image = f"{schema_origin()}/api/share-card?kind=community&id={urllib.parse.quote(public_id)}"
             headline = raw_title
             subcopy = share_description
-            listing_photo_html = share_landing_photo_html((post.get("images") or [""])[0], headline)
+            listing_photo_html = share_landing_photo_html(post.get("images") or [], headline)
         else:
             share_title = "Ask Community on FairFares"
             share_description = "Ask questions and get trusted local answers from the FairFares community."
