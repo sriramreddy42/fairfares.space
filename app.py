@@ -25748,16 +25748,21 @@ def share_landing_photo_html(images: object, alt: str) -> str:
             image_urls.append(image_url)
     if not image_urls:
         return ""
+    if len(image_urls) == 1:
+        image_tags = "".join(
+            f'<img src="{html.escape(image_url, quote=True)}" alt="{html.escape(alt, quote=True)}" '
+            'style="display:block;width:100%;height:auto;border-radius:20px">'
+            for image_url in image_urls
+        )
+        return f'<figure style="margin:22px 0 0">{image_tags}</figure>'
     image_tags = "".join(
         f'<img src="{html.escape(image_url, quote=True)}" alt="{html.escape(alt, quote=True)}" '
-        'style="display:block;flex:0 0 100%;width:100%;height:auto;border-radius:20px;scroll-snap-align:center">'
+        'style="display:block;flex:0 0 100%;width:100%;height:300px;object-fit:contain;border-radius:20px;scroll-snap-align:center">'
         for image_url in image_urls
     )
-    if len(image_urls) == 1:
-        return f'<figure style="margin:22px 0 0">{image_tags}</figure>'
     return (
         '<section aria-label="Listing photos" style="margin:22px 0 0">'
-        '<div style="display:flex;align-items:flex-start;overflow-x:auto;scroll-snap-type:x mandatory;'
+        '<div style="display:flex;height:300px;align-items:center;overflow-x:auto;scroll-snap-type:x mandatory;'
         '-webkit-overflow-scrolling:touch;scrollbar-width:none">'
         f'{image_tags}</div>'
         f'<p style="color:#9fb1c8;font-size:13px;font-weight:700;margin:9px 0 0">Swipe through {len(image_urls)} photos</p>'

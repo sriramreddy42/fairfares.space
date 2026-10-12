@@ -115,6 +115,7 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo-two.jpg"', markup)
         self.assertIn('alt="Private room available"', markup)
         self.assertIn("scroll-snap-type:x mandatory", markup)
+        self.assertIn("height:300px;object-fit:contain", markup)
         self.assertIn("Swipe through 2 photos", markup)
         self.assertNotIn("background:#10291f", markup)
         self.assertEqual(app.share_landing_photo_html(["data:image/png;base64,secret"], "Private"), "")
