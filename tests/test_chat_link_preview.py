@@ -103,6 +103,16 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn("/android/i.test(navigator.userAgent)", script)
         self.assertIn("Install FairFares", script)
 
+    def test_share_landing_photo_uses_a_public_upload_url(self):
+        markup = app.share_landing_photo_html(
+            "local://uploads/community/listing-photo.jpg",
+            "Private room available",
+        )
+        self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo.jpg"', markup)
+        self.assertIn('alt="Private room available"', markup)
+        self.assertIn("object-fit:contain", markup)
+        self.assertEqual(app.share_landing_photo_html("data:image/png;base64,secret", "Private"), "")
+
     def test_render_origin_is_never_published_as_share_origin(self):
         with patch.dict(app.os.environ, {"PUBLIC_BASE_URL": "https://fairfares.onrender.com"}, clear=False):
             app.os.environ.pop("FAIRFARES_CANONICAL_ORIGIN", None)
