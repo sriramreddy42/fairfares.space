@@ -1980,8 +1980,9 @@ const styles = StyleSheet.create({
   postOpenArea: { gap: 12 },
   answerAuthorButton: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
-  postMediaGrid: { width: "100%", height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
-  postMediaSingle: { width: "100%", borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  // Keep copy comfortably inset, while photographs use the full card width.
+  postMediaGrid: { alignSelf: "stretch", marginHorizontal: -16, height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  postMediaSingle: { alignSelf: "stretch", marginHorizontal: -16, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaCell: { width: "49.5%", height: "49.5%", overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaCellPressed: { opacity: .78 },
   postMediaCellTwo: { width: "49.5%", height: "100%", flexGrow: 1 },
