@@ -486,7 +486,10 @@ async function writeCachedChatConversations(userId: number, conversations: ChatC
     .filter((conversation) => isVisibleInboxConversation(conversation, userId))
     .map((conversation) => ({
       ...conversation,
-      lastMessage: Number(conversation.lastMessageId || 0) > 0 ? "New encrypted message" : ""
+      // This cache never stores plaintext. Use the same member-facing copy as
+      // the live placeholder so reopening Chitthi cannot expose encryption
+      // implementation language while preview envelopes are loading.
+      lastMessage: Number(conversation.lastMessageId || 0) > 0 ? "New letter" : ""
     })), 50);
   const previous = chatConversationCacheWriteChains.get(userId) || Promise.resolve();
   const pending = previous.catch(() => undefined).then(async () => {
@@ -843,7 +846,7 @@ function messageSearchPreviewText(message: ChatMessage) {
 }
 
 function isEncryptedPlaceholder(value: string) {
-  return /end-to-end encrypted message|sent you a secure message|new (?:chitthi|fchat) message/i.test(value || "");
+  return /end-to-end encrypted message|sent you a secure message|new (?:chitthi|fchat|encrypted) message/i.test(value || "");
 }
 
 function looksLikeEncryptedTransportText(value: string) {
@@ -3636,7 +3639,9 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
             // later recovered identity from resolving this conversation row.
           }
         }
-        return [conversation.id, "New encrypted message"] as const;
+        // The inbox is still useful when a historical message cannot be
+        // recovered on this device. Keep the fallback human, not technical.
+        return [conversation.id, "New letter"] as const;
       });
       const previewByConversation = new Map(resolved);
       return nextConversations.map((conversation) => ({

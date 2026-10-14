@@ -817,7 +817,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     finally { if (feedLoadGeneration.current === requestedFeedGeneration) { setLoading(false); setRefreshing(false); setFeedReadyForSecondaryReads(true); } }
   }, [appliedQuery, category, city, groupSuggestionCity, selectedGroup, user?.id]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // Resolve the persisted city before asking the API for a feed. Previously
+    // a returning member could start one full local/national feed request for
+    // the profile city and immediately start another for their saved Ask city.
+    // That duplicate work was visible as a slower Ask opening.
+    if (!feedCityPreferenceReady) return;
+    void load();
+  }, [feedCityPreferenceReady, load]);
   useEffect(() => {
     if (loading) {
       heroEntrance.setValue(0);
