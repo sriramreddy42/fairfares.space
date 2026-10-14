@@ -4491,10 +4491,18 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
     // conversation's cache is being read.
     clearThreadMessages();
     setThreadLoading(true);
-    // Disk-cache hydration and secure identity preparation are independent.
-    // Start both at tap time so a cold AsyncStorage read never delays the
-    // message/envelope request that unlocks encrypted photo previews.
-    const identityPromise = ensureChatDeviceIdentity();
+    // Disk-cache hydration, retrieving the already-stored device key, and its
+    // background registration are independent. A returning member's device
+    // key is normally registered already, so do not make the first visible
+    // page wait for account-key recovery or a registration round trip.
+    // Registration still runs now for a new or restored device; if it adds
+    // envelopes after this first response, the normal unavailable-message
+    // hydration path refreshes them once it completes.
+    const pageIdentityPromise = deviceIdentity
+      ? Promise.resolve(deviceIdentity)
+      : getOrCreateDeviceIdentity(operationUserId);
+    const identityRegistrationPromise = ensureChatDeviceIdentity();
+    void identityRegistrationPromise.catch(() => undefined);
     // Group history must be authorized by the current membership boundary
     // before anything is rendered. Never flash a stale pre-join disk cache.
     if (isGroupConversation(conversation)) {
@@ -4512,7 +4520,10 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       // Fetch only this device's envelopes for the visible page in the same
       // bounded response as its message rows. This avoids downloading the
       // conversation's entire envelope history before thumbnails can render.
-      const identity = await identityPromise;
+      // Crucially, use the local key immediately rather than waiting for the
+      // background registration above: on a normal reopen that removes an
+      // entire network request from the path to the first message bubbles.
+      const identity = await pageIdentityPromise;
       // Receiving only needs this device's page-scoped envelopes. Destination
       // send-key readiness is useful for the composer but must not hold the
       // first photo preview behind another network round trip.
