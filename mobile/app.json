@@ -4,7 +4,7 @@
     "slug": "fairfares-mobile",
     "newArchEnabled": true,
     "scheme": "fairfares",
-    "version": "0.1.14",
+    "version": "0.1.15",
     "icon": "./assets/app-icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -16,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "70",
+      "buildNumber": "71",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -50,7 +50,7 @@
     "android": {
       "package": "com.fairfares.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 48,
+      "versionCode": 49,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
