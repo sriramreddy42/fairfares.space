@@ -12990,10 +12990,9 @@ def schedule_active_housing_city_label_repair() -> None:
 
 def sync_housing_into_community() -> None:
     """Project every active housing listing into the shared community feed."""
-    # This projection also runs from a coalesced background job. Do not force
-    # a full listing repair here: it made a normal Ask read a long-running
-    # SQLite writer whenever a projection was pending.
-    repair_active_housing_city_labels(force=False)
+    # Do not chain historical city-label repair into this projection write.
+    # It scans every active listing and can monopolize the only database
+    # writer while customers are opening the app.
     with db() as con:
         # A derived Ask card must never outlive its source Housing listing.
         # Without this reconciliation, an expired or deactivated listing can
@@ -20766,10 +20765,10 @@ def mobile_housing_posts(
     post_public_id: str = "",
 ) -> list[dict[str, object]]:
     schedule_accommodation_post_expiry()
-    # City normalization is maintenance, not a prerequisite for rendering a
-    # listing. Run it off this hot path so a cold mobile bootstrap remains a
-    # read even when a repair is due.
-    schedule_active_housing_city_label_repair()
+    # Historical city-label repair is not scheduled from this endpoint. Its
+    # full-table scan and writes compete with bootstrap, Chitthi, and ride
+    # requests on the single SQLite deployment. New listings already retain
+    # their selected location; legacy repair is explicit maintenance work.
     typed_city_region = re.search(
         r",\s*([A-Za-z]{2})(?:\s*,\s*(?:US|USA|United States))?\s*$",
         clean_text_value(city, 120),
@@ -23219,7 +23218,13 @@ def get_or_create_community_conversation(
     return con.execute("SELECT * FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone(), ""
 
 
-def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object]:
+def chat_row_payload(
+    row: sqlite3.Row,
+    current_user_id: int,
+    *,
+    other_rating_summary: dict[str, object] | None = None,
+    can_rate_other_user: bool | None = None,
+) -> dict[str, object]:
     last_message_id = int(row_value(row, "last_message_id") or 0)
     last_read_id = int(row_value(row, "last_read_message_id") or 0)
     community_public_id = row_value(row, "community_public_id")
@@ -23238,7 +23243,12 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
     other_is_guest = bool(int(row_value(row, "other_guest_account") or 0)) if not is_group else False
     # Guest sessions are short-lived, scoped community channels. They are not
     # public member identities and must never receive a persistent rating.
-    can_rate_other_user = not other_is_guest and can_rate_chat_member(str(row_value(row, "public_id") or ""), current_user_id, other_user_id)
+    if other_is_guest:
+        can_rate_other = False
+    elif can_rate_other_user is not None:
+        can_rate_other = bool(can_rate_other_user)
+    else:
+        can_rate_other = can_rate_chat_member(str(row_value(row, "public_id") or ""), current_user_id, other_user_id)
     group_name = community_name or (row_value(row, "subject") if is_group else "") or "FairFares group"
     calculated_unread = max(0, last_message_id - last_read_id) if int(row_value(row, "last_sender_id") or 0) != current_user_id else 0
     unread = int(row_value(row, "unread_count", str(calculated_unread)) or 0)
@@ -23265,8 +23275,8 @@ def chat_row_payload(row: sqlite3.Row, current_user_id: int) -> dict[str, object
         "otherName": group_name if is_group else row_value(row, "other_name") or "FairFares member",
         "otherUserId": other_user_id,
         "otherIsGuest": other_is_guest,
-        "otherRatingSummary": user_rating_summary(other_user_id),
-        "canRateOtherUser": can_rate_other_user,
+        "otherRatingSummary": other_rating_summary if other_rating_summary is not None else user_rating_summary(other_user_id),
+        "canRateOtherUser": can_rate_other,
         "otherPhone": canonical_e164_phone(row_value(row, "other_phone"))
         if not is_group and int(row_value(row, "other_user_id") or 0) not in {0, current_user_id}
         else "",
@@ -25330,7 +25340,29 @@ def get_chat_conversations_for_user(
             """.format(search_clause=search_clause),
             (user_id, user_id, user_id, cursor_activity, cursor_activity, cursor_activity, cursor_id, user_id, *search_values, limit, offset),
         ).fetchall()
-    return [chat_row_payload(row, user_id) for row in rows]
+        # The inbox does not offer a rating action; that is evaluated once the
+        # member opens a direct conversation.  Previously each of these rows
+        # opened three additional database connections (two rating aggregates
+        # and one eligibility check), turning a 30-row inbox into 90+ queries.
+        # Load the visible rating badges in two bounded aggregate queries while
+        # the conversation result connection is already open.
+        direct_other_user_ids = [
+            int(row_value(row, "other_user_id") or 0)
+            for row in rows
+            if int(row_value(row, "other_user_id") or 0) > 0
+            and not row_value(row, "community_public_id")
+            and str(row_value(row, "conversation_type") or "").upper() not in {"GROUP", "COMMUNITY"}
+        ]
+        rating_summaries = user_rating_summaries(con, direct_other_user_ids)
+    return [
+        chat_row_payload(
+            row,
+            user_id,
+            other_rating_summary=rating_summaries.get(int(row_value(row, "other_user_id") or 0)),
+            can_rate_other_user=False,
+        )
+        for row in rows
+    ]
 
 
 def chat_unread_count_for_user(user_id: int) -> int:
@@ -44346,11 +44378,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         self.send_html(markup.encode("utf-8"), status)
 
     def api_mobile_community(self, parsed: urllib.parse.ParseResult) -> None:
-        # Reads provide a bounded recovery path for legacy projections. New
-        # and changed Housing listings schedule their own prompt sync after
-        # the write commits.
-        schedule_housing_community_projection_sync()
-        schedule_unlocated_community_post_repair()
+        # New and changed Housing listings schedule their derived Ask card
+        # after their write commits. Never start historical repair/projection
+        # work from this latency-sensitive feed read.
         user = self.current_user()
         guest = None if user else self.current_community_guest()
         viewer_id = int(row_value(user, "id") or row_value(guest, "user_id") or 0)
