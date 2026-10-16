@@ -145,9 +145,10 @@ class ChatRealtimeTest(unittest.TestCase):
         thread.start()
         return server, thread
 
-    def event_request(self, server, token, after=0):
+    def event_request(self, server, token, after=0, device_id=""):
+        device_query = f"&device_id={urllib.parse.quote(device_id)}" if device_id else ""
         request = urllib.request.Request(
-            f"http://127.0.0.1:{server.server_port}/api/chat/events?conversation_id=CHAT-REALTIME&after={after}&wait=0",
+            f"http://127.0.0.1:{server.server_port}/api/chat/events?conversation_id=CHAT-REALTIME&after={after}&wait=0{device_query}",
             headers={"Authorization": f"Bearer {token}"},
         )
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -203,6 +204,42 @@ class ChatRealtimeTest(unittest.TestCase):
                 self.assertEqual([row["id"] for row in payload["messages"]], message_ids)
                 self.assertEqual([row["messageId"] for row in payload["envelopes"]], message_ids)
                 self.assertTrue(all(row["type"] == "ENCRYPTED_ATTACHMENT" for row in payload["messages"]))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_event_stream_includes_recipient_device_envelope(self):
+        sender_key = base64.b64encode(b"C" * 32).decode("ascii")
+        recipient_key = base64.b64encode(b"D" * 32).decode("ascii")
+        self.assertFalse(app.register_chat_device_key(self.sender_id, "sender-live-device", sender_key))
+        self.assertFalse(app.register_chat_device_key(self.recipient_id, "recipient-live-device", recipient_key))
+        with app.db() as con:
+            sender = con.execute("SELECT * FROM users WHERE id = ?", (self.sender_id,)).fetchone()
+            conversation = con.execute("SELECT * FROM chat_conversations WHERE id = ?", (self.conversation_id,)).fetchone()
+            message, error = app.save_encrypted_chat_message(
+                con,
+                conversation,
+                sender,
+                [
+                    {"recipientUserId": self.sender_id, "recipientDeviceId": "sender-live-device", "senderPublicKey": sender_key, "nonce": "sender-nonce", "ciphertext": "sender-ciphertext"},
+                    {"recipientUserId": self.recipient_id, "recipientDeviceId": "recipient-live-device", "senderPublicKey": sender_key, "nonce": "recipient-nonce", "ciphertext": "recipient-ciphertext"},
+                ],
+                "realtime-envelopes",
+            )
+            self.assertFalse(error)
+            self.assertIsNotNone(message)
+
+        server, thread = self.start_server()
+        try:
+            _, payload = self.event_request(server, "recipient-token", device_id="recipient-live-device")
+            self.assertEqual([item["id"] for item in payload["messages"]], [int(message["id"])])
+            self.assertEqual(payload["envelopes"], [{
+                "messageId": int(message["id"]),
+                "senderPublicKey": sender_key,
+                "nonce": "recipient-nonce",
+                "ciphertext": "recipient-ciphertext",
+            }])
         finally:
             server.shutdown()
             server.server_close()

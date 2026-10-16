@@ -3091,6 +3091,7 @@ function FairFaresApp() {
     <MessengerScreen
       key={`messenger-${Number(data?.user?.id || 0)}`}
       data={data}
+      isVisible={activeTab === "messenger"}
       preferredSuggestionCity={chitthiSuggestionCity}
       pendingPost={pendingPost}
       pendingRide={pendingRide}

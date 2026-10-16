@@ -102,6 +102,7 @@ import { logDevelopmentPerformance } from "../utils/performanceDiagnostics";
 
 type Props = {
   data: BootstrapPayload | null;
+  isVisible?: boolean;
   preferredSuggestionCity?: string;
   pendingPost: HousingPost | null;
   pendingRide: RidePost | null;
@@ -2167,7 +2168,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
   </View>;
 }
 
-export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
+export function MessengerScreen({ data, isVisible = true, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
   const isLight = useColorScheme() === "light";
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -3928,17 +3929,42 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
   }, [signedIn, currentUserId]);
 
   useEffect(() => {
-    if (!signedIn || !activeConversationId || hydratedConversationId !== activeConversationId) return;
+    // The messenger stays mounted while another tab is visible. Refresh only
+    // when Chitthi itself is on screen, so the inbox receives new letters
+    // automatically without adding background traffic to every app screen.
+    if (!signedIn || !isVisible || !isAppActive || activeConversationId) return;
+    const refreshInbox = () => void refreshMessenger({ showLoader: false, showError: false });
+    refreshInbox();
+    const timer = setInterval(refreshInbox, 10_000);
+    return () => clearInterval(timer);
+  }, [activeConversationId, currentUserId, isAppActive, isVisible, signedIn]);
+
+  useEffect(() => {
+    if (!signedIn || !isVisible || !isAppActive || !activeConversationId || hydratedConversationId !== activeConversationId) return;
     let cancelled = false;
     let cursor = messages.reduce((highest, message) => Math.max(highest, Number(message.id) || 0), 0);
+    const realtimeIdentity = deviceIdentity;
     const run = async () => {
       while (!cancelled) {
         try {
-          const payload = await pollChatEvents(activeConversationId, cursor);
+          const payload = await pollChatEvents(activeConversationId, cursor, realtimeIdentity?.deviceId || "");
           if (cancelled) return;
           setTypingPeople(payload.typing || []);
           cursor = Math.max(cursor, Number(payload.cursor || 0));
-          const incomingMessages = await decryptMessages(activeConversationId, payload.messages || []);
+          const preparedDecryption = realtimeIdentity && Array.isArray(payload.envelopes)
+            ? Promise.resolve({
+              identity: realtimeIdentity,
+              identities: [realtimeIdentity],
+              envelopePayload: {
+                ok: true,
+                envelopes: payload.envelopes.map((envelope) => ({ ...envelope, recipientDeviceId: realtimeIdentity.deviceId }))
+              },
+              // Send-key readiness has its own five-second refresh. Do not
+              // delay a received letter behind that separate request.
+              keyPayload: { ok: true, keys: [], ready: false, warning: "" }
+            })
+            : undefined;
+          const incomingMessages = await decryptMessages(activeConversationId, payload.messages || [], preparedDecryption, { updateEncryptionStatus: false });
           const receiptById = new Map((payload.receipts || []).map((receipt) => [Number(receipt.id), receipt]));
           const reactionsById = new Map((payload.reactionUpdates || []).map((update) => [Number(update.messageId), update.reactions || []]));
           const deletedIds = new Set((payload.deletedMessageIds || []).map((messageId) => Number(messageId)).filter(Boolean));
@@ -3989,7 +4015,7 @@ export function MessengerScreen({ data, preferredSuggestionCity, pendingPost, pe
       cancelled = true;
       setTypingPeople([]);
     };
-  }, [signedIn, activeConversationId, hydratedConversationId, activeConversation?.communityId]);
+  }, [signedIn, activeConversationId, deviceIdentity?.deviceId, hydratedConversationId, activeConversation?.communityId, isAppActive, isVisible]);
 
   useEffect(() => {
     if (!signedIn || !activeConversationId || isGroupConversation(activeConversation)) return;

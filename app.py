@@ -30409,6 +30409,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         conversation_public_id = (params.get("conversation_id", [""])[0] or "").strip()
         after_message_id = max(0, int(float_from_value(params.get("after", ["0"])[0] or "0")))
+        device_id = clean_text_value(params.get("device_id", [""])[0], 100)
         compact_senders = (params.get("compact_senders", [""])[0] or "").strip() == "1"
         wait_seconds = min(7.5, max(0.0, float_from_value(params.get("wait", ["7"])[0] or "7")))
         if not conversation_public_id:
@@ -30422,6 +30423,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             conversation_id = int(conversation["id"])
             visible_from_message_id = int(row_value(conversation, "visible_from_message_id") or 0)
+            participant_rows = con.execute(
+                """SELECT participants.user_id, users.name
+                   FROM chat_participants participants
+                   JOIN users ON users.id = participants.user_id
+                   WHERE participants.conversation_id = ? AND participants.user_id != ?""",
+                (conversation_id, current_user_id),
+            ).fetchall()
 
         deadline = time.monotonic() + wait_seconds
         messages: list[sqlite3.Row] = []
@@ -30429,6 +30437,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         typing: list[dict[str, object]] = []
         reaction_updates: list[dict[str, object]] = []
         deleted_message_ids: list[int] = []
+        event_envelopes: list[sqlite3.Row] = []
         while True:
             with db() as con:
                 messages = con.execute(
@@ -30445,63 +30454,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     """,
                     (conversation_id, after_message_id, visible_from_message_id),
                 ).fetchall()
-                if (getattr(self, "headers", {}).get("X-FairFares-Client-Platform") in ("ios", "android")
-                        and params.get("receipts", [""])[0] != "explicit"):
-                    acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
-                receipt_rows = con.execute(
-                    """
-                    SELECT id, delivered_at, read_at
-                    FROM chat_messages
-                    WHERE conversation_id = ? AND sender_id = ? AND id > ?
-                    ORDER BY id DESC
-                    LIMIT 100
-                    """,
-                    (conversation_id, current_user_id, max(0, after_message_id - 100)),
-                ).fetchall()
-                receipts = [
-                    {
-                        "id": int(row_value(receipt, "id") or 0),
-                        "deliveredAt": row_value(receipt, "delivered_at"),
-                        "readAt": row_value(receipt, "read_at"),
-                        "status": "seen" if row_value(receipt, "read_at") else "delivered" if row_value(receipt, "delivered_at") else "sent",
-                    }
-                    for receipt in receipt_rows
-                ]
-                participant_rows = con.execute(
-                    """SELECT participants.user_id, users.name
-                       FROM chat_participants participants
-                       JOIN users ON users.id = participants.user_id
-                       WHERE participants.conversation_id = ? AND participants.user_id != ?""",
-                    (conversation_id, current_user_id),
-                ).fetchall()
-                recent_message_ids = [int(row["id"]) for row in con.execute(
-                    "SELECT id FROM chat_messages WHERE conversation_id = ? AND id >= ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100",
-                    (conversation_id, visible_from_message_id),
-                ).fetchall()]
-                reaction_updates = []
-                if recent_message_ids:
-                    placeholders = ",".join("?" for _ in recent_message_ids)
-                    reaction_rows = con.execute(
-                        f"SELECT message_id, emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(id)",
-                        (current_user_id, *recent_message_ids),
-                    ).fetchall()
-                    grouped: dict[int, list[dict[str, object]]] = {message_id: [] for message_id in recent_message_ids}
-                    for reaction in reaction_rows:
-                        grouped[int(reaction["message_id"])].append({"emoji": reaction["emoji"], "count": int(reaction["total"] or 0), "mine": bool(int(reaction["mine"] or 0))})
-                    reaction_updates = [{"messageId": message_id, "reactions": grouped[message_id]} for message_id in recent_message_ids]
-                deleted_message_ids = [
-                    int(row_value(row, "id") or 0)
-                    for row in con.execute(
-                        """
-                        SELECT id
-                        FROM chat_messages
-                        WHERE conversation_id = ? AND id >= ? AND deleted_at IS NOT NULL
-                        ORDER BY datetime(deleted_at) DESC, id DESC
-                        LIMIT 250
-                        """,
-                        (conversation_id, visible_from_message_id),
-                    ).fetchall()
-                ]
             now_monotonic = time.monotonic()
             with _CHAT_TYPING_LOCK:
                 expired = [key for key, expires_at in _CHAT_TYPING.items() if expires_at <= now_monotonic]
@@ -30514,7 +30466,70 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ]
             if messages or typing or time.monotonic() >= deadline:
                 break
-            time.sleep(0.25)
+            # Keep the held loop to the one cheap new-message query. Receipt,
+            # reaction, deletion, and envelope data are collected once when a
+            # response returns; repeating all of those queries four times a
+            # second per open thread starved unrelated mobile requests.
+            time.sleep(0.35)
+        with db() as con:
+            if messages and (getattr(self, "headers", {}).get("X-FairFares-Client-Platform") in ("ios", "android")
+                    and params.get("receipts", [""])[0] != "explicit"):
+                acknowledge_chat_messages(con, conversation, current_user_id, [int(message["id"]) for message in messages], True)
+            receipt_rows = con.execute(
+                """
+                SELECT id, delivered_at, read_at
+                FROM chat_messages
+                WHERE conversation_id = ? AND sender_id = ? AND id > ?
+                ORDER BY id DESC
+                LIMIT 100
+                """,
+                (conversation_id, current_user_id, max(0, after_message_id - 100)),
+            ).fetchall()
+            receipts = [
+                {
+                    "id": int(row_value(receipt, "id") or 0),
+                    "deliveredAt": row_value(receipt, "delivered_at"),
+                    "readAt": row_value(receipt, "read_at"),
+                    "status": "seen" if row_value(receipt, "read_at") else "delivered" if row_value(receipt, "delivered_at") else "sent",
+                }
+                for receipt in receipt_rows
+            ]
+            recent_message_ids = [int(row["id"]) for row in con.execute(
+                "SELECT id FROM chat_messages WHERE conversation_id = ? AND id >= ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100",
+                (conversation_id, visible_from_message_id),
+            ).fetchall()]
+            if recent_message_ids:
+                placeholders = ",".join("?" for _ in recent_message_ids)
+                reaction_rows = con.execute(
+                    f"SELECT message_id, emoji, COUNT(*) AS total, MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine FROM chat_message_reactions WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(id)",
+                    (current_user_id, *recent_message_ids),
+                ).fetchall()
+                grouped: dict[int, list[dict[str, object]]] = {message_id: [] for message_id in recent_message_ids}
+                for reaction in reaction_rows:
+                    grouped[int(reaction["message_id"])].append({"emoji": reaction["emoji"], "count": int(reaction["total"] or 0), "mine": bool(int(reaction["mine"] or 0))})
+                reaction_updates = [{"messageId": message_id, "reactions": grouped[message_id]} for message_id in recent_message_ids]
+            deleted_message_ids = [
+                int(row_value(row, "id") or 0)
+                for row in con.execute(
+                    """
+                    SELECT id
+                    FROM chat_messages
+                    WHERE conversation_id = ? AND id >= ? AND deleted_at IS NOT NULL
+                    ORDER BY datetime(deleted_at) DESC, id DESC
+                    LIMIT 250
+                    """,
+                    (conversation_id, visible_from_message_id),
+                ).fetchall()
+            ]
+            if messages and device_id:
+                event_envelopes = con.execute(
+                    """SELECT message_id, sender_public_key, nonce, ciphertext
+                       FROM chat_message_envelopes
+                       WHERE recipient_user_id = ? AND recipient_device_id = ?
+                         AND message_id IN ({placeholders})
+                       ORDER BY message_id ASC""".format(placeholders=",".join("?" for _ in messages)),
+                    (current_user_id, device_id, *[int(row_value(message, "id") or 0) for message in messages]),
+                ).fetchall()
         self.send_json(
             {
                 "ok": True,
@@ -30535,6 +30550,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     if int(row_value(message, "sender_id") or 0) > 0
                 },
                 "messages": [chat_message_payload(message, current_user_id, 0, None, not compact_senders) for message in messages],
+                "envelopes": [{
+                    "messageId": int(row_value(envelope, "message_id") or 0),
+                    "senderPublicKey": row_value(envelope, "sender_public_key"),
+                    "nonce": row_value(envelope, "nonce"),
+                    "ciphertext": row_value(envelope, "ciphertext"),
+                } for envelope in event_envelopes],
                 "receipts": receipts,
                 "typing": typing,
                 "reactionUpdates": reaction_updates,

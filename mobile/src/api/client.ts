@@ -2808,7 +2808,7 @@ export async function getChatKeyBackup() {
   return request<{ ok: boolean; encryptedPayload: string; updatedAt: string }>("/api/chat/e2ee/backup");
 }
 
-export async function pollChatEvents(conversationId: string, afterMessageId: number) {
+export async function pollChatEvents(conversationId: string, afterMessageId: number, deviceId = "") {
   const query = new URLSearchParams({
     receipts: "explicit",
     conversation_id: conversationId,
@@ -2818,6 +2818,7 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     // A completed empty response immediately starts the next poll.
     wait: "5"
   });
+  if (deviceId) query.set("device_id", deviceId);
   const payload = await request<{
     ok: boolean;
     messages: ChatMessage[];
@@ -2826,6 +2827,7 @@ export async function pollChatEvents(conversationId: string, afterMessageId: num
     typing: Array<{ userId: number; name: string }>;
     reactionUpdates: Array<{ messageId: number; reactions: Array<{ emoji: string; count: number; mine: boolean }> }>;
     deletedMessageIds?: number[];
+    envelopes?: Array<{ messageId: number; senderPublicKey: string; nonce: string; ciphertext: string }>;
     cursor: number;
   }>(`/api/chat/events?${query}`, {}, {
     // Long polls are background transport. The messenger loop reconnects after
