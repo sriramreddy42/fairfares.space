@@ -16,6 +16,7 @@ import Reanimated, { cancelAnimation, Extrapolation, interpolate, useAnimatedSty
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserAvatar } from "../components/UserAvatar";
+import { TactilePressable } from "../components/TactilePressable";
 import { MemberProfileSheet, MemberProfileSheetHandle } from "../components/MemberProfileSheet";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
@@ -945,9 +946,10 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
   const avatarUrl = conversationAvatarUrl(chat, currentUserId, currentUserPhotoUrl, currentUserName);
   const displayName = isGroupConversation(chat) ? chat.subject || chat.otherName : chat.otherName || chat.subject;
   return (
-    <TouchableOpacity
+    <TactilePressable
       style={[styles.chatRow, isLight && styles.chatRowLight, isLight && unread && styles.chatRowUnreadLight]}
       onPress={() => onOpen(chat)}
+      pressScale={0.985}
       accessibilityLabel={`${displayName}. ${unread ? `${chat.unread} unread. ` : ""}${preview}`}
     >
       {unread ? <View style={styles.unreadAccent} /> : null}
@@ -975,7 +977,7 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
         </View>
         <Text style={styles.chatKind}>{conversationKind}{chat.rideRoute ? ` · ${chat.rideRoute}` : ""}</Text>
       </View>
-    </TouchableOpacity>
+    </TactilePressable>
   );
 });
 

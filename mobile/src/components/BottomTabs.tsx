@@ -1,9 +1,10 @@
 import React, { useRef } from "react";
-import { Animated, Image, ImageSourcePropType, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from "react-native";
+import { Animated, Image, ImageSourcePropType, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { FairFaresUser } from "../types";
 import { AdaptiveGlassView } from "./AdaptiveGlassView";
+import { TactilePressable } from "./TactilePressable";
 import { UserAvatar } from "./UserAvatar";
 import {
   BOTTOM_NAV_HORIZONTAL_MARGIN,
@@ -93,12 +94,12 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         {navigationItems.map((item) => {
           const isSelected = selected === item.key;
           return (
-            <TouchableOpacity
+            <TactilePressable
               key={item.key}
               accessibilityRole="tab"
               accessibilityLabel={item.label}
               accessibilityState={{ selected: isSelected }}
-              activeOpacity={0.72}
+              pressScale={item.key === "community" ? 0.93 : 0.96}
               onPress={() => {
                 onChange(item.key);
                 if (item.key !== "home") return;
@@ -149,7 +150,7 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                   {item.label}
                 </Text>
               </Animated.View>
-            </TouchableOpacity>
+            </TactilePressable>
           );
         })}
       </View>
