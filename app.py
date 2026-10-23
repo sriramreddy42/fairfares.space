@@ -37017,6 +37017,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_text("Photo not found.", 404)
             return
         field = str(params.get("field", [""])[0] or "")
+        download = str(params.get("download", [""])[0] or "").lower() in {"1", "true", "yes"}
         image = rental_handoff_photo_parts(booking_id, field)
         if not image:
             self.send_text("Photo is not available.", 404)
@@ -37024,7 +37025,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         filename, mime_type, payload = image
         self.send_response(200)
         self.send_header("Content-Type", mime_type)
-        self.send_header("Content-Disposition", f'inline; filename="{re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "handoff-photo"}"')
+        safe_filename = re.sub(r"[^A-Za-z0-9_.-]", "-", filename)[:100] or "handoff-photo"
+        disposition = "attachment" if download else "inline"
+        self.send_header("Content-Disposition", f'{disposition}; filename="{safe_filename}"')
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(payload)))
@@ -37451,6 +37454,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             saved_link = (
                 f'<a class="admin-text-link" href="{escape(view_href)}" target="_blank" rel="noopener">View saved photo</a>'
+                f' <span aria-hidden="true">·</span> '
+                f'<a class="admin-text-link" href="{escape(view_href + "&download=1")}">Download photo</a>'
                 if view_href else ""
             )
             return (

@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import * as ImageManipulator from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { ActivityIndicator, Alert, AppState, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { authenticatedAssetSource, getStaffPickupBookings, reviewRentalHandoff, staffHandoffPhotoUrl, staffPrivateHandoffPhotoUrl, startStaffIdentityVerification, submitStaffHandoffInspection } from "../api/client";
+import { authenticatedAssetSource, downloadAuthenticatedAssetToFile, getStaffPickupBookings, reviewRentalHandoff, staffHandoffPhotoUrl, staffPrivateHandoffPhotoUrl, startStaffIdentityVerification, submitStaffHandoffInspection } from "../api/client";
 import { theme } from "../theme";
 import { StaffPickupBooking } from "../types";
 import { takeChatPhoto } from "../utils/imageUpload";
@@ -192,11 +194,31 @@ export function StaffPickupScreen({ onClose }: Props) {
 
 function HandoffPhotoViewer({ viewer, onClose }: { viewer: { booking: StaffPickupBooking; phase: "pickup" | "return" } | null; onClose: () => void }) {
   const safeAreaInsets = useSafeAreaInsets();
+  const [downloadingId, setDownloadingId] = useState("");
   const entries = viewer ? [
     ...photoSteps.map(({ key, label }) => ({ id: key, label, url: staffHandoffPhotoUrl(viewer.booking.id, viewer.phase, key) })),
     ...(viewer.phase === "pickup" ? Array.from({ length: Math.min(maxExistingDamagePhotos, Number(viewer.booking.pickupExistingDamagePhotoCount || 0)) }, (_, index) => ({ id: `existingDamage${index + 1}`, label: `Existing damage ${index + 1}`, url: staffPrivateHandoffPhotoUrl(viewer.booking.id, `pickup_existing_damage_${index + 1}_image`) })) : Array.from({ length: Math.min(maxExistingDamagePhotos, Number(viewer.booking.returnDamagePhotoCount || 0)) }, (_, index) => ({ id: `returnDamage${index + 1}`, label: `Damage close-up ${index + 1}`, url: staffPrivateHandoffPhotoUrl(viewer.booking.id, `return_damage_${index + 1}_image`) }))),
   ] : [];
-  return <Modal visible={Boolean(viewer)} animationType="slide" onRequestClose={onClose}><View style={styles.screen}><View style={[styles.header, { minHeight: 72 + safeAreaInsets.top, paddingTop: safeAreaInsets.top }]}><TouchableOpacity onPress={onClose} style={styles.backButton} accessibilityLabel="Close photos"><Text style={styles.backText}>‹</Text></TouchableOpacity><View style={styles.flex}><Text style={styles.eyebrow}>PRIVATE STAFF EVIDENCE</Text><Text style={styles.title}>{viewer?.phase === "pickup" ? "Pickup photos" : "Return photos"}</Text></View></View><ScrollView contentContainerStyle={styles.photoViewerGrid}>{entries.map(({ id, label, url }) => <View key={id} style={styles.photoViewerCard}><Text style={styles.photoViewerLabel}>{label}</Text><Image source={authenticatedAssetSource(url)} style={styles.photoViewerImage} resizeMode="cover" /></View>)}</ScrollView></View></Modal>;
+  async function downloadPhoto(id: string, label: string, url: string) {
+    if (!viewer || downloadingId) return;
+    const cacheDirectory = FileSystem.cacheDirectory;
+    if (!cacheDirectory) {
+      Alert.alert("Download unavailable", "Temporary photo storage is unavailable on this device.");
+      return;
+    }
+    setDownloadingId(id);
+    try {
+      const filename = `${viewer.booking.bookingId}-${viewer.phase}-${id}.jpg`.replace(/[^A-Za-z0-9._-]/g, "-");
+      const file = await downloadAuthenticatedAssetToFile(url, `${cacheDirectory}${filename}`);
+      if (!await Sharing.isAvailableAsync()) throw new Error("Sharing is unavailable on this device.");
+      await Sharing.shareAsync(file, { mimeType: "image/jpeg", dialogTitle: `Download ${label}` });
+    } catch (error) {
+      Alert.alert("Photo download failed", error instanceof Error ? error.message : "Could not download this inspection photo.");
+    } finally {
+      setDownloadingId("");
+    }
+  }
+  return <Modal visible={Boolean(viewer)} animationType="slide" onRequestClose={onClose}><View style={styles.screen}><View style={[styles.header, { minHeight: 72 + safeAreaInsets.top, paddingTop: safeAreaInsets.top }]}><TouchableOpacity onPress={onClose} style={styles.backButton} accessibilityLabel="Close photos"><Text style={styles.backText}>‹</Text></TouchableOpacity><View style={styles.flex}><Text style={styles.eyebrow}>PRIVATE STAFF EVIDENCE</Text><Text style={styles.title}>{viewer?.phase === "pickup" ? "Pickup photos" : "Return photos"}</Text></View></View><ScrollView contentContainerStyle={styles.photoViewerGrid}>{entries.map(({ id, label, url }) => <View key={id} style={styles.photoViewerCard}><Text style={styles.photoViewerLabel}>{label}</Text><Image source={authenticatedAssetSource(url)} style={styles.photoViewerImage} resizeMode="cover" /><TouchableOpacity style={[styles.photoDownloadButton, downloadingId === id && styles.disabled]} disabled={Boolean(downloadingId)} onPress={() => void downloadPhoto(id, label, url)}>{downloadingId === id ? <ActivityIndicator color={theme.colors.blue} /> : <Text style={styles.photoDownloadText}>Download photo</Text>}</TouchableOpacity></View>)}</ScrollView></View></Modal>;
 }
 
 function LicenseViewer({ booking, onClose }: { booking: StaffPickupBooking | null; onClose: () => void }) {
@@ -280,4 +302,6 @@ const styles = StyleSheet.create({
   ,photoViewerCard: { ...theme.depth.card, overflow: "hidden" }
   ,photoViewerLabel: { color: theme.colors.text, fontSize: 14, fontWeight: "800", padding: 12 }
   ,photoViewerImage: { width: "100%", aspectRatio: 4 / 3, backgroundColor: theme.colors.panel2 }
+  ,photoDownloadButton: { minHeight: 44, alignItems: "center", justifyContent: "center", borderTopWidth: 1, borderColor: theme.colors.line }
+  ,photoDownloadText: { color: theme.colors.blue, fontSize: 13, fontWeight: "800" }
 });
