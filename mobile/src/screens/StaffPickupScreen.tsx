@@ -52,7 +52,7 @@ export function StaffPickupScreen({ onClose }: Props) {
     return () => { subscription.remove(); clearInterval(interval); };
   }, [refresh]);
 
-  async function reviewHandoff(booking: StaffPickupBooking, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN" | "RECONCILE_OFFLINE_RETURN", reason = "") {
+  async function reviewHandoff(booking: StaffPickupBooking, action: "APPROVE_PICKUP" | "APPROVE_RETURN" | "HOLD_RETURN" | "RECONCILE_OFFLINE_RETURN" | "RETRY_DEPOSIT_RELEASE", reason = "") {
     setBusyBookingId(booking.id);
     try {
       const result = await reviewRentalHandoff(booking.id, action, "", reason);
@@ -122,6 +122,7 @@ export function StaffPickupScreen({ onClose }: Props) {
           const pickupSubmitted = booking.bookingStatus === "PICKUP_SUBMITTED";
           const returnSubmitted = booking.bookingStatus === "RETURN_SUBMITTED";
           const returnHeld = booking.returnReviewStatus === "CHARGES_PENDING";
+          const canRetryDepositRelease = Boolean(booking.canRetryDepositRelease);
           const identityVerified = booking.identityStatus === "VERIFIED";
           const canReconcileOfflineReturn = Boolean(booking.canReconcileOfflineReturn);
           return (
@@ -163,7 +164,8 @@ export function StaffPickupScreen({ onClose }: Props) {
                 booking.paymentStatus !== "PAID" ? <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for full rental payment</Text><Text style={styles.body}>The reservation hold does not permit vehicle release.</Text></View>
                   : identityVerified ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "pickup")}><Text style={styles.payButtonText}>Start pickup inspection</Text></TouchableOpacity>
                     : <View style={styles.waitingCard}><Text style={styles.identityTitle}>Waiting for renter identity verification</Text><Text style={styles.body}>Request Stripe Identity, then have the renter complete the secure check on their phone.</Text></View>
-              ) : booking.bookingStatus === "PICKED_UP" ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "return")}><Text style={styles.payButtonText}>Start return inspection</Text></TouchableOpacity> : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
+              ) : booking.bookingStatus === "PICKED_UP" ? <TouchableOpacity style={styles.payButton} onPress={() => openInspection(booking, "return")}><Text style={styles.payButtonText}>Start return inspection</Text></TouchableOpacity> : booking.bookingStatus === "RETURNED" ? <Text style={styles.body}>Clear return completed. Check the refundable authorization below.</Text> : <Text style={styles.body}>Rental active. Waiting for the scheduled return.</Text>}
+              {canRetryDepositRelease ? <View style={styles.waitingCard}><Text style={styles.identityTitle}>Deposit release needs retry</Text><Text style={styles.body}>The clear return is complete, but Stripe did not confirm release of the refundable authorization. Retry the release without changing the return record.</Text><TouchableOpacity style={[styles.payButton, busy && styles.disabled]} disabled={busy} onPress={() => void reviewHandoff(booking, "RETRY_DEPOSIT_RELEASE")}><Text style={styles.payButtonText}>Retry deposit release</Text></TouchableOpacity></View> : null}
               {booking.pickupEvidenceComplete ? <TouchableOpacity style={styles.photoViewerButton} onPress={() => setPhotoViewer({ booking, phase: "pickup" })}><Text style={styles.photoViewerButtonText}>View pickup photos</Text></TouchableOpacity> : null}
               {booking.returnEvidenceComplete ? <TouchableOpacity style={styles.photoViewerButton} onPress={() => setPhotoViewer({ booking, phase: "return" })}><Text style={styles.photoViewerButtonText}>View return photos</Text></TouchableOpacity> : null}
               {canReconcileOfflineReturn ? <TouchableOpacity style={[styles.offlineReturnButton, busy && styles.disabled]} disabled={busy} onPress={() => confirmOfflineReturn(booking)}>

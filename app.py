@@ -10191,43 +10191,60 @@ def verify_and_record_security_deposit(payment_intent_id: str, booking_id: int) 
     return record_security_deposit_authorization(payment_intent)
 
 
-def return_checks_clear_for_deposit_release(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+def return_release_blockers(
+    booking: sqlite3.Row | dict[str, object] | None,
+    *,
+    require_authorized_deposit: bool = True,
+) -> list[str]:
+    """Return the concrete reasons a return cannot be cleared or released."""
+    if not booking:
+        return ["booking record"]
+    blockers: list[str] = []
+    if require_authorized_deposit and row_value(booking, "security_deposit_status") != "AUTHORIZED":
+        blockers.append("authorized refundable deposit")
+    if row_value(booking, "return_review_status") != "CLEAR_TO_RELEASE":
+        blockers.append("clear return review")
+    if not row_value(booking, "actual_return_date") or not row_value(booking, "actual_return_time"):
+        blockers.append("return date and time")
+    if int(row_value(booking, "return_odometer") or 0) <= 0:
+        blockers.append("return odometer")
+    if not row_value(booking, "return_fuel_level"):
+        blockers.append("return fuel level")
+    if row_value(booking, "return_condition_status") != "ACCEPTABLE":
+        blockers.append("clear vehicle condition")
+    if row_value(booking, "new_damage_found") != "NO":
+        blockers.append("resolved damage review")
+    # Empty values are legacy inspection records created before these explicit
+    # checks existed. New return submissions always populate them.
+    if row_value(booking, "return_keys_confirmed") not in {"", "RETURNED"}:
+        blockers.append("keys or accessories review")
+    if row_value(booking, "return_cleanliness_status") not in {"", "CLEAN"}:
+        blockers.append("cleanliness review")
+    if row_value(booking, "return_smoking_status") not in {"", "NO"}:
+        blockers.append("smoking review")
+    if row_value(booking, "return_issue_types"):
+        blockers.append("recorded return issue review")
+    if float(row_value(booking, "post_return_charge_amount") or 0) != 0:
+        blockers.append("post-return charge review")
+    if not row_value(booking, "return_customer_signature") or not row_value(booking, "return_staff_signature"):
+        blockers.append("both return signatures")
     required_photos = (
-        "return_front_image",
-        "return_back_image",
-        "return_left_image",
-        "return_right_image",
-        "return_odometer_image",
-        "return_fuel_image",
-        "return_interior_front_image",
-        "return_interior_rear_image",
+        "return_front_image", "return_back_image", "return_left_image", "return_right_image",
+        "return_odometer_image", "return_fuel_image", "return_interior_front_image", "return_interior_rear_image",
     )
-    return bool(
-        booking
-        and row_value(booking, "security_deposit_status") == "AUTHORIZED"
-        and row_value(booking, "return_review_status") == "CLEAR_TO_RELEASE"
-        and row_value(booking, "actual_return_date")
-        and row_value(booking, "actual_return_time")
-        and int(row_value(booking, "return_odometer") or 0) > 0
-        and row_value(booking, "return_fuel_level")
-        and row_value(booking, "return_condition_status") == "ACCEPTABLE"
-        and row_value(booking, "new_damage_found") == "NO"
-        # Empty values are legacy inspection records created before these
-        # explicit checks existed. New return submissions always populate them.
-        and row_value(booking, "return_keys_confirmed") in {"", "RETURNED"}
-        and row_value(booking, "return_cleanliness_status") in {"", "CLEAN"}
-        and row_value(booking, "return_smoking_status") in {"", "NO"}
-        and not row_value(booking, "return_issue_types")
-        and float(row_value(booking, "post_return_charge_amount") or 0) == 0
-        and row_value(booking, "return_customer_signature")
-        and row_value(booking, "return_staff_signature")
-        and all(row_value(booking, field) for field in required_photos)
-    )
+    if not all(row_value(booking, field) for field in required_photos):
+        blockers.append("all eight return photos")
+    return blockers
+
+
+def return_checks_clear_for_deposit_release(booking: sqlite3.Row | dict[str, object] | None) -> bool:
+    return not return_release_blockers(booking)
 
 
 def release_security_deposit_after_clear_return(booking: sqlite3.Row | dict[str, object]) -> tuple[bool, str]:
-    if not return_checks_clear_for_deposit_release(booking):
-        return False, "Return checks are not complete or require review."
+    blockers = return_release_blockers(booking)
+    if blockers:
+        return False, "Return needs " + ", ".join(blockers) + "."
     payment_intent_id = str(row_value(booking, "security_deposit_payment_intent_id") or "").strip()
     if not payment_intent_id.startswith("pi_"):
         return False, "The Stripe deposit authorization reference is missing."
@@ -41594,7 +41611,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         pickups = []
         for row in get_admin_bookings(booking_identifier):
             booking_status = str(row_value(row, "booking_status") or "")
-            if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"}:
+            retryable_deposit_release = (
+                booking_status == "RETURNED"
+                and row_value(row, "security_deposit_status") == "AUTHORIZED"
+                and row_value(row, "return_review_status") == "CLEAR_TO_RELEASE"
+                and not return_release_blockers(row)
+            )
+            if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"} and not retryable_deposit_release:
                 continue
             identity_row = latest_identity_verification(
                 int(row_value(row, "user_id") or 0),
@@ -41633,6 +41656,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                     # evidence, so it is an owner-admin exception.
                     "offlineReturnEligible": offline_return_eligible and is_admin_user(staff_user),
                     "canReconcileOfflineReturn": offline_return_eligible and is_admin_user(staff_user),
+                    "canRetryDepositRelease": retryable_deposit_release,
                     "identityStatus": identity_status,
                     "identityTitle": identity_title,
                     "identityMessage": identity_message,
@@ -41922,8 +41946,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if status != "RETURN_SUBMITTED":
                 self.send_json({"ok": False, "error": "This return is not awaiting review."}, 409)
                 return
-            if row_value(booking, "return_condition_status") != "ACCEPTABLE" or row_value(booking, "new_damage_found") != "NO":
-                self.send_json({"ok": False, "error": "Damage was reported. Hold this return for charge review instead."}, 409)
+            approval_candidate = dict(booking)
+            approval_candidate.update({
+                "return_staff_signature": staff_signature,
+                "return_review_status": "CLEAR_TO_RELEASE",
+                "post_return_charge_amount": 0,
+            })
+            blockers = return_release_blockers(approval_candidate, require_authorized_deposit=False)
+            if blockers:
+                self.send_json({"ok": False, "error": "This return cannot be approved until it has " + ", ".join(blockers) + ". Hold it for review instead."}, 409)
                 return
             with db() as con:
                 con.execute(
@@ -41942,6 +41973,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": True, "message": f"Return approved. Deposit release needs staff review: {release_message}", "depositReviewRequired": True})
                 return
             self.send_json({"ok": True, "message": f"Return approved. {release_message}"})
+            return
+        if action == "RETRY_DEPOSIT_RELEASE":
+            if status != "RETURNED":
+                self.send_json({"ok": False, "error": "Only a completed return can retry a deposit release."}, 409)
+                return
+            released, release_message = release_security_deposit_after_clear_return(booking)
+            if not released:
+                self.send_json({"ok": False, "error": f"Deposit release could not be retried: {release_message}"}, 409)
+                return
+            self.send_json({"ok": True, "message": "Deposit authorization released."})
             return
         if action == "HOLD_RETURN":
             if status != "RETURN_SUBMITTED":

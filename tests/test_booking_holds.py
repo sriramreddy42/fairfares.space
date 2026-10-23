@@ -591,6 +591,105 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(completed["booking_status"], "RETURNED")
         self.assertEqual(completed["security_deposit_status"], "RELEASED")
 
+    def test_return_approval_keeps_keys_issue_in_review(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Return Admin', 'return-approval-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin = con.execute("SELECT * FROM users WHERE email = 'return-approval-admin@example.com'").fetchone()
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'RETURN_SUBMITTED', status = 'RETURN_SUBMITTED', payment_status = 'PAID',
+                    security_deposit_status = 'AUTHORIZED', security_deposit_payment_intent_id = 'pi_keys_review',
+                    actual_return_date = '2026-10-20', actual_return_time = '10:00 AM', return_odometer = 12500,
+                    return_fuel_level = 'FULL', return_condition_status = 'ACCEPTABLE', new_damage_found = 'NO',
+                    return_keys_confirmed = 'MISSING', return_cleanliness_status = 'CLEAN', return_smoking_status = 'NO',
+                    return_customer_signature = 'Hold Tester', return_review_status = 'CHARGES_PENDING',
+                    return_front_image = 'front.jpg', return_back_image = 'back.jpg', return_left_image = 'left.jpg', return_right_image = 'right.jpg',
+                    return_odometer_image = 'odometer.jpg', return_fuel_image = 'fuel.jpg', return_interior_front_image = 'inside-front.jpg', return_interior_rear_image = 'inside-rear.jpg'
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+
+        class Handler:
+            def read_json_body(self):
+                return {"bookingId": booking["id"], "action": "APPROVE_RETURN"}
+
+            def require_mobile_admin(self):
+                return admin
+
+            def send_json(self, payload, status=200):
+                self.response = (status, payload)
+
+        handler = Handler()
+        with patch.object(app, "stripe_api_request", side_effect=AssertionError("a held return must not release a deposit")):
+            app.FairFaresHandler.api_mobile_admin_handoff_review(handler)
+        self.assertEqual(handler.response[0], 409)
+        self.assertIn("keys or accessories review", handler.response[1]["error"])
+        held = app.get_booking_by_id(booking["id"])
+        self.assertEqual(held["booking_status"], "RETURN_SUBMITTED")
+        self.assertEqual(held["security_deposit_status"], "AUTHORIZED")
+
+    def test_completed_clear_return_can_retry_authorized_deposit_release(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('Retry Admin', 'retry-release-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin = con.execute("SELECT * FROM users WHERE email = 'retry-release-admin@example.com'").fetchone()
+            con.execute(
+                """
+                UPDATE bookings
+                SET booking_status = 'RETURNED', status = 'RETURNED', payment_status = 'PAID',
+                    security_deposit_status = 'AUTHORIZED', security_deposit_payment_intent_id = 'pi_retry_release',
+                    return_review_status = 'CLEAR_TO_RELEASE', actual_return_date = '2026-10-20', actual_return_time = '10:00 AM',
+                    return_odometer = 12500, return_fuel_level = 'FULL', return_condition_status = 'ACCEPTABLE', new_damage_found = 'NO',
+                    return_keys_confirmed = 'RETURNED', return_cleanliness_status = 'CLEAN', return_smoking_status = 'NO',
+                    return_customer_signature = 'Hold Tester', return_staff_signature = 'Retry Admin',
+                    return_front_image = 'front.jpg', return_back_image = 'back.jpg', return_left_image = 'left.jpg', return_right_image = 'right.jpg',
+                    return_odometer_image = 'odometer.jpg', return_fuel_image = 'fuel.jpg', return_interior_front_image = 'inside-front.jpg', return_interior_rear_image = 'inside-rear.jpg'
+                WHERE id = ?
+                """,
+                (booking["id"],),
+            )
+
+        class Handler:
+            def read_json_body(self):
+                return {"bookingId": booking["id"], "action": "RETRY_DEPOSIT_RELEASE"}
+
+            def require_mobile_admin(self):
+                return admin
+
+            def send_json(self, payload, status=200):
+                self.response = (status, payload)
+
+        class ListHandler:
+            path = "/api/mobile/admin/pickups"
+
+            def require_mobile_admin(self):
+                return admin
+
+            def send_json(self, payload, status=200):
+                self.response = (status, payload)
+
+        list_handler = ListHandler()
+        app.FairFaresHandler.api_mobile_admin_pickups(list_handler)
+        queued = next(item for item in list_handler.response[1]["pickups"] if item["id"] == booking["id"])
+        self.assertTrue(queued["canRetryDepositRelease"])
+
+        handler = Handler()
+        with patch.object(app, "stripe_api_request", return_value=({"id": "pi_retry_release", "status": "canceled"}, "ok")), patch.object(app, "send_rental_booking_push"):
+            app.FairFaresHandler.api_mobile_admin_handoff_review(handler)
+        self.assertEqual(handler.response[0], 200)
+        self.assertEqual(app.get_booking_by_id(booking["id"])["security_deposit_status"], "RELEASED")
+
     def test_staff_damage_return_requires_evidence_and_notifies_renter(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)

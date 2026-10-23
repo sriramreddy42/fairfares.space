@@ -103,7 +103,7 @@ export type StaffPickupBooking = {
   returnLocation?: string;
   returnDate?: string;
   returnTime?: string;
-  bookingStatus: "CONFIRMED" | "PICKUP_SUBMITTED" | "PICKED_UP" | "RETURN_SUBMITTED";
+  bookingStatus: "CONFIRMED" | "PICKUP_SUBMITTED" | "PICKED_UP" | "RETURN_SUBMITTED" | "RETURNED";
   paymentStatus: "HOLD_PAID" | "PAID";
   depositStatus: string;
   depositAmount: number;
@@ -118,6 +118,7 @@ export type StaffPickupBooking = {
   returnDamagePhotoCount?: number;
   offlineReturnEligible?: boolean;
   canReconcileOfflineReturn?: boolean;
+  canRetryDepositRelease?: boolean;
   identityStatus?: string;
   identityTitle?: string;
   identityMessage?: string;
