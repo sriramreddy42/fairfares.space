@@ -125,6 +125,13 @@ export function StaffPickupScreen({ onClose }: Props) {
           const canRetryDepositRelease = Boolean(booking.canRetryDepositRelease);
           const identityVerified = booking.identityStatus === "VERIFIED";
           const canReconcileOfflineReturn = Boolean(booking.canReconcileOfflineReturn);
+          const depositCopy = authorized
+            ? `$${depositAmount.toFixed(2)} refundable authorization: on hold`
+            : booking.depositStatus === "RELEASED"
+              ? `$${depositAmount.toFixed(2)} refundable authorization: released`
+              : booking.depositStatus === "NOT_AUTHORIZED"
+                ? "No refundable deposit authorization was collected"
+                : `$${depositAmount.toFixed(2)} refundable authorization: ${booking.depositStatus.replaceAll("_", " ").toLowerCase()}`;
           return (
             <View key={booking.id} style={styles.card}>
               <View style={styles.rowBetween}>
@@ -133,7 +140,7 @@ export function StaffPickupScreen({ onClose }: Props) {
               </View>
               <Text style={styles.body}>{booking.customerName} · {booking.customerEmail}</Text>
               <Text style={styles.body}>{booking.pickupDate} · {booking.pickupTime}</Text>
-              <Text style={styles.amount}>{authorized ? `$${depositAmount.toFixed(2)} refundable authorization: authorized` : `$${depositAmount.toFixed(2)} optional refundable authorization`}</Text>
+              <Text style={styles.amount}>{depositCopy}</Text>
               <View style={[styles.identityCard, identityVerified && styles.identityCardVerified]}>
                 <Text style={styles.identityTitle}>{booking.identityTitle || (identityVerified ? "Identity verified" : "Identity verification required")}</Text>
                 <Text style={styles.body}>{booking.identityMessage || "Verify the customer's driving license and selfie before vehicle release."}</Text>
