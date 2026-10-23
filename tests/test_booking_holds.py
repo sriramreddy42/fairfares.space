@@ -943,6 +943,19 @@ class BookingHoldTest(unittest.TestCase):
         # transition has completed. This verifies the stage guard does not
         # block the legitimate clear-return release path.
         handler.redirected_to = ""
+        form["return_fuel_level"] = ""
+        with patch.object(app, "store_rental_handoff_photo", return_value="r2://fairfares-attachments/rental-handoff/test.jpg"), patch.object(
+            app, "stripe_api_request", side_effect=AssertionError("An incomplete return must not release a deposit")
+        ):
+            app.FairFaresHandler.save_pickup_documents(handler)
+        incomplete = app.get_booking_by_id(booking["id"])
+        self.assertTrue(handler.redirected_to.startswith("/admin/pickup?notice="))
+        self.assertEqual(incomplete["booking_status"], "PICKED_UP")
+        self.assertEqual(incomplete["return_review_status"], "PENDING")
+        self.assertEqual(incomplete["security_deposit_status"], "AUTHORIZED")
+
+        handler.redirected_to = ""
+        form["return_fuel_level"] = "Full"
         with patch.object(app, "store_rental_handoff_photo", return_value="r2://fairfares-attachments/rental-handoff/test.jpg"), patch.object(
             app, "stripe_api_request", return_value=({"status": "canceled"}, "ok")
         ):

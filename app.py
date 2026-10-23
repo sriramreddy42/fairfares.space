@@ -36985,6 +36985,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user = self.require_admin()
         if not user:
             return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        notice = str(query.get("notice", [""])[0] or "").strip()
         retention_cutoff = (datetime.utcnow().date() - timedelta(days=RENTAL_HANDOFF_EVIDENCE_RETENTION_DAYS)).isoformat()
         pickup_bookings = [
             row for row in get_admin_bookings()
@@ -37003,6 +37005,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "admin_pickup.html",
             admin_name=escape(user["name"]),
             admin_nav=self.render_admin_nav(user, "pickup"),
+            notice=f'<div class="admin-alert">{escape(notice)}</div>' if notice else "",
             records=records or '<p class="admin-empty">No pickups or returns awaiting staff review.</p>',
         )
         self.send_html(body)
@@ -39087,6 +39090,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = form.get("user_id")
         pricing_update_booking_id = 0
         handoff_stage_before_save = ""
+        return_clear_blockers: list[str] = []
         def safe_int_field(name: str) -> int:
             try:
                 return max(0, int(float(form.get(name, "") or 0)))
@@ -39486,6 +39490,22 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if (
             saved_booking
             and handoff_stage_before_save in {"PICKED_UP", "RETURN_SUBMITTED"}
+            and return_review_status == "CLEAR_TO_RELEASE"
+        ):
+            return_clear_blockers = return_release_blockers(
+                saved_booking,
+                require_authorized_deposit=False,
+            )
+            if return_clear_blockers:
+                with db() as con:
+                    con.execute(
+                        "UPDATE bookings SET return_review_status = 'PENDING' WHERE id = ?",
+                        (saved_booking_id,),
+                    )
+                saved_booking = get_booking_by_id(saved_booking_id)
+        if (
+            saved_booking
+            and handoff_stage_before_save in {"PICKED_UP", "RETURN_SUBMITTED"}
             and return_checks_clear_for_deposit_release(saved_booking)
         ):
             with db() as con:
@@ -39496,6 +39516,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 con.execute("UPDATE cars SET status = 'AVAILABLE' WHERE id = ?", (row_value(saved_booking, "car_id"),))
             saved_booking = get_booking_by_id(saved_booking_id)
             release_security_deposit_after_clear_return(saved_booking)
+        if return_clear_blockers:
+            missing = ", ".join(return_clear_blockers)
+            self.redirect(f"/admin/pickup?notice={urllib.parse.quote('Return review remains pending. Complete: ' + missing)}")
+            return
         self.redirect("/admin/pickup")
 
     def prefill_pickup_documents(self) -> None:
