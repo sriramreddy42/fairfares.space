@@ -41617,7 +41617,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 and row_value(row, "return_review_status") == "CLEAR_TO_RELEASE"
                 and not return_release_blockers(row)
             )
-            if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"} and not retryable_deposit_release:
+            historical_lookup = bool(booking_identifier and booking_status == "RETURNED")
+            if not booking_ready_for_pickup(row) and booking_status not in {"PICKUP_SUBMITTED", "PICKED_UP", "RETURN_SUBMITTED"} and not retryable_deposit_release and not historical_lookup:
                 continue
             identity_row = latest_identity_verification(
                 int(row_value(row, "user_id") or 0),

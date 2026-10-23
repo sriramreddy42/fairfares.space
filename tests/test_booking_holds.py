@@ -690,6 +690,34 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(handler.response[0], 200)
         self.assertEqual(app.get_booking_by_id(booking["id"])["security_deposit_status"], "RELEASED")
 
+    def test_staff_can_find_completed_return_by_exact_booking_number(self):
+        car = app.get_cars()[0]
+        booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified, role, is_admin) VALUES ('History Admin', 'history-admin@example.com', ?, 1, 'ADMIN', 1)",
+                (app.hash_password("Password123!"),),
+            )
+            admin = con.execute("SELECT * FROM users WHERE email = 'history-admin@example.com'").fetchone()
+            con.execute(
+                "UPDATE bookings SET booking_status = 'RETURNED', status = 'RETURNED', payment_status = 'PAID', security_deposit_status = 'RELEASED', return_review_status = 'RELEASED' WHERE id = ?",
+                (booking["id"],),
+            )
+
+        class Handler:
+            path = f"/api/mobile/admin/pickups?bookingId={booking['booking_id']}"
+
+            def require_mobile_admin(self):
+                return admin
+
+            def send_json(self, payload, status=200):
+                self.response = (status, payload)
+
+        handler = Handler()
+        app.FairFaresHandler.api_mobile_admin_pickups(handler)
+        self.assertTrue(handler.response[1]["lookup"]["found"])
+        self.assertEqual([item["bookingId"] for item in handler.response[1]["pickups"]], [booking["booking_id"]])
+
     def test_staff_damage_return_requires_evidence_and_notifies_renter(self):
         car = app.get_cars()[0]
         booking = app.create_booking_for_user(self.user_id, car["id"], days=3)
