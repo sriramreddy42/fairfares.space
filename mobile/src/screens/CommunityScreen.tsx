@@ -564,6 +564,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [postValidation, setPostValidation] = useState<{ title?: string; body?: string }>({});
   const fieldExamples = postFieldExamples(form.category);
   const [publishing, setPublishing] = useState(false);
+  const [postVideoUploads, setPostVideoUploads] = useState<Record<string, number>>({});
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
@@ -1275,9 +1276,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   ) => {
     const pendingVideo = draftMedia.find((item) => item.pendingVideo)?.pendingVideo;
     if (!pendingVideo) return;
+    setPostVideoUploads((current) => ({ ...current, [postId]: 0 }));
     void (async () => {
       try {
-        const uploaded = await uploadCommunityVideo(pendingVideo);
+        const uploaded = await uploadCommunityVideo(pendingVideo, (progress) => {
+          setPostVideoUploads((current) => ({ ...current, [postId]: progress }));
+        });
         const media = draftMedia.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
         await updateCommunityPost(postId, { title, body, linkUrl, details, media });
         mutatePost(postId, (post) => ({
@@ -1290,7 +1294,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           images: media.filter((item) => item.type === "IMAGE").map((item) => item.url),
         }));
         void load(true);
+        setPostVideoUploads((current) => ({ ...current, [postId]: 1 }));
+        setTimeout(() => setPostVideoUploads((current) => {
+          const { [postId]: _completed, ...remaining } = current;
+          return remaining;
+        }), 1500);
       } catch (error) {
+        setPostVideoUploads((current) => {
+          const { [postId]: _failed, ...remaining } = current;
+          return remaining;
+        });
         Alert.alert("Video could not upload", `${message(error)} Your post is live; you can edit it to try the video again.`);
       }
     })();
@@ -1667,6 +1680,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
+      {postVideoUploads[post.id] !== undefined ? <View style={{ gap: 6, padding: 10, borderRadius: 12, backgroundColor: isLight ? "#ecfdf5" : "#123d2d" }}><Text style={{ color: isLight ? "#166534" : "#8ee7bc", fontSize: 12, fontWeight: "800" }}>Uploading video · {Math.round(postVideoUploads[post.id] * 100)}%</Text><View style={{ height: 6, borderRadius: 999, overflow: "hidden", backgroundColor: isLight ? "#bbf7d0" : "#285f47" }}><View style={{ width: `${Math.max(2, Math.round(postVideoUploads[post.id] * 100))}%`, height: "100%", borderRadius: 999, backgroundColor: theme.colors.brand }} /></View></View> : null}
       {renderPostImages(post, showingPostDetail)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </PostOpenContainer>

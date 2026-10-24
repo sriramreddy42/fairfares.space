@@ -1331,7 +1331,37 @@ export async function createCommunityPost(input: CommunityPostInput) {
   return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
 }
 
-export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }) {
+export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {
+  if (Platform.OS !== "web") {
+    const task = FileSystem.createUploadTask(
+      `${currentApiBase()}/api/mobile/community/video`,
+      file.uri,
+      {
+        httpMethod: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-FairFares-Client-Platform": Platform.OS,
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: "video",
+        mimeType: file.mimeType,
+        sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+      },
+      ({ totalBytesSent, totalBytesExpectedToSend }) => {
+        if (totalBytesExpectedToSend > 0) onProgress?.(Math.max(0, Math.min(1, totalBytesSent / totalBytesExpectedToSend)));
+      },
+    );
+    const result = await task.uploadAsync();
+    if (!result) throw new Error("Video upload did not complete.");
+    let payload: { ok?: boolean; error?: string; media?: { url: string; type: "VIDEO" } } = {};
+    try { payload = JSON.parse(result.body || "{}") as typeof payload; } catch { /* Preserve the HTTP error below. */ }
+    if (result.status < 200 || result.status >= 300 || !payload.ok || !payload.media) {
+      throw new Error(payload.error || `Video upload failed (${result.status}).`);
+    }
+    onProgress?.(1);
+    return { ok: true, media: payload.media };
+  }
   const body = new FormData();
   if (Platform.OS === "web") {
     const videoBlob = await fetch(file.uri).then((response) => response.blob());
