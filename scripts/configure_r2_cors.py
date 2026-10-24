@@ -38,7 +38,7 @@ def main() -> int:
             CORSConfiguration={"CORSRules": [{
                 "AllowedOrigins": origins,
                 "AllowedMethods": ["GET", "PUT", "HEAD"],
-                "AllowedHeaders": ["content-type", "x-amz-checksum-sha256", "x-amz-meta-upload-id"],
+                "AllowedHeaders": ["content-type", "content-md5", "x-amz-checksum-sha256", "x-amz-meta-upload-id"],
                 "ExposeHeaders": ["etag", "content-length", "x-amz-checksum-sha256"],
                 "MaxAgeSeconds": 3600,
             }]},

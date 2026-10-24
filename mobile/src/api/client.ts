@@ -1331,7 +1331,119 @@ export async function createCommunityPost(input: CommunityPostInput) {
   return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
 }
 
+type CommunityVideoUploadAuthorization = {
+  ok: boolean;
+  direct?: boolean;
+  uploadId?: string;
+  partSize?: number;
+  partCount?: number;
+};
+
+type CommunityVideoPartAuthorization = { ok: boolean; uploadUrl: string; headers: Record<string, string> };
+
+type CommunityVideoUploadResult = { ok: boolean; media: { url: string; type: "VIDEO" } };
+
+async function uploadCommunityVideoDirectToR2(
+  file: { uri: string; name: string; mimeType: string },
+  authorization: Required<Pick<CommunityVideoUploadAuthorization, "uploadId" | "partSize" | "partCount">>,
+  source: File,
+  onProgress?: (progress: number) => void,
+): Promise<CommunityVideoUploadResult> {
+  const sourceSize = source.size;
+  const partNumbers = Array.from({ length: authorization.partCount }, (_, index) => index + 1);
+  const completedParts: Array<{ partNumber: number; etag: string }> = [];
+  let nextPartIndex = 0;
+  let uploadedBytes = 0;
+  const reportProgress = () => onProgress?.(Math.max(0, Math.min(0.99, uploadedBytes / sourceSize)));
+  reportProgress();
+
+  const uploadNextPart = async () => {
+    while (nextPartIndex < partNumbers.length) {
+      const partNumber = partNumbers[nextPartIndex++];
+      const size = partNumber < authorization.partCount
+        ? authorization.partSize
+        : sourceSize - authorization.partSize * (authorization.partCount - 1);
+      const partFile = new File(Paths.cache, `community-video-${authorization.uploadId}-${partNumber}.part`);
+      let bytes: Uint8Array | null = null;
+      try {
+        let partMd5 = "";
+        if (FairFaresCrypto.multipartStagingAvailable) {
+          const staged = await FairFaresCrypto.stageMultipartPart(source.uri, partFile.uri, (partNumber - 1) * authorization.partSize, size);
+          if (staged.size !== size || !staged.md5Base64) throw new Error("Video part could not be prepared.");
+          partMd5 = staged.md5Base64;
+        } else {
+          const reader = source.open();
+          reader.offset = (partNumber - 1) * authorization.partSize;
+          try { bytes = reader.readBytes(size); } finally { reader.close(); }
+          if (bytes.byteLength !== size) throw new Error("Video ended before upload preparation finished.");
+          partMd5 = naclUtil.encodeBase64(md5(bytes));
+          partFile.create({ overwrite: true, intermediates: true });
+          partFile.write(bytes);
+        }
+        const signed = await request<CommunityVideoPartAuthorization>("/api/mobile/community/video/part", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uploadId: authorization.uploadId, partNumber, partSize: size, partMd5 }),
+        });
+        let upload: FileSystem.FileSystemUploadResult | undefined;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          upload = await FileSystem.uploadAsync(signed.uploadUrl, partFile.uri, {
+            httpMethod: "PUT", headers: signed.headers,
+            uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+            sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+          });
+          if (upload.status >= 200 && upload.status < 300) break;
+          if (attempt < 2) await wait([500, 1250][attempt]);
+        }
+        const etag = String(upload?.headers?.etag || upload?.headers?.ETag || upload?.headers?.Etag || "");
+        if (!upload || upload.status < 200 || upload.status >= 300 || !etag) throw new Error("A direct video part did not finish uploading.");
+        completedParts.push({ partNumber, etag });
+        uploadedBytes += size;
+        reportProgress();
+      } finally {
+        bytes?.fill(0);
+        if (partFile.exists) partFile.delete();
+      }
+    }
+  };
+
+  // Two parts transfer at once: enough to use a phone's uplink without making
+  // video playback, messaging, or the compositor contend with a large burst.
+  await Promise.all(Array.from({ length: Math.min(2, partNumbers.length) }, () => uploadNextPart()));
+  const result = await request<CommunityVideoUploadResult>("/api/mobile/community/video/complete", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uploadId: authorization.uploadId, parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }),
+  });
+  onProgress?.(1);
+  return result;
+}
+
 export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {
+  if (Platform.OS !== "web") {
+    const source = new File(file.uri);
+    if (source.exists && source.size > 0) {
+      try {
+        const authorization = await request<CommunityVideoUploadAuthorization>("/api/mobile/community/video/authorize", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: file.name, mimeType: file.mimeType, size: source.size }),
+        });
+        if (authorization.direct && authorization.uploadId && authorization.partSize && authorization.partCount) {
+          return await uploadCommunityVideoDirectToR2(file, {
+            uploadId: authorization.uploadId, partSize: authorization.partSize, partCount: authorization.partCount,
+          }, source, onProgress);
+        }
+      } catch (error) {
+        const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
+        // An older local or just-deployed server has no authorization route.
+        // Keep the original relay working until that server updates; do not
+        // fall back after a direct upload has actually begun.
+        if (status !== 404) throw error;
+      }
+    }
+  }
+  return uploadCommunityVideoViaApi(file, onProgress);
+}
+
+async function uploadCommunityVideoViaApi(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {
   if (Platform.OS !== "web") {
     // Expo FileSystem's LocalUploadTask has been observed to lose the iOS
     // connection (NSURLErrorDomain -1005) after it reports partial progress.

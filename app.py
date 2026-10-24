@@ -155,6 +155,8 @@ MAX_CHAT_ENCRYPTED_ATTACHMENT_BYTES = 100_010_000
 MAX_CHAT_ENVELOPE_CIPHERTEXT_CHARS = 72_000
 CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
+COMMUNITY_VIDEO_MULTIPART_PART_BYTES = 8 * 1024 * 1024
+COMMUNITY_VIDEO_UPLOAD_HOURS = 24
 CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 100)))
 CHITTHI_ROLLOUT_PERCENT = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_ROLLOUT_PERCENT", 100))
 CHITTHI_MULTIPART_ROLLOUT_ENABLED = os.environ.get("FAIRFARES_CHITTHI_MULTIPART_ENABLED", "1").strip() == "1"
@@ -1046,15 +1048,143 @@ def community_post_upload_type(data_url: str) -> str:
     return ""
 
 
-def is_saved_community_video(value: str) -> bool:
-    """A video accepted by the dedicated upload endpoint, ready for a post."""
+def community_video_r2_object_key(filename: str) -> str:
+    clean_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", filename).strip("-") or "community-video"
+    extension = Path(clean_name).suffix.lower() or ".mp4"
+    date_path = datetime.now(UTC).strftime("%Y/%m/%d")
+    prefix = "/".join(part for part in (R2_OBJECT_PREFIX, "community-videos", date_path) if part)
+    return f"{prefix}/{Path(clean_name).stem[:80]}-{secrets.token_hex(12)}{extension}"
+
+
+def create_community_video_upload_authorization(*, user_id: int, filename: str, mime_type: str, size: int) -> tuple[dict[str, object], str]:
+    """Create an R2 multipart upload without routing the video bytes through FairFares."""
+    if not r2_storage_configured():
+        return {"direct": False}, ""
+    media_mime_type = str(mime_type or "").strip().lower()
+    safe_name = Path(str(filename or "community-video")).name
+    if media_mime_type not in ALLOWED_COMMUNITY_VIDEO_MIME_TYPES:
+        return {}, "Choose an MP4, MOV, or WebM video."
+    if size <= 0 or size > MAX_COMMUNITY_VIDEO_BYTES:
+        return {}, "Choose an MP4, MOV, or WebM video that is no larger than 100 MB."
+    public_id = f"CVU-{secrets.token_urlsafe(24)}"
+    object_key = community_video_r2_object_key(safe_name)
+    try:
+        created = r2_storage_client().create_multipart_upload(
+            Bucket=R2_BUCKET_NAME, Key=object_key, ContentType=media_mime_type,
+            Metadata={"upload-id": public_id, "original-name": safe_name[:180]},
+        )
+        multipart_upload_id = str(created.get("UploadId") or "")
+    except Exception:
+        return {}, "Could not start the direct video upload."
+    if not multipart_upload_id:
+        return {}, "Direct video storage did not return an upload identifier."
+    try:
+        with db() as con:
+            con.execute(
+                """INSERT INTO community_video_uploads
+                   (public_id, uploader_user_id, object_key, original_name, media_mime_type, expected_size,
+                    multipart_upload_id, multipart_part_size, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
+                (public_id, user_id, object_key, safe_name[:180], media_mime_type, size,
+                 multipart_upload_id, COMMUNITY_VIDEO_MULTIPART_PART_BYTES, f"+{COMMUNITY_VIDEO_UPLOAD_HOURS} hours"),
+            )
+    except Exception:
+        try:
+            r2_storage_client().abort_multipart_upload(Bucket=R2_BUCKET_NAME, Key=object_key, UploadId=multipart_upload_id)
+        except Exception:
+            pass
+        return {}, "Could not save the direct video upload."
+    return {
+        "direct": True, "uploadId": public_id, "partSize": COMMUNITY_VIDEO_MULTIPART_PART_BYTES,
+        "partCount": (size + COMMUNITY_VIDEO_MULTIPART_PART_BYTES - 1) // COMMUNITY_VIDEO_MULTIPART_PART_BYTES,
+        "expiresIn": CHITTHI_PRESIGNED_URL_SECONDS,
+    }, ""
+
+
+def pending_community_video_upload(*, upload_id: str, user_id: int) -> sqlite3.Row | None:
+    with db() as con:
+        return con.execute(
+            """SELECT * FROM community_video_uploads WHERE public_id = ? AND uploader_user_id = ?
+               AND completed_at IS NULL AND datetime(expires_at) > datetime('now') LIMIT 1""",
+            (clean_text_value(upload_id, 100), user_id),
+        ).fetchone()
+
+
+def authorize_community_video_part(*, upload_id: str, user_id: int, part_number: int, part_size: int, part_md5: str) -> tuple[dict[str, object] | None, str]:
+    upload = pending_community_video_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return None, "Video upload was not found or has expired."
+    configured_part_size = int(upload["multipart_part_size"])
+    expected_size = int(upload["expected_size"])
+    part_count = (expected_size + configured_part_size - 1) // configured_part_size
+    expected_part_size = configured_part_size if part_number < part_count else expected_size - configured_part_size * (part_count - 1)
+    checksum = valid_md5_base64(part_md5)
+    if part_number < 1 or part_number > part_count or part_size != expected_part_size or not checksum:
+        return None, "Video part details are invalid."
+    try:
+        upload_url = r2_storage_client().generate_presigned_url(
+            "upload_part", Params={"Bucket": R2_BUCKET_NAME, "Key": str(upload["object_key"]),
+              "UploadId": str(upload["multipart_upload_id"]), "PartNumber": part_number,
+              "ContentLength": part_size, "ContentMD5": checksum}, ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
+        )
+    except Exception:
+        return None, "Could not authorize this video part."
+    return {"uploadUrl": upload_url, "headers": {"Content-MD5": checksum}}, ""
+
+
+def complete_community_video_upload(*, upload_id: str, user_id: int, completed_parts: list[dict[str, object]]) -> tuple[dict[str, object] | None, str]:
+    upload = pending_community_video_upload(upload_id=upload_id, user_id=user_id)
+    if not upload:
+        return None, "Video upload was not found or has expired."
+    expected_size = int(upload["expected_size"])
+    part_size = int(upload["multipart_part_size"])
+    expected_count = (expected_size + part_size - 1) // part_size
+    normalized = sorted(
+        ({"PartNumber": int(part.get("partNumber") or 0), "ETag": str(part.get("etag") or "")} for part in completed_parts),
+        key=lambda part: part["PartNumber"],
+    )
+    if len(normalized) != expected_count or [part["PartNumber"] for part in normalized] != list(range(1, expected_count + 1)):
+        return None, "Every video part is required before completion."
+    try:
+        remote = r2_storage_client().list_parts(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]))
+        remote_parts = {int(part.get("PartNumber") or 0): part for part in (remote.get("Parts") or [])}
+        for part in normalized:
+            number = part["PartNumber"]
+            expected_part_size = part_size if number < expected_count else expected_size - part_size * (expected_count - 1)
+            found = remote_parts.get(number)
+            if not found or int(found.get("Size") or 0) != expected_part_size or not secrets.compare_digest(str(found.get("ETag") or ""), part["ETag"]):
+                return None, "Video part verification failed."
+        r2_storage_client().complete_multipart_upload(
+            Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]),
+            MultipartUpload={"Parts": normalized},
+        )
+        head = r2_storage_client().head_object(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]))
+        metadata = head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        if int(head.get("ContentLength") or 0) != expected_size or not secrets.compare_digest(str(metadata.get("upload-id") or ""), str(upload["public_id"])):
+            return None, "Video upload verification failed."
+        with db() as con:
+            con.execute("UPDATE community_video_uploads SET completed_at = CURRENT_TIMESTAMP WHERE id = ?", (int(upload["id"]),))
+    except Exception:
+        return None, "Could not complete the direct video upload."
+    return {"url": f"r2://{R2_BUCKET_NAME}/{upload['object_key']}", "type": "VIDEO"}, ""
+
+
+def is_saved_community_video(value: str, uploader_user_id: int = 0) -> bool:
+    """Allow legacy local clips plus an R2 object finalized by its uploader."""
     raw_value = str(value or "").strip()
     parsed = urllib.parse.urlparse(raw_value)
     path = parsed.path if parsed.path else raw_value.replace("local://", "/", 1)
-    return (
-        (raw_value.startswith("local://uploads/community/") or path.startswith("/uploads/community/"))
-        and Path(path).suffix.lower() in {".mp4", ".mov", ".webm"}
-    )
+    if ((raw_value.startswith("local://uploads/community/") or path.startswith("/uploads/community/"))
+            and Path(path).suffix.lower() in {".mp4", ".mov", ".webm"}):
+        return True
+    if not (uploader_user_id > 0 and raw_value.startswith(f"r2://{R2_BUCKET_NAME}/")):
+        return False
+    object_key = raw_value.removeprefix(f"r2://{R2_BUCKET_NAME}/")
+    with db() as con:
+        return con.execute(
+            "SELECT 1 FROM community_video_uploads WHERE uploader_user_id = ? AND object_key = ? AND completed_at IS NOT NULL LIMIT 1",
+            (uploader_user_id, object_key),
+        ).fetchone() is not None
 
 
 def community_post_media_limit_error(media_types: Iterable[str]) -> str:
@@ -2029,6 +2159,37 @@ def forward_chitthi_attachment(
         return saved, destination, ""
 
 
+def cleanup_unfinalized_community_video_uploads(limit: int | None = None) -> dict[str, int]:
+    """Abort expired direct public-video uploads so unfinished R2 parts cannot accumulate."""
+    result = {"scanned": 0, "aborted": 0, "failed": 0}
+    if not r2_storage_configured():
+        return result
+    with db() as con:
+        rows = con.execute(
+            """SELECT id, object_key, multipart_upload_id FROM community_video_uploads
+               WHERE completed_at IS NULL AND datetime(expires_at) <= datetime('now')
+               ORDER BY id ASC LIMIT ?""",
+            (max(1, min(int(limit or 250), 1000)),),
+        ).fetchall()
+    for row in rows:
+        result["scanned"] += 1
+        try:
+            r2_storage_client().abort_multipart_upload(
+                Bucket=R2_BUCKET_NAME, Key=str(row["object_key"]), UploadId=str(row["multipart_upload_id"]),
+            )
+        except Exception:
+            # R2 reports NoSuchUpload after a caller or lifecycle policy has
+            # already removed it. The database row is still safe to clear.
+            pass
+        try:
+            with db() as con:
+                con.execute("DELETE FROM community_video_uploads WHERE id = ? AND completed_at IS NULL", (int(row["id"]),))
+            result["aborted"] += 1
+        except Exception:
+            result["failed"] += 1
+    return result
+
+
 def cleanup_unfinalized_chitthi_uploads(limit: int | None = None) -> dict[str, int]:
     scanned = deleted = failed = 0
     batch_limit = max(1, min(int(limit or CHITTHI_ATTACHMENT_CLEANUP_BATCH), 5000))
@@ -2072,6 +2233,7 @@ def start_chitthi_housekeeping_scheduler() -> None:
                 cleanup_expired_rental_handoff_evidence(limit=100)
                 if r2_storage_configured():
                     cleanup_unfinalized_chitthi_uploads(limit=250)
+                    cleanup_unfinalized_community_video_uploads(limit=250)
                     migrate_legacy_avatar_storage(limit=100)
             except Exception as exc:
                 print(f"Chitthi housekeeping failed: {exc}")
@@ -7255,6 +7417,22 @@ def init_db() -> None:
                 FOREIGN KEY(message_id) REFERENCES chat_messages(id)
             );
 
+            CREATE TABLE IF NOT EXISTS community_video_uploads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id TEXT NOT NULL UNIQUE,
+                uploader_user_id INTEGER NOT NULL,
+                object_key TEXT NOT NULL UNIQUE,
+                original_name TEXT NOT NULL DEFAULT '',
+                media_mime_type TEXT NOT NULL,
+                expected_size INTEGER NOT NULL,
+                multipart_upload_id TEXT NOT NULL,
+                multipart_part_size INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(uploader_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_attachment_device_receipts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id INTEGER NOT NULL,
@@ -8531,6 +8709,8 @@ def init_db() -> None:
             )
             """
         )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_community_video_uploads_user ON community_video_uploads(uploader_user_id, completed_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_community_video_uploads_object ON community_video_uploads(object_key)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_conversation_user ON chat_participants(conversation_id, user_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_community ON chat_conversations(community_id)")
@@ -13735,7 +13915,8 @@ def community_post_payload(
         if not item:
             continue
         url, separator, media_type = item.partition(chr(30))
-        media.append({"url": url, "type": media_type if separator and media_type in {"IMAGE", "VIDEO"} else "IMAGE"})
+        public_url = public_upload_url(url) if url.startswith(f"r2://{R2_BUCKET_NAME}/") else url
+        media.append({"url": public_url, "type": media_type if separator and media_type in {"IMAGE", "VIDEO"} else "IMAGE"})
     images = [str(item["url"]) for item in media if item["type"] == "IMAGE"]
     try:
         details = json.loads(str(row_value(row, "details_json") or "{}"))
@@ -25844,6 +26025,16 @@ def public_upload_url(value: str) -> str:
         return ""
     if value.startswith("local://uploads/"):
         return "/" + value.replace("local://", "", 1)
+    if value.startswith(f"r2://{R2_BUCKET_NAME}/") and r2_storage_configured():
+        object_key = value.removeprefix(f"r2://{R2_BUCKET_NAME}/")
+        if object_key:
+            try:
+                return r2_storage_client().generate_presigned_url(
+                    "get_object", Params={"Bucket": R2_BUCKET_NAME, "Key": object_key},
+                    ExpiresIn=CHITTHI_PRESIGNED_URL_SECONDS,
+                )
+            except Exception:
+                return ""
     return optimized_static_image_url(value)
 
 
@@ -28552,6 +28743,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/housing/complete": self.api_mobile_complete_housing,
             "/api/mobile/community/video": self.api_mobile_upload_community_video,
+            "/api/mobile/community/video/authorize": self.api_mobile_authorize_community_video,
+            "/api/mobile/community/video/part": self.api_mobile_authorize_community_video_part,
+            "/api/mobile/community/video/complete": self.api_mobile_complete_community_video,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
             "/api/mobile/community/guest-message": self.api_mobile_community_guest_message,
@@ -44758,7 +44952,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if media_error:
             self.send_json({"ok": False, "error": media_error}, 400)
             return
-        valid_media = [(value, "VIDEO" if is_saved_community_video(value) else community_post_upload_type(value)) for value in raw_media]
+        valid_media = [(value, "VIDEO" if is_saved_community_video(value, int(user["id"])) else community_post_upload_type(value)) for value in raw_media]
         if not all(media_type for _value, media_type in valid_media):
             self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, GIF, MP4, MOV, or WebM attachment within the upload limit."}, 400)
             return
@@ -44802,7 +44996,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             )
             database_id = int(cursor.lastrowid)
             for index, (media_data, media_type) in enumerate(valid_media, start=1):
-                if media_type == "VIDEO" and is_saved_community_video(media_data):
+                if media_type == "VIDEO" and is_saved_community_video(media_data, int(user["id"])):
                     con.execute(
                         "INSERT INTO ask_community_post_images (post_id, image_url, media_type, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
                         (database_id, media_data, media_type, index, now),
@@ -44817,6 +45011,57 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             invalidate_mobile_search_cache("housing")
         row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
         self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"]))}, 201)
+
+    def api_mobile_authorize_community_video(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to upload a video."}, 401)
+            return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before adding a video."}, 403)
+            return
+        payload = self.read_json_body()
+        authorization, error = create_community_video_upload_authorization(
+            user_id=int(user["id"]), filename=clean_text_value(payload.get("name"), 180),
+            mime_type=clean_text_value(payload.get("mimeType"), 100),
+            size=int(float_from_value(payload.get("size")) or 0),
+        )
+        if error:
+            self.send_json({"ok": False, "error": error}, 503 if r2_storage_configured() else 400)
+            return
+        self.send_json({"ok": True, **authorization}, 201)
+
+    def api_mobile_authorize_community_video_part(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to continue the video upload."}, 401)
+            return
+        payload = self.read_json_body()
+        authorization, error = authorize_community_video_part(
+            upload_id=clean_text_value(payload.get("uploadId"), 100), user_id=int(user["id"]),
+            part_number=int(float_from_value(payload.get("partNumber")) or 0),
+            part_size=int(float_from_value(payload.get("partSize")) or 0),
+            part_md5=clean_text_value(payload.get("partMd5"), 100),
+        )
+        if not authorization:
+            self.send_json({"ok": False, "error": error}, 409)
+            return
+        self.send_json({"ok": True, **authorization})
+
+    def api_mobile_complete_community_video(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to complete the video upload."}, 401)
+            return
+        payload = self.read_json_body()
+        parts = payload.get("parts") if isinstance(payload.get("parts"), list) else []
+        media, error = complete_community_video_upload(
+            upload_id=clean_text_value(payload.get("uploadId"), 100), user_id=int(user["id"]), completed_parts=parts,
+        )
+        if not media:
+            self.send_json({"ok": False, "error": error}, 409)
+            return
+        self.send_json({"ok": True, "media": media}, 201)
 
     def api_mobile_upload_community_video(self) -> None:
         user = self.current_user()
@@ -45403,7 +45648,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if media_path in existing_by_path:
                     next_media.append(existing_by_path[media_path])
                     continue
-                media_type = "VIDEO" if is_saved_community_video(media_value) else community_post_upload_type(media_value)
+                media_type = "VIDEO" if is_saved_community_video(media_value, int(user["id"])) else community_post_upload_type(media_value)
                 if not media_type:
                     if not media_supplied:
                         # Older photo-only app versions ignored an individual
@@ -45411,7 +45656,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         continue
                     self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, GIF, MP4, MOV, or WebM attachment within the upload limit."}, 400)
                     return
-                if media_type == "VIDEO" and is_saved_community_video(media_value):
+                if media_type == "VIDEO" and is_saved_community_video(media_value, int(user["id"])):
                     next_media.append((media_value, media_type))
                     continue
                 allowed_mime_types = ALLOWED_COMMUNITY_VIDEO_MIME_TYPES if media_type == "VIDEO" else ALLOWED_HOUSING_IMAGE_MIME_TYPES

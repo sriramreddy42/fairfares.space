@@ -945,6 +945,55 @@ class R2StorageTest(unittest.TestCase):
             with app.db() as con:
                 self.assertIsNotNone(con.execute("SELECT id FROM chat_messages WHERE id = ?", (message_id,)).fetchone())
 
+    def test_community_video_uploads_directly_to_r2_and_requires_its_owner(self):
+        self.addCleanup(app.refresh_storage_paths)
+        client = FakeR2Client()
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {"FAIRFARES_DB_PATH": str(Path(directory) / "fairfares.sqlite3"), "FAIRFARES_SEED_DEFAULTS": "0"}), \
+             mock.patch.object(app, "R2_ACCOUNT_ID", "account"), \
+             mock.patch.object(app, "R2_ACCESS_KEY_ID", "access"), \
+             mock.patch.object(app, "R2_SECRET_ACCESS_KEY", "secret"), \
+             mock.patch.object(app, "R2_BUCKET_NAME", "fairfares-attachments"), \
+             mock.patch.object(app, "COMMUNITY_VIDEO_MULTIPART_PART_BYTES", 8), \
+             mock.patch.object(app, "r2_storage_client", return_value=client):
+            app.refresh_storage_paths(); app.init_db()
+            with app.db() as con:
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Owner', 'video-owner@example.com', 'x', 1)")
+                owner_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Other', 'video-other@example.com', 'x', 1)")
+                other_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+            payload = b"eightbyt" + b"final"
+            authorization, error = app.create_community_video_upload_authorization(
+                user_id=owner_id, filename="walkthrough.mp4", mime_type="video/mp4", size=len(payload),
+            )
+            self.assertFalse(error)
+            self.assertTrue(authorization["direct"])
+            self.assertEqual(authorization["partCount"], 2)
+            upload_id = str(authorization["uploadId"])
+            first = payload[:8]
+            second = payload[8:]
+            completed = []
+            for number, part in enumerate((first, second), start=1):
+                checksum = base64.b64encode(hashlib.md5(part).digest()).decode()
+                signed, error = app.authorize_community_video_part(
+                    upload_id=upload_id, user_id=owner_id, part_number=number, part_size=len(part), part_md5=checksum,
+                )
+                self.assertFalse(error)
+                self.assertEqual(signed["headers"]["Content-MD5"], checksum)
+                with app.db() as con:
+                    row = con.execute("SELECT multipart_upload_id FROM community_video_uploads WHERE public_id = ?", (upload_id,)).fetchone()
+                completed.append({"partNumber": number, "etag": client.upload_test_part(str(row["multipart_upload_id"]), number, part)})
+
+            result, error = app.complete_community_video_upload(upload_id=upload_id, user_id=owner_id, completed_parts=completed)
+            self.assertFalse(error)
+            self.assertEqual(result["type"], "VIDEO")
+            self.assertTrue(app.is_saved_community_video(result["url"], owner_id))
+            self.assertFalse(app.is_saved_community_video(result["url"], other_id))
+            delivery = app.public_upload_url(result["url"])
+            self.assertIn("https://r2.example.test/", delivery)
+            self.assertEqual(client.get_object_calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
