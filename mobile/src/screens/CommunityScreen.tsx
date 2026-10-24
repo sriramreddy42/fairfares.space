@@ -1350,7 +1350,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setPostValidation((current) => current[field] ? { ...current, [field]: undefined } : current);
   };
 
-  const publish = async (videoUploadConfirmed = false) => {
+  const publish = async () => {
     const titleLength = form.title.trim().length;
     const bodyLength = form.body.trim().length;
     const validation = {
@@ -1361,19 +1361,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       setPostValidation(validation);
       return;
     }
-    const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
     let preparedVideo: CommunityVideoFile | null = null;
-    if (hasQueuedVideo && !videoUploadConfirmed) {
-      Alert.alert(
-        "Post while your video uploads?",
-        "Your post will appear to you now with an upload circle. Other members will see it only after the video is verified. You can keep using FairFares; iPhone can continue the transfer in the background and the app will resume it if needed.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Post and upload", onPress: () => { void publish(true); } },
-        ],
-      );
-      return;
-    }
+    const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
     setPublishing(true);
     try {
       // A video post remains private to its author until R2 verifies the
@@ -1414,7 +1403,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           setForm(emptyForm);
           setPostValidation({});
           setComposerOpen(false);
-          Alert.alert("Uploading video", "Your post is saved privately and will be visible to everyone when the video finishes uploading.");
           return;
         }
         const uploaded = await uploadCommunityVideo(preparedVideo, (progress) => setVideoUploadProgress(0.18 + Math.max(0, Math.min(1, progress)) * 0.82), setVideoUploadPath);
