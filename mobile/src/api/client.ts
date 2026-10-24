@@ -454,7 +454,11 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
   // upload-specific error copy) used by endpoints that move attachment bytes.
   const isAttachmentUpload = (path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments"))
     && path !== "/api/chat/e2ee/attachments/forward";
-  const isCommunityVideoUpload = path === "/api/mobile/community/video";
+  // Direct community-video authorization, part signing, and completion can
+  // each wait on R2. They are media operations just like the legacy upload,
+  // not ordinary short JSON requests.
+  const isCommunityVideoUpload = path === "/api/mobile/community/video"
+    || path.startsWith("/api/mobile/community/video/");
   const isAvatarUpload = path === "/api/chat/groups/photo"
     || path === "/api/chat/communities"
     || path === "/api/mobile/profile";
@@ -1439,9 +1443,10 @@ export async function uploadCommunityVideo(
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
         // An older local or just-deployed server has no authorization route.
-        // Keep the original relay working until that server updates; do not
-        // fall back after a direct upload has actually begun.
-        if (status !== 404) throw error;
+        // If the direct storage signer is briefly unavailable, the established
+        // relay remains a safe fallback because no video bytes have been sent
+        // to R2 yet. Do not fall back after a direct upload has begun.
+        if (status && ![404, 502, 503, 504].includes(status)) throw error;
       }
     }
   }
