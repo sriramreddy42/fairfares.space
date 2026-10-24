@@ -1333,37 +1333,38 @@ export async function createCommunityPost(input: CommunityPostInput) {
 
 export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {
   if (Platform.OS !== "web") {
-    const task = FileSystem.createUploadTask(
-      `${currentApiBase()}/api/mobile/community/video`,
-      file.uri,
-      {
-        httpMethod: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": file.mimeType,
-          "X-FairFares-Filename": file.name,
-          "X-FairFares-Client-Platform": Platform.OS,
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
-        // A raw body avoids Expo's iOS multipart uploader stalling after it
-        // has reported the final file bytes. The endpoint still accepts
-        // multipart for the web app, while native retains true byte progress.
-        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-        sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
-      },
-      ({ totalBytesSent, totalBytesExpectedToSend }) => {
-        if (totalBytesExpectedToSend > 0) onProgress?.(Math.max(0, Math.min(1, totalBytesSent / totalBytesExpectedToSend)));
-      },
-    );
-    const result = await task.uploadAsync();
-    if (!result) throw new Error("Video upload did not complete.");
-    let payload: { ok?: boolean; error?: string; media?: { url: string; type: "VIDEO" } } = {};
-    try { payload = JSON.parse(result.body || "{}") as typeof payload; } catch { /* Preserve the HTTP error below. */ }
-    if (result.status < 200 || result.status >= 300 || !payload.ok || !payload.media) {
-      throw new Error(payload.error || `Video upload failed (${result.status}).`);
-    }
-    onProgress?.(1);
-    return { ok: true, media: payload.media };
+    // Expo FileSystem's LocalUploadTask has been observed to lose the iOS
+    // connection (NSURLErrorDomain -1005) after it reports partial progress.
+    // React Native's multipart XMLHttpRequest uses the platform networking
+    // stack directly and exposes byte progress without that task lifecycle.
+    return new Promise<{ ok: boolean; media: { url: string; type: "VIDEO" } }>((resolve, reject) => {
+      const body = new FormData();
+      body.append("video", { uri: file.uri, name: file.name, type: file.mimeType } as never);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${currentApiBase()}/api/mobile/community/video`);
+      xhr.timeout = 120_000;
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.setRequestHeader("X-FairFares-Client-Platform", Platform.OS);
+      if (authToken) xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress?.(Math.max(0, Math.min(1, event.loaded / event.total)));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Video upload lost its connection. Check your internet and try again."));
+      xhr.ontimeout = () => reject(new Error("Video upload took too long. Check your internet and try again."));
+      xhr.onload = () => {
+        let payload: { ok?: boolean; error?: string; media?: { url: string; type: "VIDEO" } } = {};
+        try { payload = JSON.parse(xhr.responseText || "{}") as typeof payload; } catch { /* Preserve the HTTP error below. */ }
+        if (xhr.status < 200 || xhr.status >= 300 || !payload.ok || !payload.media) {
+          reject(new Error(payload.error || `Video upload failed (${xhr.status || "network error"}).`));
+          return;
+        }
+        onProgress?.(1);
+        resolve({ ok: true, media: payload.media });
+      };
+      xhr.send(body);
+    });
   }
   const body = new FormData();
   if (Platform.OS === "web") {
