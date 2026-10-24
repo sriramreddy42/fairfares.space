@@ -1392,12 +1392,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           const nextLinkUrl = form.linkUrl.trim();
           const nextDetails = { ...form.details };
           const uploadProgressKey = `pending-${Date.now()}`;
+          let createdPostId = "";
           const created = await createCommunityVideoPost(
             { ...form, media, city: groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl, details: nextDetails },
             preparedVideo,
-            (progress) => setCommunityVideoProgress((current) => ({ ...current, [uploadProgressKey]: progress })),
+            (progress) => setCommunityVideoProgress((current) => ({ ...current, [createdPostId || uploadProgressKey]: progress })),
           );
-          const createdPostId = created.post.id;
+          createdPostId = created.post.id;
           setPosts((current) => [created.post, ...current]);
           setCommunityVideoProgress((current) => {
             const next = { ...current, [createdPostId]: current[uploadProgressKey] || 0 };
@@ -1783,7 +1784,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {post.uploadState === "UPLOADING" ? <View style={[styles.videoUploadCard, isLight && styles.videoUploadCardLight]}>
-        <View style={styles.videoUploadRing}><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.videoUploadPercent}>{Math.round((communityVideoProgress[post.id] || 0) * 100)}%</Text></View>
+        <View style={styles.videoUploadRing}><Text style={styles.videoUploadPercent}>{Math.round((communityVideoProgress[post.id] || 0) * 100)}%</Text></View>
         <View style={styles.videoUploadCopy}><Text style={[styles.videoUploadTitle, isLight && styles.textPrimaryLight]}>Uploading your video</Text><Text style={[styles.videoUploadBody, isLight && styles.textSecondaryLight]}>Only you can see this until it finishes. You can keep using FairFares.</Text></View>
       </View> : null}
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
@@ -2194,8 +2195,8 @@ const styles = StyleSheet.create({
   postOpenArea: { gap: 12 },
   videoUploadCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, borderRadius: 14, borderWidth: 1, borderColor: "rgba(24,184,132,.42)", backgroundColor: "rgba(24,184,132,.10)", padding: 11 },
   videoUploadCardLight: { borderColor: "rgba(10,142,94,.35)", backgroundColor: "rgba(16,185,129,.10)" },
-  videoUploadRing: { width: 45, height: 45, alignItems: "center", justifyContent: "center", borderRadius: 23, borderWidth: 3, borderColor: theme.colors.brand },
-  videoUploadPercent: { position: "absolute", color: theme.colors.soft, fontSize: 9, fontWeight: "900" },
+  videoUploadRing: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 24, borderWidth: 3, borderColor: theme.colors.brand, backgroundColor: "rgba(255,255,255,.82)" },
+  videoUploadPercent: { color: "#063f2d", fontSize: 11, fontWeight: "900" },
   videoUploadCopy: { flex: 1, minWidth: 0 },
   videoUploadTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
   videoUploadBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
