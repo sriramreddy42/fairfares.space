@@ -2921,6 +2921,17 @@ export async function getCommunityUserProfile(userId: number) {
   return payload.profile;
 }
 
+export type MemberRatingDetails = {
+  summary: { average: number; count: number; label: string };
+  breakdown: Record<string, number>;
+  reviews: Array<{ score: number; comment: string; createdAt: string; context: string }>;
+};
+
+export async function getMemberRatingDetails(userId: number) {
+  const payload = await request<{ ok: boolean } & MemberRatingDetails>(`/api/mobile/member-ratings?user_id=${encodeURIComponent(String(userId))}`);
+  return { summary: payload.summary, breakdown: payload.breakdown, reviews: payload.reviews };
+}
+
 export async function updateChatTyping(conversationId: string, active: boolean) {
   return request<{ ok: boolean; active: boolean }>("/api/chat/typing", {
     method: "POST",

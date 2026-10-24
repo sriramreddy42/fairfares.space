@@ -281,6 +281,7 @@ export type CommunityUserProfile = {
   name: string;
   photoUrl: string;
   isGuest?: boolean;
+  ratingSummary?: UserRatingSummary;
   listings: HousingPost[];
 };
 

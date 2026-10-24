@@ -18,6 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { UserAvatar } from "../components/UserAvatar";
 import { TactilePressable } from "../components/TactilePressable";
 import { MemberProfileSheet, MemberProfileSheetHandle } from "../components/MemberProfileSheet";
+import { MemberRatingsSheet } from "../components/MemberRatingsSheet";
 import { mapCoordinatesUrl, mapSearchUrl, nativeMapProviderName } from "../utils/maps";
 import { useResponsiveLayout } from "../utils/layout";
 import { deviceAddressCityLabel } from "../utils/locationRegion";
@@ -2313,6 +2314,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
   const [ratingScore, setRatingScore] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [ratingDetailsTarget, setRatingDetailsTarget] = useState<{ id: number; name: string } | null>(null);
   const [reportTarget, setReportTarget] = useState<ChatReportTarget | null>(null);
   const [reportReason, setReportReason] = useState<ChatReportReason>("SPAM_SCAM");
   const [reportDetails, setReportDetails] = useState("");
@@ -7692,8 +7694,9 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
             <Text style={styles.threadHeaderMeta} numberOfLines={1}>
               {activeConversation?.otherIsGuest
                 ? `${presenceLabel(activeConversation)} · Guest reply channel`
-                : `${presenceLabel(activeConversation)}${!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count ? ` · ⭐ ${activeConversation.otherRatingSummary.label}` : ""} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
+                : `${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
             </Text>
+            {!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count && activeConversation.otherUserId ? <TouchableOpacity style={styles.threadHeaderRatingButton} onPress={() => setRatingDetailsTarget({ id: activeConversation.otherUserId!, name: activeConversation.otherName || "FairFares member" })} accessibilityRole="button" accessibilityLabel={`View ${activeConversation.otherName || "member"} ratings`}><Text style={styles.threadHeaderRatingText}>⭐ {activeConversation.otherRatingSummary.label}</Text></TouchableOpacity> : null}
           </TouchableOpacity>
           {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
             <TouchableOpacity style={styles.headerAction} onPress={() => void callActiveConversationMember()} accessibilityRole="button" accessibilityLabel={`Call ${activeConversation.otherName || "member"}`}>
@@ -8653,6 +8656,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
           void openContactChat({ id: userId, name: name || member?.name || "FairFares member" });
         }}
       />
+      {ratingDetailsTarget ? <MemberRatingsSheet userId={ratingDetailsTarget.id} memberName={ratingDetailsTarget.name} visible onClose={() => setRatingDetailsTarget(null)} /> : null}
       </ChatPhotoViewerContext.Provider>
     );
   }
@@ -9192,7 +9196,7 @@ const styles = StyleSheet.create({
   activeDot: { position: "absolute", right: 0, bottom: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: "#43c866", borderWidth: 2, borderColor: "#021c16" },
   threadHeaderCopy: { flex: 1 },
   threadHeaderTitle: { color: "#153D31", fontSize: 16.5, fontWeight: "700" },
-  threadHeaderMeta: { color: "#4D675D", fontSize: 11.5, fontWeight: "500", marginTop: 2 },
+  threadHeaderMeta: { color: "#4D675D", fontSize: 11.5, fontWeight: "500", marginTop: 2 }, threadHeaderRatingButton: { alignSelf: "flex-start", minHeight: 22, justifyContent: "center", marginTop: 2, paddingHorizontal: 7, borderRadius: 11, backgroundColor: "rgba(245,172,27,.16)" }, threadHeaderRatingText: { color: "#966300", fontSize: 11, fontWeight: "900" },
   headerAction: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   headerCallIcon: { color: "#866525", fontSize: 25, lineHeight: 28, fontWeight: "600" },
   messageSelectionBar: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.line, backgroundColor: "rgba(9,18,33,0.98)", zIndex: 12 },

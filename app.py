@@ -28129,6 +28129,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/community/user":
             self.api_mobile_community_user(parsed)
             return
+        if parsed.path == "/api/mobile/member-ratings":
+            self.api_mobile_member_ratings(parsed)
+            return
         if parsed.path == "/community/open":
             self.community_open_landing(parsed)
             return
@@ -42688,8 +42691,71 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "id": user_id,
                 "name": clean_text_value(row_value(user, "name"), 120) or "FairFares member",
                 "photoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), user_id),
+                "ratingSummary": user_rating_summary(user_id),
                 "listings": listings,
             },
+        })
+
+    def api_mobile_member_ratings(self, parsed: urllib.parse.ParseResult) -> None:
+        """Public, anonymized trust feedback for a member profile."""
+        params = urllib.parse.parse_qs(parsed.query)
+        user_id = int(float_from_value((params.get("user_id", ["0"])[0] or "0")))
+        if user_id <= 0:
+            self.send_json({"ok": False, "message": "Member not found."}, 404)
+            return
+        breakdown = {str(score): 0 for score in range(1, 6)}
+        try:
+            with db() as con:
+                member = con.execute(
+                    "SELECT id FROM users WHERE id = ? AND guest_account = 0 LIMIT 1", (user_id,)
+                ).fetchone()
+                if not member:
+                    self.send_json({"ok": False, "message": "Member not found."}, 404)
+                    return
+                rows = con.execute(
+                    """
+                    SELECT score, COUNT(*) AS rating_count FROM (
+                        SELECT score FROM user_ratings
+                        WHERE reviewed_user_id = ? AND status = 'PUBLISHED'
+                        UNION ALL
+                        SELECT score FROM ride_ratings WHERE rated_user_id = ?
+                    ) GROUP BY score
+                    """,
+                    (user_id, user_id),
+                ).fetchall()
+                for row in rows:
+                    score = int(row_value(row, "score") or 0)
+                    if 1 <= score <= 5:
+                        breakdown[str(score)] = int(row_value(row, "rating_count") or 0)
+                review_rows = con.execute(
+                    """
+                    SELECT score, comment, created_at, context FROM (
+                        SELECT score, comment, created_at, 'FairFares interaction' AS context
+                        FROM user_ratings
+                        WHERE reviewed_user_id = ? AND status = 'PUBLISHED' AND TRIM(comment) <> ''
+                        UNION ALL
+                        SELECT score, comment, created_at, 'Carpool ride' AS context
+                        FROM ride_ratings
+                        WHERE rated_user_id = ? AND TRIM(comment) <> ''
+                    ) ORDER BY created_at DESC LIMIT 30
+                    """,
+                    (user_id, user_id),
+                ).fetchall()
+        except sqlite3.Error:
+            self.send_json({"ok": False, "message": "Ratings are temporarily unavailable."}, 503)
+            return
+        self.send_json({
+            "ok": True,
+            "summary": user_rating_summary(user_id),
+            "breakdown": breakdown,
+            # Reviewers remain anonymous to prevent ratings from becoming a new
+            # contact-discovery channel. Their optional feedback is public.
+            "reviews": [{
+                "score": int(row_value(row, "score") or 0),
+                "comment": clean_text_value(row_value(row, "comment"), 500),
+                "createdAt": str(row_value(row, "created_at") or ""),
+                "context": str(row_value(row, "context") or "FairFares interaction"),
+            } for row in review_rows],
         })
 
     def api_mobile_rides(self, parsed: urllib.parse.ParseResult) -> None:
