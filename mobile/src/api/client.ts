@@ -1440,6 +1440,11 @@ export async function uploadCommunityVideo(
             uploadId: authorization.uploadId, partSize: authorization.partSize, partCount: authorization.partCount,
           }, source, onProgress);
         }
+        // The authorization endpoint exists but direct storage is unavailable.
+        // Never stream a video through the legacy Render relay: its proxy has
+        // a lower body-size limit and would replace this actionable error with
+        // a misleading HTTP 413.
+        throw new Error("Secure video storage is unavailable. Your post is still a draft. Please try again shortly.");
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
         // Only an older server lacks this route. A storage-signing failure must
