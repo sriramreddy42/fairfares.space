@@ -337,8 +337,10 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   return images;
 }
 
+export type CommunityVideoFile = { uri: string; name: string; mimeType: string };
+
 /** Select the original video without a picker-side transcode. */
-export async function pickCommunityVideo() {
+export async function pickCommunityVideo(): Promise<CommunityVideoFile | null> {
   const result = await launchPrivateMediaPicker({
     allowsMultipleSelection: false,
     base64: false,
