@@ -338,7 +338,6 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
 }
 
 export type CommunityVideoFile = { uri: string; name: string; mimeType: string; temporary?: boolean };
-const MAX_COMMUNITY_VIDEO_BYTES = 100_000_000;
 
 /** Select the original video without a picker-side transcode. */
 export async function pickCommunityVideo(): Promise<CommunityVideoFile | null> {
@@ -371,23 +370,16 @@ export async function prepareCommunityVideoForFeed(
 ): Promise<CommunityVideoFile> {
   if (Platform.OS !== "ios" || !FairFaresCrypto.videoPreparationAvailable || !FileSystem.cacheDirectory) return video;
   const stem = video.name.replace(/\.[^.]+$/, "") || "community-video";
-  // 1080p gives the best feed result, but an HEVC/HDR source can become
-  // larger when it is tone-mapped to universally playable H.264. Retry at
-  // 720p before rejecting it so a valid selected clip does not fail only
-  // because the compatibility export crossed the server's 100 MB ceiling.
-  for (const [index, profile] of (["hd", "data-saver"] as const).entries()) {
-    const destination = `${FileSystem.cacheDirectory}chitthi-prepared/community-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}.mp4`;
-    const prepared = await FairFaresCrypto.prepareVideo(video.uri, destination, profile, onProgress);
-    if (!prepared.outputSize) {
-      await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
-      throw new Error("The video could not be prepared for posting.");
-    }
-    if (prepared.outputSize <= MAX_COMMUNITY_VIDEO_BYTES) {
-      return { uri: destination, name: `${stem}.mp4`, mimeType: prepared.mimeType || "video/mp4", temporary: true };
-    }
+  // Keep the 1080p SDR export for consistent color and feed quality. Community
+  // videos upload directly to R2, so this conversion is not constrained by
+  // Render's former 100 MB request-body ceiling.
+  const destination = `${FileSystem.cacheDirectory}chitthi-prepared/community-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+  const prepared = await FairFaresCrypto.prepareVideo(video.uri, destination, "hd", onProgress);
+  if (!prepared.outputSize) {
     await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    throw new Error("The video could not be prepared for posting.");
   }
-  throw new Error("This video is still larger than 100 MB after optimization. Choose a shorter video.");
+  return { uri: destination, name: `${stem}.mp4`, mimeType: prepared.mimeType || "video/mp4", temporary: true };
 }
 
 export async function removePreparedCommunityVideo(video: CommunityVideoFile | null) {

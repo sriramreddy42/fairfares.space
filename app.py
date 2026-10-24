@@ -157,6 +157,12 @@ CHITTHI_MULTIPART_THRESHOLD_BYTES = 12_000_000
 CHITTHI_MULTIPART_PART_BYTES = 8 * 1024 * 1024
 COMMUNITY_VIDEO_MULTIPART_PART_BYTES = 8 * 1024 * 1024
 COMMUNITY_VIDEO_UPLOAD_HOURS = 24
+# Direct R2 uploads never pass through Render, so community video is not held
+# to the former 100 MB relay ceiling. One gigabyte accommodates long, modern
+# phone clips while retaining a bounded mobile-storage and abuse surface.
+# Older clients that relay through Render continue to use
+# MAX_COMMUNITY_VIDEO_BYTES above.
+MAX_COMMUNITY_VIDEO_DIRECT_BYTES = 1_000_000_000
 CHITTHI_ROLLOUT_MAX_VIDEO_MB = max(12, min(100, positive_int_env("FAIRFARES_CHITTHI_MAX_VIDEO_MB", 100)))
 CHITTHI_ROLLOUT_PERCENT = min(100, nonnegative_int_env("FAIRFARES_CHITTHI_ROLLOUT_PERCENT", 100))
 CHITTHI_MULTIPART_ROLLOUT_ENABLED = os.environ.get("FAIRFARES_CHITTHI_MULTIPART_ENABLED", "1").strip() == "1"
@@ -1082,8 +1088,8 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
     safe_name = Path(str(filename or "community-video")).name
     if media_mime_type not in ALLOWED_COMMUNITY_VIDEO_MIME_TYPES:
         return {}, "Choose an MP4, MOV, or WebM video."
-    if size <= 0 or size > MAX_COMMUNITY_VIDEO_BYTES:
-        return {}, "Choose an MP4, MOV, or WebM video that is no larger than 100 MB."
+    if size <= 0 or size > MAX_COMMUNITY_VIDEO_DIRECT_BYTES:
+        return {}, "This video is too large for a direct mobile upload."
     public_id = f"CVU-{secrets.token_urlsafe(24)}"
     object_key = community_video_r2_object_key(safe_name)
     try:
