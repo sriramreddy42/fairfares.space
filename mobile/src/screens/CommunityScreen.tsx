@@ -1687,7 +1687,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         onPress={() => openPostPhoto(post, photos, 0)}
       />;
     }
-    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} contentFit="contain" autoPlay={autoPlayVideo} /></View>;
+    // A feed card should use its full visual area. Portrait videos retain their
+    // center framing while the native player crops the outer edges instead of
+    // leaving contrasting black side bars around the content.
+    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} contentFit="cover" autoPlay={autoPlayVideo} /></View>;
     return <View style={styles.postMediaGrid}>
       {visible.map((item, index) => {
         const cellStyle = [
