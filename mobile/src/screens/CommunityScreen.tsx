@@ -1329,7 +1329,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setPostValidation((current) => current[field] ? { ...current, [field]: undefined } : current);
   };
 
-  const publish = async () => {
+  const publish = async (videoUploadConfirmed = false) => {
     const titleLength = form.title.trim().length;
     const bodyLength = form.body.trim().length;
     const validation = {
@@ -1341,6 +1341,17 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       return;
     }
     const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
+    if (hasQueuedVideo && !videoUploadConfirmed) {
+      Alert.alert(
+        "Keep FairFares open",
+        "Your video needs to finish uploading before the post can go live. Keep FairFares open and connected until you see Posted.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Upload video", onPress: () => { void publish(true); } },
+        ],
+      );
+      return;
+    }
     setPublishing(true);
     try {
       // A video post is atomic: keep the composer as a draft until its upload
