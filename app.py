@@ -44760,10 +44760,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not mobile_user_is_verified(user):
             self.send_json({"ok": False, "error": "Verify your email or phone before adding a video."}, 403)
             return
-        _form, files = self.read_form_with_files()
+        # Expo's native multipart task can report that the last multipart
+        # boundary was sent while the request remains open. Accepting a raw
+        # video body lets the native client use its proven binary uploader,
+        # including byte-accurate progress, without changing the browser's
+        # ordinary multipart form upload.
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type in ALLOWED_COMMUNITY_VIDEO_MIME_TYPES:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                length = 0
+            if length <= 0 or length > MAX_COMMUNITY_VIDEO_BYTES:
+                self.send_json({"ok": False, "error": "Choose an MP4, MOV, or WebM video that is no larger than 100 MB."}, 400)
+                return
+            payload = self.rfile.read(length)
+            filename = Path(self.headers.get("X-FairFares-Filename", "community-video")).name
+            file_data: dict[str, object] | None = {
+                "filename": filename,
+                "mime_type": content_type,
+                "payload": payload,
+            }
+        else:
+            _form, files = self.read_form_with_files()
+            file_data = files.get("video")
         video_url = save_file_payload_locally(
             folder_name="community",
-            file_data=files.get("video"),
+            file_data=file_data,
             fallback_name=f"community-video-{int(user['id'])}",
             allowed_mime_types=ALLOWED_COMMUNITY_VIDEO_MIME_TYPES,
             max_bytes=MAX_COMMUNITY_VIDEO_BYTES,

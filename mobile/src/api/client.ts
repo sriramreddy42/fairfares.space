@@ -1340,12 +1340,15 @@ export async function uploadCommunityVideo(file: { uri: string; name: string; mi
         httpMethod: "POST",
         headers: {
           Accept: "application/json",
+          "Content-Type": file.mimeType,
+          "X-FairFares-Filename": file.name,
           "X-FairFares-Client-Platform": Platform.OS,
           ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
-        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-        fieldName: "video",
-        mimeType: file.mimeType,
+        // A raw body avoids Expo's iOS multipart uploader stalling after it
+        // has reported the final file bytes. The endpoint still accepts
+        // multipart for the web app, while native retains true byte progress.
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
         sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
       },
       ({ totalBytesSent, totalBytesExpectedToSend }) => {

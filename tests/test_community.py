@@ -298,6 +298,24 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(created["post"]["media"], [uploaded["media"]])
 
+    def test_native_binary_video_upload_can_be_attached_without_base64_json(self):
+        video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}/api/mobile/community/video",
+            data=video_bytes,
+            headers={
+                "Authorization": "Bearer owner-token",
+                "Content-Type": "video/mp4",
+                "X-FairFares-Filename": "short-clip.mp4",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 201)
+            uploaded = json.loads(response.read())
+        self.assertEqual(uploaded["media"]["type"], "VIDEO")
+        self.assertTrue(uploaded["media"]["url"].endswith(".mp4"))
+
     def test_comment_author_can_edit_but_other_users_cannot(self):
         _, created = self.create_post()
         post_id = created["post"]["id"]
