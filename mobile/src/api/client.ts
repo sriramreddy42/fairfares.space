@@ -1325,6 +1325,8 @@ export type CommunityPostInput = {
   media: Array<{ url: string; type: "IMAGE" | "VIDEO" }>;
   details: Record<string, string>;
   expiresInDays: number;
+  /** Metadata only. The bytes transfer directly to storage after the post card exists. */
+  videoUpload?: { name: string; mimeType: string; size: number };
 };
 
 async function communityPostRequest<T>(path: string, body: Record<string, unknown>) {
@@ -1332,10 +1334,10 @@ async function communityPostRequest<T>(path: string, body: Record<string, unknow
 }
 
 export async function createCommunityPost(input: CommunityPostInput) {
-  return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
+  return communityPostRequest<{ ok: boolean; post: CommunityPost; videoUpload?: CommunityVideoUploadAuthorization }>("/api/mobile/community", input);
 }
 
-type CommunityVideoUploadAuthorization = {
+export type CommunityVideoUploadAuthorization = {
   ok: boolean;
   direct?: boolean;
   uploadId?: string;
@@ -1344,8 +1346,49 @@ type CommunityVideoUploadAuthorization = {
 };
 
 type CommunityVideoPartAuthorization = { ok: boolean; uploadUrl: string; headers: Record<string, string> };
+type CommunityVideoUploadStatus = { ok: boolean; completed: boolean; media?: { url: string; type: "VIDEO" }; parts: Array<{ partNumber: number; etag: string; size: number }> };
 
 type CommunityVideoUploadResult = { ok: boolean; media: { url: string; type: "VIDEO" }; uploadPath: "direct-r2" | "relay" };
+
+type PendingCommunityVideoUpload = {
+  version: 1;
+  postId: string;
+  upload: Required<Pick<CommunityVideoUploadAuthorization, "uploadId" | "partSize" | "partCount">>;
+  file: { uri: string; name: string; mimeType: string };
+  createdAt: number;
+};
+
+const COMMUNITY_VIDEO_OUTBOX_KEY = "fairfares.community-video-outbox.v1";
+const communityVideoOutboxDirectory = `${FileSystem.documentDirectory}community-video-outbox/`;
+
+async function readPendingCommunityVideoUploads(): Promise<PendingCommunityVideoUpload[]> {
+  try {
+    const raw = await AsyncStorage.getItem(COMMUNITY_VIDEO_OUTBOX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is PendingCommunityVideoUpload => item?.version === 1 && typeof item.postId === "string" && typeof item.upload?.uploadId === "string" && typeof item.file?.uri === "string") : [];
+  } catch { return []; }
+}
+
+async function writePendingCommunityVideoUploads(jobs: PendingCommunityVideoUpload[]) {
+  await AsyncStorage.setItem(COMMUNITY_VIDEO_OUTBOX_KEY, JSON.stringify(jobs));
+}
+
+async function removePendingCommunityVideoUpload(uploadId: string) {
+  const jobs = await readPendingCommunityVideoUploads();
+  const removed = jobs.filter((job) => job.upload.uploadId === uploadId);
+  await writePendingCommunityVideoUploads(jobs.filter((job) => job.upload.uploadId !== uploadId));
+  for (const job of removed) await FileSystem.deleteAsync(job.file.uri, { idempotent: true }).catch(() => undefined);
+}
+
+async function storeCommunityVideoForRecovery(file: { uri: string; name: string; mimeType: string }) {
+  await FileSystem.makeDirectoryAsync(communityVideoOutboxDirectory, { intermediates: true });
+  const extension = /\.(mp4|mov|webm)$/i.test(file.name) ? file.name.match(/\.(mp4|mov|webm)$/i)?.[0] || ".mp4" : ".mp4";
+  const destination = `${communityVideoOutboxDirectory}${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`;
+  await FileSystem.copyAsync({ from: file.uri, to: destination });
+  const info = await FileSystem.getInfoAsync(destination);
+  if (!info.exists || !info.size) throw new Error("Could not save the video for a reliable background upload.");
+  return { uri: destination, name: file.name, mimeType: file.mimeType, size: Number(info.size) };
+}
 
 async function uploadCommunityVideoDirectToR2(
   file: { uri: string; name: string; mimeType: string },
@@ -1355,15 +1398,93 @@ async function uploadCommunityVideoDirectToR2(
 ): Promise<CommunityVideoUploadResult> {
   const sourceSize = source.size;
   const partNumbers = Array.from({ length: authorization.partCount }, (_, index) => index + 1);
-  const completedParts: Array<{ partNumber: number; etag: string }> = [];
+  const status = await request<CommunityVideoUploadStatus>("/api/mobile/community/video/status", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ uploadId: authorization.uploadId }),
+  });
+  if (status.completed) {
+    onProgress?.(1);
+    return { ok: true, media: status.media || { url: "", type: "VIDEO" }, uploadPath: "direct-r2" };
+  }
+  const completedParts: Array<{ partNumber: number; etag: string }> = status.parts.filter((part) => {
+    const expected = part.partNumber < authorization.partCount ? authorization.partSize : sourceSize - authorization.partSize * (authorization.partCount - 1);
+    return part.partNumber >= 1 && part.partNumber <= authorization.partCount && part.size === expected && Boolean(part.etag);
+  }).map((part) => ({ partNumber: part.partNumber, etag: part.etag }));
+  const completedNumbers = new Set(completedParts.map((part) => part.partNumber));
+  const pendingPartNumbers = partNumbers.filter((partNumber) => !completedNumbers.has(partNumber));
   let nextPartIndex = 0;
-  let uploadedBytes = 0;
+  let uploadedBytes = completedParts.reduce((total, part) => total + (part.partNumber < authorization.partCount ? authorization.partSize : sourceSize - authorization.partSize * (authorization.partCount - 1)), 0);
   const reportProgress = () => onProgress?.(Math.max(0, Math.min(0.99, uploadedBytes / sourceSize)));
   reportProgress();
 
+  if (Platform.OS === "ios" && FairFaresCrypto.multipartStagingAvailable && FairFaresCrypto.backgroundTaskInspectionAvailable) {
+    // Queue file-backed URLSession tasks before waiting for any of them. iOS
+    // keeps those transfers alive after this React screen is gone (and may
+    // relaunch the app for their completion), unlike an Expo JS upload task.
+    for (let check = 0; check < 10; check += 1) {
+      const active = await FairFaresCrypto.activeMultipartPartNumbers(authorization.uploadId);
+      if (!active.length) break;
+      if (check === 9) throw new Error("This video is still transferring in the background. It will resume when FairFares opens.");
+      await wait(1000);
+    }
+    const scheduled: Array<Promise<void>> = [];
+    try {
+      for (const partNumber of pendingPartNumbers) {
+        const size = partNumber < authorization.partCount
+          ? authorization.partSize
+          : sourceSize - authorization.partSize * (authorization.partCount - 1);
+        const partFile = new File(Paths.cache, `community-video-${authorization.uploadId}-${partNumber}.part`);
+        const staged = await FairFaresCrypto.stageMultipartPart(source.uri, partFile.uri, (partNumber - 1) * authorization.partSize, size);
+        if (staged.size !== size || !staged.md5Base64) throw new Error("Video part could not be prepared.");
+        let signed: CommunityVideoPartAuthorization;
+        try {
+          signed = await request<CommunityVideoPartAuthorization>("/api/mobile/community/video/part", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uploadId: authorization.uploadId, partNumber, partSize: size, partMd5: staged.md5Base64 }),
+          });
+        } catch (error) {
+          if (partFile.exists) partFile.delete();
+          throw error;
+        }
+        const transfer = (async () => {
+          try {
+            let uploaded: { status: number; etag: string } | undefined;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                uploaded = await FairFaresCrypto.uploadMultipartPart(authorization.uploadId, partNumber, signed.uploadUrl, signed.headers, partFile.uri, size);
+                if (uploaded.status >= 200 && uploaded.status < 300 && uploaded.etag) break;
+              } catch (error) { if (attempt === 2) throw error; }
+              if (attempt < 2) await wait([500, 1250][attempt]);
+            }
+            if (!uploaded || uploaded.status < 200 || uploaded.status >= 300 || !uploaded.etag) throw new Error("A direct video part did not finish uploading.");
+            completedParts.push({ partNumber, etag: uploaded.etag });
+            uploadedBytes += size;
+            reportProgress();
+          } finally {
+            // The native delegate removes a completed part. A failed task
+            // leaves no durable secret data; recovery re-stages it from the
+            // Documents copy owned by the outbox.
+            if (partFile.exists) partFile.delete();
+          }
+        })();
+        void transfer.catch(() => undefined);
+        scheduled.push(transfer);
+      }
+      await Promise.all(scheduled);
+    } catch (error) {
+      await Promise.allSettled(scheduled);
+      throw error;
+    }
+    const result = await request<Omit<CommunityVideoUploadResult, "uploadPath">>("/api/mobile/community/video/complete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uploadId: authorization.uploadId, parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }),
+    });
+    onProgress?.(1);
+    return { ...result, uploadPath: "direct-r2" };
+  }
+
   const uploadNextPart = async () => {
-    while (nextPartIndex < partNumbers.length) {
-      const partNumber = partNumbers[nextPartIndex++];
+    while (nextPartIndex < pendingPartNumbers.length) {
+      const partNumber = pendingPartNumbers[nextPartIndex++];
       const size = partNumber < authorization.partCount
         ? authorization.partSize
         : sourceSize - authorization.partSize * (authorization.partCount - 1);
@@ -1412,13 +1533,70 @@ async function uploadCommunityVideoDirectToR2(
 
   // Two parts transfer at once: enough to use a phone's uplink without making
   // video playback, messaging, or the compositor contend with a large burst.
-  await Promise.all(Array.from({ length: Math.min(2, partNumbers.length) }, () => uploadNextPart()));
+    await Promise.all(Array.from({ length: Math.min(2, pendingPartNumbers.length) }, () => uploadNextPart()));
   const result = await request<Omit<CommunityVideoUploadResult, "uploadPath">>("/api/mobile/community/video/complete", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId: authorization.uploadId, parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }),
   });
   onProgress?.(1);
   return { ...result, uploadPath: "direct-r2" };
+}
+
+async function finishPendingCommunityVideoUpload(job: PendingCommunityVideoUpload, onProgress?: (progress: number) => void) {
+  const source = new File(job.file.uri);
+  if (!source.exists || source.size <= 0) throw new Error("The saved video is no longer on this device. Open the draft and choose it again.");
+  await uploadCommunityVideoDirectToR2(job.file, job.upload, source, onProgress);
+  await removePendingCommunityVideoUpload(job.upload.uploadId);
+  return await getCommunityPost(job.postId);
+}
+
+/**
+ * Create the author-visible post before its video bytes move. The manifest and
+ * source video live in Documents so a later app launch can resume the same R2
+ * multipart upload instead of asking the member to start over.
+ */
+export async function createCommunityVideoPost(
+  input: Omit<CommunityPostInput, "videoUpload">,
+  video: { uri: string; name: string; mimeType: string },
+  onProgress?: (progress: number) => void,
+) {
+  const saved = await storeCommunityVideoForRecovery(video);
+  let result: Awaited<ReturnType<typeof createCommunityPost>>;
+  try {
+    result = await createCommunityPost({ ...input, videoUpload: { name: saved.name, mimeType: saved.mimeType, size: saved.size } });
+  } catch (error) {
+    await FileSystem.deleteAsync(saved.uri, { idempotent: true }).catch(() => undefined);
+    throw error;
+  }
+  const authorization = result.videoUpload;
+  if (!authorization?.direct || !authorization.uploadId || !authorization.partSize || !authorization.partCount) {
+    await FileSystem.deleteAsync(saved.uri, { idempotent: true }).catch(() => undefined);
+    throw new Error("Secure video storage was not prepared. Your post is still private while we retry.");
+  }
+  const job: PendingCommunityVideoUpload = {
+    version: 1, postId: result.post.id,
+    upload: { uploadId: authorization.uploadId, partSize: authorization.partSize, partCount: authorization.partCount },
+    file: { uri: saved.uri, name: saved.name, mimeType: saved.mimeType }, createdAt: Date.now(),
+  };
+  const jobs = await readPendingCommunityVideoUploads();
+  await writePendingCommunityVideoUploads([...jobs.filter((item) => item.postId !== job.postId), job]);
+  return { post: result.post, completion: finishPendingCommunityVideoUpload(job, onProgress) };
+}
+
+/** Resume author-only video posts after a reload or an iOS background transfer. */
+export async function resumePendingCommunityVideoUploads(onProgress?: (postId: string, progress: number) => void) {
+  const jobs = await readPendingCommunityVideoUploads();
+  const completed: CommunityPost[] = [];
+  for (const job of jobs) {
+    try {
+      const post = await finishPendingCommunityVideoUpload(job, (progress) => onProgress?.(job.postId, progress));
+      if (post) completed.push(post);
+    } catch {
+      // Keep the manifest and durable source. The next foreground/network
+      // recovery retries the same multipart session while it remains valid.
+    }
+  }
+  return completed;
 }
 
 export async function uploadCommunityVideo(

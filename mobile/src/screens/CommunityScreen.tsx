@@ -11,7 +11,7 @@ import {
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
   getHousingActivity, getRentalBookings, getRideActivity,
-  reactToCommunityContent, reportCommunityContent, saveCommunityPost,
+  createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, uploadCommunityVideo,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
@@ -617,6 +617,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [publishing, setPublishing] = useState(false);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [videoUploadPath, setVideoUploadPath] = useState<"preparing" | "direct-r2" | "relay" | null>(null);
+  const [communityVideoProgress, setCommunityVideoProgress] = useState<Record<string, number>>({});
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
@@ -1216,6 +1217,26 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setDetail((current) => current?.id === id ? update(current) : current);
   };
 
+  useEffect(() => {
+    if (!user?.id) return;
+    let stopped = false;
+    const resume = async () => {
+      const completed = await resumePendingCommunityVideoUploads((postId, progress) => {
+        if (!stopped) setCommunityVideoProgress((current) => ({ ...current, [postId]: progress }));
+      });
+      if (stopped || !completed.length) return;
+      setPosts((current) => current.map((post) => completed.find((item) => item.id === post.id) || post));
+      setCommunityVideoProgress((current) => {
+        const next = { ...current };
+        completed.forEach((post) => delete next[post.id]);
+        return next;
+      });
+    };
+    void resume();
+    const subscription = AppState.addEventListener("change", (state) => { if (state === "active") void resume(); });
+    return () => { stopped = true; subscription.remove(); };
+  }, [user?.id]);
+
   const optimisticReaction = <T extends { viewerReaction: string; reactionCount: number; reactionCounts?: Record<string, number> }>(item: T, reaction: string): T => {
     const previous = item.viewerReaction;
     const selecting = previous !== reaction;
@@ -1344,30 +1365,59 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     let preparedVideo: CommunityVideoFile | null = null;
     if (hasQueuedVideo && !videoUploadConfirmed) {
       Alert.alert(
-        "Keep FairFares open",
-        "Your video needs to finish uploading before the post can go live. Keep FairFares open and connected until you see Posted.",
+        "Post while your video uploads?",
+        "Your post will appear to you now with an upload circle. Other members will see it only after the video is verified. You can keep using FairFares; iPhone can continue the transfer in the background and the app will resume it if needed.",
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Upload video", onPress: () => { void publish(true); } },
+          { text: "Post and upload", onPress: () => { void publish(true); } },
         ],
       );
       return;
     }
     setPublishing(true);
     try {
-      // A video post is atomic: keep the composer as a draft until its upload
-      // is complete, so a failed attachment can never create a text-only post.
+      // A video post remains private to its author until R2 verifies the
+      // media. Its durable upload job runs independently of this page sheet.
       let media = form.media.filter((item) => !item.pendingVideo).map((item) => ({ url: item.url, type: item.type }));
       const pendingVideo = form.media.find((item) => item.pendingVideo)?.pendingVideo;
       if (pendingVideo) {
         setVideoUploadProgress(0);
         setVideoUploadPath("preparing");
         preparedVideo = await prepareCommunityVideoForFeed(pendingVideo, (progress) => setVideoUploadProgress(Math.max(0, Math.min(0.18, progress * 0.18))));
-        const uploaded = await uploadCommunityVideo(
-          preparedVideo,
-          (progress) => setVideoUploadProgress(0.18 + Math.max(0, Math.min(1, progress)) * 0.82),
-          setVideoUploadPath,
-        );
+        if (!editingPostId) {
+          const nextTitle = form.title.trim();
+          const nextBody = form.body.trim();
+          const nextLinkUrl = form.linkUrl.trim();
+          const nextDetails = { ...form.details };
+          const uploadProgressKey = `pending-${Date.now()}`;
+          const created = await createCommunityVideoPost(
+            { ...form, media, city: groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl, details: nextDetails },
+            preparedVideo,
+            (progress) => setCommunityVideoProgress((current) => ({ ...current, [uploadProgressKey]: progress })),
+          );
+          const createdPostId = created.post.id;
+          setPosts((current) => [created.post, ...current]);
+          setCommunityVideoProgress((current) => {
+            const next = { ...current, [createdPostId]: current[uploadProgressKey] || 0 };
+            delete next[uploadProgressKey];
+            return next;
+          });
+          void created.completion.then((completed) => {
+            if (completed) setPosts((current) => current.map((post) => post.id === completed.id ? completed : post));
+            setCommunityVideoProgress((current) => { const next = { ...current }; delete next[createdPostId]; return next; });
+          }).catch(() => {
+            // The durable outbox retries on the next foreground session. Keep
+            // the author-visible card instead of misleadingly publishing it.
+          });
+          const emptyForm = emptyCommunityPostForm();
+          composerBaselineRef.current = composerFingerprint(emptyForm);
+          setForm(emptyForm);
+          setPostValidation({});
+          setComposerOpen(false);
+          Alert.alert("Uploading video", "Your post is saved privately and will be visible to everyone when the video finishes uploading.");
+          return;
+        }
+        const uploaded = await uploadCommunityVideo(preparedVideo, (progress) => setVideoUploadProgress(0.18 + Math.max(0, Math.min(1, progress)) * 0.82), setVideoUploadPath);
         setVideoUploadPath(uploaded.uploadPath);
         media = form.media.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
       }
@@ -1730,6 +1780,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       <Text style={[styles.postTitle, styles.postTitleSoft, isLight && styles.textPrimaryLight]}>{post.title}</Text>
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
+      {post.uploadState === "UPLOADING" ? <View style={[styles.videoUploadCard, isLight && styles.videoUploadCardLight]}>
+        <View style={styles.videoUploadRing}><ActivityIndicator size="small" color={theme.colors.brand} /><Text style={styles.videoUploadPercent}>{Math.round((communityVideoProgress[post.id] || 0) * 100)}%</Text></View>
+        <View style={styles.videoUploadCopy}><Text style={[styles.videoUploadTitle, isLight && styles.textPrimaryLight]}>Uploading your video</Text><Text style={[styles.videoUploadBody, isLight && styles.textSecondaryLight]}>Only you can see this until it finishes. You can keep using FairFares.</Text></View>
+      </View> : null}
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </PostOpenContainer>
@@ -2135,6 +2189,13 @@ const styles = StyleSheet.create({
   postCard: { backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 15, gap: 12, shadowColor: "#000", shadowOpacity: .14, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 }, postHead: { flexDirection: "row", alignItems: "center", gap: 10 }, avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#204538" }, avatarImage: { borderRadius: 22 }, avatarInitials: { color: "#a8ecd1", fontSize: 14, fontWeight: "900" }, postAuthor: { flex: 1, minWidth: 0 }, author: { color: theme.colors.text, fontWeight: "900", fontSize: 15 }, meta: { color: theme.colors.muted, fontSize: 11, marginTop: 2 }, postTitle: { color: theme.colors.text, fontSize: 19, lineHeight: 25, fontWeight: "800" }, postBody: { color: theme.colors.soft, fontSize: 14, lineHeight: 21 }, imageRow: { gap: 5 }, postImage: { width: 255, height: 175, borderRadius: 12, backgroundColor: theme.colors.panel2 }, linkCard: { minHeight: 92, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 14, padding: 9, overflow: "hidden" }, linkPreviewImage: { width: 74, height: 74, borderRadius: 10, backgroundColor: theme.colors.panel2 }, linkPreviewPlaceholder: { width: 74, height: 74, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#173b2d" }, linkPreviewPlaceholderText: { color: theme.colors.brand, fontSize: 28 }, linkContent: { flex: 1, minWidth: 0, gap: 4 }, linkLabel: { color: theme.colors.text, fontWeight: "800", fontSize: 13, lineHeight: 17 }, linkDescription: { color: theme.colors.muted, fontSize: 10, lineHeight: 14 }, linkSource: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }, linkFavicon: { width: 15, height: 15, borderRadius: 3 }, linkFaviconFallback: { width: 15, height: 15, borderRadius: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#1c4938" }, linkFaviconFallbackText: { color: theme.colors.brand, fontSize: 9 }, linkUrl: { flex: 1, color: "#85caae", fontSize: 10 }, linkChevron: { color: theme.colors.brand, fontSize: 26, marginRight: 2 }, latestComment: { flexDirection: "row", alignItems: "flex-start", gap: 9 }, latestCommentAvatar: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#204538" }, latestCommentInitials: { color: "#a8ecd1", fontSize: 9, fontWeight: "900" }, latestCommentBubble: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: theme.colors.panel2, paddingHorizontal: 11, paddingVertical: 8 }, latestCommentAuthor: { color: theme.colors.text, fontSize: 11, fontWeight: "900" }, latestCommentBody: { color: theme.colors.soft, fontSize: 12, lineHeight: 17, marginTop: 2 }, addCommentPrompt: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: theme.colors.line }, addCommentIcon: { color: theme.colors.brand, fontSize: 15 }, addCommentText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" }, postActions: { position: "relative", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, borderTopWidth: 1, borderTopColor: theme.colors.line, paddingTop: 10, overflow: "visible" }, postActionsCompact: { flexWrap: "nowrap", justifyContent: "space-between", gap: 0 }, compactPostAction: { flex: 1, minWidth: 0, marginLeft: 0, paddingHorizontal: 2, justifyContent: "center" }, reactionDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0, backgroundColor: "transparent" }, reactionControl: { position: "relative", zIndex: 30 }, reactionTray: { position: "absolute", left: 0, bottom: 40, height: 50, flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 7, borderRadius: 25, borderWidth: 1, borderColor: "#dedede", backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: .24, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 24, zIndex: 50 }, reactionChoice: { width: 37, height: 42, alignItems: "center", justifyContent: "center" }, reactionChoiceEmoji: { fontSize: 24 }, reactionSummary: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 7, borderRadius: 9 }, compactReactionSummary: { minWidth: 0, justifyContent: "center", gap: 3, paddingHorizontal: 2 }, reactionSummaryEmoji: { fontSize: 16 }, reactionSummaryText: { color: theme.colors.soft, fontSize: 11, fontWeight: "800" }, reactionSummaryTextActive: { color: theme.colors.brand }, reactionTotal: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, action: { backgroundColor: "transparent", borderRadius: 9, paddingHorizontal: 7, minHeight: 36, justifyContent: "center" }, iconAction: { width: 34, height: 34, borderRadius: 9, justifyContent: "center", alignItems: "center", backgroundColor: "transparent" }, actionActive: { backgroundColor: "#174c38" }, actionText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" },
   activitySummary: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(145,145,150,.28)", paddingTop: 8 }, activitySummaryLight: { borderTopColor: "rgba(101,103,107,.16)" }, reactionBreakdown: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }, answerReactionStats: { minHeight: 24, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 5 }, activityText: { color: theme.colors.soft, fontSize: 10, fontWeight: "700" }, commentCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, footerIconAction: { minWidth: 58, height: 34, paddingHorizontal: 6, flexDirection: "row", gap: 4, borderRadius: 9, alignItems: "center", justifyContent: "center" }, footerIcon: { color: theme.colors.soft, fontSize: 20, lineHeight: 23 }, compactFooterIcon: { fontSize: 16, lineHeight: 19 }, footerShareIcon: { color: theme.colors.soft, fontSize: 19, fontWeight: "500", transform: [{ rotate: "-12deg" }] }, footerActionLabel: { color: theme.colors.soft, fontSize: 10, fontWeight: "800", flexShrink: 1 }, compactFooterActionLabel: { fontSize: 9 },
   postOpenArea: { gap: 12 },
+  videoUploadCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 11, borderRadius: 14, borderWidth: 1, borderColor: "rgba(24,184,132,.42)", backgroundColor: "rgba(24,184,132,.10)", padding: 11 },
+  videoUploadCardLight: { borderColor: "rgba(10,142,94,.35)", backgroundColor: "rgba(16,185,129,.10)" },
+  videoUploadRing: { width: 45, height: 45, alignItems: "center", justifyContent: "center", borderRadius: 23, borderWidth: 3, borderColor: theme.colors.brand },
+  videoUploadPercent: { position: "absolute", color: theme.colors.soft, fontSize: 9, fontWeight: "900" },
+  videoUploadCopy: { flex: 1, minWidth: 0 },
+  videoUploadTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "900" },
+  videoUploadBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   answerAuthorButton: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   // Keep copy comfortably inset, while photographs use the full card width.

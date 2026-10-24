@@ -1068,7 +1068,7 @@ def community_video_storage_failure_code(error: Exception) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "", str(candidate))[:80] or "UnknownStorageError"
 
 
-def create_community_video_upload_authorization(*, user_id: int, filename: str, mime_type: str, size: int) -> tuple[dict[str, object], str]:
+def create_community_video_upload_authorization(*, user_id: int, filename: str, mime_type: str, size: int, post_public_id: str = "") -> tuple[dict[str, object], str]:
     """Create an R2 multipart upload without routing the video bytes through FairFares."""
     if not r2_storage_configured():
         missing = ", ".join(name for name, value in (
@@ -1115,10 +1115,10 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
         with db() as con:
             con.execute(
                 """INSERT INTO community_video_uploads
-                   (public_id, uploader_user_id, object_key, original_name, media_mime_type, expected_size,
+                   (public_id, uploader_user_id, post_public_id, object_key, original_name, media_mime_type, expected_size,
                     multipart_upload_id, multipart_part_size, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
-                (public_id, user_id, object_key, safe_name[:180], media_mime_type, size,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
+                (public_id, user_id, clean_text_value(post_public_id, 80), object_key, safe_name[:180], media_mime_type, size,
                  multipart_upload_id, COMMUNITY_VIDEO_MULTIPART_PART_BYTES, f"+{COMMUNITY_VIDEO_UPLOAD_HOURS} hours"),
             )
     except Exception as error:
@@ -1146,6 +1146,31 @@ def pending_community_video_upload(*, upload_id: str, user_id: int) -> sqlite3.R
                AND completed_at IS NULL AND datetime(expires_at) > datetime('now') LIMIT 1""",
             (clean_text_value(upload_id, 100), user_id),
         ).fetchone()
+
+
+def community_video_upload_status(*, upload_id: str, user_id: int) -> tuple[dict[str, object] | None, str]:
+    """Return verified R2 parts so a relaunched app never re-sends finished bytes."""
+    with db() as con:
+        upload = con.execute(
+            "SELECT * FROM community_video_uploads WHERE public_id = ? AND uploader_user_id = ? LIMIT 1",
+            (clean_text_value(upload_id, 100), user_id),
+        ).fetchone()
+    if not upload:
+        return None, "Video upload was not found."
+    if row_value(upload, "completed_at"):
+        return {"completed": True, "parts": [], "media": {"url": f"r2://{R2_BUCKET_NAME}/{upload['object_key']}", "type": "VIDEO"}}, ""
+    if str(row_value(upload, "expires_at") or "") <= datetime.utcnow().isoformat(timespec="seconds"):
+        return None, "Video upload has expired."
+    try:
+        remote = r2_storage_client().list_parts(Bucket=R2_BUCKET_NAME, Key=str(upload["object_key"]), UploadId=str(upload["multipart_upload_id"]))
+        parts = [
+            {"partNumber": int(part.get("PartNumber") or 0), "etag": str(part.get("ETag") or ""), "size": int(part.get("Size") or 0)}
+            for part in (remote.get("Parts") or [])
+            if int(part.get("PartNumber") or 0) > 0 and str(part.get("ETag") or "")
+        ]
+    except Exception:
+        return None, "Could not check the saved video upload."
+    return {"completed": False, "parts": parts}, ""
 
 
 def authorize_community_video_part(*, upload_id: str, user_id: int, part_number: int, part_size: int, part_md5: str) -> tuple[dict[str, object] | None, str]:
@@ -1202,6 +1227,22 @@ def complete_community_video_upload(*, upload_id: str, user_id: int, completed_p
             return None, "Video upload verification failed."
         with db() as con:
             con.execute("UPDATE community_video_uploads SET completed_at = CURRENT_TIMESTAMP WHERE id = ?", (int(upload["id"]),))
+            post_public_id = clean_text_value(row_value(upload, "post_public_id"), 80)
+            if post_public_id:
+                post = con.execute(
+                    "SELECT id FROM ask_community_posts WHERE public_id = ? AND author_id = ? AND upload_state = 'UPLOADING'",
+                    (post_public_id, user_id),
+                ).fetchone()
+                if not post:
+                    return None, "The post waiting for this video is no longer available."
+                con.execute(
+                    "INSERT INTO ask_community_post_images (post_id, image_url, media_type, sort_order, created_at) VALUES (?, ?, 'VIDEO', ?, CURRENT_TIMESTAMP)",
+                    (int(post["id"]), f"r2://{R2_BUCKET_NAME}/{upload['object_key']}", 999),
+                )
+                con.execute(
+                    "UPDATE ask_community_posts SET upload_state = 'READY', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (int(post["id"]),),
+                )
     except Exception:
         return None, "Could not complete the direct video upload."
     return {"url": f"r2://{R2_BUCKET_NAME}/{upload['object_key']}", "type": "VIDEO"}, ""
@@ -7459,6 +7500,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
                 uploader_user_id INTEGER NOT NULL,
+                post_public_id TEXT NOT NULL DEFAULT '',
                 object_key TEXT NOT NULL UNIQUE,
                 original_name TEXT NOT NULL DEFAULT '',
                 media_mime_type TEXT NOT NULL,
@@ -8186,6 +8228,7 @@ def init_db() -> None:
                 area TEXT NOT NULL DEFAULT '',
                 link_url TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'PUBLISHED' CHECK(status IN ('PUBLISHED', 'LOCKED', 'HIDDEN', 'DELETED')),
+                upload_state TEXT NOT NULL DEFAULT 'READY',
                 accepted_answer_id INTEGER,
                 details_json TEXT NOT NULL DEFAULT '{}',
                 fulfillment_status TEXT NOT NULL DEFAULT 'OPEN',
@@ -8307,6 +8350,8 @@ def init_db() -> None:
         ensure_column(con, "ask_community_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "ask_community_posts", "source_kind", "source_kind TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ask_community_posts", "source_public_id", "source_public_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ask_community_posts", "upload_state", "upload_state TEXT NOT NULL DEFAULT 'READY'")
+        ensure_column(con, "community_video_uploads", "post_public_id", "post_public_id TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ask_community_post_images", "media_type", "media_type TEXT NOT NULL DEFAULT 'IMAGE'")
         ensure_column(con, "users", "phone", "phone TEXT")
         ensure_column(con, "users", "chat_phone_discoverable", "chat_phone_discoverable INTEGER NOT NULL DEFAULT 0")
@@ -8748,6 +8793,7 @@ def init_db() -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_community_video_uploads_user ON community_video_uploads(uploader_user_id, completed_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_community_video_uploads_post ON community_video_uploads(post_public_id, completed_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_community_video_uploads_object ON community_video_uploads(object_key)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id, conversation_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_participants_conversation_user ON chat_participants(conversation_id, user_id)")
@@ -13712,8 +13758,8 @@ def community_post_rows(
     limit: int = 30,
     offset: int = 0,
 ) -> list[sqlite3.Row]:
-    filters = ["posts.status IN ('PUBLISHED', 'LOCKED')", "(posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now') OR posts.author_id = ?)"]
-    values: list[object] = [viewer_id, viewer_id, viewer_id, viewer_id]
+    filters = ["posts.status IN ('PUBLISHED', 'LOCKED')", "(posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now') OR posts.author_id = ?)", "(COALESCE(posts.upload_state, 'READY') = 'READY' OR posts.author_id = ?)"]
+    values: list[object] = [viewer_id, viewer_id, viewer_id, viewer_id, viewer_id]
     if city:
         city_variants = community_local_city_variants(city)
         city_checks = []
@@ -13979,6 +14025,7 @@ def community_post_payload(
         "images": images,
         "media": media,
         "status": str(row_value(row, "status") or "PUBLISHED"),
+        "uploadState": str(row_value(row, "upload_state") or "READY"),
         "fulfillmentStatus": str(row_value(row, "fulfillment_status") or "OPEN"),
         "expiresAt": str(row_value(row, "expires_at") or ""),
         "details": {str(key): str(value) for key, value in details.items() if value is not None},
@@ -14021,7 +14068,7 @@ def community_post_payload(
         "saved": bool(int(float_from_value(row_value(row, "saved")) or 0)),
         "acceptedAnswerId": str(row_value(row, "accepted_answer_public_id") or ""),
         "canEdit": bool(viewer_id and viewer_id == author_id),
-        "canAnswer": str(row_value(row, "status") or "") == "PUBLISHED" and str(row_value(row, "fulfillment_status") or "OPEN") == "OPEN",
+        "canAnswer": str(row_value(row, "status") or "") == "PUBLISHED" and str(row_value(row, "upload_state") or "READY") == "READY" and str(row_value(row, "fulfillment_status") or "OPEN") == "OPEN",
         "createdAt": str(row_value(row, "created_at") or ""),
         "updatedAt": str(row_value(row, "updated_at") or ""),
         "sourceKind": str(row_value(row, "source_kind") or ""),
@@ -28783,6 +28830,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/community/video": self.api_mobile_upload_community_video,
             "/api/mobile/community/video/authorize": self.api_mobile_authorize_community_video,
             "/api/mobile/community/video/part": self.api_mobile_authorize_community_video_part,
+            "/api/mobile/community/video/status": self.api_mobile_community_video_status,
             "/api/mobile/community/video/complete": self.api_mobile_complete_community_video,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
@@ -44998,8 +45046,33 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if media_limit_error:
             self.send_json({"ok": False, "error": media_limit_error}, 400)
             return
+        raw_video_upload = payload.get("videoUpload") if isinstance(payload.get("videoUpload"), dict) else None
+        video_upload: dict[str, object] | None = None
+        if raw_video_upload:
+            video_name = clean_text_value(raw_video_upload.get("name"), 180)
+            video_mime_type = clean_text_value(raw_video_upload.get("mimeType"), 100).lower()
+            video_size = int(float_from_value(raw_video_upload.get("size")) or 0)
+            if any(media_type == "VIDEO" for _value, media_type in valid_media):
+                self.send_json({"ok": False, "error": "Choose one video for this post."}, 400)
+                return
+            if video_mime_type not in ALLOWED_COMMUNITY_VIDEO_MIME_TYPES or video_size <= 0 or video_size > MAX_COMMUNITY_VIDEO_DIRECT_BYTES:
+                self.send_json({"ok": False, "error": "Choose a supported video within the direct upload limit."}, 400)
+                return
+            video_upload = {"name": video_name, "mimeType": video_mime_type, "size": video_size}
+            if len(valid_media) >= 4:
+                self.send_json({"ok": False, "error": "Add up to four attachments."}, 400)
+                return
         now = datetime.utcnow().isoformat(timespec="seconds")
         public_id = community_public_id()
+        upload_authorization: dict[str, object] | None = None
+        if video_upload:
+            upload_authorization, upload_error = create_community_video_upload_authorization(
+                user_id=int(user["id"]), filename=str(video_upload["name"]), mime_type=str(video_upload["mimeType"]),
+                size=int(video_upload["size"]), post_public_id=public_id,
+            )
+            if upload_error:
+                self.send_json({"ok": False, "error": upload_error}, 503)
+                return
         with db() as con:
             recent_posts = int(con.execute("SELECT COUNT(*) AS count FROM ask_community_posts WHERE author_id = ? AND datetime(created_at) >= datetime('now', '-1 hour')", (int(user["id"]),)).fetchone()["count"])
             if recent_posts >= 6:
@@ -45028,9 +45101,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 community_id = int(community["id"])
             cursor = con.execute(
                 """INSERT INTO ask_community_posts
-                   (public_id, author_id, community_id, post_type, title, body, category, city, area, link_url, details_json, fulfillment_status, expires_at, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, 'PUBLISHED', ?, ?)""",
-                (public_id, int(user["id"]), community_id, post_type, title, body, category, city, area, link_url, json.dumps(details, separators=(",", ":")), expires_at, now, now),
+                   (public_id, author_id, community_id, post_type, title, body, category, city, area, link_url, details_json, fulfillment_status, expires_at, status, upload_state, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, 'PUBLISHED', ?, ?, ?)""",
+                (public_id, int(user["id"]), community_id, post_type, title, body, category, city, area, link_url, json.dumps(details, separators=(",", ":")), expires_at, "UPLOADING" if video_upload else "READY", now, now),
             )
             database_id = int(cursor.lastrowid)
             for index, (media_data, media_type) in enumerate(valid_media, start=1):
@@ -45048,7 +45121,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if category == "HAVE_PLACE":
             invalidate_mobile_search_cache("housing")
         row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
-        self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"]))}, 201)
+        self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"])), "videoUpload": upload_authorization}, 201)
 
     def api_mobile_authorize_community_video(self) -> None:
         user = self.current_user()
@@ -45089,6 +45162,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": error}, 409)
             return
         self.send_json({"ok": True, **authorization})
+
+    def api_mobile_community_video_status(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to continue the video upload."}, 401)
+            return
+        payload = self.read_json_body()
+        status, error = community_video_upload_status(
+            upload_id=clean_text_value(payload.get("uploadId"), 100), user_id=int(user["id"]),
+        )
+        if not status:
+            self.send_json({"ok": False, "error": error}, 409)
+            return
+        self.send_json({"ok": True, **status})
 
     def api_mobile_complete_community_video(self) -> None:
         user = self.current_user()

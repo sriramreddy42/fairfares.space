@@ -312,6 +312,8 @@ export type CommunityPost = {
   images: string[];
   media: Array<{ url: string; type: "IMAGE" | "VIDEO" }>;
   status: "PUBLISHED" | "LOCKED";
+  /** A video post is visible only to its author until R2 has verified its media. */
+  uploadState?: "READY" | "UPLOADING";
   fulfillmentStatus: "OPEN" | "RESOLVED" | "FOUND" | "FILLED" | "ARRANGED";
   expiresAt: string;
   details: Record<string, string>;
