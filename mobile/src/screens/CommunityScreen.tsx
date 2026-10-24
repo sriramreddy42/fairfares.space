@@ -58,10 +58,6 @@ const popularTopics = [
   { value: "RENTALS", image: require("../../assets/ask-topic-rental.png"), title: "Car Rental", subtitle: "Find a car", color: "#ffeadb" },
 ] as const;
 const communityHeroPoster = require("../../assets/ask-community-logo-transparent.png");
-const types: Array<{ value: CommunityPost["type"]; label: string }> = [
-  { value: "QUESTION", label: "Ask a question" }, { value: "REQUEST", label: "Request help" },
-  { value: "RECOMMENDATION", label: "Recommend" }, { value: "UPDATE", label: "Share update" },
-];
 const categoryLabels: Record<string, string> = {
   ALL: "For you", GENERAL: "General", NEED_ROOMMATE: "Need a roommate", NEED_PLACE: "Need a place",
   HAVE_PLACE: "Have a place", CARPOOL_RIDE: "Carpool ride", HOUSING: "Housing", RIDES: "Rides",
@@ -407,14 +403,36 @@ function CommunitySinglePostPhoto({ image, interactive, onPress, label }: { imag
     : <View style={containerStyle}>{photo}</View>;
 }
 
-function CommunityPostVideo({ video, style, contentFit = "cover" }: { video: string; style: object; contentFit?: "contain" | "cover" | "fill" }) {
-  // A feed video never autoplays. It only loads its first frame, and native
-  // controls provide play, scrubbing, and fullscreen without another modal.
+function CommunityPostVideo({ video, style, contentFit = "cover", autoPlay = false }: { video: string; style: object; contentFit?: "contain" | "cover" | "fill"; autoPlay?: boolean }) {
+  const [muted, setMuted] = useState(true);
   const player = useVideoPlayer(absoluteUrl(video), (instance) => {
-    instance.muted = false;
-    instance.loop = false;
+    // Feed videos follow the familiar social convention: autoplay only while
+    // visible, always start muted, and loop until the member scrolls away.
+    instance.muted = true;
+    instance.loop = true;
   });
-  return <VideoView player={player} style={style} nativeControls contentFit={contentFit} allowsFullscreen />;
+  useEffect(() => {
+    const statusSubscription = player.addListener("statusChange", ({ status }) => {
+      if (status === "readyToPlay" && autoPlay) player.play();
+    });
+    return () => statusSubscription.remove();
+  }, [autoPlay, player]);
+  useEffect(() => {
+    player.muted = muted;
+    if (autoPlay) player.play();
+    else player.pause();
+  }, [autoPlay, muted, player]);
+  return <View style={style}>
+    <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls contentFit={contentFit} allowsFullscreen />
+    <TouchableOpacity
+      style={styles.communityVideoSoundButton}
+      onPress={() => { const nextMuted = !muted; setMuted(nextMuted); if (!nextMuted) player.play(); }}
+      accessibilityRole="button"
+      accessibilityLabel={muted ? "Unmute video" : "Mute video"}
+    >
+      <Text style={styles.communityVideoSoundIcon}>{muted ? "🔇" : "🔊"}</Text>
+    </TouchableOpacity>
+  </View>;
 }
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
@@ -568,6 +586,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
+  const [visibleVideoPostIds, setVisibleVideoPostIds] = useState<Set<string>>(() => new Set());
+  const onFeedViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ isViewable?: boolean; item: CommunityFeedRow }> }) => {
+    const next = new Set<string>();
+    for (const item of viewableItems) {
+      if (!item.isViewable || item.item.kind !== "post") continue;
+      if ((item.item.post.media || []).some((media) => media.type === "VIDEO")) next.add(item.item.post.id);
+    }
+    setVisibleVideoPostIds((current) => current.size === next.size && [...current].every((id) => next.has(id)) ? current : next);
+  }).current;
+  const feedVideoViewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 }).current;
   const reactionRequests = useRef(new Set<string>());
   const reactionLongPressTarget = useRef("");
   const groupLoadGeneration = useRef(0);
@@ -1600,6 +1628,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const media = post.media?.length ? post.media : post.images.map((url) => ({ url, type: "IMAGE" as const }));
     const visible = media.slice(0, 4);
     const photos = media.filter((item) => item.type === "IMAGE").map((item) => item.url);
+    const autoPlayVideo = interactive || visibleVideoPostIds.has(post.id);
     if (!visible.length) return null;
     if (visible.length === 1 && visible[0].type === "IMAGE") {
       return <CommunitySinglePostPhoto
@@ -1609,7 +1638,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         onPress={() => openPostPhoto(post, photos, 0)}
       />;
     }
-    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} contentFit="contain" /></View>;
+    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} contentFit="contain" autoPlay={autoPlayVideo} /></View>;
     return <View style={styles.postMediaGrid}>
       {visible.map((item, index) => {
         const cellStyle = [
@@ -1619,7 +1648,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           visible.length === 3 && index > 0 && styles.postMediaCellThreeSmall,
           visible.length === 4 && styles.postMediaCellFour,
         ];
-        if (item.type === "VIDEO") return <View key={`${item.url}-${index}`} style={cellStyle}><CommunityPostVideo video={item.url} style={styles.postMediaImage} /></View>;
+        if (item.type === "VIDEO") return <View key={`${item.url}-${index}`} style={cellStyle}><CommunityPostVideo video={item.url} style={styles.postMediaImage} autoPlay={autoPlayVideo} /></View>;
         const photoIndex = photos.indexOf(item.url);
         const imageCell = <Image source={{ uri: absoluteUrl(item.url) }} style={styles.postMediaImage} resizeMode="cover" />;
         return interactive ? <TouchableOpacity key={`${item.url}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${photoIndex + 1} of ${photos.length}`} activeOpacity={0.78} onPress={() => openPostPhoto(post, photos, photoIndex)} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${item.url}-${index}`} style={cellStyle}>{imageCell}</View>;
@@ -1808,6 +1837,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       windowSize={Platform.OS === "android" ? 9 : 8}
       updateCellsBatchingPeriod={Platform.OS === "android" ? 28 : 32}
       removeClippedSubviews={Platform.OS === "android"}
+      onViewableItemsChanged={onFeedViewableItemsChanged}
+      viewabilityConfig={feedVideoViewabilityConfig}
       contentContainerStyle={[styles.content, isLight && styles.contentLight, { maxWidth: layout.contentMaxWidth, paddingBottom: layout.navClearance }]}
       alwaysBounceVertical
       scrollEventThrottle={16}
@@ -1900,7 +1931,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
     <Modal visible={composerOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestCommunityComposerClose}>
       <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? videoUploadProgress !== null ? `Uploading ${Math.round(videoUploadProgress * 100)}%` : "Posting…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
-        <Text style={styles.formLabel}>What are you sharing?</Text><View style={styles.optionGrid}>{types.map((item) => <TouchableOpacity key={item.value} style={[styles.option, form.type === item.value && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, type: item.value }))} accessibilityRole="button" accessibilityState={{ selected: form.type === item.value }}><Text style={[styles.optionText, form.type === item.value && styles.optionTextActive]}>{item.label}</Text></TouchableOpacity>)}</View>
         <Text style={styles.formLabel}>What do you need?</Text><View style={styles.needGrid}>{categories.slice(1).map((item) => <TouchableOpacity key={item} style={[styles.needOption, form.category === item && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, category: item as CommunityPost["category"] }))} accessibilityRole="button" accessibilityState={{ selected: form.category === item }}><Text style={styles.needIcon}>{categoryIcons[item]}</Text><Text style={[styles.needText, form.category === item && styles.optionTextActive]}>{categoryLabels[item]}</Text></TouchableOpacity>)}</View>
         {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <View style={styles.detailFields}>
           <Text style={styles.formLabel}>Housing details <Text style={styles.formLabelOptional}>Optional</Text></Text>
@@ -2062,6 +2092,8 @@ const styles = StyleSheet.create({
   postMediaCellFour: { width: "49.5%", height: "49.5%", flexGrow: 1 },
   postMediaImage: { width: "100%", height: "100%" },
   postMediaSingleImage: { width: "100%", height: "100%" },
+  communityVideoSoundButton: { position: "absolute", top: 10, right: 10, zIndex: 3, width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,.62)", borderWidth: 1, borderColor: "rgba(255,255,255,.36)" },
+  communityVideoSoundIcon: { fontSize: 17, lineHeight: 20 },
   photoViewerBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "#050807" }, photoViewerHeader: { minHeight: 58, paddingHorizontal: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, photoViewerClose: { minWidth: 64, minHeight: 36, justifyContent: "center" }, photoViewerCloseText: { color: "#fff", fontSize: 16, fontWeight: "800" }, photoViewerCounter: { color: "#fff", fontSize: 14, fontWeight: "800" }, photoViewerHeaderSpacer: { width: 64 }, photoViewerStage: { flex: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" }, photoViewerImage: { width: "100%", height: "100%" }, photoViewerThumbs: { alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 7 }, photoViewerThumb: { width: 58, height: 58, borderRadius: 9, overflow: "hidden", opacity: .55, borderWidth: 2, borderColor: "transparent" }, photoViewerThumbActive: { opacity: 1, borderColor: theme.colors.brand }, photoViewerThumbImage: { width: "100%", height: "100%" }, photoViewerHint: { color: "rgba(255,255,255,.72)", fontSize: 12, fontWeight: "700", textAlign: "center", paddingHorizontal: 20, paddingTop: 5, paddingBottom: 22 },
   postMediaMore: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,.48)" },
   postMediaMoreText: { color: "#fff", fontSize: 28, fontWeight: "900" },
