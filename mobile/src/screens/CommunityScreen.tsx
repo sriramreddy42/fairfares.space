@@ -1657,11 +1657,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const communityInsertIndex = Math.min(3, posts.length - 1);
 
-  const renderPostImages = (post: CommunityPost, interactive = false) => {
+  const renderPostImages = (post: CommunityPost, interactive = false, playVideo = false) => {
     const media = post.media?.length ? post.media : post.images.map((url) => ({ url, type: "IMAGE" as const }));
     const visible = media.slice(0, 4);
     const photos = media.filter((item) => item.type === "IMAGE").map((item) => item.url);
-    const autoPlayVideo = interactive || visibleVideoPostIds.has(post.id);
+    const autoPlayVideo = playVideo || visibleVideoPostIds.has(post.id);
     if (!visible.length) return null;
     if (visible.length === 1 && visible[0].type === "IMAGE") {
       return <CommunitySinglePostPhoto
@@ -1707,7 +1707,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </PostOpenContainer>
-      {renderPostImages(post, showingPostDetail)}
+      {/* Photos always open the zoomable viewer. They sit outside the post
+          navigation target, so this works in both the feed and post sheet. */}
+      {renderPostImages(post, true, showingPostDetail)}
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
       <View style={[styles.postActions, compactPostActions && styles.postActionsCompact, isLight && styles.postActionsLight]}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction), false, compactPostActions)}
