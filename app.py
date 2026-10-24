@@ -1056,6 +1056,12 @@ def community_video_r2_object_key(filename: str) -> str:
     return f"{prefix}/{Path(clean_name).stem[:80]}-{secrets.token_hex(12)}{extension}"
 
 
+def community_video_storage_failure_code(error: Exception) -> str:
+    """Return a safe, provider-neutral code for a failed video-upload step."""
+    candidate = storage_error_code(error) or type(error).__name__
+    return re.sub(r"[^A-Za-z0-9_.-]+", "", str(candidate))[:80] or "UnknownStorageError"
+
+
 def create_community_video_upload_authorization(*, user_id: int, filename: str, mime_type: str, size: int) -> tuple[dict[str, object], str]:
     """Create an R2 multipart upload without routing the video bytes through FairFares."""
     if not r2_storage_configured():
@@ -1087,15 +1093,16 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
         )
         multipart_upload_id = str(created.get("UploadId") or "")
     except Exception as error:
+        failure_code = community_video_storage_failure_code(error)
         send_operational_alert(
-            f"community-video:multipart-start:{storage_error_code(error) or type(error).__name__}",
+            f"community-video:multipart-start:{failure_code}",
             "Community video multipart upload could not start",
             details=[
-                f"Storage error: {storage_error_code(error) or type(error).__name__}",
+                f"Storage error: {failure_code}",
                 "Stage: create_multipart_upload",
             ],
         )
-        return {}, "Could not start the direct video upload."
+        return {}, f"Direct video storage could not start (storage code: {failure_code})."
     if not multipart_upload_id:
         return {}, "Direct video storage did not return an upload identifier."
     try:
@@ -1118,7 +1125,7 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
             "Community video upload record could not be saved",
             details=["Stage: save_upload_record", f"Database error: {type(error).__name__}"],
         )
-        return {}, "Could not save the direct video upload."
+        return {}, f"Direct video upload record could not be saved (record code: {type(error).__name__})."
     return {
         "direct": True, "uploadId": public_id, "partSize": COMMUNITY_VIDEO_MULTIPART_PART_BYTES,
         "partCount": (size + COMMUNITY_VIDEO_MULTIPART_PART_BYTES - 1) // COMMUNITY_VIDEO_MULTIPART_PART_BYTES,

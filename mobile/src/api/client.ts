@@ -1447,6 +1447,11 @@ export async function uploadCommunityVideo(
         throw new Error("Secure video storage is unavailable. Your post is still a draft. Please try again shortly.");
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
+        const payload = (error as Error & { fairFaresPayload?: { error?: unknown } }).fairFaresPayload;
+        // request() intentionally makes ordinary 5xx responses generic. For
+        // this upload authorization, the API exposes only a scrubbed storage
+        // code, which is safe and gives support a concrete failed stage.
+        if (status === 503 && typeof payload?.error === "string") throw new Error(payload.error);
         // Only an older server lacks this route. A storage-signing failure must
         // reach the member unchanged: retrying the large file through Render's
         // legacy relay hides the actual cause behind a proxy 413 response.
