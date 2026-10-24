@@ -337,7 +337,7 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   return images;
 }
 
-export type CommunityVideoFile = { uri: string; name: string; mimeType: string };
+export type CommunityVideoFile = { uri: string; name: string; mimeType: string; temporary?: boolean };
 
 /** Select the original video without a picker-side transcode. */
 export async function pickCommunityVideo(): Promise<CommunityVideoFile | null> {
@@ -355,6 +355,35 @@ export async function pickCommunityVideo(): Promise<CommunityVideoFile | null> {
   const mimeType = asset.mimeType === "video/quicktime" || asset.mimeType === "video/webm" ? asset.mimeType : "video/mp4";
   const name = asset.fileName || `fairfares-video.${mimeType === "video/quicktime" ? "mov" : mimeType === "video/webm" ? "webm" : "mp4"}`;
   return { uri: asset.uri, name, mimeType };
+}
+
+/**
+ * Community posts always render in a mixed SDR/HDR feed. Re-export iOS clips
+ * as H.264 SDR so HDR/Dolby Vision metadata cannot make a post look blown out
+ * on a different member's screen. The native exporter keeps audio and makes a
+ * network-friendly MP4; it is intentionally visible to the member as a
+ * preparation step rather than hidden in the picker.
+ */
+export async function prepareCommunityVideoForFeed(
+  video: CommunityVideoFile,
+  onProgress?: (progress: number) => void,
+): Promise<CommunityVideoFile> {
+  if (Platform.OS !== "ios" || !FairFaresCrypto.videoPreparationAvailable || !FileSystem.cacheDirectory) return video;
+  const destination = `${FileSystem.cacheDirectory}chitthi-prepared/community-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
+  const prepared = await FairFaresCrypto.prepareVideo(video.uri, destination, "hd", onProgress);
+  if (!prepared.outputSize) throw new Error("The video could not be prepared for posting.");
+  return {
+    uri: destination,
+    name: video.name.replace(/\.[^.]+$/, "") + ".mp4",
+    mimeType: prepared.mimeType || "video/mp4",
+    temporary: true,
+  };
+}
+
+export async function removePreparedCommunityVideo(video: CommunityVideoFile | null) {
+  if (!video?.temporary) return;
+  try { await FileSystem.deleteAsync(video.uri, { idempotent: true }); }
+  catch { /* Cache cleanup must never hide the result of a post attempt. */ }
 }
 
 export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
