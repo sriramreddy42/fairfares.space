@@ -11,7 +11,7 @@ import { BlurView } from "expo-blur";
 import { sha256 } from "@noble/hashes/sha256";
 import { utf8ToBytes } from "@noble/hashes/utils";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Dimensions, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Dimensions, Easing, FlatList, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import Reanimated, { cancelAnimation, Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -1277,6 +1277,26 @@ function isEmojiOnlyMessage(text: string) {
   if (!compact) return false;
   const emojiSyntax = /[\p{Extended_Pictographic}\uFE0F\u200D\u{1F3FB}-\u{1F3FF}]/gu;
   return compact.replace(emojiSyntax, "").trim().length === 0;
+}
+
+function AnimatedChatComment({ mine, children }: { mine: boolean; children: React.ReactNode }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(mine ? 12 : -12)).current;
+  const translateY = useRef(new Animated.Value(5)).current;
+  const scale = useRef(new Animated.Value(0.985)).current;
+
+  useEffect(() => {
+    const animation = Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 150, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(translateX, { toValue: 0, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 190, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, damping: 17, stiffness: 260, mass: 0.55, useNativeDriver: true }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [opacity, scale, translateX, translateY]);
+
+  return <Animated.View style={{ opacity, transform: [{ translateX }, { translateY }, { scale }] }}>{children}</Animated.View>;
 }
 
 function AnimatedEmojiOnlyMessage({ children }: { children: string }) {
@@ -8038,7 +8058,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
                   <InitialsAvatar photoUrl={message.senderPhotoUrl} label={message.senderName || "F"} imageStyle={styles.smallAvatarImage} textStyle={styles.smallAvatarText} />
                 </TouchableOpacity>
               ) : !message.mine && isGroupConversation(activeConversation) ? <View style={styles.smallAvatarSpacer} /> : null}
-              <SwipeToReply mine={message.mine} onReply={() => beginReply(message)}><TouchableOpacity
+              <AnimatedChatComment mine={message.mine}><SwipeToReply mine={message.mine} onReply={() => beginReply(message)}><TouchableOpacity
                 activeOpacity={selectedMessageIds.length ? 0.78 : 1}
                 delayLongPress={350}
                 onLongPress={() => handleMessageLongPress(message)}
@@ -8186,7 +8206,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
                   {message.mine && messageReceipt(message.status) ? <Text style={[styles.receiptMark, message.status === "seen" && styles.receiptSeen, message.status === "failed" && styles.receiptFailed]}>{messageReceipt(message.status)}</Text> : null}
                 </View> : null}
                 {(message.reactions || []).length ? <View style={styles.messageReactions}>{message.reactions!.map((reaction) => <TouchableOpacity key={reaction.emoji} style={[styles.messageReactionChip, reaction.mine && styles.messageReactionChipMine]} onPress={() => void reactToMessage(message, reaction.emoji)}><Text style={styles.messageReactionEmoji}>{reaction.emoji}</Text>{reaction.count > 1 ? <Text style={styles.messageReactionCount}>{reaction.count}</Text> : null}</TouchableOpacity>)}</View> : null}
-              </TouchableOpacity></SwipeToReply>
+              </TouchableOpacity></SwipeToReply></AnimatedChatComment>
             </View>
             </View>
             );
