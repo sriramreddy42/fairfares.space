@@ -598,10 +598,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
-  const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number; returnToPost: CommunityPost } | null>(null);
+  const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
-  const pendingPhotoViewerRef = useRef<{ images: string[]; index: number; returnToPost: CommunityPost } | null>(null);
+  const pendingPhotoViewerRef = useRef<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const pendingPhotoReturnRef = useRef<CommunityPost | null>(null);
   const [answer, setAnswer] = useState("");
   const [answerReplyTarget, setAnswerReplyTarget] = useState<{ id: string; name: string } | null>(null);
@@ -822,10 +822,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [detail]);
 
   const openPostPhoto = (post: CommunityPost, images: string[], index: number) => {
-    const viewer = { images, index, returnToPost: post };
+    const openedFromPostSheet = detail?.id === post.id;
+    const viewer = { images, index, returnToPost: openedFromPostSheet ? post : null };
     // The Community post is an iOS page sheet. Present the full-screen photo
     // only after that sheet is gone, just as we do for a member profile.
-    if (Platform.OS === "ios" && detail) {
+    if (Platform.OS === "ios" && openedFromPostSheet) {
       pendingPhotoViewerRef.current = viewer;
       setDetail(null);
       return;
