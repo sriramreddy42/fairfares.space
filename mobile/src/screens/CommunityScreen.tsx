@@ -422,7 +422,14 @@ function CommunityPostVideo({ video, style, contentFit = "cover", autoPlay = fal
     if (autoPlay) player.play();
     else player.pause();
   }, [autoPlay, muted, player]);
-  return <View style={style}>
+  // The full feed card opens its discussion when pressed. Stop a touch that
+  // began on the native player from bubbling to that card: play/pause, seek,
+  // fullscreen, and audio controls must remain video-only interactions.
+  return <View
+    style={style}
+    onTouchStart={(event) => event.stopPropagation()}
+    onTouchEnd={(event) => event.stopPropagation()}
+  >
     <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls contentFit={contentFit} allowsFullscreen />
     <TouchableOpacity
       style={styles.communityVideoSoundButton}
