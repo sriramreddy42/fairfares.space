@@ -9718,7 +9718,7 @@ const styles = StyleSheet.create({
   myQuotedReplyText: { color: "#FFF8E9" },
   theirQuotedReplyText: { color: "#24483C" },
   quotedReplyCopy: { flex: 1, minWidth: 0, maxWidth: "100%" },
-  bubbleText: { minWidth: 0, maxWidth: "100%", fontSize: 15, lineHeight: 19, fontWeight: "400" },
+  bubbleText: { minWidth: 0, maxWidth: "100%", fontSize: 18, lineHeight: 23, fontWeight: "400" },
   emojiOnlyText: { fontSize: 40, lineHeight: 48, includeFontPadding: false },
   messageMention: { fontWeight: "900", textDecorationLine: "underline" },
   myMessageMention: { color: "#FFE6A6", backgroundColor: "rgba(255,230,166,0.16)" },
