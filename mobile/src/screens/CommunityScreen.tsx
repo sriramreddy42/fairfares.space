@@ -1205,7 +1205,20 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         setGuestIdentity(guest.guestId);
         setGuestRemaining(guest.remaining);
       }
-      setDetail(await getCommunityPost(post.id));
+      const refreshed = await getCommunityPost(post.id);
+      setDetail(refreshed);
+      // Detail fetches the authoritative post, including a video that may
+      // have completed while this feed card was still rendering its local
+      // upload state. Keep both views in sync when the sheet is closed.
+      if (refreshed) {
+        setPosts((current) => current.map((item) => item.id === refreshed.id ? refreshed : item));
+        setNationalPosts((current) => current.map((item) => item.id === refreshed.id ? refreshed : item));
+        setCommunityVideoProgress((current) => {
+          const next = { ...current };
+          delete next[refreshed.id];
+          return next;
+        });
+      }
     }
     catch (error) { Alert.alert("Could not open post", message(error)); }
     finally { setDetailBusy(false); }
@@ -1756,8 +1769,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const renderPost = (post: CommunityPost) => {
     const facts = communityPostFacts(post);
     const showingPostDetail = detail?.id === post.id;
-    const PostOpenContainer: React.ElementType = showingPostDetail ? View : TouchableOpacity;
-    const postOpenProps = showingPostDetail ? {} : { activeOpacity: 0.92, onPress: () => void openDetail(post), accessible: false };
+    const videoStillUploading = post.uploadState === "UPLOADING";
+    const PostOpenContainer: React.ElementType = showingPostDetail || videoStillUploading ? View : TouchableOpacity;
+    const postOpenProps = showingPostDetail || videoStillUploading ? {} : { activeOpacity: 0.92, onPress: () => void openDetail(post), accessible: false };
     return (
     <View key={post.id} style={[styles.postCard, isLight && styles.postCardLight]}>
       <PostOpenContainer style={styles.postOpenArea} {...postOpenProps}>
@@ -1779,12 +1793,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           navigation target, so this works in both the feed and post sheet. */}
       {renderPostImages(post, true, showingPostDetail)}
       {post.reactionCount ? <View style={[styles.activitySummary, isLight && styles.activitySummaryLight]}><View style={styles.reactionBreakdown}>{reactionBreakdown(post.reactionCounts, post.reactionCount, post.viewerReaction).map((option) => <Text key={option.value} style={styles.activityText}>{option.count} {option.emoji} {option.label}</Text>)}</View></View> : null}
-      <View style={[styles.postActions, compactPostActions && styles.postActionsCompact, isLight && styles.postActionsLight]}>
+      {!videoStillUploading ? <View style={[styles.postActions, compactPostActions && styles.postActionsCompact, isLight && styles.postActionsLight]}>
         {reactionPicker(`post-${post.id}`, post.viewerReaction, post.reactionCount, post.reactionCounts, (reaction) => void reactPost(post, reaction), false, compactPostActions)}
         <TouchableOpacity style={[styles.footerCommentAction, compactPostActions && styles.compactPostAction]} onPress={() => void openDetail(post)} accessibilityLabel={`${post.answerCount} comments`}><Text style={[styles.footerIcon, compactPostActions && styles.compactFooterIcon, isLight && styles.textBodyLight]}>◯</Text><Text numberOfLines={1} style={[styles.footerActionLabel, compactPostActions && styles.compactFooterActionLabel, isLight && styles.textBodyLight]}>Comment{post.answerCount ? ` ${post.answerCount}` : ""}</Text></TouchableOpacity>
         <TouchableOpacity style={[styles.footerIconAction, compactPostActions && styles.compactPostAction]} onPress={(event) => { event.stopPropagation(); const url = `https://www.fairfare.space/community/open?postId=${encodeURIComponent(post.id)}&share=3`; const summary = `${post.title}\n${post.body.slice(0, 180)}`; void Share.share(Platform.OS === "ios" ? { title: post.title, message: summary, url } : { title: post.title, message: `${summary}\n\n${url}` }); }} accessibilityLabel="Share"><Text style={[styles.footerShareIcon, compactPostActions && styles.compactFooterIcon, isLight && styles.textBodyLight]}>↗</Text><Text numberOfLines={1} style={[styles.footerActionLabel, compactPostActions && styles.compactFooterActionLabel, isLight && styles.textBodyLight]}>Share</Text></TouchableOpacity>
         {post.sourceKind === "HOUSING" && post.sourceId ? <TouchableOpacity style={[styles.viewListingButton, compactPostActions && styles.compactPostAction]} onPress={(event) => { event.stopPropagation(); onOpenHousing(post.sourceId); }} accessibilityRole="button" accessibilityLabel={`View housing details: ${post.title}`}><Text style={[styles.viewListingIcon, compactPostActions && styles.compactFooterIcon]}>⌂</Text><Text numberOfLines={1} style={[styles.viewListingButtonText, compactPostActions && styles.compactViewListingButtonText, isLight && styles.textBodyLight]}>Details</Text><Text style={[styles.viewListingArrow, compactPostActions && styles.compactViewListingArrow, isLight && styles.textSecondaryLight]}>›</Text></TouchableOpacity> : null}
       </View>
+      : null}
     </View>
     );
   };
