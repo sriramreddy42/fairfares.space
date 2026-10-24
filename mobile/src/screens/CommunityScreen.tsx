@@ -564,7 +564,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [postValidation, setPostValidation] = useState<{ title?: string; body?: string }>({});
   const fieldExamples = postFieldExamples(form.category);
   const [publishing, setPublishing] = useState(false);
-  const [postVideoUploads, setPostVideoUploads] = useState<Record<string, number>>({});
+  const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
@@ -1266,49 +1266,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setPostValidation((current) => current[field] ? { ...current, [field]: undefined } : current);
   };
 
-  const attachQueuedCommunityVideo = (
-    postId: string,
-    draftMedia: ComposerMedia[],
-    title: string,
-    body: string,
-    linkUrl: string,
-    details: Record<string, string>,
-  ) => {
-    const pendingVideo = draftMedia.find((item) => item.pendingVideo)?.pendingVideo;
-    if (!pendingVideo) return;
-    setPostVideoUploads((current) => ({ ...current, [postId]: 0 }));
-    void (async () => {
-      try {
-        const uploaded = await uploadCommunityVideo(pendingVideo, (progress) => {
-          setPostVideoUploads((current) => ({ ...current, [postId]: progress }));
-        });
-        const media = draftMedia.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
-        await updateCommunityPost(postId, { title, body, linkUrl, details, media });
-        mutatePost(postId, (post) => ({
-          ...post,
-          title,
-          body,
-          linkUrl,
-          details: { ...details },
-          media,
-          images: media.filter((item) => item.type === "IMAGE").map((item) => item.url),
-        }));
-        void load(true);
-        setPostVideoUploads((current) => ({ ...current, [postId]: 1 }));
-        setTimeout(() => setPostVideoUploads((current) => {
-          const { [postId]: _completed, ...remaining } = current;
-          return remaining;
-        }), 1500);
-      } catch (error) {
-        setPostVideoUploads((current) => {
-          const { [postId]: _failed, ...remaining } = current;
-          return remaining;
-        });
-        Alert.alert("Video could not upload", `${message(error)} Your post is live; you can edit it to try the video again.`);
-      }
-    })();
-  };
-
   const publish = async () => {
     const titleLength = form.title.trim().length;
     const bodyLength = form.body.trim().length;
@@ -1320,12 +1277,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       setPostValidation(validation);
       return;
     }
+    const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
     setPublishing(true);
     try {
-      // Publish the post first. A local video transfers in the background,
-      // which keeps the primary Post action quick on slower connections.
-      const media = form.media.filter((item) => !item.pendingVideo).map((item) => ({ url: item.url, type: item.type }));
-      const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
+      // A video post is atomic: keep the composer as a draft until its upload
+      // is complete, so a failed attachment can never create a text-only post.
+      let media = form.media.filter((item) => !item.pendingVideo).map((item) => ({ url: item.url, type: item.type }));
+      const pendingVideo = form.media.find((item) => item.pendingVideo)?.pendingVideo;
+      if (pendingVideo) {
+        setVideoUploadProgress(0);
+        const uploaded = await uploadCommunityVideo(pendingVideo, setVideoUploadProgress);
+        media = form.media.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
+      }
       const nextTitle = form.title.trim();
       const nextBody = form.body.trim();
       const nextLinkUrl = form.linkUrl.trim();
@@ -1347,21 +1310,23 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           images: media.filter((item) => item.type === "IMAGE").map((item) => item.url),
         }));
         void load(true);
-        attachQueuedCommunityVideo(postId, form.media, nextTitle, nextBody, nextLinkUrl, nextDetails);
       } else {
         const result = await createCommunityPost({ ...form, media, city: groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl });
         setPosts((current) => [result.post, ...current]);
-        attachQueuedCommunityVideo(result.post.id, form.media, nextTitle, nextBody, nextLinkUrl, nextDetails);
       }
       const emptyForm = emptyCommunityPostForm();
       composerBaselineRef.current = composerFingerprint(emptyForm);
       setForm(emptyForm);
       setPostValidation({});
       setComposerOpen(false);
-      Alert.alert(editingPostId ? "Post updated" : "Posted", hasQueuedVideo ? "Your post is live. The video is uploading in the background." : editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
+      Alert.alert(editingPostId ? "Post updated" : "Posted", editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
       setEditingPostId("");
-    } catch (error) { Alert.alert("Could not publish", message(error)); }
-    finally { setPublishing(false); }
+    } catch (error) {
+      Alert.alert(hasQueuedVideo ? "Video not uploaded" : "Could not publish", hasQueuedVideo ? `${message(error)} Your post is still a draft. Try posting again when the connection is better.` : message(error));
+    } finally {
+      setVideoUploadProgress(null);
+      setPublishing(false);
+    }
   };
 
   const addCommunityPhotos = async () => {
@@ -1680,7 +1645,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       {post.fulfillmentStatus !== "OPEN" ? <View style={styles.resolvedBadge}><Text style={[styles.resolvedText, styles.postBadgeSoft]}>✓ {post.fulfillmentStatus === "ARRANGED" ? "Ride arranged" : post.fulfillmentStatus.charAt(0) + post.fulfillmentStatus.slice(1).toLowerCase()}</Text></View> : null}
       <Text style={[styles.postBody, isLight && styles.textBodyLight]} numberOfLines={4}>{post.body}</Text>
       {facts.length ? <View style={styles.detailFacts}>{facts.map((fact) => <View key={fact.id} style={[styles.fact, fact.wide && styles.factWide]}><Text style={[styles.factLabel, isLight && styles.textSecondaryLight]}>{fact.wide ? "⌖  " : ""}{fact.label}</Text><Text style={[styles.factValue, isLight && styles.textPrimaryLight]} numberOfLines={2}>{fact.value}</Text></View>)}</View> : null}
-      {postVideoUploads[post.id] !== undefined ? <View style={{ gap: 6, padding: 10, borderRadius: 12, backgroundColor: isLight ? "#ecfdf5" : "#123d2d" }}><Text style={{ color: isLight ? "#166534" : "#8ee7bc", fontSize: 12, fontWeight: "800" }}>Uploading video · {Math.round(postVideoUploads[post.id] * 100)}%</Text><View style={{ height: 6, borderRadius: 999, overflow: "hidden", backgroundColor: isLight ? "#bbf7d0" : "#285f47" }}><View style={{ width: `${Math.max(2, Math.round(postVideoUploads[post.id] * 100))}%`, height: "100%", borderRadius: 999, backgroundColor: theme.colors.brand }} /></View></View> : null}
       {renderPostImages(post, showingPostDetail)}
       {post.linkUrl || firstWebUrl(post.body) ? <SharedLinkCard url={post.linkUrl || firstWebUrl(post.body)} /> : null}
       </PostOpenContainer>
@@ -1935,7 +1899,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     </Modal>
 
     <Modal visible={composerOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestCommunityComposerClose}>
-      <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? "Saving…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+      <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? videoUploadProgress !== null ? `Uploading ${Math.round(videoUploadProgress * 100)}%` : "Posting…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
         <Text style={styles.formLabel}>What are you sharing?</Text><View style={styles.optionGrid}>{types.map((item) => <TouchableOpacity key={item.value} style={[styles.option, form.type === item.value && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, type: item.value }))} accessibilityRole="button" accessibilityState={{ selected: form.type === item.value }}><Text style={[styles.optionText, form.type === item.value && styles.optionTextActive]}>{item.label}</Text></TouchableOpacity>)}</View>
         <Text style={styles.formLabel}>What do you need?</Text><View style={styles.needGrid}>{categories.slice(1).map((item) => <TouchableOpacity key={item} style={[styles.needOption, form.category === item && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, category: item as CommunityPost["category"] }))} accessibilityRole="button" accessibilityState={{ selected: form.category === item }}><Text style={styles.needIcon}>{categoryIcons[item]}</Text><Text style={[styles.needText, form.category === item && styles.optionTextActive]}>{categoryLabels[item]}</Text></TouchableOpacity>)}</View>
         {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <View style={styles.detailFields}>
@@ -1984,7 +1948,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <View><Text style={styles.attachmentTitle}>Add to your post <Text style={styles.attachmentOptional}>Optional</Text></Text><Text style={styles.attachmentHint}>Add up to 4 photos, or combine photos with one video.</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
           {form.media.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.media.map((item, index) => <TouchableOpacity key={`${item.url.slice(0, 24)}-${index}`} onPress={() => setForm((current) => ({ ...current, media: current.media.filter((_, target) => target !== index) }))}>{item.type === "VIDEO" ? <View style={styles.previewVideo}><Text style={styles.previewVideoIcon}>▶</Text><Text style={styles.previewVideoText}>Video</Text></View> : <Image source={{ uri: absoluteUrl(item.url) }} style={styles.previewImage} />}<View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
-          <TouchableOpacity style={styles.addPhoto} onPress={chooseCommunityAttachment} accessibilityRole="button" accessibilityLabel="Add photos or video"><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos or video</Text><Text style={styles.addPhotoBody}>{form.media.some((item) => item.pendingVideo) ? "Video ready · uploads when you post" : form.media.length ? `${form.media.length} of 4 selected · One video max · Tap an attachment to remove it` : "Choose up to 4 photos or one video"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.addPhoto, publishing && { opacity: 0.6 }]} onPress={publishing ? undefined : chooseCommunityAttachment} disabled={publishing} accessibilityRole="button" accessibilityLabel="Add photos or video" accessibilityState={{ disabled: publishing }}><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos or video</Text><Text style={styles.addPhotoBody}>{videoUploadProgress !== null ? `Uploading video · ${Math.round(videoUploadProgress * 100)}%` : form.media.some((item) => item.pendingVideo) ? "Video ready · uploads when you post" : form.media.length ? `${form.media.length} of 4 selected · One video max · Tap an attachment to remove it` : "Choose up to 4 photos or one video"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
+          {videoUploadProgress !== null ? <View style={{ height: 7, borderRadius: 999, overflow: "hidden", backgroundColor: isLight ? "#bbf7d0" : "#285f47" }}><View style={{ width: `${Math.max(2, Math.round(videoUploadProgress * 100))}%`, height: "100%", borderRadius: 999, backgroundColor: theme.colors.brand }} /></View> : null}
         </View>
         <View style={styles.fieldGroup}>
           <View style={styles.fieldHeader}><Text style={styles.fieldLabel}>Location or area <Text style={styles.fieldOptional}>Optional</Text></Text><Text style={styles.fieldHint}>This helps nearby members find your post.</Text></View>
