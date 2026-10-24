@@ -225,6 +225,32 @@ function relativeTime(value: string) {
 
 function message(error: unknown) { return error instanceof Error ? error.message : "Something went wrong. Please try again."; }
 function initials(name: string) { return avatarInitials(name, "FF"); }
+
+/** A restrained idle motion gives the illustrated member characters some life
+ * without competing with the post itself. It runs only on feed cards. */
+function FeedCharacterAvatar({ photoUrl, name, delay = 0 }: { photoUrl?: string; name: string; delay?: number }) {
+  const lift = useRef(new Animated.Value(0)).current;
+  const sway = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(Animated.sequence([
+      Animated.parallel([
+        Animated.timing(lift, { toValue: -2, duration: 1550, useNativeDriver: true }),
+        Animated.timing(sway, { toValue: 1, duration: 1550, useNativeDriver: true }),
+      ]),
+      Animated.parallel([
+        Animated.timing(lift, { toValue: 0, duration: 1550, useNativeDriver: true }),
+        Animated.timing(sway, { toValue: -1, duration: 1550, useNativeDriver: true }),
+      ]),
+    ]));
+    const starter = setTimeout(() => animation.start(), delay);
+    return () => { clearTimeout(starter); animation.stop(); };
+  }, [delay, lift, sway]);
+  const rotate = sway.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-1deg", "0deg", "1deg"] });
+  return <Animated.View style={[styles.avatar, { transform: [{ translateY: lift }, { rotate }] }]}>
+    <UserAvatar photoUrl={photoUrl} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(name)}</Text>} />
+  </Animated.View>;
+}
+
 function firstWebUrl(value: string) {
   const match = value.match(/https?:\/\/[^\s<>]+/i)?.[0] || "";
   return match.replace(/[),.!?;:'\"]+$/, "");
@@ -1672,7 +1698,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     <View key={post.id} style={[styles.postCard, isLight && styles.postCardLight]}>
       <PostOpenContainer style={styles.postOpenArea} {...postOpenProps}>
       <View style={styles.postHead}>
-        <TouchableOpacity onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><UserAvatar photoUrl={post.author.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(post.author.name)}</Text>} /></TouchableOpacity>
+        <TouchableOpacity onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><FeedCharacterAvatar photoUrl={post.author.photoUrl} name={post.author.name} delay={(post.id.length % 5) * 170} /></TouchableOpacity>
         <TouchableOpacity style={styles.postAuthor} onPress={(event) => { event.stopPropagation(); void openMemberProfile(post.author); }} accessibilityRole="button" accessibilityLabel={`View ${post.author.name}'s profile`}><Text style={[styles.author, styles.postAuthorSoft, isLight && styles.textPrimaryLight]} numberOfLines={1}>{post.author.name}</Text><View style={styles.authorMetaLine}>{post.author.ratingSummary?.count ? <Text style={styles.authorRatingBadge}>⭐ {post.author.ratingSummary.label}</Text> : null}<Text style={[styles.meta, styles.postMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{post.community?.name || (isHousingCommunityPost(post) ? "Housing listing" : communityPostLocation(post.area, post.city) || "FairFares Community")} · {relativeTime(post.createdAt)}</Text></View></TouchableOpacity>
       </View>
       <Text style={[styles.postTitle, styles.postTitleSoft, isLight && styles.textPrimaryLight]}>{post.title}</Text>
