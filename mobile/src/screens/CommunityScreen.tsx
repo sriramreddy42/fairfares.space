@@ -1265,6 +1265,37 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setPostValidation((current) => current[field] ? { ...current, [field]: undefined } : current);
   };
 
+  const attachQueuedCommunityVideo = (
+    postId: string,
+    draftMedia: ComposerMedia[],
+    title: string,
+    body: string,
+    linkUrl: string,
+    details: Record<string, string>,
+  ) => {
+    const pendingVideo = draftMedia.find((item) => item.pendingVideo)?.pendingVideo;
+    if (!pendingVideo) return;
+    void (async () => {
+      try {
+        const uploaded = await uploadCommunityVideo(pendingVideo);
+        const media = draftMedia.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
+        await updateCommunityPost(postId, { title, body, linkUrl, details, media });
+        mutatePost(postId, (post) => ({
+          ...post,
+          title,
+          body,
+          linkUrl,
+          details: { ...details },
+          media,
+          images: media.filter((item) => item.type === "IMAGE").map((item) => item.url),
+        }));
+        void load(true);
+      } catch (error) {
+        Alert.alert("Video could not upload", `${message(error)} Your post is live; you can edit it to try the video again.`);
+      }
+    })();
+  };
+
   const publish = async () => {
     const titleLength = form.title.trim().length;
     const bodyLength = form.body.trim().length;
@@ -1278,19 +1309,17 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     }
     setPublishing(true);
     try {
-      // Keep selection immediate. A selected local video uploads only when the
-      // member confirms the post, so the composer is never held up by network.
-      const media = await Promise.all(form.media.map(async (item) => {
-        if (!item.pendingVideo) return { url: item.url, type: item.type };
-        const uploaded = await uploadCommunityVideo(item.pendingVideo);
-        return uploaded.media;
-      }));
+      // Publish the post first. A local video transfers in the background,
+      // which keeps the primary Post action quick on slower connections.
+      const media = form.media.filter((item) => !item.pendingVideo).map((item) => ({ url: item.url, type: item.type }));
+      const hasQueuedVideo = form.media.some((item) => item.pendingVideo);
+      const nextTitle = form.title.trim();
+      const nextBody = form.body.trim();
+      const nextLinkUrl = form.linkUrl.trim();
+      const nextDetails = { ...form.details };
       if (editingPostId) {
         const postId = editingPostId;
-        const nextTitle = form.title.trim();
-        const nextBody = form.body.trim();
-        const nextLinkUrl = form.linkUrl.trim();
-        await updateCommunityPost(postId, { title: nextTitle, body: nextBody, linkUrl: nextLinkUrl, details: form.details, media });
+        await updateCommunityPost(postId, { title: nextTitle, body: nextBody, linkUrl: nextLinkUrl, details: nextDetails, media });
         // The save has succeeded. Do not hold this page-sheet open behind a
         // full local-and-national feed refresh: that extra request made an
         // Edit tap appear stuck when the feed was slow. Update the card the
@@ -1300,21 +1329,23 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           title: nextTitle,
           body: nextBody,
           linkUrl: nextLinkUrl,
-          details: { ...form.details },
+          details: nextDetails,
           media,
           images: media.filter((item) => item.type === "IMAGE").map((item) => item.url),
         }));
         void load(true);
+        attachQueuedCommunityVideo(postId, form.media, nextTitle, nextBody, nextLinkUrl, nextDetails);
       } else {
-        const result = await createCommunityPost({ ...form, media, city: groupSuggestionCity, title: form.title.trim(), body: form.body.trim(), area: form.area.trim(), linkUrl: form.linkUrl.trim() });
+        const result = await createCommunityPost({ ...form, media, city: groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl });
         setPosts((current) => [result.post, ...current]);
+        attachQueuedCommunityVideo(result.post.id, form.media, nextTitle, nextBody, nextLinkUrl, nextDetails);
       }
       const emptyForm = emptyCommunityPostForm();
       composerBaselineRef.current = composerFingerprint(emptyForm);
       setForm(emptyForm);
       setPostValidation({});
       setComposerOpen(false);
-      Alert.alert(editingPostId ? "Post updated" : "Posted", editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
+      Alert.alert(editingPostId ? "Post updated" : "Posted", hasQueuedVideo ? "Your post is live. The video is uploading in the background." : editingPostId ? "Your changes are live." : "Your post is now live in Ask Community.");
       setEditingPostId("");
     } catch (error) { Alert.alert("Could not publish", message(error)); }
     finally { setPublishing(false); }
