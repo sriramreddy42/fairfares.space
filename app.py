@@ -1059,7 +1059,19 @@ def community_video_r2_object_key(filename: str) -> str:
 def create_community_video_upload_authorization(*, user_id: int, filename: str, mime_type: str, size: int) -> tuple[dict[str, object], str]:
     """Create an R2 multipart upload without routing the video bytes through FairFares."""
     if not r2_storage_configured():
-        return {"direct": False}, ""
+        missing = ", ".join(name for name, value in (
+            ("account ID", R2_ACCOUNT_ID),
+            ("access key", R2_ACCESS_KEY_ID),
+            ("secret key", R2_SECRET_ACCESS_KEY),
+            ("bucket", R2_BUCKET_NAME),
+        ) if not value)
+        send_operational_alert(
+            "community-video:r2-not-configured",
+            "Community video direct storage is unavailable",
+            severity="warning",
+            details=[f"Missing R2 setting(s): {missing or 'unknown'}"],
+        )
+        return {}, "Video storage is temporarily unavailable. Please try again shortly."
     media_mime_type = str(mime_type or "").strip().lower()
     safe_name = Path(str(filename or "community-video")).name
     if media_mime_type not in ALLOWED_COMMUNITY_VIDEO_MIME_TYPES:
@@ -1074,7 +1086,15 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
             Metadata={"upload-id": public_id, "original-name": safe_name[:180]},
         )
         multipart_upload_id = str(created.get("UploadId") or "")
-    except Exception:
+    except Exception as error:
+        send_operational_alert(
+            f"community-video:multipart-start:{storage_error_code(error) or type(error).__name__}",
+            "Community video multipart upload could not start",
+            details=[
+                f"Storage error: {storage_error_code(error) or type(error).__name__}",
+                "Stage: create_multipart_upload",
+            ],
+        )
         return {}, "Could not start the direct video upload."
     if not multipart_upload_id:
         return {}, "Direct video storage did not return an upload identifier."
@@ -1088,11 +1108,16 @@ def create_community_video_upload_authorization(*, user_id: int, filename: str, 
                 (public_id, user_id, object_key, safe_name[:180], media_mime_type, size,
                  multipart_upload_id, COMMUNITY_VIDEO_MULTIPART_PART_BYTES, f"+{COMMUNITY_VIDEO_UPLOAD_HOURS} hours"),
             )
-    except Exception:
+    except Exception as error:
         try:
             r2_storage_client().abort_multipart_upload(Bucket=R2_BUCKET_NAME, Key=object_key, UploadId=multipart_upload_id)
         except Exception:
             pass
+        send_operational_alert(
+            f"community-video:record-create:{type(error).__name__}",
+            "Community video upload record could not be saved",
+            details=["Stage: save_upload_record", f"Database error: {type(error).__name__}"],
+        )
         return {}, "Could not save the direct video upload."
     return {
         "direct": True, "uploadId": public_id, "partSize": COMMUNITY_VIDEO_MULTIPART_PART_BYTES,
@@ -45027,7 +45052,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             size=int(float_from_value(payload.get("size")) or 0),
         )
         if error:
-            self.send_json({"ok": False, "error": error}, 503 if r2_storage_configured() else 400)
+            # This route starts the direct R2 transfer. A 503 stops mobile
+            # clients from retrying the large video through Render's legacy,
+            # request-size-limited relay and obscuring the storage failure as
+            # an unrelated proxy 413.
+            self.send_json({"ok": False, "error": error}, 503)
             return
         self.send_json({"ok": True, **authorization}, 201)
 

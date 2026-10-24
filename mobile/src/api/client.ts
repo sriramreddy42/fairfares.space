@@ -1442,11 +1442,10 @@ export async function uploadCommunityVideo(
         }
       } catch (error) {
         const status = (error as Error & { fairFaresHttpStatus?: number }).fairFaresHttpStatus;
-        // An older local or just-deployed server has no authorization route.
-        // If the direct storage signer is briefly unavailable, the established
-        // relay remains a safe fallback because no video bytes have been sent
-        // to R2 yet. Do not fall back after a direct upload has begun.
-        if (status && ![404, 502, 503, 504].includes(status)) throw error;
+        // Only an older server lacks this route. A storage-signing failure must
+        // reach the member unchanged: retrying the large file through Render's
+        // legacy relay hides the actual cause behind a proxy 413 response.
+        if (status !== 404) throw error;
       }
     }
   }
