@@ -370,7 +370,7 @@ export function rentalPickupEvidencePhotoUrl(bookingId: string, field: string) {
   return `/api/mobile/rentals/pickup-evidence-photo?bookingId=${encodeURIComponent(bookingId)}&field=${encodeURIComponent(field)}`;
 }
 
-export async function startStaffIdentityVerification(bookingId: number) {
+export async function startStaffIdentityVerification(bookingId: number, returnUrl = "") {
   return request<{
     ok: boolean;
     requested?: boolean;
@@ -379,7 +379,7 @@ export async function startStaffIdentityVerification(bookingId: number) {
   }>("/api/mobile/admin/identity/stripe-session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bookingId })
+    body: JSON.stringify({ bookingId, returnUrl })
   });
 }
 
@@ -454,10 +454,11 @@ async function request<T>(path: string, init: RequestInit = {}, options: Request
   // upload-specific error copy) used by endpoints that move attachment bytes.
   const isAttachmentUpload = (path === "/api/chat/attachments" || path.startsWith("/api/chat/e2ee/attachments"))
     && path !== "/api/chat/e2ee/attachments/forward";
+  const isCommunityVideoUpload = path === "/api/mobile/community/video";
   const isAvatarUpload = path === "/api/chat/groups/photo"
     || path === "/api/chat/communities"
     || path === "/api/mobile/profile";
-  const isMediaUpload = isAttachmentUpload || isAvatarUpload;
+  const isMediaUpload = isAttachmentUpload || isAvatarUpload || isCommunityVideoUpload;
   const candidateUrls = isAttachmentUpload ? uniqueUrls([activeApiBase, API_URL]) : API_CANDIDATES;
   for (const baseUrl of candidateUrls) {
     const method = String(init.method || "GET").toUpperCase();
@@ -1242,13 +1243,20 @@ export async function startRentalCheckout(
   throw new Error(lastError || "Unable to open Stripe checkout.");
 }
 
-export async function startRentalSecurityDeposit(bookingId: string) {
+export async function startRentalSecurityDeposit(
+  bookingId: string,
+  returnUrls?: { successUrl?: string; cancelUrl?: string }
+) {
   return request<{ ok: boolean; url: string; amount: number; message?: string }>(
     "/api/mobile/rentals/security-deposit-session",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bookingId })
+      body: JSON.stringify({
+        bookingId,
+        successUrl: returnUrls?.successUrl || "",
+        cancelUrl: returnUrls?.cancelUrl || ""
+      })
     }
   );
 }
@@ -1310,7 +1318,7 @@ export type CommunityPostInput = {
   area: string;
   linkUrl: string;
   communityId: string;
-  images: string[];
+  media: Array<{ url: string; type: "IMAGE" | "VIDEO" }>;
   details: Record<string, string>;
   expiresInDays: number;
 };
@@ -1323,7 +1331,18 @@ export async function createCommunityPost(input: CommunityPostInput) {
   return communityPostRequest<{ ok: boolean; post: CommunityPost }>("/api/mobile/community", input);
 }
 
-export async function updateCommunityPost(postId: string, input: Pick<CommunityPostInput, "title" | "body" | "linkUrl" | "details" | "images">) {
+export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }) {
+  const body = new FormData();
+  if (Platform.OS === "web") {
+    const videoBlob = await fetch(file.uri).then((response) => response.blob());
+    body.append("video", videoBlob, file.name);
+  } else {
+    body.append("video", { uri: file.uri, name: file.name, type: file.mimeType } as never);
+  }
+  return request<{ ok: boolean; media: { url: string; type: "VIDEO" } }>("/api/mobile/community/video", { method: "POST", body });
+}
+
+export async function updateCommunityPost(postId: string, input: Pick<CommunityPostInput, "title" | "body" | "linkUrl" | "details" | "media">) {
   return communityPostRequest<{ ok: boolean }>("/api/mobile/community/update", { postId, ...input });
 }
 

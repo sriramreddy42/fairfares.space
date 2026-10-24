@@ -86,7 +86,7 @@ export function StaffPickupScreen({ onClose }: Props) {
   async function openIdentityVerification(booking: StaffPickupBooking) {
     setBusyBookingId(booking.id);
     try {
-      const result = await startStaffIdentityVerification(booking.id);
+      const result = await startStaffIdentityVerification(booking.id, "fairfares://identity/complete");
       if (result.verified) {
         Alert.alert("Identity verified", result.message);
         await refresh();

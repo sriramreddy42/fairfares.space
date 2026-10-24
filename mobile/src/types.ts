@@ -309,6 +309,7 @@ export type CommunityPost = {
   area: string;
   linkUrl: string;
   images: string[];
+  media: Array<{ url: string; type: "IMAGE" | "VIDEO" }>;
   status: "PUBLISHED" | "LOCKED";
   fulfillmentStatus: "OPEN" | "RESOLVED" | "FOUND" | "FILLED" | "ARRANGED";
   expiresAt: string;

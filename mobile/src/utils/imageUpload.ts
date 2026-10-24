@@ -337,6 +337,24 @@ export async function pickCompressedImages(limit = 4, maxWidth = 1280, quality =
   return images;
 }
 
+/** Select the original video without a picker-side transcode. */
+export async function pickCommunityVideo() {
+  const result = await launchPrivateMediaPicker({
+    allowsMultipleSelection: false,
+    base64: false,
+    mediaTypes: ["videos"],
+    selectionLimit: 1,
+    // Re-encoding here makes the native picker appear frozen for large clips.
+    // Upload the original file and show upload progress in the composer.
+    videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
+  });
+  if (result.canceled || !result.assets.length) return null;
+  const asset = result.assets[0];
+  const mimeType = asset.mimeType === "video/quicktime" || asset.mimeType === "video/webm" ? asset.mimeType : "video/mp4";
+  const name = asset.fileName || `fairfares-video.${mimeType === "video/quicktime" ? "mov" : mimeType === "video/webm" ? "webm" : "mp4"}`;
+  return { uri: asset.uri, name, mimeType };
+}
+
 export async function pickChatImages(limit = 4, maxWidth = 1280, quality = 0.62, maxBytes = 350_000) {
   const selectionLimit = Math.max(1, Math.min(limit, 4));
   const result = await launchPrivateMediaPicker({

@@ -15,7 +15,7 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { BottomTabs, TabKey } from "./src/components/BottomTabs";
 import { DateTimeField, todayLocalIso } from "./src/components/DateTimeField";
-import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerCommunityGuestPushToken, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent, updateDiceBearAvatar } from "./src/api/client";
+import { absoluteAssetUrl, acceptCurrentPolicies, AppVersionPolicy, bookRentalCar, completeSocialPhone, createMobileHousingPost, getAccommodationLocationOptions, getAppVersionPolicy, getBootstrap, getCars, getChatConversations, getChatDeviceKeys, getHousing, getHousingAreaStats, getHousingListing, getRideListing, getRidePlaceSuggestions, getSiteServices, hydrateAuthToken, isAuthenticationRejection, mobileLogin, mobileLogout, mobileSignup, mobileSocialLogin, MobileHousingPostInput, MobileSocialAuthPayload, openChatForPost, openChatWithPerson, registerChatDeviceKey, registerCommunityGuestPushToken, registerMobilePushToken, RidePlaceSuggestion, sendEncryptedChatMessage, setAuthToken, startRentalCheckout, submitAppFeedback, trackAppLaunch, trackProductEvent, updateDiceBearAvatar, updateMobileProfile } from "./src/api/client";
 import { appAssets } from "./src/assets";
 import { awaitChatIdentityRecovery, beginChatIdentityRecovery, invalidateChatIdentityRecovery } from "./src/utils/chatRecovery";
 import type { ServiceKey } from "./src/screens/ServicesScreen";
@@ -500,7 +500,10 @@ function FairFaresApp() {
   const [profileCompletionOpen, setProfileCompletionOpen] = useState(false);
   const [founderNoteOpen, setFounderNoteOpen] = useState(false);
   const founderNoteHandledRef = useRef(false);
-  const [profileCompletionEditRequested, setProfileCompletionEditRequested] = useState(false);
+  const [profileCompletionName, setProfileCompletionName] = useState("");
+  const [profileCompletionEmail, setProfileCompletionEmail] = useState("");
+  const [profileCompletionPhone, setProfileCompletionPhone] = useState("");
+  const [profileCompletionValidationError, setProfileCompletionValidationError] = useState("");
   const [profileConsentAccepted, setProfileConsentAccepted] = useState(false);
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const [characterAvatarBusy, setCharacterAvatarBusy] = useState(false);
@@ -1130,6 +1133,12 @@ function FairFaresApp() {
     }, 900);
     return () => clearTimeout(timer);
   }, [bottomTabsHidden, data?.user, launchVisible, listingOpen, loading, loginOpen, paymentStatus, paymentUrl, reviewPromptOpen, searchOpen]);
+
+  useEffect(() => {
+    setProfileCompletionName(data?.user?.name || "");
+    setProfileCompletionEmail(data?.user?.email || "");
+    setProfileCompletionPhone(data?.user?.phone || "");
+  }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone]);
 
   useEffect(() => {
     if (Platform.OS === "web" || !data?.user) return;
@@ -3000,33 +3009,51 @@ function FairFaresApp() {
   async function continueProfileCompletion() {
     const user = data?.user;
     if (!user) return;
+    const name = profileCompletionName.trim();
+    const email = profileCompletionEmail.trim();
+    const phone = profileCompletionPhone.trim();
+    if (!name || !email || !phone) {
+      setProfileCompletionValidationError("Add your full name, email, and phone number to continue.");
+      return;
+    }
+    if (!user.profilePhotoUrl?.trim()) {
+      setProfileCompletionValidationError("Choose a character and tap Save character before continuing.");
+      return;
+    }
+    setProfileCompletionValidationError("");
+    if (profileConsentBusy) return;
+    setProfileConsentBusy(true);
     let nextUser = user;
-    if (user.consentPending) {
-      if (!profileConsentAccepted) {
-        Alert.alert("FairFares policies", "Review and accept the Terms, Community Guidelines, and Privacy Policy to continue.");
-        return;
+    try {
+      if (name !== user.name || email !== user.email || phone !== user.phone) {
+        const profile = await updateMobileProfile({ name, email, phone });
+        if (profile.user) {
+          nextUser = profile.user;
+          updateLocalUser(profile.user);
+        }
       }
-      if (profileConsentBusy) return;
-      setProfileConsentBusy(true);
-      try {
+      if (nextUser.consentPending) {
+        if (!profileConsentAccepted) {
+          Alert.alert("FairFares policies", "Review and accept the Terms, Community Guidelines, and Privacy Policy to continue.");
+          return;
+        }
         const payload = await acceptCurrentPolicies();
         if (payload.user) {
           nextUser = payload.user;
           updateLocalUser(payload.user);
         }
         setProfileConsentAccepted(false);
-      } catch (error) {
-        Alert.alert("Could not save acceptance", error instanceof Error ? error.message : "Please try again.");
-        return;
-      } finally {
-        setProfileConsentBusy(false);
       }
-    }
-    setProfileCompletionOpen(false);
-    const detailsMissing = !nextUser.profilePhotoUrl?.trim() || !nextUser.name?.trim() || !nextUser.email?.trim() || !nextUser.phone?.trim();
-    if (detailsMissing) {
-      setProfileCompletionEditRequested(true);
-      setActiveTab("profile");
+      const stillIncomplete = !nextUser.profilePhotoUrl?.trim() || !nextUser.name?.trim() || !nextUser.email?.trim() || !nextUser.phone?.trim() || nextUser.consentPending;
+      if (stillIncomplete) {
+        setProfileCompletionValidationError("Complete every required item before continuing.");
+        return;
+      }
+      setProfileCompletionOpen(false);
+    } catch (error) {
+      Alert.alert("Could not save your profile", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setProfileConsentBusy(false);
     }
   }
 
@@ -3041,6 +3068,7 @@ function FairFaresApp() {
       const payload = await updateDiceBearAvatar({ seed, backgroundColor });
       if (payload.user) {
         updateLocalUser(payload.user);
+        setProfileCompletionValidationError("");
         setCharacterAvatarChoice(null);
         setCharacterAvatarPickerOpen(false);
       }
@@ -3283,8 +3311,6 @@ function FairFaresApp() {
       <ProfileScreen
         key={`profile-${effectiveColorScheme}-${systemColorScheme || "unset"}`}
         data={data}
-        openProfileDetails={profileCompletionEditRequested}
-        onProfileDetailsOpened={() => setProfileCompletionEditRequested(false)}
         onLogin={() => setLoginOpen(true)}
         onLogout={logoutProfile}
         onProfileUpdated={updateLocalUser}
@@ -3823,6 +3849,10 @@ function FairFaresApp() {
               placeholderTextColor={theme.colors.muted}
               secureTextEntry
               autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              returnKeyType={authMode === "login" ? "done" : "next"}
+              onSubmitEditing={() => {
+                if (authMode === "login") void submitLogin();
+              }}
               accessibilityLabel="Password"
               style={[styles.input, styles.authInput]}
             />
@@ -4066,7 +4096,7 @@ function FairFaresApp() {
               <View style={styles.characterAvatarPickerActions}><TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button"><Text style={styles.characterAvatarShuffleText}>Shuffle</Text></TouchableOpacity><TouchableOpacity style={[styles.characterAvatarSave, (!characterAvatarChoice || characterAvatarBusy) && styles.disabledButton]} disabled={!characterAvatarChoice || characterAvatarBusy} onPress={() => characterAvatarChoice && void selectCharacterAvatar(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor)} accessibilityRole="button"><Text style={styles.characterAvatarSaveText}>{characterAvatarBusy ? "Saving…" : "Save character"}</Text></TouchableOpacity></View>
             </View> : null}
             {characterAvatarPickerOpen && characterAvatarPickerTab === "scene" ? <View style={styles.profileCompletionScenePicker}>{DICEBEAR_AVATAR_BACKGROUNDS.map((backgroundColor) => <TouchableOpacity key={backgroundColor} style={[styles.profileCompletionSceneSwatch, { backgroundColor: `#${backgroundColor}` }, characterAvatarChoice?.backgroundColor === backgroundColor && styles.profileCompletionSceneSwatchSelected]} onPress={() => setCharacterAvatarChoice((current) => ({ seed: current?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, backgroundColor }))} accessibilityRole="button" accessibilityLabel="Choose character background" />)}</View> : null}
-            {characterAvatarPickerOpen && characterAvatarPickerTab === "photo" ? <TouchableOpacity style={styles.profileCompletionPhotoNotice} onPress={() => { setProfileCompletionOpen(false); setProfileCompletionEditRequested(true); }} accessibilityRole="button"><Text style={styles.profileCompletionPhotoNoticeTitle}>Use a profile photo</Text><Text style={styles.profileCompletionPhotoNoticeCopy}>Open Profile details to upload or change your photo.</Text></TouchableOpacity> : null}
+            {characterAvatarPickerOpen && characterAvatarPickerTab === "photo" ? <View style={styles.profileCompletionPhotoNotice}><Text style={styles.profileCompletionPhotoNoticeTitle}>Use a profile photo later</Text><Text style={styles.profileCompletionPhotoNoticeCopy}>Save a character to finish setup now. You can replace it with a photo any time from Profile.</Text></View> : null}
             <Text style={styles.profileCompletionRemainingTitle}>Required to complete your profile</Text>
             <View style={styles.profileCompletionMissingRow}>
               {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Photo or character</Text> : null}
@@ -4075,6 +4105,13 @@ function FairFaresApp() {
               {!data?.user?.phone?.trim() ? <Text style={styles.profileCompletionChip}>Phone number</Text> : null}
               {data?.user?.consentPending ? <Text style={styles.profileCompletionChip}>Policy acceptance</Text> : null}
             </View>
+            {profileCompletionValidationError ? <Text style={styles.profileCompletionValidationError} accessibilityRole="alert">{profileCompletionValidationError}</Text> : null}
+            {!data?.user?.name?.trim() || !data?.user?.email?.trim() || !data?.user?.phone?.trim() ? <View style={styles.profileCompletionDetails}>
+              <Text style={styles.profileCompletionDetailsTitle}>Your details</Text>
+              {!data?.user?.name?.trim() ? <TextInput value={profileCompletionName} onChangeText={setProfileCompletionName} placeholder="Full name" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="words" /> : null}
+              {!data?.user?.email?.trim() ? <TextInput value={profileCompletionEmail} onChangeText={setProfileCompletionEmail} placeholder="Email" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="none" keyboardType="email-address" /> : null}
+              {!data?.user?.phone?.trim() ? <TextInput value={profileCompletionPhone} onChangeText={setProfileCompletionPhone} placeholder="Phone number, including country code" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} keyboardType="phone-pad" autoComplete="tel" /> : null}
+            </View> : null}
             {data?.user?.consentPending ? (
               <View style={styles.signupConsentRow}>
                 <TouchableOpacity
@@ -4685,6 +4722,10 @@ const styles = StyleSheet.create({
   profileCompletionMissingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 7, marginVertical: 4 },
   profileCompletionRemainingTitle: { alignSelf: "flex-start", color: "#fff", fontSize: 15, fontWeight: "900", marginTop: 3 },
   profileCompletionChip: { color: "#d7e1f0", fontSize: 12, fontWeight: "800", overflow: "hidden", borderRadius: theme.radius.pill, borderWidth: 1, borderColor: "rgba(206,224,246,0.25)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 10, paddingVertical: 6 },
+  profileCompletionValidationError: { width: "100%", color: "#ffb4b4", backgroundColor: "rgba(166, 38, 38, 0.25)", borderColor: "rgba(255, 137, 137, 0.62)", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, fontSize: 12, lineHeight: 17, fontWeight: "800", textAlign: "center" },
+  profileCompletionDetails: { width: "100%", gap: 8, padding: 11, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.06)" },
+  profileCompletionDetailsTitle: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  profileCompletionInput: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: "rgba(206,224,246,0.28)", backgroundColor: "rgba(7,19,37,0.72)", color: "#fff", paddingHorizontal: 12, fontSize: 14, fontWeight: "700" },
   profileCompletionPrimary: { width: "100%", minHeight: 48, borderRadius: theme.radius.pill, backgroundColor: theme.colors.green, alignItems: "center", justifyContent: "center", marginTop: 2 },
   profileCompletionPrimaryText: { color: "#0c1a10", fontSize: 16, fontWeight: "900" },
   reviewPromptCard: { width: "100%", maxWidth: 410, alignSelf: "center", padding: 20, gap: 16, borderRadius: 28 },

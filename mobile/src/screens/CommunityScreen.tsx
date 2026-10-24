@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import { VideoView, useVideoPlayer } from "expo-video";
 import {
   AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, FlatList, Image, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Share,
   StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View,
@@ -11,7 +12,7 @@ import {
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
   getHousingActivity, getRentalBookings, getRideActivity,
   reactToCommunityContent, reportCommunityContent, saveCommunityPost,
-  updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus,
+  updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, uploadCommunityVideo,
 } from "../api/client";
 import type { ChatLinkPreview } from "../api/client";
 import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, FairFaresUser, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
@@ -19,7 +20,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { TactilePressable } from "../components/TactilePressable";
 import { MemberProfileSheet, MemberProfileSheetHandle, MemberProfileTarget } from "../components/MemberProfileSheet";
 import { theme } from "../theme";
-import { pickCompressedImages } from "../utils/imageUpload";
+import { pickCommunityVideo, pickCompressedImages } from "../utils/imageUpload";
 import { useResponsiveLayout } from "../utils/layout";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 import { readCachedDeviceCity, resolveCurrentDeviceCity } from "../utils/deviceCity";
@@ -85,7 +86,7 @@ function emptyCommunityPostForm() {
     area: "",
     linkUrl: "",
     communityId: "",
-    images: [] as string[],
+    media: [] as Array<{ url: string; type: "IMAGE" | "VIDEO" }>,
     details: { ...emptyDetails },
     expiresInDays: 45,
   };
@@ -403,6 +404,16 @@ function CommunitySinglePostPhoto({ image, interactive, onPress, label }: { imag
     ? <TouchableOpacity style={containerStyle} activeOpacity={0.78} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>{photo}</TouchableOpacity>
     : <View style={containerStyle}>{photo}</View>;
 }
+
+function CommunityPostVideo({ video, style }: { video: string; style: object }) {
+  // A feed video never autoplays. It only loads its first frame, and native
+  // controls provide play, scrubbing, and fullscreen without another modal.
+  const player = useVideoPlayer(absoluteUrl(video), (instance) => {
+    instance.muted = false;
+    instance.loop = false;
+  });
+  return <VideoView player={player} style={style} nativeControls contentFit="cover" allowsFullscreen />;
+}
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
@@ -551,6 +562,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [postValidation, setPostValidation] = useState<{ title?: string; body?: string }>({});
   const fieldExamples = postFieldExamples(form.category);
   const [publishing, setPublishing] = useState(false);
+  const [videoUploading, setVideoUploading] = useState(false);
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
@@ -1072,7 +1084,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       area: post.area,
       linkUrl: post.linkUrl,
       communityId: post.community?.id || "",
-      images: [...post.images],
+      media: [...(post.media || post.images.map((url) => ({ url, type: "IMAGE" as const })))],
       details: { ...emptyDetails, ...post.details },
       expiresInDays: 45,
     };
@@ -1270,7 +1282,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         const nextTitle = form.title.trim();
         const nextBody = form.body.trim();
         const nextLinkUrl = form.linkUrl.trim();
-        await updateCommunityPost(postId, { title: nextTitle, body: nextBody, linkUrl: nextLinkUrl, details: form.details, images: form.images });
+        await updateCommunityPost(postId, { title: nextTitle, body: nextBody, linkUrl: nextLinkUrl, details: form.details, media: form.media });
         // The save has succeeded. Do not hold this page-sheet open behind a
         // full local-and-national feed refresh: that extra request made an
         // Edit tap appear stuck when the feed was slow. Update the card the
@@ -1281,7 +1293,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           body: nextBody,
           linkUrl: nextLinkUrl,
           details: { ...form.details },
-          images: [...form.images],
+          media: [...form.media],
+          images: form.media.filter((item) => item.type === "IMAGE").map((item) => item.url),
         }));
         void load(true);
       } else {
@@ -1298,6 +1311,37 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     } catch (error) { Alert.alert("Could not publish", message(error)); }
     finally { setPublishing(false); }
   };
+
+  const addCommunityPhotos = async () => {
+    if (form.media.length >= 4) { Alert.alert("Attachment limit", "A post can have up to four attachments."); return; }
+    try {
+      const images = await pickCompressedImages(4 - form.media.length);
+      setForm((current) => ({ ...current, media: [...current.media, ...images.map((url) => ({ url, type: "IMAGE" as const }))].slice(0, 4) }));
+    } catch (error) { Alert.alert("Photos not added", message(error)); }
+  };
+
+  const addCommunityVideo = async () => {
+    if (form.media.some((item) => item.type === "VIDEO")) { Alert.alert("Video already added", "Each post can include one video."); return; }
+    if (form.media.length >= 4) { Alert.alert("Attachment limit", "Remove an attachment before adding a video."); return; }
+    try {
+      const video = await pickCommunityVideo();
+      if (!video) return;
+      setVideoUploading(true);
+      const uploaded = await uploadCommunityVideo(video);
+      setForm((current) => ({ ...current, media: [...current.media, uploaded.media].slice(0, 4) }));
+    } catch (error) { Alert.alert("Video not added", message(error)); }
+    finally { setVideoUploading(false); }
+  };
+
+  const chooseCommunityAttachment = () => Alert.alert(
+    "Add to your post",
+    videoUploading ? "Uploading your selected video…" : "Choose photos or one video.",
+    [
+      { text: "Photos", onPress: () => void addCommunityPhotos() },
+      { text: "Video", onPress: () => void addCommunityVideo() },
+      { text: "Cancel", style: "cancel" },
+    ],
+  );
 
   const submitAnswer = async () => {
     if (!detail || !answer.trim()) return;
@@ -1539,19 +1583,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const communityInsertIndex = Math.min(3, posts.length - 1);
 
   const renderPostImages = (post: CommunityPost, interactive = false) => {
-    const images = post.images;
-    const visible = images.slice(0, 4);
+    const media = post.media?.length ? post.media : post.images.map((url) => ({ url, type: "IMAGE" as const }));
+    const visible = media.slice(0, 4);
+    const photos = media.filter((item) => item.type === "IMAGE").map((item) => item.url);
     if (!visible.length) return null;
-    if (visible.length === 1) {
+    if (visible.length === 1 && visible[0].type === "IMAGE") {
       return <CommunitySinglePostPhoto
-        image={visible[0]}
+        image={visible[0].url}
         interactive={interactive}
-        label={`Open listing photo 1 of ${images.length}`}
-        onPress={() => openPostPhoto(post, images, 0)}
+        label={`Open listing photo 1 of ${photos.length}`}
+        onPress={() => openPostPhoto(post, photos, 0)}
       />;
     }
+    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} /></View>;
     return <View style={styles.postMediaGrid}>
-      {visible.map((image, index) => {
+      {visible.map((item, index) => {
         const cellStyle = [
           styles.postMediaCell,
           visible.length === 2 && styles.postMediaCellTwo,
@@ -1559,11 +1605,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           visible.length === 3 && index > 0 && styles.postMediaCellThreeSmall,
           visible.length === 4 && styles.postMediaCellFour,
         ];
-        const imageCell = <>
-          <Image source={{ uri: absoluteUrl(image) }} style={styles.postMediaImage} resizeMode="cover" />
-          {index === 3 && images.length > 4 ? <View style={styles.postMediaMore}><Text style={styles.postMediaMoreText}>+{images.length - 4}</Text></View> : null}
-        </>;
-        return interactive ? <TouchableOpacity key={`${image}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${index + 1} of ${images.length}`} activeOpacity={0.78} onPress={() => openPostPhoto(post, images, index)} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${image}-${index}`} style={cellStyle}>{imageCell}</View>;
+        if (item.type === "VIDEO") return <View key={`${item.url}-${index}`} style={cellStyle}><CommunityPostVideo video={item.url} style={styles.postMediaImage} /></View>;
+        const photoIndex = photos.indexOf(item.url);
+        const imageCell = <Image source={{ uri: absoluteUrl(item.url) }} style={styles.postMediaImage} resizeMode="cover" />;
+        return interactive ? <TouchableOpacity key={`${item.url}-${index}`} accessibilityRole="button" accessibilityLabel={`Open listing photo ${photoIndex + 1} of ${photos.length}`} activeOpacity={0.78} onPress={() => openPostPhoto(post, photos, photoIndex)} style={cellStyle}>{imageCell}</TouchableOpacity> : <View key={`${item.url}-${index}`} style={cellStyle}>{imageCell}</View>;
       })}
     </View>;
   };
@@ -1886,10 +1931,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         </View>
         <View style={styles.counter}><Text style={styles.counterText}>{form.body.length}/3000</Text></View>
         <View style={[styles.attachmentPanel, { backgroundColor: theme.colors.panel, borderColor: theme.colors.line }]}>
-          <View><Text style={styles.attachmentTitle}>Add to your post <Text style={styles.attachmentOptional}>Optional</Text></Text><Text style={styles.attachmentHint}>A link or up to 4 photos can help people understand your post.</Text></View>
+          <View><Text style={styles.attachmentTitle}>Add to your post <Text style={styles.attachmentOptional}>Optional</Text></Text><Text style={styles.attachmentHint}>Add up to 4 photos, or combine photos with one video.</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
-          {form.images.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.images.map((image, index) => <TouchableOpacity key={index} onPress={() => setForm((current) => ({ ...current, images: current.images.filter((_, target) => target !== index) }))}><Image source={{ uri: absoluteUrl(image) }} style={styles.previewImage} /><View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
-          <TouchableOpacity style={styles.addPhoto} onPress={async () => { try { const images = await pickCompressedImages(4 - form.images.length); setForm((current) => ({ ...current, images: [...current.images, ...images].slice(0, 4) })); } catch (error) { Alert.alert("Photos not added", message(error)); } }} accessibilityRole="button" accessibilityLabel="Add up to four photos"><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos</Text><Text style={styles.addPhotoBody}>{form.images.length ? `${form.images.length} of 4 selected · Tap a photo to remove it` : "Choose up to 4 clear, relevant images"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
+          {form.media.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.media.map((item, index) => <TouchableOpacity key={`${item.url.slice(0, 24)}-${index}`} onPress={() => setForm((current) => ({ ...current, media: current.media.filter((_, target) => target !== index) }))}>{item.type === "VIDEO" ? <View style={styles.previewVideo}><Text style={styles.previewVideoIcon}>▶</Text><Text style={styles.previewVideoText}>Video</Text></View> : <Image source={{ uri: absoluteUrl(item.url) }} style={styles.previewImage} />}<View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
+          <TouchableOpacity style={[styles.addPhoto, videoUploading && { opacity: 0.65 }]} onPress={videoUploading ? undefined : chooseCommunityAttachment} disabled={videoUploading} accessibilityRole="button" accessibilityLabel="Add photos or video" accessibilityState={{ disabled: videoUploading }}><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos or video</Text><Text style={styles.addPhotoBody}>{videoUploading ? "Uploading video…" : form.media.length ? `${form.media.length} of 4 selected · One video max · Tap an attachment to remove it` : "Choose up to 4 photos or one video"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
         </View>
         <View style={styles.fieldGroup}>
           <View style={styles.fieldHeader}><Text style={styles.fieldLabel}>Location or area <Text style={styles.fieldOptional}>Optional</Text></Text><Text style={styles.fieldHint}>This helps nearby members find your post.</Text></View>
@@ -2008,6 +2053,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", backgroundColor: theme.colors.panel, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, padding: 30, gap: 8 }, emptyIcon: { fontSize: 36 }, emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "800" }, emptyBody: { color: theme.colors.muted, textAlign: "center", lineHeight: 20 }, emptyButton: { marginTop: 8, backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 18, paddingVertical: 11 }, emptyButtonText: { color: "#06291e", fontWeight: "800" },
   loadMore: { alignSelf: "center", borderWidth: 1, borderColor: "#315945", backgroundColor: "#10291f", borderRadius: 999, paddingHorizontal: 20, paddingVertical: 12 }, loadMoreText: { color: "#9be8c7", fontWeight: "800" },
   modal: { flex: 1, backgroundColor: theme.colors.bg }, modalHead: { minHeight: 62, borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, cancel: { color: theme.colors.soft, fontSize: 15 }, modalTitle: { color: theme.colors.text, fontWeight: "800", fontSize: 16 }, publish: { color: theme.colors.brand, fontWeight: "800", fontSize: 15 }, danger: { color: theme.colors.accent, fontWeight: "800" }, disabled: { opacity: .45 }, form: { padding: 18, gap: 15, paddingBottom: 40 }, formLabel: { color: theme.colors.soft, fontWeight: "800", fontSize: 12, textTransform: "uppercase", letterSpacing: .5 }, formLabelOptional: { color: theme.colors.muted, fontWeight: "700", textTransform: "none", letterSpacing: 0 }, optionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, option: { width: "48%", backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderWidth: 1, borderRadius: 14, padding: 13 }, optionActive: { backgroundColor: "#173b2d", borderColor: theme.colors.brand }, optionText: { color: theme.colors.soft, fontWeight: "700" }, optionTextActive: { color: "#a9f2d2" }, detailFields: { gap: 7 }, fieldGroup: { gap: 5 }, fieldHeader: { gap: 2 }, fieldLabel: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, fieldHint: { color: theme.colors.muted, fontSize: 12, lineHeight: 17 }, fieldRequired: { color: theme.colors.brand, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: .2 }, fieldOptional: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: .2 }, titleInput: { color: theme.colors.text, fontSize: 22, fontWeight: "800", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingVertical: 13 }, bodyInput: { minHeight: 150, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, color: theme.colors.text, fontSize: 15, lineHeight: 22 }, fieldInputInvalid: { borderColor: "#dc2626", borderBottomColor: "#dc2626" }, fieldError: { color: "#dc2626", fontSize: 12, lineHeight: 16, fontWeight: "800" }, input: { minHeight: 50, backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 15, paddingHorizontal: 14, color: theme.colors.text }, counter: { alignItems: "flex-end", marginTop: -10 }, counterText: { color: theme.colors.muted, fontSize: 11 }, attachmentPanel: { gap: 10, padding: 13, borderRadius: 17, borderWidth: 1, borderColor: "#315348", backgroundColor: "#111d19" }, attachmentTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, attachmentOptional: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: .2 }, attachmentHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 }, previewImage: { width: 105, height: 105, borderRadius: 15 }, removeImage: { position: "absolute", right: 5, top: 5, width: 25, height: 25, borderRadius: 13, backgroundColor: "rgba(0,0,0,.75)", alignItems: "center", justifyContent: "center" }, removeImageText: { color: "#fff", fontSize: 18 }, addPhoto: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderStyle: "dashed", borderColor: "#3f6554", borderRadius: 14, padding: 13 }, addPhotoIcon: { color: theme.colors.brand, fontSize: 24 }, addPhotoCopy: { flex: 1, minWidth: 0 }, addPhotoTitle: { color: theme.colors.text, fontWeight: "800" }, addPhotoBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 }, addPhotoChevron: { color: theme.colors.brand, fontSize: 25 }, safety: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, backgroundColor: "#211f17", borderRadius: 14, padding: 13 },
+  previewVideo: { width: 105, height: 105, borderRadius: 15, backgroundColor: "#10291f", alignItems: "center", justifyContent: "center", gap: 6 }, previewVideoIcon: { color: "#9be8c7", fontSize: 28 }, previewVideoText: { color: "#d8f5e7", fontSize: 12, fontWeight: "900" },
   detailContent: { padding: 14, gap: 14, paddingBottom: 45 }, answersTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800", marginTop: 6 }, answerCard: { backgroundColor: theme.colors.panel, borderWidth: 1, borderColor: theme.colors.line, borderRadius: 18, padding: 15, gap: 11 }, answerAvatar: { width: 36, height: 36, borderRadius: 12, backgroundColor: theme.colors.panel2 }, accepted: { color: "#7ee2b8", fontSize: 12, fontWeight: "800" }, acceptedLight: { color: "#126b4c" }, answerBody: { color: theme.colors.soft, lineHeight: 21 }, answerActions: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }, answerAction: { color: theme.colors.muted, fontWeight: "700", fontSize: 12 }, acceptAction: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, answerComposer: { backgroundColor: theme.colors.panel, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.line, padding: 12, gap: 10 }, answerInput: { minHeight: 75, color: theme.colors.text, fontSize: 14, textAlignVertical: "top" }, sendAnswer: { alignSelf: "flex-end", backgroundColor: theme.colors.brand, borderRadius: 999, paddingHorizontal: 15, paddingVertical: 10 }, sendAnswerText: { color: "#06291e", fontWeight: "800" }, locked: { color: theme.colors.muted, textAlign: "center", padding: 18 },
   signInAnswer: { backgroundColor: "#10291f", borderWidth: 1, borderColor: "#315945", borderRadius: 18, padding: 18, alignItems: "center", gap: 4 }, signInAnswerTitle: { color: "#9be8c7", fontSize: 16, fontWeight: "800" }, signInAnswerBody: { color: theme.colors.muted, fontSize: 12, textAlign: "center" },
   replyLabel: { color: theme.colors.brand, fontSize: 10, fontWeight: "800" }, replyAction: { color: theme.colors.brand, fontWeight: "800", fontSize: 12 }, replyingTo: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 10, borderRadius: 9, backgroundColor: theme.colors.panel2 }, replyingToText: { color: theme.colors.soft, fontSize: 11, fontWeight: "700" }, replyingToClose: { color: theme.colors.muted, fontSize: 20 }, guestAllowance: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, guestAllowanceName: { color: theme.colors.brand, fontSize: 11, fontWeight: "900" }, guestAllowanceCount: { color: theme.colors.muted, fontSize: 10, fontWeight: "700" }, guestSignupHint: { color: theme.colors.brand, fontSize: 11, textAlign: "center", fontWeight: "800", paddingVertical: 3 },

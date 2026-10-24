@@ -94,6 +94,25 @@ class CommunityFeatureTest(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def multipart_request(self, path, token, field, filename, mime_type, payload):
+        boundary = "----FairFaresCommunityVideo"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode() + payload + f"\r\n--{boundary}--\r\n".encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_port}{path}",
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
     def guest_request(self, method, path, guest_token, payload=None):
         data = json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(
@@ -230,6 +249,54 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertEqual(status, 200)
         _, preserved = self.request("GET", f"/api/mobile/community?postId={post_id}", "owner-token")
         self.assertEqual(preserved["posts"][0]["images"], edited_images)
+
+    def test_post_video_is_limited_and_returned_as_media(self):
+        png = "data:image/png;base64," + base64.b64encode(
+            base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        ).decode("ascii")
+        video = "data:video/mp4;base64," + base64.b64encode(b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2").decode("ascii")
+        status, created = self.create_post(media=[{"url": png, "type": "IMAGE"}, {"url": video, "type": "VIDEO"}])
+        self.assertEqual(status, 201)
+        post = created["post"]
+        self.assertEqual([item["type"] for item in post["media"]], ["IMAGE", "VIDEO"])
+        self.assertEqual(len(post["images"]), 1)
+        self.assertIn("/community/", urllib.parse.urlparse(post["media"][1]["url"]).path)
+
+        status, updated = self.request(
+            "POST", "/api/mobile/community/update", "owner-token",
+            {
+                "postId": post["id"],
+                "title": "Updated post with a short video",
+                "body": "This keeps the selected photo and video in the chosen order.",
+                "linkUrl": "",
+                "details": {},
+                "media": [post["media"][1], post["media"][0]],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(updated["ok"])
+        _, detail = self.request("GET", f"/api/mobile/community?postId={post['id']}", "owner-token")
+        self.assertEqual([item["type"] for item in detail["posts"][0]["media"]], ["VIDEO", "IMAGE"])
+
+        status, rejected = self.create_post(
+            title="A different valid local video post",
+            media=[{"url": video, "type": "VIDEO"}, {"url": video, "type": "VIDEO"}],
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("one video", rejected["error"].lower())
+
+    def test_video_file_upload_can_be_attached_without_base64_json(self):
+        video_bytes = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+        status, uploaded = self.multipart_request(
+            "/api/mobile/community/video", "owner-token", "video", "short-clip.mp4", "video/mp4", video_bytes,
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(uploaded["media"]["type"], "VIDEO")
+        self.assertTrue(uploaded["media"]["url"].endswith(".mp4"))
+
+        status, created = self.create_post(media=[uploaded["media"]])
+        self.assertEqual(status, 201)
+        self.assertEqual(created["post"]["media"], [uploaded["media"]])
 
     def test_comment_author_can_edit_but_other_users_cannot(self):
         _, created = self.create_post()

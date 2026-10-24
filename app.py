@@ -132,8 +132,12 @@ DICEBEAR_AVATAR_API_VERSION = "10.x"
 DICEBEAR_AVATAR_BACKGROUND_COLORS = {"b6ead8", "c9e4ff", "fde1d7", "f7e6ba", "ddd6fe", "d1fae5"}
 MAX_DRIVE_UPLOAD_BYTES = 12_000_000
 MAX_HOUSING_IMAGE_BYTES = 3_000_000
-MAX_REQUEST_BODY_BYTES = 24_000_000
+# Community clips upload as a file rather than Base64 inside the post JSON.
+# This avoids Base64 expansion and accepts normal phone videos.
+MAX_COMMUNITY_VIDEO_BYTES = 100_000_000
+MAX_REQUEST_BODY_BYTES = 120_000_000
 ALLOWED_HOUSING_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_COMMUNITY_VIDEO_MIME_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
 ALLOWED_CHAT_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_CHAT_IMAGE_BYTES = 4_000_000
 ALLOWED_CHAT_FILE_MIME_TYPES = {
@@ -1000,6 +1004,66 @@ def data_url_upload_parts(
     if not safe_name.lower().endswith(extension.lower()):
         safe_name = f"{safe_name}{extension}"
     return safe_name, mime_type, payload
+
+
+def community_post_media_entries(payload: dict[str, object]) -> tuple[bool, list[str], str]:
+    """Read the current media format while keeping photo-only app versions working."""
+    media_supplied = isinstance(payload.get("media"), list)
+    images_supplied = isinstance(payload.get("images"), list)
+    if not media_supplied and not images_supplied:
+        return False, [], ""
+    raw_entries = payload.get("media") if media_supplied else payload.get("images")
+    if not isinstance(raw_entries, list):
+        return True, [], "Add valid photos or a video."
+    if media_supplied and len(raw_entries) > 4:
+        return True, [], "Add up to four attachments."
+    entries: list[str] = []
+    for entry in raw_entries[:4]:
+        value = entry.get("url") if isinstance(entry, dict) else entry
+        value = str(value or "").strip()
+        if not value:
+            return True, [], "One of the selected attachments is invalid."
+        entries.append(value)
+    return True, entries, ""
+
+
+def community_post_upload_type(data_url: str) -> str:
+    """Return the only supported public-feed media kind for a new upload."""
+    if data_url_upload_parts(
+        data_url,
+        "community-image",
+        allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
+        max_bytes=MAX_HOUSING_IMAGE_BYTES,
+    ):
+        return "IMAGE"
+    if data_url_upload_parts(
+        data_url,
+        "community-video",
+        allowed_mime_types=ALLOWED_COMMUNITY_VIDEO_MIME_TYPES,
+        max_bytes=MAX_COMMUNITY_VIDEO_BYTES,
+    ):
+        return "VIDEO"
+    return ""
+
+
+def is_saved_community_video(value: str) -> bool:
+    """A video accepted by the dedicated upload endpoint, ready for a post."""
+    raw_value = str(value or "").strip()
+    parsed = urllib.parse.urlparse(raw_value)
+    path = parsed.path if parsed.path else raw_value.replace("local://", "/", 1)
+    return (
+        (raw_value.startswith("local://uploads/community/") or path.startswith("/uploads/community/"))
+        and Path(path).suffix.lower() in {".mp4", ".mov", ".webm"}
+    )
+
+
+def community_post_media_limit_error(media_types: Iterable[str]) -> str:
+    types = tuple(media_types)
+    if len(types) > 4:
+        return "Add up to four attachments."
+    if sum(item == "VIDEO" for item in types) > 1:
+        return "Add one video per post."
+    return ""
 
 
 def chat_avatar_data_url_parts(value: str) -> tuple[str, bytes] | None:
@@ -7920,6 +7984,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 post_id INTEGER NOT NULL,
                 image_url TEXT NOT NULL,
+                media_type TEXT NOT NULL DEFAULT 'IMAGE' CHECK(media_type IN ('IMAGE', 'VIDEO')),
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(post_id) REFERENCES ask_community_posts(id)
@@ -8026,6 +8091,7 @@ def init_db() -> None:
         ensure_column(con, "ask_community_posts", "expires_at", "expires_at TEXT")
         ensure_column(con, "ask_community_posts", "source_kind", "source_kind TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "ask_community_posts", "source_public_id", "source_public_id TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "ask_community_post_images", "media_type", "media_type TEXT NOT NULL DEFAULT 'IMAGE'")
         ensure_column(con, "users", "phone", "phone TEXT")
         ensure_column(con, "users", "chat_phone_discoverable", "chat_phone_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "address", "address TEXT")
@@ -10059,6 +10125,8 @@ def create_security_deposit_checkout_session(
     booking: sqlite3.Row,
     actor: sqlite3.Row,
     origin: str,
+    success_url: str = "",
+    cancel_url: str = "",
 ) -> tuple[dict[str, object], str]:
     if row_value(booking, "payment_status") not in {"HOLD_PAID", "PAID"}:
         return {}, "Security deposit can be authorized after the 10% hold or full payment is recorded."
@@ -10071,11 +10139,15 @@ def create_security_deposit_checkout_session(
     amount_cents = int(round(SECURITY_DEPOSIT_AMOUNT * 100))
     public_booking_id = row_value(booking, "booking_id")
     origin = origin.rstrip("/")
+    if not is_safe_mobile_return_url(success_url):
+        success_url = f"{origin}/payment/success?deposit=1"
+    if not is_safe_mobile_return_url(cancel_url):
+        cancel_url = f"{origin}/manage-booking?deposit=cancelled#bookingHoldPanel"
     params = {
         "mode": "payment",
         "payment_method_types[]": "card",
-        "success_url": f"{origin}/payment/success?deposit=1&session_id={{CHECKOUT_SESSION_ID}}",
-        "cancel_url": f"{origin}/manage-booking?deposit=cancelled#bookingHoldPanel",
+        "success_url": f"{success_url}{'&' if '?' in success_url else '?'}session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": cancel_url,
         "customer_email": row_value(booking, "contact_email") or row_value(actor, "email"),
         "client_reference_id": public_booking_id,
         "line_items[0][quantity]": 1,
@@ -13514,7 +13586,7 @@ def community_post_rows(
                    EXISTS(SELECT 1 FROM ask_community_reactions mine WHERE mine.post_id = posts.id AND mine.user_id = ?) AS reacted,
                    (SELECT CASE mine_type.reaction WHEN 'HELPFUL' THEN 'LIKE' WHEN 'THANKS' THEN 'LOVE' WHEN 'SUPPORT' THEN 'CARE' ELSE mine_type.reaction END FROM ask_community_reactions mine_type WHERE mine_type.post_id = posts.id AND mine_type.user_id = ? LIMIT 1) AS viewer_reaction,
                    EXISTS(SELECT 1 FROM ask_community_saved_posts saved WHERE saved.post_id = posts.id AND saved.user_id = ?) AS saved,
-                   (SELECT GROUP_CONCAT(image_url, char(31)) FROM (SELECT image_url FROM ask_community_post_images WHERE post_id = posts.id ORDER BY sort_order, id)) AS image_urls
+                   (SELECT GROUP_CONCAT(image_url || char(30) || COALESCE(media_type, 'IMAGE'), char(31)) FROM (SELECT image_url, media_type FROM ask_community_post_images WHERE post_id = posts.id ORDER BY sort_order, id)) AS image_urls
             FROM ask_community_posts posts
             JOIN users ON users.id = posts.author_id
             LEFT JOIN chat_communities communities ON communities.id = posts.community_id
@@ -13658,7 +13730,13 @@ def community_post_payload(
     rating_summaries: dict[int, dict[str, object]] | None = None,
 ) -> dict[str, object]:
     author_id = int(row_value(row, "author_id") or 0)
-    images = [item for item in str(row_value(row, "image_urls") or "").split(chr(31)) if item]
+    media = []
+    for item in str(row_value(row, "image_urls") or "").split(chr(31)):
+        if not item:
+            continue
+        url, separator, media_type = item.partition(chr(30))
+        media.append({"url": url, "type": media_type if separator and media_type in {"IMAGE", "VIDEO"} else "IMAGE"})
+    images = [str(item["url"]) for item in media if item["type"] == "IMAGE"]
     try:
         details = json.loads(str(row_value(row, "details_json") or "{}"))
     except (TypeError, ValueError):
@@ -13680,6 +13758,7 @@ def community_post_payload(
         "area": str(row_value(row, "area") or ""),
         "linkUrl": str(row_value(row, "link_url") or ""),
         "images": images,
+        "media": media,
         "status": str(row_value(row, "status") or "PUBLISHED"),
         "fulfillmentStatus": str(row_value(row, "fulfillment_status") or "OPEN"),
         "expiresAt": str(row_value(row, "expires_at") or ""),
@@ -28469,6 +28548,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/notification-test": self.api_mobile_send_notification_test,
             "/api/mobile/housing": self.api_mobile_create_housing,
             "/api/mobile/housing/complete": self.api_mobile_complete_housing,
+            "/api/mobile/community/video": self.api_mobile_upload_community_video,
             "/api/mobile/community": self.api_mobile_create_community_post,
             "/api/mobile/community/guest-session": self.api_mobile_community_guest_session,
             "/api/mobile/community/guest-message": self.api_mobile_community_guest_message,
@@ -28678,7 +28758,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             filename = part.get_filename() or ""
             if filename:
                 payload = part.get_payload(decode=True) or b""
-                if len(payload) <= MAX_DRIVE_UPLOAD_BYTES:
+                # Endpoints enforce their own file limits. Keep this parser
+                # aligned with the largest supported request so a community
+                # video is not silently discarded before validation.
+                if len(payload) <= MAX_REQUEST_BODY_BYTES:
                     files[key] = {
                         "filename": Path(filename).name,
                         "mime_type": part.get_content_type() or mimetypes.guess_type(filename)[0] or "application/octet-stream",
@@ -41387,19 +41470,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
         if email_changed or phone_changed:
             with db() as con:
-                has_social_identity = con.execute(
-                    "SELECT 1 FROM auth_identities WHERE user_id = ? LIMIT 1",
-                    (int(row_value(user, "id") or 0),),
-                ).fetchone() is not None
                 phone_owner = find_other_user_by_phone(
                     con, canonical_phone, int(row_value(user, "id") or 0)
                 ) if phone_changed else None
-            # A social-only account created by the temporary legacy rollout has
-            # no password the member knows. Permit only its initial phone to be
-            # completed from its authenticated session; later changes still
-            # require normal credential verification.
-            initial_social_phone = phone_changed and not normalize_phone(current_phone) and has_social_identity and not email_changed
-            if not initial_social_phone and not verify_password(current_password, row_value(user, "password_hash")):
+            # A signed-in new member may add their first phone number during
+            # mandatory profile completion. Any later phone change (or any
+            # email change) still requires their current password.
+            initial_phone_completion = phone_changed and not normalize_phone(current_phone) and not email_changed
+            if not initial_phone_completion and not verify_password(current_password, row_value(user, "password_hash")):
                 self.send_json({"ok": False, "error": "Enter your current password to change email or phone."}, 403)
                 return
             if phone_owner:
@@ -41756,10 +41834,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         session, status = resumable_stripe_identity_session(int(customer["id"]), int(row_value(booking, "id") or 0))
         if not session.get("url"):
             origin = self.public_origin().rstrip("/")
+            return_url = str(payload.get("returnUrl") or payload.get("return_url") or "").strip()
+            if not is_safe_mobile_return_url(return_url):
+                return_url = f"{origin}/manage-booking?identity=return"
             session, status = create_stripe_identity_session_for(
                 customer,
                 booking,
-                f"{origin}/manage-booking?identity=return",
+                return_url,
             )
             if session.get("id"):
                 save_identity_verification_from_session(session, int(customer["id"]), int(row_value(booking, "id") or 0))
@@ -44072,7 +44153,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not booking:
             self.send_json({"ok": False, "error": "Booking not found."}, 404)
             return
-        session, status = create_security_deposit_checkout_session(booking, user, self.public_origin())
+        success_url = str(payload.get("successUrl") or payload.get("success_url") or "").strip()
+        cancel_url = str(payload.get("cancelUrl") or payload.get("cancel_url") or "").strip()
+        session, status = create_security_deposit_checkout_session(
+            booking,
+            user,
+            self.public_origin(),
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
         checkout_url = str(session.get("url") or "")
         if status != "ok" or not checkout_url:
             self.send_json(
@@ -44599,12 +44688,18 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if identity_error:
             self.send_json({"ok": False, "error": identity_error}, 400)
             return
-        images_supplied = isinstance(payload.get("images"), list)
-        raw_images = payload.get("images") if images_supplied else []
-        valid_images = [
-            str(value) for value in raw_images[:4]
-            if data_url_upload_parts(str(value or ""), "community-image", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
-        ]
+        _media_supplied, raw_media, media_error = community_post_media_entries(payload)
+        if media_error:
+            self.send_json({"ok": False, "error": media_error}, 400)
+            return
+        valid_media = [(value, "VIDEO" if is_saved_community_video(value) else community_post_upload_type(value)) for value in raw_media]
+        if not all(media_type for _value, media_type in valid_media):
+            self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, GIF, MP4, MOV, or WebM attachment within the upload limit."}, 400)
+            return
+        media_limit_error = community_post_media_limit_error(media_type for _value, media_type in valid_media)
+        if media_limit_error:
+            self.send_json({"ok": False, "error": media_limit_error}, 400)
+            return
         now = datetime.utcnow().isoformat(timespec="seconds")
         public_id = community_public_id()
         with db() as con:
@@ -44640,14 +44735,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (public_id, int(user["id"]), community_id, post_type, title, body, category, city, area, link_url, json.dumps(details, separators=(",", ":")), expires_at, now, now),
             )
             database_id = int(cursor.lastrowid)
-            for index, image_data in enumerate(valid_images, start=1):
-                image_url = save_data_url_payload_locally(folder_name="community", data_url=image_data, fallback_name=f"{public_id.lower()}-{index}", allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES, max_bytes=MAX_HOUSING_IMAGE_BYTES)
-                if image_url:
-                    con.execute("INSERT INTO ask_community_post_images (post_id, image_url, sort_order, created_at) VALUES (?, ?, ?, ?)", (database_id, image_url, index, now))
+            for index, (media_data, media_type) in enumerate(valid_media, start=1):
+                if media_type == "VIDEO" and is_saved_community_video(media_data):
+                    con.execute(
+                        "INSERT INTO ask_community_post_images (post_id, image_url, media_type, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (database_id, media_data, media_type, index, now),
+                    )
+                    continue
+                allowed_mime_types = ALLOWED_COMMUNITY_VIDEO_MIME_TYPES if media_type == "VIDEO" else ALLOWED_HOUSING_IMAGE_MIME_TYPES
+                max_bytes = MAX_COMMUNITY_VIDEO_BYTES if media_type == "VIDEO" else MAX_HOUSING_IMAGE_BYTES
+                media_url = save_data_url_payload_locally(folder_name="community", data_url=media_data, fallback_name=f"{public_id.lower()}-{index}", allowed_mime_types=allowed_mime_types, max_bytes=max_bytes)
+                if media_url:
+                    con.execute("INSERT INTO ask_community_post_images (post_id, image_url, media_type, sort_order, created_at) VALUES (?, ?, ?, ?, ?)", (database_id, media_url, media_type, index, now))
         if category == "HAVE_PLACE":
             invalidate_mobile_search_cache("housing")
         row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
         self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"]))}, 201)
+
+    def api_mobile_upload_community_video(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "error": "Login is required to upload a video."}, 401)
+            return
+        if not mobile_user_is_verified(user):
+            self.send_json({"ok": False, "error": "Verify your email or phone before adding a video."}, 403)
+            return
+        _form, files = self.read_form_with_files()
+        video_url = save_file_payload_locally(
+            folder_name="community",
+            file_data=files.get("video"),
+            fallback_name=f"community-video-{int(user['id'])}",
+            allowed_mime_types=ALLOWED_COMMUNITY_VIDEO_MIME_TYPES,
+            max_bytes=MAX_COMMUNITY_VIDEO_BYTES,
+        )
+        if not video_url:
+            self.send_json({"ok": False, "error": "Choose an MP4, MOV, or WebM video that is no larger than 100 MB."}, 400)
+            return
+        self.send_json({"ok": True, "media": {"url": video_url, "type": "VIDEO"}}, 201)
 
     def api_mobile_create_community_answer(self) -> None:
         user = self.current_user()
@@ -45149,8 +45273,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
         detail_limits = {"budget": 40, "moveInDate": 20, "preference": 160, "rent": 40, "availableDate": 20, "roomType": 60, "origin": 120, "destination": 120, "travelDate": 20, "travelTime": 20, "seats": 3}
         details = {key: clean_text_value(raw_details.get(key), limit) for key, limit in detail_limits.items() if clean_text_value(raw_details.get(key), limit)}
-        images_supplied = isinstance(payload.get("images"), list)
-        raw_images = payload.get("images") if images_supplied else []
+        attachments_supplied, raw_media, media_error = community_post_media_entries(payload)
+        media_supplied = isinstance(payload.get("media"), list)
+        if media_error:
+            self.send_json({"ok": False, "error": media_error}, 400)
+            return
         if len(title) < 6 or len(body) < 12:
             self.send_json({"ok": False, "error": "Add a clear title and description."}, 400)
             return
@@ -45165,53 +45292,62 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 return
             database_id = int(post["id"])
             existing_rows = con.execute(
-                "SELECT image_url FROM ask_community_post_images WHERE post_id = ? ORDER BY sort_order, id",
+                "SELECT image_url, media_type FROM ask_community_post_images WHERE post_id = ? ORDER BY sort_order, id",
                 (database_id,),
-            ).fetchall() if images_supplied else []
+            ).fetchall() if attachments_supplied else []
             existing_by_path = {
-                urllib.parse.urlparse(public_upload_url(row_value(image_row, "image_url"))).path: str(row_value(image_row, "image_url") or "")
+                urllib.parse.urlparse(public_upload_url(row_value(image_row, "image_url"))).path: (str(row_value(image_row, "image_url") or ""), str(row_value(image_row, "media_type") or "IMAGE"))
                 for image_row in existing_rows
                 if row_value(image_row, "image_url")
             }
             existing_by_value = {
-                str(row_value(image_row, "image_url") or ""): str(row_value(image_row, "image_url") or "")
+                str(row_value(image_row, "image_url") or ""): (str(row_value(image_row, "image_url") or ""), str(row_value(image_row, "media_type") or "IMAGE"))
                 for image_row in existing_rows
                 if row_value(image_row, "image_url")
             }
-            next_images: list[str] = []
-            for index, raw_image in enumerate(raw_images[:4], start=1):
-                image_value = str(raw_image or "").strip()
-                image_path = urllib.parse.urlparse(image_value).path
-                if image_value in existing_by_value:
-                    next_images.append(existing_by_value[image_value])
+            next_media: list[tuple[str, str]] = []
+            for index, media_value in enumerate(raw_media, start=1):
+                media_path = urllib.parse.urlparse(media_value).path
+                if media_value in existing_by_value:
+                    next_media.append(existing_by_value[media_value])
                     continue
-                if image_path in existing_by_path:
-                    next_images.append(existing_by_path[image_path])
+                if media_path in existing_by_path:
+                    next_media.append(existing_by_path[media_path])
                     continue
-                if not data_url_upload_parts(
-                    image_value,
-                    f"community-image-{index}",
-                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
-                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
-                ):
+                media_type = "VIDEO" if is_saved_community_video(media_value) else community_post_upload_type(media_value)
+                if not media_type:
+                    if not media_supplied:
+                        # Older photo-only app versions ignored an individual
+                        # bad image while retaining the rest of an edit.
+                        continue
+                    self.send_json({"ok": False, "error": "Use a JPG, PNG, WebP, GIF, MP4, MOV, or WebM attachment within the upload limit."}, 400)
+                    return
+                if media_type == "VIDEO" and is_saved_community_video(media_value):
+                    next_media.append((media_value, media_type))
                     continue
+                allowed_mime_types = ALLOWED_COMMUNITY_VIDEO_MIME_TYPES if media_type == "VIDEO" else ALLOWED_HOUSING_IMAGE_MIME_TYPES
+                max_bytes = MAX_COMMUNITY_VIDEO_BYTES if media_type == "VIDEO" else MAX_HOUSING_IMAGE_BYTES
                 saved_url = save_data_url_payload_locally(
                     folder_name="community",
-                    data_url=image_value,
+                    data_url=media_value,
                     fallback_name=f"{post_public_id.lower()}-{index}",
-                    allowed_mime_types=ALLOWED_HOUSING_IMAGE_MIME_TYPES,
-                    max_bytes=MAX_HOUSING_IMAGE_BYTES,
+                    allowed_mime_types=allowed_mime_types,
+                    max_bytes=max_bytes,
                 )
                 if saved_url:
-                    next_images.append(saved_url)
+                    next_media.append((saved_url, media_type))
+            media_limit_error = community_post_media_limit_error(media_type for _media_url, media_type in next_media)
+            if media_limit_error:
+                self.send_json({"ok": False, "error": media_limit_error}, 400)
+                return
             cursor = con.execute("UPDATE ask_community_posts SET title = ?, body = ?, link_url = ?, details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (title, body, link_url, json.dumps(details, separators=(",", ":")), database_id))
-            if images_supplied:
+            if attachments_supplied:
                 con.execute("DELETE FROM ask_community_post_images WHERE post_id = ?", (database_id,))
                 now = datetime.utcnow().isoformat(timespec="seconds")
-                for index, image_url in enumerate(next_images, start=1):
+                for index, (media_url, media_type) in enumerate(next_media, start=1):
                     con.execute(
-                        "INSERT INTO ask_community_post_images (post_id, image_url, sort_order, created_at) VALUES (?, ?, ?, ?)",
-                        (database_id, image_url, index, now),
+                        "INSERT INTO ask_community_post_images (post_id, image_url, media_type, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (database_id, media_url, media_type, index, now),
                     )
         if not cursor.rowcount:
             self.send_json({"ok": False, "error": "You can only edit your own active post."}, 403)

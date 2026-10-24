@@ -1052,6 +1052,34 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_new_password_member_can_complete_initial_phone_from_profile_gate(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, ?, 1)",
+                ("New Member", "new-member@example.com", app.hash_password("NewMemberPassword123!")),
+            )
+            user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("new-member-token", user_id))
+
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({"phone": "+1 303 555 0199"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer new-member-token"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["user"]["phone"], "+13035550199")
+            with app.db() as con:
+                saved = con.execute("SELECT phone FROM users WHERE id = ?", (user_id,)).fetchone()
+            self.assertEqual(saved["phone"], "+13035550199")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_mobile_signup_preserves_guest_profile_and_rejects_member_phone_reuse(self):
         with app.db() as con:
             con.execute(

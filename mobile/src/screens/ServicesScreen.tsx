@@ -350,11 +350,15 @@ export function ServicesScreen({
           return;
         }
       }
+      const returnUrls = {
+        successUrl: "fairfares://payment/success",
+        cancelUrl: "fairfares://payment/cancel"
+      };
       const result = kind === "balance"
-        ? await startRentalCheckout("full", selectedBooking.id)
+        ? await startRentalCheckout("full", selectedBooking.id, returnUrls)
         : kind === "extension"
-          ? await startRentalCheckout("extension", selectedBooking.id)
-          : await startRentalSecurityDeposit(selectedBooking.id);
+          ? await startRentalCheckout("extension", selectedBooking.id, returnUrls)
+          : await startRentalSecurityDeposit(selectedBooking.id, returnUrls);
       if (!result.url) throw new Error("Stripe checkout could not be opened on this device.");
       const checkout = await WebBrowser.openAuthSessionAsync(result.url, "fairfares://payment");
       if (checkout.type === "success" && checkout.url?.includes("payment/success")) {

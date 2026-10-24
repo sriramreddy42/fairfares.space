@@ -517,7 +517,7 @@ class BookingHoldTest(unittest.TestCase):
         self.assertIn("staff completes the pickup inspection", pickup.response[1]["error"])
         with app.db() as con:
             self.assertEqual(con.execute("SELECT booking_status FROM bookings WHERE id = ?", (booking["id"],)).fetchone()["booking_status"], "CONFIRMED")
-        identity_start = Handler(admin, {"bookingId": booking["id"]})
+        identity_start = Handler(admin, {"bookingId": booking["id"], "returnUrl": "fairfares://identity/complete"})
         with patch.object(app, "stripe_identity_enabled", return_value=True), patch.object(
             app,
             "resumable_stripe_identity_session",
@@ -526,11 +526,12 @@ class BookingHoldTest(unittest.TestCase):
             app,
             "create_stripe_identity_session_for",
             return_value=({"id": "vs_mobile_start", "url": "https://verify.stripe.com/mobile-test"}, "ok"),
-        ):
+        ) as create_identity_session:
             app.FairFaresHandler.api_mobile_admin_stripe_identity_session(identity_start)
         self.assertEqual(identity_start.response[0], 200)
         self.assertTrue(identity_start.response[1]["requested"])
         self.assertNotIn("url", identity_start.response[1])
+        self.assertEqual(create_identity_session.call_args.args[2], "fairfares://identity/complete")
         renter_identity = Handler(customer, {"bookingId": booking["booking_id"]})
         with patch.object(
             app,
@@ -1787,6 +1788,8 @@ class BookingHoldTest(unittest.TestCase):
                 hold_paid_booking,
                 admin,
                 "https://www.fairfare.space",
+                success_url="fairfares://payment/success",
+                cancel_url="fairfares://payment/cancel",
             )
 
         self.assertEqual(status, "ok")
@@ -1799,6 +1802,8 @@ class BookingHoldTest(unittest.TestCase):
         self.assertEqual(params["line_items[0][price_data][unit_amount]"], 25000)
         self.assertEqual(params["metadata[payment_option]"], "security_deposit")
         self.assertEqual(params["payment_intent_data[metadata][payment_option]"], "security_deposit")
+        self.assertEqual(params["success_url"], "fairfares://payment/success?session_id={CHECKOUT_SESSION_ID}")
+        self.assertEqual(params["cancel_url"], "fairfares://payment/cancel")
 
     def test_security_deposit_falls_back_when_extended_authorization_is_unavailable(self):
         car = app.get_cars()[0]
