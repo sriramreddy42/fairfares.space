@@ -1279,6 +1279,30 @@ function isEmojiOnlyMessage(text: string) {
   return compact.replace(emojiSyntax, "").trim().length === 0;
 }
 
+function AnimatedRatingCommentsBadge({ label, onPress }: { label: string; onPress: () => void }) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.delay(1500),
+        Animated.spring(scale, { toValue: 1.075, damping: 10, stiffness: 180, mass: 0.45, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 1, duration: 330, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [scale]);
+
+  return (
+    <TouchableOpacity style={styles.threadHeaderRatingButton} onPress={onPress} accessibilityRole="button" accessibilityLabel="View member ratings and written reviews">
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <Text style={styles.threadHeaderRatingText}>⭐ {label} · Reviews ›</Text>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
 function AnimatedChatComment({ mine, children }: { mine: boolean; children: React.ReactNode }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(mine ? 12 : -12)).current;
@@ -7716,7 +7740,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
                 ? `${presenceLabel(activeConversation)} · Guest reply channel`
                 : `${presenceLabel(activeConversation)} · ${encryptionReady ? "🔒 End-to-end encrypted" : "Preparing secure chat…"}`}
             </Text>
-            {!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count && activeConversation.otherUserId ? <TouchableOpacity style={styles.threadHeaderRatingButton} onPress={() => setRatingDetailsTarget({ id: activeConversation.otherUserId!, name: activeConversation.otherName || "FairFares member" })} accessibilityRole="button" accessibilityLabel={`View ${activeConversation.otherName || "member"} ratings`}><Text style={styles.threadHeaderRatingText}>⭐ {activeConversation.otherRatingSummary.label}</Text></TouchableOpacity> : null}
+            {!isGroupConversation(activeConversation) && activeConversation?.otherRatingSummary?.count && activeConversation.otherUserId ? <AnimatedRatingCommentsBadge label={activeConversation.otherRatingSummary.label} onPress={() => setRatingDetailsTarget({ id: activeConversation.otherUserId!, name: activeConversation.otherName || "FairFares member" })} /> : null}
           </TouchableOpacity>
           {!isGroupConversation(activeConversation) && activeConversation?.otherPhone && Number(activeConversation.otherUserId || 0) !== currentUserId ? (
             <TouchableOpacity style={styles.headerAction} onPress={() => void callActiveConversationMember()} accessibilityRole="button" accessibilityLabel={`Call ${activeConversation.otherName || "member"}`}>
