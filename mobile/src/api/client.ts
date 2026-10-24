@@ -1341,7 +1341,7 @@ type CommunityVideoUploadAuthorization = {
 
 type CommunityVideoPartAuthorization = { ok: boolean; uploadUrl: string; headers: Record<string, string> };
 
-type CommunityVideoUploadResult = { ok: boolean; media: { url: string; type: "VIDEO" } };
+type CommunityVideoUploadResult = { ok: boolean; media: { url: string; type: "VIDEO" }; uploadPath: "direct-r2" | "relay" };
 
 async function uploadCommunityVideoDirectToR2(
   file: { uri: string; name: string; mimeType: string },
@@ -1409,15 +1409,19 @@ async function uploadCommunityVideoDirectToR2(
   // Two parts transfer at once: enough to use a phone's uplink without making
   // video playback, messaging, or the compositor contend with a large burst.
   await Promise.all(Array.from({ length: Math.min(2, partNumbers.length) }, () => uploadNextPart()));
-  const result = await request<CommunityVideoUploadResult>("/api/mobile/community/video/complete", {
+  const result = await request<Omit<CommunityVideoUploadResult, "uploadPath">>("/api/mobile/community/video/complete", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ uploadId: authorization.uploadId, parts: completedParts.sort((a, b) => a.partNumber - b.partNumber) }),
   });
   onProgress?.(1);
-  return result;
+  return { ...result, uploadPath: "direct-r2" };
 }
 
-export async function uploadCommunityVideo(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {
+export async function uploadCommunityVideo(
+  file: { uri: string; name: string; mimeType: string },
+  onProgress?: (progress: number) => void,
+  onUploadPath?: (path: CommunityVideoUploadResult["uploadPath"]) => void,
+) {
   if (Platform.OS !== "web") {
     const source = new File(file.uri);
     if (source.exists && source.size > 0) {
@@ -1427,6 +1431,7 @@ export async function uploadCommunityVideo(file: { uri: string; name: string; mi
           body: JSON.stringify({ name: file.name, mimeType: file.mimeType, size: source.size }),
         });
         if (authorization.direct && authorization.uploadId && authorization.partSize && authorization.partCount) {
+          onUploadPath?.("direct-r2");
           return await uploadCommunityVideoDirectToR2(file, {
             uploadId: authorization.uploadId, partSize: authorization.partSize, partCount: authorization.partCount,
           }, source, onProgress);
@@ -1440,7 +1445,9 @@ export async function uploadCommunityVideo(file: { uri: string; name: string; mi
       }
     }
   }
-  return uploadCommunityVideoViaApi(file, onProgress);
+  onUploadPath?.("relay");
+  const uploaded = await uploadCommunityVideoViaApi(file, onProgress);
+  return { ...uploaded, uploadPath: "relay" as const };
 }
 
 async function uploadCommunityVideoViaApi(file: { uri: string; name: string; mimeType: string }, onProgress?: (progress: number) => void) {

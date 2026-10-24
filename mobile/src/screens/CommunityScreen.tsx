@@ -616,6 +616,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const fieldExamples = postFieldExamples(form.category);
   const [publishing, setPublishing] = useState(false);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
+  const [videoUploadPath, setVideoUploadPath] = useState<"direct-r2" | "relay" | null>(null);
   const composerBaselineRef = useRef("");
   const [groupBusyId, setGroupBusyId] = useState("");
   const [expandedReactionTarget, setExpandedReactionTarget] = useState("");
@@ -1348,7 +1349,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       const pendingVideo = form.media.find((item) => item.pendingVideo)?.pendingVideo;
       if (pendingVideo) {
         setVideoUploadProgress(0);
-        const uploaded = await uploadCommunityVideo(pendingVideo, setVideoUploadProgress);
+        setVideoUploadPath(null);
+        const uploaded = await uploadCommunityVideo(pendingVideo, setVideoUploadProgress, setVideoUploadPath);
+        setVideoUploadPath(uploaded.uploadPath);
         media = form.media.map((item) => item.pendingVideo ? uploaded.media : { url: item.url, type: item.type });
       }
       const nextTitle = form.title.trim();
@@ -1387,6 +1390,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       Alert.alert(hasQueuedVideo ? "Video not uploaded" : "Could not publish", hasQueuedVideo ? `${message(error)} Your post is still a draft. Try posting again when the connection is better.` : message(error));
     } finally {
       setVideoUploadProgress(null);
+      setVideoUploadPath(null);
       setPublishing(false);
     }
   };
@@ -2012,7 +2016,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <View><Text style={styles.attachmentTitle}>Add to your post <Text style={styles.attachmentOptional}>Optional</Text></Text><Text style={styles.attachmentHint}>Add up to 4 photos, or combine photos with one video.</Text></View>
           <TextInput style={styles.input} value={form.linkUrl} onChangeText={(linkUrl) => setForm((current) => ({ ...current, linkUrl }))} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="🔗 Paste a website link (optional)" placeholderTextColor={theme.colors.muted} />
           {form.media.length ? <ScrollView horizontal contentContainerStyle={styles.imageRow}>{form.media.map((item, index) => <TouchableOpacity key={`${item.url.slice(0, 24)}-${index}`} onPress={() => setForm((current) => ({ ...current, media: current.media.filter((_, target) => target !== index) }))}>{item.type === "VIDEO" ? <View style={styles.previewVideo}><Text style={styles.previewVideoIcon}>▶</Text><Text style={styles.previewVideoText}>Video</Text></View> : <Image source={{ uri: absoluteUrl(item.url) }} style={styles.previewImage} />}<View style={styles.removeImage}><Text style={styles.removeImageText}>×</Text></View></TouchableOpacity>)}</ScrollView> : null}
-          <TouchableOpacity style={[styles.addPhoto, publishing && { opacity: 0.6 }]} onPress={publishing ? undefined : chooseCommunityAttachment} disabled={publishing} accessibilityRole="button" accessibilityLabel="Add photos or video" accessibilityState={{ disabled: publishing }}><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos or video</Text><Text style={styles.addPhotoBody}>{videoUploadProgress !== null ? `Uploading video · ${Math.round(videoUploadProgress * 100)}%` : form.media.some((item) => item.pendingVideo) ? "Video ready · uploads when you post" : form.media.length ? `${form.media.length} of 4 selected · One video max · Tap an attachment to remove it` : "Choose up to 4 photos or one video"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.addPhoto, publishing && { opacity: 0.6 }]} onPress={publishing ? undefined : chooseCommunityAttachment} disabled={publishing} accessibilityRole="button" accessibilityLabel="Add photos or video" accessibilityState={{ disabled: publishing }}><Text style={styles.addPhotoIcon}>▣</Text><View style={styles.addPhotoCopy}><Text style={styles.addPhotoTitle}>Add photos or video</Text><Text style={styles.addPhotoBody}>{videoUploadProgress !== null ? `${videoUploadPath === "direct-r2" ? "Uploading directly to secure storage" : videoUploadPath === "relay" ? "Uploading through FairFares" : "Preparing direct upload"} · ${Math.round(videoUploadProgress * 100)}%` : form.media.some((item) => item.pendingVideo) ? "Video ready · uploads when you post" : form.media.length ? `${form.media.length} of 4 selected · One video max · Tap an attachment to remove it` : "Choose up to 4 photos or one video"}</Text></View><Text style={styles.addPhotoChevron}>›</Text></TouchableOpacity>
           {videoUploadProgress !== null ? <View style={{ height: 7, borderRadius: 999, overflow: "hidden", backgroundColor: isLight ? "#bbf7d0" : "#285f47" }}><View style={{ width: `${Math.max(2, Math.round(videoUploadProgress * 100))}%`, height: "100%", borderRadius: 999, backgroundColor: theme.colors.brand }} /></View> : null}
         </View>
         <View style={styles.fieldGroup}>
