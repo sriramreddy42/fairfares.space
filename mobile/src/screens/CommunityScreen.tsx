@@ -234,18 +234,18 @@ function FeedCharacterAvatar({ photoUrl, name, delay = 0 }: { photoUrl?: string;
   useEffect(() => {
     const animation = Animated.loop(Animated.sequence([
       Animated.parallel([
-        Animated.timing(lift, { toValue: -2, duration: 1550, useNativeDriver: true }),
-        Animated.timing(sway, { toValue: 1, duration: 1550, useNativeDriver: true }),
+        Animated.timing(lift, { toValue: -5, duration: 900, useNativeDriver: true }),
+        Animated.timing(sway, { toValue: 1, duration: 900, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(lift, { toValue: 0, duration: 1550, useNativeDriver: true }),
-        Animated.timing(sway, { toValue: -1, duration: 1550, useNativeDriver: true }),
+        Animated.timing(lift, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(sway, { toValue: -1, duration: 900, useNativeDriver: true }),
       ]),
     ]));
     const starter = setTimeout(() => animation.start(), delay);
     return () => { clearTimeout(starter); animation.stop(); };
   }, [delay, lift, sway]);
-  const rotate = sway.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-1deg", "0deg", "1deg"] });
+  const rotate = sway.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-2.5deg", "0deg", "2.5deg"] });
   return <Animated.View style={[styles.avatar, { transform: [{ translateY: lift }, { rotate }] }]}>
     <UserAvatar photoUrl={photoUrl} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarInitials}>{initials(name)}</Text>} />
   </Animated.View>;
