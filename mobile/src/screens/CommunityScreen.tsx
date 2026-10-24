@@ -407,14 +407,14 @@ function CommunitySinglePostPhoto({ image, interactive, onPress, label }: { imag
     : <View style={containerStyle}>{photo}</View>;
 }
 
-function CommunityPostVideo({ video, style }: { video: string; style: object }) {
+function CommunityPostVideo({ video, style, contentFit = "cover" }: { video: string; style: object; contentFit?: "contain" | "cover" | "fill" }) {
   // A feed video never autoplays. It only loads its first frame, and native
   // controls provide play, scrubbing, and fullscreen without another modal.
   const player = useVideoPlayer(absoluteUrl(video), (instance) => {
     instance.muted = false;
     instance.loop = false;
   });
-  return <VideoView player={player} style={style} nativeControls contentFit="cover" allowsFullscreen />;
+  return <VideoView player={player} style={style} nativeControls contentFit={contentFit} allowsFullscreen />;
 }
 function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
@@ -1609,7 +1609,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         onPress={() => openPostPhoto(post, photos, 0)}
       />;
     }
-    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} /></View>;
+    if (visible.length === 1) return <View style={styles.postMediaSingle}><CommunityPostVideo video={visible[0].url} style={styles.postMediaSingleImage} contentFit="contain" /></View>;
     return <View style={styles.postMediaGrid}>
       {visible.map((item, index) => {
         const cellStyle = [
@@ -2050,7 +2050,10 @@ const styles = StyleSheet.create({
   postActionsLight: { borderTopColor: "rgba(101,103,107,.16)" },
   // Keep copy comfortably inset, while photographs use the full card width.
   postMediaGrid: { alignSelf: "stretch", marginHorizontal: -16, height: 310, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
-  postMediaSingle: { alignSelf: "stretch", marginHorizontal: -16, borderRadius: 14, overflow: "hidden", backgroundColor: theme.colors.panel2 },
+  // Give a standalone clip a predictable, full-width Instagram-style feed
+  // frame. `contain` above preserves portrait and landscape video rather than
+  // cutting off the edges; the dark frame safely letterboxes either shape.
+  postMediaSingle: { alignSelf: "stretch", marginHorizontal: -16, aspectRatio: 4 / 5, borderRadius: 14, overflow: "hidden", backgroundColor: "#050807" },
   postMediaCell: { width: "49.5%", height: "49.5%", overflow: "hidden", backgroundColor: theme.colors.panel2 },
   postMediaCellPressed: { opacity: .78 },
   postMediaCellTwo: { width: "49.5%", height: "100%", flexGrow: 1 },
