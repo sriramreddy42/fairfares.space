@@ -8067,6 +8067,11 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
             // instead of repeating its title/body in the chat bubble.
             const visibleMessageText = safeVisibleMessageText(message.text || "");
             const renderedMessageText = isFairFaresShare ? discoveredUrl : visibleMessageText;
+            // A caption belongs to the first item in a photo/video batch. The
+            // batch container is intentionally transparent so the stacked
+            // cards can float above the wallpaper; rendering ordinary bubble
+            // text directly in it made captions appear as pale, orphaned text.
+            const stackedMediaCaption = isMediaMessage && mediaGroup.length > 1 && Boolean(renderedMessageText);
             const emojiOnlyMessage = !isMediaMessage
               && !message.contextTitle
               && !message.replyToMessageId
@@ -8205,7 +8210,9 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
                 ) : null}
                 {renderedMessageText && !["POLL", "EVENT", "CONTACT", "LOCATION"].includes(message.type) ? (emojiOnlyMessage
                   ? <AnimatedEmojiOnlyMessage>{visibleMessageText}</AnimatedEmojiOnlyMessage>
-                  : <DiscoveredMessageText message={renderedMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
+                  : stackedMediaCaption
+                    ? <View style={[styles.mediaCaption, message.mine ? styles.myMediaCaption : styles.theirMediaCaption]}><DiscoveredMessageText message={renderedMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} /></View>
+                    : <DiscoveredMessageText message={renderedMessageText} mine={message.mine} mentionNames={groupMembers.map((member) => member.name)} hiddenUrl={discoveredUrl && linkPreviewFaviconState[discoveredUrl] === "favicon" ? discoveredUrl : ""} />
                 ) : null}
                 {discoveredUrl ? (
                   <WebsitePreviewCard
@@ -9676,6 +9683,9 @@ const styles = StyleSheet.create({
   theirPhotoBubble: { backgroundColor: "#202321", borderColor: "rgba(255,255,255,0.16)", borderBottomLeftRadius: 19 },
   borderlessMediaBubble: { borderWidth: 0, shadowOpacity: 0, elevation: 0 },
   stackedMediaBubble: { backgroundColor: "transparent", borderColor: "transparent", shadowOpacity: 0, elevation: 0 },
+  mediaCaption: { marginTop: 2, paddingHorizontal: 12, paddingTop: 9, paddingBottom: 8, borderRadius: 13, borderWidth: StyleSheet.hairlineWidth },
+  myMediaCaption: { backgroundColor: "#176B4A", borderColor: "rgba(80,174,126,0.65)" },
+  theirMediaCaption: { backgroundColor: "#F2E8D3", borderColor: "rgba(183,145,78,0.42)" },
   replyForwardMediaBubble: { borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.36)" },
   selectedMessageBubble: { borderWidth: 2, borderColor: "#4f7cff" },
   selectedCollageCell: { borderWidth: 2, borderColor: "#4f7cff" },
