@@ -952,7 +952,7 @@ class CommunityFeatureTest(unittest.TestCase):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}/community/{dayton['post']['id']}", timeout=5) as response:
             markup = response.read().decode()
         self.assertIn("Best groceries in Brookville?", markup)
-        self.assertIn("Open / Install FairFares", markup)
+        self.assertIn("Open in FairFares", markup)
         self.assertIn(f"https://www.fairfare.space/community/{dayton['post']['id']}?open_or_install=1", markup)
         self.assertNotIn("Visit FairFares", markup)
         self.assertEqual(markup.count('id=\"open-or-install-fairfares\"'), 1)

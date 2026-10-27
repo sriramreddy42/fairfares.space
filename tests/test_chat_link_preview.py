@@ -44,7 +44,7 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 self.assertIn("<style>html,body{margin:0;background:#07101f!important", body)
                 self.assertIn("<main", body)
                 self.assertIn("Open in FairFares", body)
-                self.assertIn("Install FairFares", body)
+                self.assertNotIn("Install FairFares", body)
                 self.assertNotIn("button.href=fairfares://", body)
                 self.assertNotIn("window.location.href=fairfares://", body)
                 self.assertIn("intent://www.fairfare.space", body)
@@ -101,7 +101,7 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn("/app/fairfares-ltd/id6797162820", script)
         self.assertIn("id=com.fairfares.mobile", script)
         self.assertIn("/android/i.test(navigator.userAgent)", script)
-        self.assertIn("Install FairFares", script)
+        self.assertNotIn("Install FairFares", script)
 
     def test_share_landing_photo_uses_public_upload_urls_in_a_swipe_gallery(self):
         markup = app.share_landing_photo_html(
