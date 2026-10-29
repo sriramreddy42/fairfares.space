@@ -6,6 +6,7 @@ import { appAssets } from "../assets";
 import { theme } from "../theme";
 import { HousingPost } from "../types";
 import { shareHousingListing } from "../utils/listingShare";
+import { housingMessageRecipientLabel, suggestedHousingMessage } from "../utils/housingMessage";
 
 type Props = {
   post: HousingPost;
@@ -24,7 +25,7 @@ type Props = {
 export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, height, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
   const isLight = useColorScheme() === "light";
   const isAskCommunityOffer = post.sourceKind === "ASK_COMMUNITY";
-  const [draft, setDraft] = useState(() => `Hi, I am interested in ${post.title.trim().replace(/[.!?]+$/, "")}. Is it still available?`);
+  const [draft, setDraft] = useState(() => suggestedHousingMessage(post));
   const [sending, setSending] = useState(false);
   const postImages = post.images?.length ? post.images : post.imageUrl ? [post.imageUrl] : [];
   const imageUrl = absoluteAssetUrl(postImages[0] || "");
@@ -122,7 +123,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
             <>
               <View style={styles.sentHeading}>
                 <View style={styles.sentCheck}><Text style={styles.sentCheckText}>✓</Text></View>
-                <Text style={styles.sentTitle} numberOfLines={1}>Message sent to lister</Text>
+                <Text style={styles.sentTitle} numberOfLines={1}>Message sent to {housingMessageRecipientLabel(post)}</Text>
               </View>
               <TouchableOpacity style={styles.seeConversation} onPress={() => (onSeeConversation || onMessage)(post)}><Text style={styles.seeConversationText}>See conversation</Text></TouchableOpacity>
             </>
@@ -133,7 +134,7 @@ export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, hei
                   <Image source={appAssets.chittiMascot} style={styles.inlineMessageMascot} resizeMode="contain" />
                 </View>
                 <View style={styles.inlineMessageHeadingCopy}>
-                  <Text style={[styles.inlineMessageTitle, isLight && styles.inlineMessageTitleLight]}>Message lister</Text>
+                  <Text style={[styles.inlineMessageTitle, isLight && styles.inlineMessageTitleLight]}>Message {housingMessageRecipientLabel(post)}</Text>
                   <Text style={styles.inlineMessageHint}>Start a private Chitthi</Text>
                 </View>
               </View>

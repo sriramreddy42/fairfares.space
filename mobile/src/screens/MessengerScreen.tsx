@@ -89,6 +89,7 @@ import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { theme } from "../theme";
 import { shareChitthiGroup } from "../utils/listingShare";
+import { suggestedHousingMessage } from "../utils/housingMessage";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityAnswer, CommunityPost, HousingPost, RidePost } from "../types";
 import { createLightweightChatThumbnail, createLightweightVideoThumbnail, pickChatMedia, pickCompressedImages, takeChatPhoto } from "../utils/imageUpload";
 import { pickChatFile } from "../utils/fileUpload";
@@ -3881,7 +3882,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
       clearThreadMessages();
       setHasMoreMessages(false);
       setNextBeforeMessageId(0);
-      setMessageText(`Hi, I am interested in ${pendingPost.title}. Is it still available?`);
+      setMessageText(suggestedHousingMessage(pendingPost));
       let cancelled = false;
       setThreadLoading(false);
       void (pendingPost.sourceKind === "ASK_COMMUNITY"
