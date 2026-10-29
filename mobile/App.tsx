@@ -4858,7 +4858,7 @@ const styles = StyleSheet.create({
   countryPickerFlag: { fontSize: 22 },
   countryPickerLabel: { flex: 1, color: theme.colors.text, fontSize: 14 },
   countryPickerCode: { color: theme.colors.soft, fontSize: 14, fontWeight: "700" },
-  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
+  input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
   searchInputWrap: { position: "relative", justifyContent: "center", borderRadius: theme.radius.md, shadowColor: theme.colors.blue, shadowOpacity: 0.07, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   searchInputWithClear: { paddingRight: 52, minHeight: 56, borderWidth: 1.25, borderColor: "rgba(79,124,255,0.42)", fontSize: 16, fontWeight: "700" },
   searchInputClear: { position: "absolute", right: 8, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: theme.colors.line },
