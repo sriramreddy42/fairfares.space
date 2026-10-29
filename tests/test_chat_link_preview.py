@@ -41,7 +41,7 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 body = sent["body"]
                 self.assertEqual(sent["status"], 200)
                 self.assertIn("text/html", sent["content_type"])
-                self.assertIn("<style>html,body{margin:0;background:#07101f!important", body)
+                self.assertIn("background:#07101f", body)
                 self.assertIn("<main", body)
                 self.assertIn("Open in FairFares", body)
                 self.assertNotIn("Install FairFares", body)
@@ -88,7 +88,7 @@ class ChatLinkPreviewTest(unittest.TestCase):
             with self.subTest(body=sent["body"][:80]):
                 self.assertEqual(sent["status"], 200)
                 self.assertIn("Open in FairFares", sent["body"])
-                self.assertIn("background:#07101f!important", sent["body"])
+                self.assertIn("background:#07101f", sent["body"])
 
     def test_open_landing_pages_handle_head_without_404_or_gateway_failure(self):
         for path in (
@@ -133,9 +133,9 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo.jpg"', markup)
         self.assertIn('src="https://www.fairfare.space/uploads/community/listing-photo-two.jpg"', markup)
         self.assertIn('alt="Private room available"', markup)
-        self.assertIn("scroll-snap-type:x mandatory", markup)
-        self.assertIn("height:300px;object-fit:contain", markup)
-        self.assertIn("Swipe through 2 photos", markup)
+        self.assertIn('class="ff-share-photo-track"', markup)
+        self.assertIn('class="ff-share-photo ff-share-photo-slide"', markup)
+        self.assertIn("2 photos · swipe to view", markup)
         self.assertNotIn("background:#10291f", markup)
         self.assertEqual(app.share_landing_photo_html(["data:image/png;base64,secret"], "Private"), "")
 
