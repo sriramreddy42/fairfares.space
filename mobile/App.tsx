@@ -468,6 +468,7 @@ function FairFaresApp() {
   const [listingValidation, setListingValidation] = useState<Record<string, string>>({});
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
+  const [listingIntentPickerOpen, setListingIntentPickerOpen] = useState(false);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
@@ -682,7 +683,7 @@ function FairFaresApp() {
   // from posting a room. A neighbourhood is enough for initial discovery and
   // also avoids asking people to publish their home address.
   const listingLocationInput = listingHasPropertyDetails
-    ? (listingForm.streetAddress || listingForm.primaryNeighborhood || listingForm.apartmentName)
+    ? (listingForm.primaryNeighborhood || listingForm.apartmentName || listingForm.streetAddress)
     : listingForm.area;
   const housingSuccessSearchNeed: ListingIntent = housingListingSuccess?.roommateIntent
     ? "need_roommates"
@@ -2110,6 +2111,7 @@ function FairFaresApp() {
     setListingOpen(false);
     setListingValidation({});
     setListingOptionalDetailsOpen(false);
+    setListingIntentPickerOpen(false);
     setListingAddressSuggestions([]);
     setListingAddressLoading(false);
   }
@@ -2156,6 +2158,7 @@ function FairFaresApp() {
     setListingValidatedLabel("");
     setRoommatePlaceChoice(null);
     setListingOptionalDetailsOpen(false);
+    setListingIntentPickerOpen(false);
     setListingOpen(true);
   }
 
@@ -2241,6 +2244,7 @@ function FairFaresApp() {
     setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
     setHousingListingSuccess(null);
     setListingOptionalDetailsOpen(true);
+    setListingIntentPickerOpen(false);
     setListingOpen(true);
   }
 
@@ -2279,6 +2283,7 @@ function FairFaresApp() {
 
   function updateListingIntent(intent: ListingIntent) {
     setListingValidation({});
+    setListingIntentPickerOpen(false);
     setListingForm((current) => {
       const isHavePlace = intent === "have_place";
       const isRoommateSearch = intent === "need_roommates";
@@ -2639,7 +2644,7 @@ function FairFaresApp() {
     return (
       <View style={styles.listingField}>
         <Text style={styles.listingFieldLabel}>
-          {label} {options.required ? <Text style={styles.listingFieldRequired}>Required</Text> : <Text style={styles.listingFieldOptional}>Optional</Text>}
+          {label}{options.required ? <Text style={styles.listingFieldRequired}> *</Text> : null}
         </Text>
         {options.hint ? <Text style={styles.listingFieldHint}>{options.hint}</Text> : null}
         {child}
@@ -4254,20 +4259,18 @@ function FairFaresApp() {
                 {listingForm.listingId ? "Edit listing" : listingIsHavePlace ? "List your place" : listingIsRoommateSearch ? "Find roommates" : "Find a place"}
               </Text>
             </View>
-            <Text style={styles.modalCopy}>
-              {listingIsHavePlace
-                ? "Post the room or property details people need before they message you."
-                : listingIsRoommateSearch
-                  ? listingRoommateHasPlace
-                    ? "Post your place and the roommate details people need before they message you."
-                    : roommatePlaceChoice === false
-                      ? "Share where you want to live, your budget, and the kind of roommates you are looking for."
-                      : "First choose whether you already have a place or want to search together."
-                  : "Share your preferred area, budget, move-in timing, and room requirements."}
-            </Text>
-            <Text style={styles.requiredLegend}>Only fields marked * are needed to publish.</Text>
-            {renderFormSection(
-              "Post type *",
+            <Text style={styles.modalCopy}>Start with the essentials. You can add more after your post is live.</Text>
+            <View style={styles.listingTypeSummary}>
+              <View>
+                <Text style={styles.listingTypeSummaryLabel}>POST TYPE</Text>
+                <Text style={styles.listingTypeSummaryValue}>{listingIntentChoices.find((choice) => choice.value === listingIntent)?.title || "Housing post"}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setListingIntentPickerOpen((current) => !current)} accessibilityRole="button" accessibilityLabel="Change post type">
+                <Text style={styles.listingTypeSummaryAction}>{listingIntentPickerOpen ? "Done" : "Change"}</Text>
+              </TouchableOpacity>
+            </View>
+            {listingIntentPickerOpen ? renderFormSection(
+              "Choose post type",
               <>
                 {renderListingIntentChoices()}
                 {listingIsRoommateSearch ? (
@@ -4295,16 +4298,27 @@ function FairFaresApp() {
                   </View>
                 ) : null}
               </>
-            )}
-            {renderFormSection(
-              "Location *",
+            ) : listingIsRoommateSearch ? renderFormSection(
+              "Your roommate plan",
               <>
-                {renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Example: Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.city && styles.listingInputInvalid]} />, { required: true, hint: "Use the city where the place or search is located.", errorKey: "city" })}
-                {renderListingField("ZIP code", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Example: 80202" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { required: true, hint: "This keeps the listing local and improves matching.", errorKey: "zipCode" })}
+                <Text style={styles.listingFieldHint}>Do you already have a place?</Text>
+                <View style={styles.choiceRow}>
+                  <TouchableOpacity style={[styles.choicePill, styles.roommatePathChoice, roommatePlaceChoice === true && styles.choicePillActive]} onPress={() => updateRoommatePlaceStatus(true)}><Text style={[styles.choiceText, roommatePlaceChoice === true && styles.choiceTextActive]}>Yes, fill my place</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.choicePill, styles.roommatePathChoice, roommatePlaceChoice === false && styles.choicePillActive]} onPress={() => updateRoommatePlaceStatus(false)}><Text style={[styles.choiceText, roommatePlaceChoice === false && styles.choiceTextActive]}>No, search together</Text></TouchableOpacity>
+                </View>
+                {listingFieldError("roommatePlaceChoice")}
+              </>
+            ) : null}
+            {renderFormSection(
+              "Where is it?",
+              <>
+                <View style={styles.twoCol}>
+                  <View style={styles.twoColField}>{renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.city && styles.listingInputInvalid]} />, { required: true, errorKey: "city" })}</View>
+                  <View style={styles.twoColField}>{renderListingField("ZIP", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="80202" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { required: true, errorKey: "zipCode" })}</View>
+                </View>
                 {listingHasPropertyDetails ? (
                   <>
-                    {renderListingField("Neighborhood or locality", <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Example: Capitol Hill" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.primaryNeighborhood && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, hint: "Use an area people will recognize. Do not use a full street address.", errorKey: "primaryNeighborhood" })}
-                    {renderListingField("Exact address", <TextInput value={listingForm.streetAddress} onChangeText={(text) => updateListingLocationField("streetAddress", text)} placeholder="Example: 123 Main Street" placeholderTextColor={theme.colors.muted} style={styles.input} autoCorrect={false} />, { hint: "Private: this is never shown publicly." })}
+                    {renderListingField("Neighborhood", <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Capitol Hill, campus, or landmark" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.primaryNeighborhood && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, errorKey: "primaryNeighborhood" })}
                     {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
                     {listingAddressSuggestions.length ? (
                       <View style={styles.addressSuggestionPanel}>
@@ -4326,7 +4340,7 @@ function FairFaresApp() {
                   </>
                 ) : (
                   <>
-                    {renderListingField(listingIsRoommateSearch ? "Preferred area" : "Area or landmark", <TextInput value={listingForm.area} onChangeText={(text) => updateListingLocationField("area", text)} placeholder={listingIsRoommateSearch ? "Example: Near CU Denver" : "Example: Capitol Hill or DU"} placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.location && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, hint: listingIsRoommateSearch ? "Tell potential roommates where you want to live." : "Use a neighborhood, campus, building, or landmark.", errorKey: "location" })}
+                    {renderListingField(listingIsRoommateSearch ? "Preferred area" : "Area or landmark", <TextInput value={listingForm.area} onChangeText={(text) => updateListingLocationField("area", text)} placeholder={listingIsRoommateSearch ? "Near CU Denver" : "Capitol Hill or DU"} placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.location && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, errorKey: "location" })}
                     {listingAddressLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Checking location…</Text></View> : null}
                     {listingAddressSuggestions.length ? (
                       <View style={styles.addressSuggestionPanel}>
@@ -4344,7 +4358,6 @@ function FairFaresApp() {
                     ) : null}
                     {!listingAddressValidated && listingLocationInput.trim().length >= 3 ? <TouchableOpacity style={styles.addressManualAction} onPress={useEnteredListingLocation}><Text style={styles.addressManualActionText}>Use entered location</Text></TouchableOpacity> : null}
                     {listingAddressValidated ? <View style={styles.addressValidated}><Text style={styles.addressValidatedIcon}>✓</Text><Text style={styles.addressValidatedText}>Location set: {listingValidatedLabel}</Text></View> : null}
-                    {renderListingField("Work, school, or commute target", <TextInput value={listingForm.workSchoolLocation} onChangeText={(text) => updateListingForm("workSchoolLocation", text)} placeholder="Example: 20 minutes to CU Denver" placeholderTextColor={theme.colors.muted} style={styles.input} />, { hint: "Add this when commute time matters." })}
                   </>
                 )}
               </>
@@ -4352,30 +4365,22 @@ function FairFaresApp() {
             {renderFormSection(
               `${listingHasPropertyDetails ? "Place details" : listingIsRoommateSearch ? "Roommate search" : "Room requirements"}`,
               <>
-                {renderListingField("Short title", <TextInput value={listingForm.title} onChangeText={(text) => updateListingForm("title", text)} placeholder={listingHasPropertyDetails ? "Example: Sunny room near DU" : listingIsRoommateSearch ? "Example: Looking for two roommates" : "Example: Looking near downtown"} placeholderTextColor={theme.colors.muted} style={styles.input} />, { hint: "A clear headline helps the right people open your listing." })}
-                {renderListingField("Description", <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Describe the room, property, rules, and who it suits." : listingIsRoommateSearch ? "Describe your roommate plan, lifestyle, and timing." : "Describe the place you need and your must-haves."} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea, listingValidation.description && styles.listingInputInvalid]} multiline />, { required: true, hint: "Include the important details people need before they message you.", errorKey: "description" })}
-                {renderListingField(listingHasPropertyDetails ? "Available from" : "Move-in from", <DateTimeField label="Choose date" value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} style={listingValidation.moveInDate && styles.listingDateInvalid} />, { required: true, hint: "Choose the earliest date that works for you.", errorKey: "moveInDate" })}
+                {renderListingField("Description", <TextInput value={listingForm.description} onChangeText={(text) => updateListingForm("description", text)} placeholder={listingHasPropertyDetails ? "Room, rent, and anything important to know" : listingIsRoommateSearch ? "What you need in a roommate and when" : "What you need and any must-haves"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.textArea, listingValidation.description && styles.listingInputInvalid]} multiline />, { required: true, errorKey: "description" })}
+                {renderListingField(listingHasPropertyDetails ? "Available from" : "Move-in from", <DateTimeField label="Choose date" value={listingForm.moveInDate} mode="date" minimumDate={todayLocalIso()} onChange={(value) => updateListingForm("moveInDate", value)} style={listingValidation.moveInDate && styles.listingDateInvalid} />, { required: true, errorKey: "moveInDate" })}
                 <View style={styles.twoCol}>
-                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Monthly rent" : "Minimum budget"} <Text style={styles.listingFieldRequired}>Required</Text></Text><TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingHasPropertyDetails ? "Example: 950" : "Example: 800"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.rentMin && styles.listingInputInvalid]} keyboardType="number-pad" /></View>
-                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Highest rent" : "Maximum budget"} <Text style={styles.listingFieldOptional}>Optional</Text></Text><TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder={listingHasPropertyDetails ? "Example: 1100" : "Example: 1000"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" /></View>
+                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Monthly rent" : "Budget"} <Text style={styles.listingFieldRequired}>*</Text></Text><TextInput value={listingForm.rentMin} onChangeText={(text) => updateListingForm("rentMin", text)} placeholder={listingHasPropertyDetails ? "$950" : "$800"} placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.rentMin && styles.listingInputInvalid]} keyboardType="number-pad" /></View>
+                  <View style={styles.twoColField}><Text style={styles.listingFieldLabel}>{listingHasPropertyDetails ? "Up to" : "Maximum"}</Text><TextInput value={listingForm.rentMax} onChangeText={(text) => updateListingForm("rentMax", text)} placeholder="$1,100" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput]} keyboardType="number-pad" /></View>
                 </View>
                 {listingFieldError("rentMin")}
-                {renderChoiceGroup("rentPeriod", rentPeriods)}
               </>
             )}
             {listingIsNeedPlace ? renderFormSection(
               "Need a place",
-              <Text style={styles.photoHelp}>
-                No photos needed here. Add clear details about your preferred area, budget, move-in date, people moving, lease length, and must-have amenities so owners can reply quickly.
-              </Text>
+              <Text style={styles.photoHelp}>Photos are not needed for a housing request.</Text>
             ) : renderFormSection(
               listingHasPropertyDetails ? "Photos *" : "Photos",
               <>
-                <Text style={styles.photoHelp}>
-                  {listingHasPropertyDetails
-                    ? "Upload at least 1 valid room/property image. Add up to 4 clear photos. Note: upload a valid image; otherwise the listing may be rejected."
-                    : "Photos are optional for roommate posts. Note: if you upload one, use a valid image; otherwise the listing may be rejected."}
-                </Text>
+                <Text style={styles.photoHelp}>{listingHasPropertyDetails ? "Add one clear photo to publish. You can add up to four." : "Photos are optional."}</Text>
                 <View style={[styles.photoGrid, listingValidation.images && styles.listingValidationSection]}>
                   {(listingForm.images || []).map((image, index) => (
                     <View key={`${index}-${image.slice(0, 20)}`} style={styles.photoPreviewWrap}>
@@ -4405,7 +4410,7 @@ function FairFaresApp() {
             >
               <View style={styles.optionalDetailsCopy}>
                 <Text style={styles.optionalDetailsTitle}>Add details to improve matches</Text>
-                <Text style={styles.optionalDetailsText}>Preferences, amenities, roommate count, lease details, and social links.</Text>
+                <Text style={styles.optionalDetailsText}>Amenities, preferences, roommate details, and social links.</Text>
               </View>
               <Text style={styles.optionalDetailsGlyph}>{listingOptionalDetailsOpen ? "−" : "+"}</Text>
             </TouchableOpacity>
@@ -4443,7 +4448,7 @@ function FairFaresApp() {
             {listingNeedsContactDetails ? renderFormSection(
               "Contact details *",
               <>
-                <Text style={styles.contactDetailsHelp}>We use this only to help interested members contact you.</Text>
+                <Text style={styles.contactDetailsHelp}>Used only for private replies. Your details are not shown on the listing.</Text>
                 {renderListingField("Contact name", <TextInput value={listingForm.contactName} onChangeText={(text) => updateListingForm("contactName", text)} placeholder="Example: Taylor Smith" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactName && styles.listingInputInvalid]} />, { required: true, errorKey: "contactName" })}
                 {renderListingField("Email address", <TextInput value={listingForm.contactEmail} onChangeText={(text) => updateListingForm("contactEmail", text)} placeholder="Example: taylor@email.com" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactEmail && styles.listingInputInvalid]} autoCapitalize="none" />, { required: true, errorKey: "contactEmail" })}
                 {renderListingField("Phone number", <TextInput value={listingForm.contactPhone} onChangeText={(text) => updateListingForm("contactPhone", text)} placeholder="Example: (303) 555-0123" placeholderTextColor={theme.colors.muted} style={[styles.input, listingValidation.contactPhone && styles.listingInputInvalid]} keyboardType="phone-pad" />, { required: true, errorKey: "contactPhone" })}
@@ -4794,6 +4799,10 @@ const styles = StyleSheet.create({
   searchModalActions: { gap: theme.spacing.xs, paddingTop: theme.spacing.sm, borderTopWidth: 1, borderTopColor: theme.colors.line },
   listingModalCard: { maxHeight: "94%" },
   listingForm: { width: "100%", maxWidth: "100%", alignSelf: "stretch", gap: theme.spacing.md, paddingBottom: theme.spacing.lg },
+  listingTypeSummary: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  listingTypeSummaryLabel: { color: theme.colors.muted, fontSize: 10, lineHeight: 13, fontWeight: "900", letterSpacing: 0.9 },
+  listingTypeSummaryValue: { color: theme.colors.text, fontSize: 15, lineHeight: 20, fontWeight: "800", marginTop: 2 },
+  listingTypeSummaryAction: { color: theme.colors.blue, fontSize: 14, lineHeight: 20, fontWeight: "900", paddingHorizontal: 4, paddingVertical: 8 },
   listingInputInvalid: { borderColor: "#dc2626" },
   listingDateInvalid: { borderWidth: 1.5, borderColor: "#dc2626" },
   listingValidationSection: { borderWidth: 1.5, borderColor: "#dc2626", borderRadius: 14, padding: 7 },
