@@ -29361,7 +29361,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # visible CTA below uses a platform-aware open-with-store-fallback flow.
         app_invite_token = token or public_chat_group_invite_token(community_id)
         app_invite_query = urllib.parse.urlencode({"group_invite": app_invite_token})
-        universal_app_link = f"https://fairfare.space/chitthi/invite?{app_invite_query}"
+        universal_app_link = f"https://www.fairfare.space/chitthi/invite?{app_invite_query}"
         safe_universal_app_link = html.escape(universal_app_link, quote=True)
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         group_query = app_invite_query
@@ -29421,7 +29421,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         app_query = urllib.parse.urlencode({"postId": post_id}) if post_id else ""
         ios_app_link = f"fairfares://housing?{app_query}" if app_query else "fairfares://housing"
-        universal_app_link = f"https://fairfare.space/accommodations?{app_query}" if app_query else "https://fairfare.space/accommodations"
+        # Stay on the canonical associated-domain host. Facebook's in-app
+        # browser can lose an iOS Universal Link when it first crosses the
+        # apex-to-www redirect.
+        universal_app_link = f"https://www.fairfare.space/accommodations?{app_query}" if app_query else "https://www.fairfare.space/accommodations"
         android_app_link = (
             f"intent://www.fairfare.space/accommodations?{app_query}#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
             if app_query else
@@ -29484,7 +29487,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         app_query = urllib.parse.urlencode({"rideId": ride_id}) if ride_id else ""
         ios_app_link = f"fairfares://carpool?{app_query}" if app_query else "fairfares://carpool"
-        universal_app_link = f"https://fairfare.space/carpool?{app_query}" if app_query else "https://fairfare.space/carpool"
+        universal_app_link = f"https://www.fairfare.space/carpool?{app_query}" if app_query else "https://www.fairfare.space/carpool"
         android_app_link = (
             f"intent://www.fairfare.space/carpool?{app_query}#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
             if app_query else

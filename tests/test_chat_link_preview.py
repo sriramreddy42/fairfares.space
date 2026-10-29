@@ -57,6 +57,17 @@ class ChatLinkPreviewTest(unittest.TestCase):
         self.assertIn("https://www.fairfare.space/community?postId=FFH-TEST", sent["body"])
         self.assertNotIn("https://fairfare.space/community?postId=FFH-TEST", sent["body"])
 
+    def test_housing_and_carpool_open_landings_use_the_canonical_universal_link_host(self):
+        cases = [
+            ("accommodations_open_landing", "/accommodations/open?postId=FFH-TEST", "/accommodations?postId=FFH-TEST"),
+            ("carpool_open_landing", "/carpool/open?rideId=FRD-TEST", "/carpool?rideId=FRD-TEST"),
+        ]
+        for method_name, path, target in cases:
+            with self.subTest(path=path):
+                sent = self._capture_open_landing(method_name, path)
+                self.assertIn(f"https://www.fairfare.space{target}", sent["body"])
+                self.assertNotIn(f"https://fairfare.space{target}", sent["body"])
+
     def test_open_landing_pages_fallback_to_visible_shell_when_lookup_fails(self):
         failing_db = sqlite3.OperationalError("database is locked")
         with patch.object(app, "db", side_effect=failing_db):
