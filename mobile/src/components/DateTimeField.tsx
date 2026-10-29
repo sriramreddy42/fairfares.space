@@ -12,6 +12,7 @@ type Props = {
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
   darkSurface?: boolean;
+  hideLabel?: boolean;
 };
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -47,7 +48,7 @@ function timeLabel(hour: number, minute: number) {
 
 const timeOptions = Array.from({ length: 48 }, (_item, index) => timeLabel(Math.floor(index / 2), (index % 2) * 30));
 
-export function DateTimeField({ label, value, mode, onChange, minimumDate = "", maximumDate = "", placeholder, style, darkSurface = false }: Props) {
+export function DateTimeField({ label, value, mode, onChange, minimumDate = "", maximumDate = "", placeholder, style, darkSurface = false, hideLabel = false }: Props) {
   const [open, setOpen] = useState(false);
   const initialDate = parseIso(value) || parseIso(minimumDate) || new Date();
   const [visibleMonth, setVisibleMonth] = useState(new Date(initialDate.getFullYear(), initialDate.getMonth(), 1));
@@ -89,7 +90,7 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
         accessibilityLabel={`${label}: ${display}`}
       >
         <View style={styles.fieldCopy}>
-          <Text style={[styles.fieldLabel, darkSurface && styles.darkFieldLabel]}>{label}</Text>
+          {!hideLabel ? <Text style={[styles.fieldLabel, darkSurface && styles.darkFieldLabel]}>{label}</Text> : null}
           <Text style={[styles.fieldValue, darkSurface && styles.darkFieldValue, !value && styles.placeholder, !value && darkSurface && styles.darkPlaceholder]}>{display}</Text>
         </View>
         <Text style={styles.fieldIcon}>{mode === "date" ? "▣" : "◷"}</Text>
@@ -132,7 +133,7 @@ export function DateTimeField({ label, value, mode, onChange, minimumDate = "", 
 }
 
 const styles = StyleSheet.create({
-  field: { minHeight: 58, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, paddingHorizontal: 14, paddingVertical: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  field: { minHeight: 58, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, paddingVertical: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   darkField: { backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   fieldCopy: { flex: 1, gap: 3 },
   fieldLabel: { color: theme.colors.muted, fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
