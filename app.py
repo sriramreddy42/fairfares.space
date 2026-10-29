@@ -44833,7 +44833,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         android_store_url = "https://play.google.com/store/apps/details?id=com.fairfares.mobile"
         app_query = urllib.parse.urlencode({"postId": public_id}) if public_id else ""
         ios_app_link = f"fairfares://community?{app_query}" if app_query else "fairfares://community"
-        universal_app_link = f"https://fairfare.space/community?{app_query}" if app_query else "https://fairfare.space/community"
+        # Use the canonical associated-domain host directly. Sending iOS from
+        # the apex host through its www redirect can make Facebook's in-app
+        # browser drop the Universal Link handoff and render an empty view.
+        universal_app_link = f"https://www.fairfare.space/community?{app_query}" if app_query else "https://www.fairfare.space/community"
         android_app_link = (
             f"intent://www.fairfare.space/community?{app_query}#Intent;scheme=https;package=com.fairfares.mobile;S.browser_fallback_url={urllib.parse.quote(android_store_url, safe='')};end"
             if app_query else

@@ -49,6 +49,14 @@ class ChatLinkPreviewTest(unittest.TestCase):
                 self.assertNotIn("window.location.href=fairfares://", body)
                 self.assertIn("intent://www.fairfare.space", body)
 
+    def test_community_open_landing_uses_the_canonical_universal_link_host(self):
+        sent = self._capture_open_landing(
+            "community_open_landing",
+            "/community/open?postId=FFH-TEST",
+        )
+        self.assertIn("https://www.fairfare.space/community?postId=FFH-TEST", sent["body"])
+        self.assertNotIn("https://fairfare.space/community?postId=FFH-TEST", sent["body"])
+
     def test_open_landing_pages_fallback_to_visible_shell_when_lookup_fails(self):
         failing_db = sqlite3.OperationalError("database is locked")
         with patch.object(app, "db", side_effect=failing_db):
