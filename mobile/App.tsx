@@ -3760,7 +3760,7 @@ function FairFaresApp() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.authHeader}>
-              <View style={styles.authBrandMark}><Text style={styles.authBrandMarkText}>F</Text></View>
+              <Image source={appAssets.appIcon} style={styles.authBrandLogo} resizeMode="contain" />
               <View style={styles.authHeaderCopy}>
                 <Text style={styles.authTitle}>{authMode === "login" ? "Welcome back" : "Join FairFares"}</Text>
                 <Text style={styles.authEyebrow}>{authMode === "login" ? "CONTINUE TO YOUR COMMUNITY" : "YOUR LOCAL COMMUNITY, IN ONE PLACE"}</Text>
@@ -4783,8 +4783,7 @@ const styles = StyleSheet.create({
   authModalScroll: { width: "100%", maxWidth: 440, maxHeight: "92%", alignSelf: "center", borderRadius: 28 },
   authModalCard: { backgroundColor: theme.colors.panel, borderRadius: 28, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 20, gap: 11, borderWidth: 1, borderColor: "rgba(145,145,150,.25)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 28, shadowOffset: { width: 0, height: 14 }, elevation: 16 },
   authHeader: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 10 },
-  authBrandMark: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand, shadowColor: theme.colors.brand, shadowOpacity: 0.28, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
-  authBrandMarkText: { color: "#06291e", fontSize: 23, fontWeight: "900", fontStyle: "italic" },
+  authBrandLogo: { width: 46, height: 46, borderRadius: 14 },
   authHeaderCopy: { flex: 1, minWidth: 0 },
   authTitle: { color: theme.colors.text, fontSize: 21, lineHeight: 25, fontWeight: "900", letterSpacing: -0.35 },
   authEyebrow: { color: theme.colors.brand, fontSize: 8, lineHeight: 12, fontWeight: "900", letterSpacing: 0.65, marginTop: 2 },
