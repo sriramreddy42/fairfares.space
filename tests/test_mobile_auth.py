@@ -485,7 +485,7 @@ class MobileAuthTest(unittest.TestCase):
             payload = {
                 "postMode": "HAVE_PLACE", "category": "single_room",
                 "title": "Quiet furnished room", "description": "A furnished private room near downtown is available now.",
-                "streetAddress": "123 Example Street", "city": "Denver, CO", "zipCode": "80203",
+                "streetAddress": "123 Example Street", "city": "Denver, CO",
                 "primaryNeighborhood": "Capitol Hill", "moveInDate": "2099-09-15", "rentMin": "900",
                 "rentPeriod": "MONTH", "accommodates": "1", "contactName": "Typed Address Owner",
                 "contactEmail": "typed-address@example.com", "contactPhone": "+13035550111",
@@ -504,6 +504,7 @@ class MobileAuthTest(unittest.TestCase):
 
             self.assertEqual(status, 201)
             self.assertEqual(result["post"]["streetAddress"], "123 Example Street")
+            self.assertEqual(result["post"]["zipCode"], "")
             google_api_get.assert_not_called()
             with app.db() as con:
                 stored = con.execute(

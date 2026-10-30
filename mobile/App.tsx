@@ -2380,19 +2380,18 @@ function FairFaresApp() {
     const location = listingLocationInput.trim();
     const normalizedCity = normalizeCityInput(listingForm.city).trim();
     const zipCode = listingForm.zipCode.trim();
-    if (!location || !normalizedCity || !zipCode) {
+    if (!location || !normalizedCity) {
       setListingValidation((current) => ({
         ...current,
         ...(location ? {} : { location: "Enter a neighborhood, address, or preferred area." }),
         ...(normalizedCity ? {} : { city: "Enter the city and state." }),
-        ...(zipCode ? {} : { zipCode: "Enter the ZIP code." }),
       }));
       return;
     }
     setListingForm((current) => ({ ...current, city: normalizedCity }));
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
-    setListingValidatedLabel(`${location}, ${normalizedCity} ${zipCode}`);
+    setListingValidatedLabel([location, normalizedCity, zipCode].filter(Boolean).join(", "));
     setListingValidation((current) => {
       const next = { ...current };
       delete next.location;
@@ -2446,7 +2445,6 @@ function FairFaresApp() {
     const validation: Record<string, string> = {};
     if (listingIsRoommateSearch && roommatePlaceChoice === null) validation.roommatePlaceChoice = "Choose whether you already have the place.";
     if (!listingForm.city.trim()) validation.city = "Enter the city and state.";
-    if (!listingForm.zipCode.trim()) validation.zipCode = "Enter the ZIP code.";
     if (!listingForm.description.trim()) validation.description = "Add a description so members understand the listing.";
     if (!listingForm.moveInDate.trim()) validation.moveInDate = listingHasPropertyDetails ? "Select when the place is available." : "Select your move-in date.";
     if (!listingForm.rentMin.trim()) validation.rentMin = listingHasPropertyDetails ? "Enter the monthly rent." : "Enter your monthly budget.";
@@ -2458,12 +2456,11 @@ function FairFaresApp() {
     const canUseEnteredLocation = Boolean(
       listingLocationInput.trim().length >= 3
       && normalizeCityInput(listingForm.city).trim()
-      && listingForm.zipCode.trim()
     );
     if (!listingAddressValidated && !canUseEnteredLocation) {
       validation.location = listingHasPropertyDetails
-        ? "Select or use the property location with its city and ZIP code."
-        : "Select or use your preferred location with its city and ZIP code.";
+        ? "Select or use the property location with its city."
+        : "Select or use your preferred location with its city.";
     }
     if (Object.keys(validation).length) {
       setListingValidation(validation);
@@ -4312,7 +4309,7 @@ function FairFaresApp() {
               <>
                 <View style={styles.twoCol}>
                   <View style={styles.twoColField}>{renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.city && styles.listingInputInvalid]} />, { required: true, errorKey: "city" })}</View>
-                  <View style={styles.twoColField}>{renderListingField("ZIP", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="80202" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { required: true, errorKey: "zipCode" })}</View>
+                  <View style={styles.twoColField}>{renderListingField("ZIP", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Optional" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { errorKey: "zipCode" })}</View>
                 </View>
                 {listingHasPropertyDetails ? (
                   <>

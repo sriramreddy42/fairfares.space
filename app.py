@@ -30264,7 +30264,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "title",
                 "street_address",
                 "city",
-                "zip_code",
                 "move_in_date",
                 "rent_min",
                 "rent_period",
@@ -30279,7 +30278,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             required_request_fields = (
                 "title",
                 "city_area_zip",
-                "zip_code",
                 "move_in_date",
                 "rent_min",
                 "rent_period",
@@ -45987,11 +45985,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             for image_value in mobile_images[:4]
             if str(image_value or "").strip() and not str(image_value or "").startswith("data:")
         }
-        if not all((category, title, description, city, zip_code, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
+        if not all((category, title, description, city, move_in_date, contact_name, contact_email, contact_phone)) or rent_min <= 0:
             self.send_json(
                 {
                     "ok": False,
-                    "error": "Title, description, city, ZIP, move-in date, rent, contact name, email, and phone are required.",
+                    "error": "Title, description, city, move-in date, rent, contact name, email, and phone are required.",
                 },
                 400,
             )
