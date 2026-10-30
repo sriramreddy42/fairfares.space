@@ -926,6 +926,18 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertFalse(first_local_page & second_local_page)
         self.assertFalse(first_national_page & second_national_page)
 
+        _, local_only = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&limit=1&includeNational=0")
+        self.assertTrue(local_only["sections"]["local"]["posts"])
+        self.assertEqual(local_only["sections"]["national"]["posts"], [])
+        self.assertTrue(local_only["sections"]["local"]["hasMore"])
+        self.assertFalse(local_only["sections"]["national"]["hasMore"])
+
+        _, national_only = self.request("GET", "/api/mobile/community?city=Dayton%2C%20OH&layered=1&limit=1&includeLocal=0")
+        self.assertEqual(national_only["sections"]["local"]["posts"], [])
+        self.assertTrue(national_only["sections"]["national"]["posts"])
+        self.assertFalse(national_only["sections"]["local"]["hasMore"])
+        self.assertTrue(national_only["sections"]["national"]["hasMore"])
+
     def test_public_post_author_avatar_is_readable_without_login(self):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         with app.db() as con:

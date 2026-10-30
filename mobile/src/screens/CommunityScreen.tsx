@@ -108,7 +108,8 @@ function postFieldExamples(category: CommunityPost["category"]) {
 type CommunityFeedSnapshot = {
   posts: CommunityPost[];
   nationalPosts: CommunityPost[];
-  hasMore: boolean;
+  localHasMore: boolean;
+  nationalHasMore: boolean;
   updatedAt: number;
 };
 
@@ -118,6 +119,7 @@ type CommunityFeedRow =
   | { key: string; kind: "local-empty" }
   | { key: string; kind: "local-more" }
   | { key: string; kind: "national-heading" }
+  | { key: string; kind: "national-more" }
   | { key: string; kind: "testimonial" }
   | { key: string; kind: "rental" }
   | { key: string; kind: "empty" };
@@ -579,6 +581,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const initialGroups = communityGroupSnapshots.get(normalizedLocationLabel(city).toLocaleLowerCase());
   const [posts, setPosts] = useState<CommunityPost[]>(() => initialFeedSnapshot?.posts || []);
   const [nationalPosts, setNationalPosts] = useState<CommunityPost[]>(() => initialFeedSnapshot?.nationalPosts || []);
+  const [localHasMore, setLocalHasMore] = useState(() => initialFeedSnapshot?.localHasMore || false);
+  const [nationalHasMore, setNationalHasMore] = useState(() => initialFeedSnapshot?.nationalHasMore || false);
   const [groups, setGroups] = useState<Community[]>(() => initialGroups || []);
   const [groupSuggestionCity, setGroupSuggestionCity] = useState(city);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
@@ -617,7 +621,6 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [loading, setLoading] = useState(!initialFeedSnapshot);
   const [feedReadyForSecondaryReads, setFeedReadyForSecondaryReads] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingPostId, setEditingPostId] = useState("");
   const [detail, setDetail] = useState<CommunityPost | null>(null);
@@ -872,7 +875,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (cached) {
       setPosts(cached.posts);
       setNationalPosts(cached.nationalPosts);
-      setHasMore(cached.hasMore);
+      setLocalHasMore(cached.localHasMore);
+      setNationalHasMore(cached.nationalHasMore);
     }
     if (!quiet) setLoading(!cached);
     try {
@@ -896,11 +900,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       if (feedLoadGeneration.current !== requestedFeedGeneration) return;
       const nextPosts = feed.sections?.local?.posts || feed.posts || [];
       let nextNationalPosts: CommunityPost[] = [];
-      let nextHasMore = false;
+      let nextLocalHasMore = false;
+      let nextNationalHasMore = false;
       setPosts(nextPosts);
       if (feed.sections) {
         nextNationalPosts = feed.sections.national?.posts || [];
-        nextHasMore = Boolean(feed.pagination?.hasMore);
+        nextLocalHasMore = Boolean(feed.sections.local?.hasMore);
+        nextNationalHasMore = Boolean(feed.sections.national?.hasMore);
       } else if (!selectedGroup) {
         const nationwide = await previewOrFallback(
           getCommunityFeed({ q: appliedQuery, category: category === "ALL" ? "" : category, limit: 30 }),
@@ -911,14 +917,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         fallbackNationalOffset.current = nationwide.posts?.length || 0;
         const localIds = new Set((feed.posts || []).map((post) => post.id));
         nextNationalPosts = (nationwide.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds));
-        nextHasMore = Boolean(feed.pagination?.hasMore || nationwide.pagination?.hasMore);
+        nextLocalHasMore = Boolean(feed.pagination?.hasMore);
+        nextNationalHasMore = Boolean(nationwide.pagination?.hasMore);
       } else {
-        nextHasMore = Boolean(feed.pagination?.hasMore);
+        nextLocalHasMore = Boolean(feed.pagination?.hasMore);
       }
       setNationalPosts(nextNationalPosts);
-      setHasMore(nextHasMore);
-      communityFeedSnapshots.set(snapshotKey, { posts: nextPosts, nationalPosts: nextNationalPosts, hasMore: nextHasMore, updatedAt: Date.now() });
-    } catch { if (feedLoadGeneration.current === requestedFeedGeneration) { setPosts([]); setNationalPosts([]); } }
+      setLocalHasMore(nextLocalHasMore);
+      setNationalHasMore(nextNationalHasMore);
+      communityFeedSnapshots.set(snapshotKey, { posts: nextPosts, nationalPosts: nextNationalPosts, localHasMore: nextLocalHasMore, nationalHasMore: nextNationalHasMore, updatedAt: Date.now() });
+    } catch { if (feedLoadGeneration.current === requestedFeedGeneration) { setPosts([]); setNationalPosts([]); setLocalHasMore(false); setNationalHasMore(false); } }
     finally { if (feedLoadGeneration.current === requestedFeedGeneration) { setLoading(false); setRefreshing(false); setFeedReadyForSecondaryReads(true); } }
   }, [appliedQuery, category, city, groupSuggestionCity, selectedGroup, user?.id]);
 
@@ -1202,23 +1210,28 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     setComposerOpen(true);
   };
 
-  const loadMore = async () => {
-    if (loadingMore || !hasMore) return;
+  const loadMore = async (section: "local" | "national" = "local") => {
+    const sectionHasMore = section === "local" ? localHasMore : nationalHasMore;
+    if (loadingMore || !sectionHasMore) return;
     setLoadingMore(true);
     const requestedFeedGeneration = feedLoadGeneration.current;
     try {
-      const feed = await getCommunityFeed({ q: appliedQuery, city: groupSuggestionCity, category: category === "ALL" ? "" : category, communityId: selectedGroup, layered: !selectedGroup, offset: posts.length, localOffset: posts.length, nationalOffset: nationalPosts.length, limit: 30 });
+      const feed = await getCommunityFeed({ q: appliedQuery, city: groupSuggestionCity, category: category === "ALL" ? "" : category, communityId: selectedGroup, layered: !selectedGroup, offset: section === "local" ? posts.length : nationalPosts.length, localOffset: posts.length, nationalOffset: nationalPosts.length, includeLocal: section === "local", includeNational: section === "national", limit: 30 });
       const nextLocal = feed.sections?.local?.posts || feed.posts || [];
-      const nationwide = !feed.sections && !selectedGroup
+      const nationwide = !feed.sections && !selectedGroup && section === "national"
         ? await getCommunityFeed({ q: appliedQuery, category: category === "ALL" ? "" : category, offset: fallbackNationalOffset.current, limit: 30 })
         : null;
       if (feedLoadGeneration.current !== requestedFeedGeneration) return;
       if (nationwide) fallbackNationalOffset.current += nationwide.posts?.length || 0;
       const localIds = new Set([...posts, ...nextLocal].map((post) => post.id));
       const nextNational = feed.sections?.national?.posts || (nationwide?.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds));
-      setPosts((current) => [...current, ...nextLocal.filter((post) => !current.some((item) => item.id === post.id))]);
-      setNationalPosts((current) => [...current, ...nextNational.filter((post) => !current.some((item) => item.id === post.id))]);
-      setHasMore(Boolean(feed.pagination?.hasMore || nationwide?.pagination?.hasMore));
+      if (section === "local") {
+        setPosts((current) => [...current, ...nextLocal.filter((post) => !current.some((item) => item.id === post.id))]);
+        setLocalHasMore(Boolean(feed.sections?.local?.hasMore ?? feed.pagination?.hasMore));
+      } else {
+        setNationalPosts((current) => [...current, ...nextNational.filter((post) => !current.some((item) => item.id === post.id))]);
+        setNationalHasMore(Boolean(feed.sections?.national?.hasMore ?? nationwide?.pagination?.hasMore));
+      }
     } catch (error) { if (feedLoadGeneration.current === requestedFeedGeneration) Alert.alert("Could not load more", message(error)); }
     finally { if (feedLoadGeneration.current === requestedFeedGeneration) setLoadingMore(false); }
   };
@@ -1858,7 +1871,16 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const renderLocalMore = () => {
     const label = posts.length ? `Show more posts near ${groupSuggestionCity.split(",", 1)[0] || "you"}` : "Show more posts";
     return (
-      <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore()} accessibilityRole="button" accessibilityLabel={label}>
+      <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore("local")} accessibilityRole="button" accessibilityLabel={label}>
+        <Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : label}</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderNationalMore = () => {
+    const label = "Show more posts from across the USA";
+    return (
+      <TouchableOpacity style={styles.loadMore} disabled={loadingMore} onPress={() => void loadMore("national")} accessibilityRole="button" accessibilityLabel={label}>
         <Text style={styles.loadMoreText}>{loadingMore ? "Loading…" : label}</Text>
       </TouchableOpacity>
     );
@@ -1875,7 +1897,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     // Put paging directly after local posts. Previously users had to scroll
     // through the nationwide section before they could discover the next page
     // of listings from their own metro.
-    if (!selectedGroup && posts.length && hasMore) rows.push({ key: "local-more", kind: "local-more" });
+    if (!selectedGroup && posts.length && localHasMore) rows.push({ key: "local-more", kind: "local-more" });
     if (!selectedGroup && nationalPosts.length) {
       rows.push({ key: "national-heading", kind: "national-heading" });
       rows.push({ key: "community-testimonial", kind: "testimonial" });
@@ -1886,10 +1908,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         if (index === 2 && lowestRental) rows.push({ key: "lowest-rental", kind: "rental" });
       });
       if (nationalPosts.length < 3 && lowestRental) rows.push({ key: "lowest-rental", kind: "rental" });
+      if (nationalHasMore) rows.push({ key: "national-more", kind: "national-more" });
     }
     if (!posts.length && !nationalPosts.length) rows.push({ key: "feed-empty", kind: "empty" });
     return rows;
-  }, [category, communityInsertIndex, hasMore, lowestRental, nationalPosts, posts, selectedGroup]);
+  }, [category, communityInsertIndex, localHasMore, lowestRental, nationalHasMore, nationalPosts, posts, selectedGroup]);
 
   // The detail sheet is intentionally stateful, but opening a comment must not
   // replace FlatList's render callback. On iOS that made every visible card
@@ -1899,6 +1922,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     renderCommunitySuggestions: () => React.ReactElement | null;
     renderCommunityReview: () => React.ReactElement;
     renderLocalMore: () => React.ReactElement;
+    renderNationalMore: () => React.ReactElement;
     renderLowestRental: () => React.ReactElement | null;
     groupSuggestionCity: string;
     acrossCountryName: string;
@@ -1908,6 +1932,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     renderCommunitySuggestions,
     renderCommunityReview,
     renderLocalMore,
+    renderNationalMore,
     renderLowestRental,
     groupSuggestionCity,
     acrossCountryName,
@@ -1920,6 +1945,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (item.kind === "communities") return context.renderCommunitySuggestions();
     if (item.kind === "local-empty") return <View style={styles.localFeedNote}><Text style={styles.localFeedNoteTitle}>No posts near {context.groupSuggestionCity.split(",", 1)[0] || "you"} yet</Text><Text style={styles.localFeedNoteBody}>Start a local conversation above, or explore active posts from across the country.</Text></View>;
     if (item.kind === "local-more") return context.renderLocalMore();
+    if (item.kind === "national-more") return context.renderNationalMore();
     if (item.kind === "national-heading") return <View style={styles.nationalSectionHead}><View><Text style={styles.nationalEyebrow}>DISCOVER MORE</Text><Text style={styles.nationalTitle}>Across {context.acrossCountryName === "India" ? "India" : "the USA"}</Text><Text style={styles.nationalBody}>Active public posts from FairFares communities nationwide.</Text></View><Text style={styles.nationalIcon}>{context.acrossCountryName === "India" ? "🇮🇳" : "🇺🇸"}</Text></View>;
     if (item.kind === "testimonial") return context.renderCommunityReview();
     if (item.kind === "rental") return context.renderLowestRental();
@@ -2026,7 +2052,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={groupSuggestionCity ? `Change feed city. Currently ${groupSuggestionCity}` : "Choose a feed city or use current location"}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>{groupSuggestionCity ? `Near ${groupSuggestionCity.split(",", 1)[0]}` : "Choose your location"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category !== "ALL" ? categoryLabels[category] : locationResolving && !groupSuggestionCity ? "Finding your current city…" : groupSuggestionCity ? "Current-city posts and listings · Tap to change" : "Use current location or choose a city"}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
       </>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
-      ListFooterComponent={hasMore && (selectedGroup || !posts.length) ? renderLocalMore() : null}
+      ListFooterComponent={selectedGroup && localHasMore ? renderLocalMore() : null}
     />
     {actionNotice ? <View pointerEvents="box-none" style={[styles.actionNoticeOverlay, { bottom: layout.navClearance + 8 }]}>
       <Animated.View style={[styles.actionNotice, isLight && styles.actionNoticeLight, {

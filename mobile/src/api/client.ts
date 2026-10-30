@@ -1282,6 +1282,8 @@ export type CommunityFeedFilters = {
   offset?: number;
   localOffset?: number;
   nationalOffset?: number;
+  includeLocal?: boolean;
+  includeNational?: boolean;
   limit?: number;
 };
 
@@ -1303,6 +1305,8 @@ export async function getCommunityFeed(filters: CommunityFeedFilters = {}) {
   params.set("offset", String(Math.max(0, filters.offset || 0)));
   if (filters.localOffset !== undefined) params.set("localOffset", String(Math.max(0, filters.localOffset)));
   if (filters.nationalOffset !== undefined) params.set("nationalOffset", String(Math.max(0, filters.nationalOffset)));
+  if (filters.includeLocal === false) params.set("includeLocal", "0");
+  if (filters.includeNational === false) params.set("includeNational", "0");
   params.set("limit", String(Math.max(1, Math.min(50, filters.limit || 30))));
   const payload = await request<{ ok: boolean; posts: CommunityPost[]; sections?: { local: CommunityFeedSection; national: CommunityFeedSection }; pagination: { hasMore: boolean } }>(`/api/mobile/community?${params}`, communityGuestToken ? { headers: { "X-FairFares-Guest-Token": communityGuestToken } } : undefined);
   return payload;

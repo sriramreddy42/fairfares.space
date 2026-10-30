@@ -44939,24 +44939,28 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         offset = int(float_from_value((params.get("offset") or ["0"])[0]) or 0)
         local_offset = int(float_from_value((params.get("localOffset") or [str(offset)])[0]) or 0)
         national_offset = int(float_from_value((params.get("nationalOffset") or [str(offset)])[0]) or 0)
+        include_local = (params.get("includeLocal") or ["1"])[0] != "0"
+        include_national = (params.get("includeNational") or ["1"])[0] != "0"
         if saved_only and not viewer_id:
             self.send_json({"ok": False, "error": "Login is required to view saved posts."}, 401)
             return
         if layered and city and not post_public_id and not group_id and not saved_only:
             section_limit = max(1, min(limit, 30))
             selected_country = inferred_location_country(city)
-            local_rows = community_post_rows(
-                viewer_id,
-                city=city,
-                category=category,
-                query=query,
-                active_only=True,
-                limit=section_limit,
-                offset=local_offset,
-            )
+            local_rows: list[sqlite3.Row] = []
+            if include_local:
+                local_rows = community_post_rows(
+                    viewer_id,
+                    city=city,
+                    category=category,
+                    query=query,
+                    active_only=True,
+                    limit=section_limit,
+                    offset=local_offset,
+                )
             local_ids = tuple(str(row_value(row, "public_id") or "") for row in local_rows)
             national_rows: list[sqlite3.Row] = []
-            if selected_country == "US":
+            if include_national and selected_country == "US":
                 national_rows = community_post_rows(
                     viewer_id,
                     category=category,
@@ -44978,10 +44982,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "posts": combined_posts,
                 "sections": {
-                    "local": {"city": city, "posts": local_posts, "hasMore": len(local_posts) >= section_limit},
-                    "national": {"label": "Across the USA" if selected_country == "US" else "", "posts": national_posts, "hasMore": selected_country == "US" and len(national_posts) >= section_limit},
+                    "local": {"city": city, "posts": local_posts, "hasMore": include_local and len(local_posts) >= section_limit},
+                    "national": {"label": "Across the USA" if selected_country == "US" else "", "posts": national_posts, "hasMore": include_national and selected_country == "US" and len(national_posts) >= section_limit},
                 },
-                "pagination": {"limit": section_limit, "offset": max(0, offset), "returned": len(combined_posts), "hasMore": len(local_posts) >= section_limit or len(national_posts) >= section_limit},
+                "pagination": {"limit": section_limit, "offset": max(0, offset), "returned": len(combined_posts), "hasMore": (include_local and len(local_posts) >= section_limit) or (include_national and len(national_posts) >= section_limit)},
             })
             return
         rows = community_post_rows(
