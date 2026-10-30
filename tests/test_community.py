@@ -907,6 +907,17 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertIn("FFC-GREENWOOD-VILLAGE-CO", denver_local_ids)
         self.assertNotIn("FFC-DENVER-NC", denver_local_ids)
 
+        _, university_houston = self.create_post(
+            token="outsider-token",
+            title="Looking for a place near the University of Houston",
+            city="University of Houston, TX",
+        )
+        status, houston_feed = self.request("GET", "/api/mobile/community?city=Houston%2C%20TX&layered=1&limit=20")
+        self.assertEqual(status, 200)
+        self.assertIn(university_houston["post"]["id"], {
+            post["id"] for post in houston_feed["sections"]["local"]["posts"]
+        })
+
         status, empty_local_feed = self.request("GET", "/api/mobile/community?city=Boston%2C%20MA&layered=1&limit=20")
         self.assertEqual(status, 200)
         self.assertEqual(empty_local_feed["sections"]["local"]["posts"], [])

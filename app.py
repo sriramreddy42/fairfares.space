@@ -13707,6 +13707,18 @@ def community_local_city_variants(value: str) -> tuple[str, ...]:
         return (clean_text_value(value, 120),)
     selected_keys = {item.lower() for item in selected}
     variants: list[str] = list(selected)
+    # Housing posters often select a campus instead of its municipality (for
+    # example, "University of Houston, TX"). Treat that form as local to the
+    # selected city without broadening across state lines. This keeps a
+    # Houston member's post in Houston rather than placing it only in the
+    # nationwide section.
+    for selected_city in selected:
+        canonical = community_us_city_variants(selected_city)
+        if not canonical:
+            continue
+        city_name, state = split_city_state(canonical[0])
+        if city_name and state:
+            variants.append(f"University of {city_name}, {state}")
     for group in ACCOMMODATION_METRO_GROUPS.values():
         suggestions = tuple(str(item) for item in group.get("suggested", ()))
         if not any(selected_keys.intersection(item.lower() for item in community_us_city_variants(suggestion)) for suggestion in suggestions):
