@@ -1142,6 +1142,11 @@ function FairFaresApp() {
   }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone]);
 
   useEffect(() => {
+    setCharacterAvatarChoice(null);
+    setCharacterAvatarPickerOpen(false);
+  }, [data?.user?.id]);
+
+  useEffect(() => {
     if (Platform.OS === "web" || !data?.user) return;
     const subscription = Notifications.addPushTokenListener(() => {
       // Expo push tokens can rotate after the underlying APNs/FCM token changes.
@@ -3017,8 +3022,18 @@ function FairFaresApp() {
     const name = profileCompletionName.trim();
     const email = profileCompletionEmail.trim();
     const phone = profileCompletionPhone.trim();
+    const selectedCharacter = characterAvatarChoice;
     if (!name || !email || !phone) {
       setProfileCompletionValidationError("Add your full name, email, and phone number to continue.");
+      return;
+    }
+    if (!user.profilePhotoUrl?.trim() && !selectedCharacter) {
+      setCharacterAvatarPickerOpen(true);
+      setProfileCompletionValidationError("Choose a FairFares character to continue.");
+      return;
+    }
+    if (user.consentPending && !profileConsentAccepted) {
+      setProfileCompletionValidationError("Accept the FairFares policies to continue.");
       return;
     }
     setProfileCompletionValidationError("");
@@ -3034,23 +3049,15 @@ function FairFaresApp() {
         }
       }
       // New members see a useful starter character immediately. Save it with
-      // the rest of the profile so avatar choice is never a separate hurdle.
+      // the rest of the profile after they explicitly choose it.
       if (!nextUser.profilePhotoUrl?.trim()) {
-        const avatar = characterAvatarChoice || {
-          seed: `fairfares-${Number(nextUser.id || user.id || 0)}-${characterAvatarSet}-0`,
-          backgroundColor: DICEBEAR_AVATAR_BACKGROUNDS[0],
-        };
-        const avatarPayload = await updateDiceBearAvatar(avatar);
+        const avatarPayload = await updateDiceBearAvatar(selectedCharacter!);
         if (avatarPayload.user) {
           nextUser = avatarPayload.user;
           updateLocalUser(avatarPayload.user);
         }
       }
       if (nextUser.consentPending) {
-        if (!profileConsentAccepted) {
-          Alert.alert("FairFares policies", "Review and accept the Terms, Community Guidelines, and Privacy Policy to continue.");
-          return;
-        }
         const payload = await acceptCurrentPolicies();
         if (payload.user) {
           nextUser = payload.user;
@@ -4083,21 +4090,21 @@ function FairFaresApp() {
             <View style={styles.profileCompletionAvatarRow}>
               <AvatarMotion style={styles.profileCompletionQuickAvatar}>
                 <UserAvatar
-                  photoUrl={data?.user?.profilePhotoUrl || characterAvatarPreview(characterAvatarChoice?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0])}
+                  photoUrl={data?.user?.profilePhotoUrl || (characterAvatarChoice ? characterAvatarPreview(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor) : "")}
                   imageStyle={styles.profileCompletionAvatarImage}
-                  fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
+                  fallback={<Text style={styles.profileCompletionAvatarText}>{characterAvatarChoice || data?.user?.profilePhotoUrl ? Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F" : "◌"}</Text>}
                 />
               </AvatarMotion>
               <View style={styles.profileCompletionAvatarCopy}>
-                <Text style={styles.profileCompletionAvatarTitle}>Your FairFares character</Text>
-                <Text style={styles.profileCompletionAvatarHint}>A starter look is ready. You can change it any time.</Text>
+                <Text style={styles.profileCompletionAvatarTitle}>{characterAvatarChoice || data?.user?.profilePhotoUrl ? "Your FairFares character" : "Choose your FairFares character"}</Text>
+                <Text style={styles.profileCompletionAvatarHint}>{characterAvatarChoice || data?.user?.profilePhotoUrl ? "You can change it any time." : "Pick the character members will recognize."}</Text>
               </View>
-              <TouchableOpacity style={styles.profileCompletionAvatarChange} onPress={() => { setCharacterAvatarPickerTab("look"); setCharacterAvatarPickerOpen((open) => !open); }} accessibilityRole="button" accessibilityLabel="Change your FairFares character">
-                <Text style={styles.profileCompletionAvatarChangeText}>{characterAvatarPickerOpen ? "Done" : "Change"}</Text>
+              <TouchableOpacity style={styles.profileCompletionAvatarChange} onPress={() => { setCharacterAvatarPickerTab("look"); setCharacterAvatarPickerOpen((open) => !open); }} accessibilityRole="button" accessibilityLabel="Choose your FairFares character">
+                <Text style={styles.profileCompletionAvatarChangeText}>{characterAvatarPickerOpen ? "Done" : characterAvatarChoice || data?.user?.profilePhotoUrl ? "Change" : "Choose"}</Text>
               </TouchableOpacity>
             </View>
             {characterAvatarPickerOpen ? <View style={styles.characterAvatarPicker}>
-              <Text style={styles.characterAvatarHint}>Pick a look. It will be saved when you finish setup.</Text>
+              <Text style={styles.characterAvatarHint}>Pick one character. It will be saved when you finish setup.</Text>
               <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`; const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length]; const selected = characterAvatarChoice?.seed === seed; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Choose character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
               <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button"><Text style={styles.characterAvatarShuffleText}>Show more looks</Text></TouchableOpacity>
             </View> : null}
