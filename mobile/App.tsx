@@ -509,7 +509,7 @@ function FairFaresApp() {
   const [profileConsentBusy, setProfileConsentBusy] = useState(false);
   const [characterAvatarBusy, setCharacterAvatarBusy] = useState(false);
   const [characterAvatarSet, setCharacterAvatarSet] = useState(0);
-  const [characterAvatarPickerOpen, setCharacterAvatarPickerOpen] = useState(true);
+  const [characterAvatarPickerOpen, setCharacterAvatarPickerOpen] = useState(false);
   const [characterAvatarPickerTab, setCharacterAvatarPickerTab] = useState<"look" | "photo" | "scene">("look");
   const [characterAvatarChoice, setCharacterAvatarChoice] = useState<{ seed: string; backgroundColor: string } | null>(null);
   const profileCompletionPromptedUserRef = useRef(0);
@@ -3021,10 +3021,6 @@ function FairFaresApp() {
       setProfileCompletionValidationError("Add your full name, email, and phone number to continue.");
       return;
     }
-    if (!user.profilePhotoUrl?.trim()) {
-      setProfileCompletionValidationError("Choose a character and tap Save character before continuing.");
-      return;
-    }
     setProfileCompletionValidationError("");
     if (profileConsentBusy) return;
     setProfileConsentBusy(true);
@@ -3035,6 +3031,19 @@ function FairFaresApp() {
         if (profile.user) {
           nextUser = profile.user;
           updateLocalUser(profile.user);
+        }
+      }
+      // New members see a useful starter character immediately. Save it with
+      // the rest of the profile so avatar choice is never a separate hurdle.
+      if (!nextUser.profilePhotoUrl?.trim()) {
+        const avatar = characterAvatarChoice || {
+          seed: `fairfares-${Number(nextUser.id || user.id || 0)}-${characterAvatarSet}-0`,
+          backgroundColor: DICEBEAR_AVATAR_BACKGROUNDS[0],
+        };
+        const avatarPayload = await updateDiceBearAvatar(avatar);
+        if (avatarPayload.user) {
+          nextUser = avatarPayload.user;
+          updateLocalUser(avatarPayload.user);
         }
       }
       if (nextUser.consentPending) {
@@ -4066,53 +4075,35 @@ function FairFaresApp() {
         <View style={[styles.profileCompletionBackdrop, { paddingTop: Math.max(16, safeAreaInsets.top + 8), paddingBottom: Math.max(16, safeAreaInsets.bottom + 8) }]}>
           <ScrollView style={styles.profileCompletionScroll} contentContainerStyle={styles.profileCompletionScrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.profileCompletionCard} accessibilityRole="alert">
-            <View style={styles.profileCompletionAccountHeader}>
-              <AvatarMotion style={styles.profileCompletionAvatar}>
+            <View style={styles.profileCompletionIntro}>
+              <Text style={styles.profileCompletionEyebrow}>One-minute setup</Text>
+              <Text style={styles.profileCompletionTitle}>Finish your profile</Text>
+              <Text style={styles.profileCompletionCopy}>Add the details members need to recognize and contact you.</Text>
+            </View>
+            <View style={styles.profileCompletionAvatarRow}>
+              <AvatarMotion style={styles.profileCompletionQuickAvatar}>
                 <UserAvatar
                   photoUrl={data?.user?.profilePhotoUrl || characterAvatarPreview(characterAvatarChoice?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0])}
                   imageStyle={styles.profileCompletionAvatarImage}
                   fallback={<Text style={styles.profileCompletionAvatarText}>{Array.from(avatarInitials(data?.user?.name || "F"))[0] || "F"}</Text>}
                 />
               </AvatarMotion>
-              <View style={styles.profileCompletionAccountCopy}>
-                <Text style={styles.profileCompletionName} numberOfLines={1}>{data?.user?.name || "Your FairFares profile"}</Text>
-                <View style={styles.profileCompletionVerificationRow}>
-                  {data?.user?.isVerified ? <Text style={styles.profileCompletionVerified}>Email verified</Text> : <Text style={styles.profileCompletionPending}>Email pending</Text>}
-                  <Text style={styles.profileCompletionPhone}>{data?.user?.phone?.trim() ? "Phone on file" : "Add phone"}</Text>
-                </View>
+              <View style={styles.profileCompletionAvatarCopy}>
+                <Text style={styles.profileCompletionAvatarTitle}>Your FairFares character</Text>
+                <Text style={styles.profileCompletionAvatarHint}>A starter look is ready. You can change it any time.</Text>
               </View>
-              <Text style={styles.profileCompletionAccountLabel}>Account</Text>
+              <TouchableOpacity style={styles.profileCompletionAvatarChange} onPress={() => { setCharacterAvatarPickerTab("look"); setCharacterAvatarPickerOpen((open) => !open); }} accessibilityRole="button" accessibilityLabel="Change your FairFares character">
+                <Text style={styles.profileCompletionAvatarChangeText}>{characterAvatarPickerOpen ? "Done" : "Change"}</Text>
+              </TouchableOpacity>
             </View>
-            <View style={styles.profileCompletionDivider} />
-            <View style={styles.profileCompletionCharacterHeader}>
-              <View><Text style={styles.profileCompletionEyebrow}>Character</Text><Text style={styles.profileCompletionTitle}>Choose your look</Text></View>
-              <TouchableOpacity style={styles.profileCompletionChoose} onPress={() => { setCharacterAvatarPickerTab("look"); setCharacterAvatarPickerOpen(true); }} accessibilityRole="button" accessibilityLabel="Choose a FairFares character"><Text style={styles.profileCompletionChooseText}>Choose</Text></TouchableOpacity>
-            </View>
-            <View style={[styles.profileCompletionCharacterStage, { backgroundColor: `#${characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0]}` }]}>
-              <View style={styles.profileCompletionCharacterHaloLarge} /><View style={styles.profileCompletionCharacterHaloSmall} />
-              <AvatarMotion style={styles.profileCompletionCharacterMotion}><UserAvatar photoUrl={data?.user?.profilePhotoUrl || characterAvatarPreview(characterAvatarChoice?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, characterAvatarChoice?.backgroundColor || DICEBEAR_AVATAR_BACKGROUNDS[0])} imageStyle={styles.profileCompletionCharacterImage} fallback={<Text style={styles.profileCompletionAvatarText}>F</Text>} /></AvatarMotion>
-            </View>
-            <View style={styles.profileCompletionCharacterTabs} accessibilityRole="tablist">
-              {([['look', 'Looks'], ['photo', 'Photo'], ['scene', 'Background']] as Array<["look" | "photo" | "scene", string]>).map(([tab, label]) => <TouchableOpacity key={tab} style={[styles.profileCompletionCharacterTab, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabSelected]} onPress={() => { setCharacterAvatarPickerTab(tab); setCharacterAvatarPickerOpen(true); }} accessibilityRole="tab" accessibilityState={{ selected: characterAvatarPickerOpen && characterAvatarPickerTab === tab }} accessibilityLabel={`${label} options`}><View style={[styles.profileCompletionCharacterTabMarker, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabMarkerSelected]} /><Text style={[styles.profileCompletionCharacterTabText, characterAvatarPickerOpen && characterAvatarPickerTab === tab && styles.profileCompletionCharacterTabTextSelected]}>{label}</Text></TouchableOpacity>)}
-            </View>
-            {characterAvatarPickerOpen && characterAvatarPickerTab === "look" ? <View style={styles.characterAvatarPicker}>
-              <Text style={styles.characterAvatarHint}>Pick a look, then save it.</Text>
-              <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`; const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length]; const selected = characterAvatarChoice?.seed === seed; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Preview character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
-              <View style={styles.characterAvatarPickerActions}><TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button"><Text style={styles.characterAvatarShuffleText}>Shuffle</Text></TouchableOpacity><TouchableOpacity style={[styles.characterAvatarSave, (!characterAvatarChoice || characterAvatarBusy) && styles.disabledButton]} disabled={!characterAvatarChoice || characterAvatarBusy} onPress={() => characterAvatarChoice && void selectCharacterAvatar(characterAvatarChoice.seed, characterAvatarChoice.backgroundColor)} accessibilityRole="button"><Text style={styles.characterAvatarSaveText}>{characterAvatarBusy ? "Saving…" : "Save character"}</Text></TouchableOpacity></View>
+            {characterAvatarPickerOpen ? <View style={styles.characterAvatarPicker}>
+              <Text style={styles.characterAvatarHint}>Pick a look. It will be saved when you finish setup.</Text>
+              <View style={styles.characterAvatarGrid}>{Array.from({ length: 6 }, (_, index) => { const seed = `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-${index}`; const backgroundColor = DICEBEAR_AVATAR_BACKGROUNDS[index % DICEBEAR_AVATAR_BACKGROUNDS.length]; const selected = characterAvatarChoice?.seed === seed; return <TouchableOpacity key={seed} style={[styles.characterAvatarOption, selected && styles.characterAvatarOptionSelected, characterAvatarBusy && styles.disabledButton]} disabled={characterAvatarBusy} onPress={() => setCharacterAvatarChoice({ seed, backgroundColor })} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`Choose character ${index + 1}`}><UserAvatar photoUrl={characterAvatarPreview(seed, backgroundColor)} imageStyle={styles.characterAvatarImage} fallback={<Text style={styles.characterAvatarFallback}>◌</Text>} /></TouchableOpacity>; })}</View>
+              <TouchableOpacity style={styles.characterAvatarShuffle} disabled={characterAvatarBusy} onPress={() => { setCharacterAvatarSet((current) => current + 1); setCharacterAvatarChoice(null); }} accessibilityRole="button"><Text style={styles.characterAvatarShuffleText}>Show more looks</Text></TouchableOpacity>
             </View> : null}
-            {characterAvatarPickerOpen && characterAvatarPickerTab === "scene" ? <View style={styles.profileCompletionScenePicker}>{DICEBEAR_AVATAR_BACKGROUNDS.map((backgroundColor) => <TouchableOpacity key={backgroundColor} style={[styles.profileCompletionSceneSwatch, { backgroundColor: `#${backgroundColor}` }, characterAvatarChoice?.backgroundColor === backgroundColor && styles.profileCompletionSceneSwatchSelected]} onPress={() => setCharacterAvatarChoice((current) => ({ seed: current?.seed || `fairfares-${Number(data?.user?.id || 0)}-${characterAvatarSet}-0`, backgroundColor }))} accessibilityRole="button" accessibilityLabel="Choose character background" />)}</View> : null}
-            {characterAvatarPickerOpen && characterAvatarPickerTab === "photo" ? <View style={styles.profileCompletionPhotoNotice}><Text style={styles.profileCompletionPhotoNoticeTitle}>Use a profile photo later</Text><Text style={styles.profileCompletionPhotoNoticeCopy}>Save a character to finish setup now. You can replace it with a photo any time from Profile.</Text></View> : null}
-            <Text style={styles.profileCompletionRemainingTitle}>Required to complete your profile</Text>
-            <View style={styles.profileCompletionMissingRow}>
-              {!data?.user?.profilePhotoUrl?.trim() ? <Text style={styles.profileCompletionChip}>Photo or character</Text> : null}
-              {!data?.user?.name?.trim() ? <Text style={styles.profileCompletionChip}>Full name</Text> : null}
-              {!data?.user?.email?.trim() ? <Text style={styles.profileCompletionChip}>Email</Text> : null}
-              {!data?.user?.phone?.trim() ? <Text style={styles.profileCompletionChip}>Phone number</Text> : null}
-              {data?.user?.consentPending ? <Text style={styles.profileCompletionChip}>Policy acceptance</Text> : null}
-            </View>
             {profileCompletionValidationError ? <Text style={styles.profileCompletionValidationError} accessibilityRole="alert">{profileCompletionValidationError}</Text> : null}
             {!data?.user?.name?.trim() || !data?.user?.email?.trim() || !data?.user?.phone?.trim() ? <View style={styles.profileCompletionDetails}>
-              <Text style={styles.profileCompletionDetailsTitle}>Your details</Text>
+              <Text style={styles.profileCompletionDetailsTitle}>Your contact details</Text>
               {!data?.user?.name?.trim() ? <TextInput value={profileCompletionName} onChangeText={setProfileCompletionName} placeholder="Full name" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="words" /> : null}
               {!data?.user?.email?.trim() ? <TextInput value={profileCompletionEmail} onChangeText={setProfileCompletionEmail} placeholder="Email" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="none" keyboardType="email-address" /> : null}
               {!data?.user?.phone?.trim() ? <TextInput value={profileCompletionPhone} onChangeText={setProfileCompletionPhone} placeholder="Phone number, including country code" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} keyboardType="phone-pad" autoComplete="tel" /> : null}
@@ -4134,7 +4125,7 @@ function FairFaresApp() {
               </View>
             ) : null}
             <TouchableOpacity style={[styles.profileCompletionPrimary, profileConsentBusy && styles.disabledButton]} disabled={profileConsentBusy} onPress={() => void continueProfileCompletion()}>
-              <Text style={styles.profileCompletionPrimaryText}>{profileConsentBusy ? "Saving..." : "Complete profile"}</Text>
+              <Text style={styles.profileCompletionPrimaryText}>{profileConsentBusy ? "Saving..." : "Finish setup"}</Text>
             </TouchableOpacity>
           </View>
           </ScrollView>
@@ -4673,6 +4664,14 @@ const styles = StyleSheet.create({
   profileCompletionScroll: { width: "100%", maxWidth: 382, maxHeight: "100%" },
   profileCompletionScrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: 8 },
   profileCompletionCard: { width: "100%", maxWidth: 382, borderRadius: 24, borderWidth: 1, borderColor: "rgba(94,196,122,0.42)", backgroundColor: "#182a45", paddingHorizontal: 14, paddingVertical: 14, alignItems: "center", gap: 9 },
+  profileCompletionIntro: { width: "100%", alignItems: "flex-start", paddingHorizontal: 2, paddingTop: 3 },
+  profileCompletionAvatarRow: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, padding: 11, backgroundColor: "rgba(255,255,255,0.07)" },
+  profileCompletionQuickAvatar: { width: 56, height: 56, borderRadius: 28, overflow: "hidden", backgroundColor: "#123c27", borderWidth: 2, borderColor: "#74d8aa" },
+  profileCompletionAvatarCopy: { flex: 1, minWidth: 0 },
+  profileCompletionAvatarTitle: { color: "#fff", fontSize: 14, lineHeight: 18, fontWeight: "900" },
+  profileCompletionAvatarHint: { color: "#c5d1e1", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 2 },
+  profileCompletionAvatarChange: { minHeight: 34, paddingHorizontal: 11, borderRadius: 17, backgroundColor: "rgba(135,237,198,0.18)", borderWidth: 1, borderColor: "rgba(136,243,201,0.58)", alignItems: "center", justifyContent: "center" },
+  profileCompletionAvatarChangeText: { color: "#a6f3d2", fontSize: 12, fontWeight: "900" },
   profileCompletionAccountHeader: { width: "100%", flexDirection: "row", alignItems: "center", gap: 10 },
   profileCompletionAccountCopy: { flex: 1, minWidth: 0 },
   profileCompletionName: { color: "#fff", fontSize: 16, lineHeight: 20, fontWeight: "900" },
@@ -4708,7 +4707,7 @@ const styles = StyleSheet.create({
   profileCompletionAvatarText: { color: theme.colors.text, fontSize: 27, fontWeight: "900" },
   profileCompletionEyebrow: { color: "#9be7cb", fontSize: 11, lineHeight: 15, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.6 },
   profileCompletionTitle: { color: "#fff", fontSize: 22, lineHeight: 27, fontWeight: "900" },
-  profileCompletionCopy: { color: "#c5d1e1", fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "center" },
+  profileCompletionCopy: { color: "#c5d1e1", fontSize: 14, lineHeight: 20, fontWeight: "700", textAlign: "left", marginTop: 3 },
   characterAvatarPicker: { width: "100%", alignItems: "center", gap: 9, paddingTop: 2 },
   characterAvatarPickerTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   characterAvatarPickerToggle: { width: "100%", minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: theme.radius.md, paddingHorizontal: 13, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
