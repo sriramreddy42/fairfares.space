@@ -13707,18 +13707,6 @@ def community_local_city_variants(value: str) -> tuple[str, ...]:
         return (clean_text_value(value, 120),)
     selected_keys = {item.lower() for item in selected}
     variants: list[str] = list(selected)
-    # Housing posters often select a campus instead of its municipality (for
-    # example, "University of Houston, TX"). Treat that form as local to the
-    # selected city without broadening across state lines. This keeps a
-    # Houston member's post in Houston rather than placing it only in the
-    # nationwide section.
-    for selected_city in selected:
-        canonical = community_us_city_variants(selected_city)
-        if not canonical:
-            continue
-        city_name, state = split_city_state(canonical[0])
-        if city_name and state:
-            variants.append(f"University of {city_name}, {state}")
     for group in ACCOMMODATION_METRO_GROUPS.values():
         suggestions = tuple(str(item) for item in group.get("suggested", ()))
         if not any(selected_keys.intersection(item.lower() for item in community_us_city_variants(suggestion)) for suggestion in suggestions):
@@ -13778,6 +13766,18 @@ def community_post_rows(
         for city_variant in city_variants:
             city_checks.extend(("posts.city = ? COLLATE NOCASE", "posts.city LIKE ? COLLATE NOCASE"))
             values.extend((city_variant, f"{city_variant},%"))
+        # A housing poster can choose a qualified point of interest instead
+        # of the municipality, such as "University of Houston, TX". Match a
+        # selected city's own same-state suffix as well, while retaining the
+        # exact/prefix checks for ordinary cities and metro members above.
+        # This is intentionally limited to the selected city (not every metro
+        # variant) to keep the query bounded and avoid broad locality guesses.
+        selected_city_variants = community_us_city_variants(city)
+        if selected_city_variants:
+            selected_city, selected_state = split_city_state(selected_city_variants[0])
+            if selected_city and selected_state:
+                city_checks.append("posts.city LIKE ? COLLATE NOCASE")
+                values.append(f"%{selected_city}, {selected_state}")
         filters.append(f"({' OR '.join(city_checks)})")
     if exclude_city:
         excluded_city_variants = community_local_city_variants(exclude_city)
@@ -13785,6 +13785,12 @@ def community_post_rows(
         for city_variant in excluded_city_variants:
             excluded_checks.extend(("posts.city = ? COLLATE NOCASE", "posts.city LIKE ? COLLATE NOCASE"))
             values.extend((city_variant, f"{city_variant},%"))
+        excluded_selected_variants = community_us_city_variants(exclude_city)
+        if excluded_selected_variants:
+            excluded_selected_city, excluded_selected_state = split_city_state(excluded_selected_variants[0])
+            if excluded_selected_city and excluded_selected_state:
+                excluded_checks.append("posts.city LIKE ? COLLATE NOCASE")
+                values.append(f"%{excluded_selected_city}, {excluded_selected_state}")
         filters.append(f"NOT ({' OR '.join(excluded_checks)})")
     if active_only:
         filters.append("posts.status = 'PUBLISHED' AND posts.fulfillment_status = 'OPEN' AND (posts.expires_at IS NULL OR posts.expires_at = '' OR datetime(posts.expires_at) > datetime('now'))")

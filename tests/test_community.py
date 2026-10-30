@@ -917,6 +917,9 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertIn(university_houston["post"]["id"], {
             post["id"] for post in houston_feed["sections"]["local"]["posts"]
         })
+        self.assertNotIn(university_houston["post"]["id"], {
+            post["id"] for post in houston_feed["sections"]["national"]["posts"]
+        })
 
         status, empty_local_feed = self.request("GET", "/api/mobile/community?city=Boston%2C%20MA&layered=1&limit=20")
         self.assertEqual(status, 200)
