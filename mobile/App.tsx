@@ -469,6 +469,8 @@ function FairFaresApp() {
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
   const [listingIntentPickerOpen, setListingIntentPickerOpen] = useState(false);
+  const [listingCitySuggestions, setListingCitySuggestions] = useState<string[]>([]);
+  const [listingCityLoading, setListingCityLoading] = useState(false);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [listingAddressLoading, setListingAddressLoading] = useState(false);
   const [listingAddressValidated, setListingAddressValidated] = useState(false);
@@ -2158,6 +2160,7 @@ function FairFaresApp() {
     listingFormBaselineRef.current = listingFormFingerprint(initialForm, null);
     setListingForm(initialForm);
     setListingValidation({});
+    setListingCitySuggestions([]);
     setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
@@ -2244,6 +2247,7 @@ function FairFaresApp() {
     setListingForm(initialForm);
     setListingValidation({});
     setRoommatePlaceChoice(initialRoommatePlaceChoice);
+    setListingCitySuggestions([]);
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
     setListingValidatedLabel(post.streetAddress || post.area || post.location || "Saved location");
@@ -2349,6 +2353,25 @@ function FairFaresApp() {
       delete next.location;
       return next;
     });
+    if (key === "city") {
+      setListingCitySuggestions([]);
+      setListingAddressSuggestions([]);
+    }
+    setListingAddressValidated(false);
+    setListingValidatedLabel("");
+  }
+
+  function selectListingCity(value: string) {
+    const selectedCity = normalizeCityInput(value);
+    setListingForm((current) => ({ ...current, city: selectedCity }));
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next.city;
+      delete next.location;
+      return next;
+    });
+    setListingCitySuggestions([]);
+    setListingAddressSuggestions([]);
     setListingAddressValidated(false);
     setListingValidatedLabel("");
   }
@@ -2366,6 +2389,7 @@ function FairFaresApp() {
     setListingForm((current) => current.postMode === "HAVE_PLACE"
       ? { ...current, streetAddress, city: suggestedCity, zipCode }
       : { ...current, area: suggestion.label, city: suggestedCity, zipCode });
+    setListingCitySuggestions([]);
     setListingAddressSuggestions([]);
     setListingAddressValidated(true);
     setListingValidatedLabel(suggestion.label);
@@ -2400,6 +2424,43 @@ function FairFaresApp() {
       return next;
     });
   }
+
+  useEffect(() => {
+    if (!listingOpen) {
+      setListingCitySuggestions([]);
+      setListingCityLoading(false);
+      return;
+    }
+    const query = listingForm.city.trim();
+    if (query.length < 2) {
+      setListingCitySuggestions([]);
+      setListingCityLoading(false);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      setListingCityLoading(true);
+      void getAccommodationLocationOptions(query)
+        .then((options) => {
+          if (!active) return;
+          const typedCity = query.split(",", 1)[0]?.trim().toLocaleLowerCase() || "";
+          const exactCityAndRegion = /^[^,]+,\s*[A-Za-z]{2}(?:\s*,\s*(?:US|USA|United States))?$/i.test(query);
+          const suggestions = (options?.cities || [])
+            .map((value) => normalizeCityInput(value))
+            .filter((value) => value && (!typedCity || value.split(",", 1)[0]?.trim().toLocaleLowerCase().startsWith(typedCity)))
+            .filter((value) => !exactCityAndRegion || value.toLocaleLowerCase() !== query.toLocaleLowerCase())
+            .filter((value, index, values) => values.findIndex((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) === index)
+            .slice(0, 6);
+          setListingCitySuggestions(suggestions);
+        })
+        .catch(() => { if (active) setListingCitySuggestions([]); })
+        .finally(() => { if (active) setListingCityLoading(false); });
+    }, 300);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [listingOpen, listingForm.city]);
 
   useEffect(() => {
     if (!listingOpen || listingAddressValidated) {
@@ -4311,6 +4372,14 @@ function FairFaresApp() {
                   <View style={styles.twoColField}>{renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.city && styles.listingInputInvalid]} />, { required: true, errorKey: "city" })}</View>
                   <View style={styles.twoColField}>{renderListingField("ZIP", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Optional" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { errorKey: "zipCode" })}</View>
                 </View>
+                {listingCityLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Finding cities…</Text></View> : null}
+                {listingCitySuggestions.length ? <View style={styles.addressSuggestionPanel}>
+                  <Text style={styles.addressSuggestionTitle}>Choose your city</Text>
+                  {listingCitySuggestions.map((suggestion) => <TouchableOpacity key={suggestion} style={styles.addressSuggestion} onPress={() => selectListingCity(suggestion)}>
+                    <Text style={styles.addressSuggestionPin}>⌖</Text>
+                    <Text style={styles.addressSuggestionMain}>{suggestion}</Text>
+                  </TouchableOpacity>)}
+                </View> : null}
                 {listingHasPropertyDetails ? (
                   <>
                     {renderListingField("Neighborhood", <TextInput value={listingForm.primaryNeighborhood} onChangeText={(text) => updateListingLocationField("primaryNeighborhood", text)} placeholder="Capitol Hill, campus, or landmark" placeholderTextColor={theme.colors.muted} style={[styles.input, listingAddressValidated && styles.validatedInput, listingValidation.primaryNeighborhood && styles.listingInputInvalid]} autoCorrect={false} />, { required: true, errorKey: "primaryNeighborhood" })}
