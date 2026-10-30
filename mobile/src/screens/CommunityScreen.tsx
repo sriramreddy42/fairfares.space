@@ -151,16 +151,29 @@ const communityReviewFallback: BootstrapPayload["testimonials"][number] = {
 
 type CommunityReview = BootstrapPayload["testimonials"][number];
 
-// Keep this card static while a user is reading the feed. Rotating a
-// testimonial every few seconds repeatedly committed the image-heavy Ask
-// screen and was visible as a small scroll hitch on slower phones.
+// The active-review state intentionally lives inside this memoized card. Its
+// timer can rotate a review without committing the image-heavy Ask feed or
+// disturbing a person's scroll position.
 const CommunityReviewCard = React.memo(function CommunityReviewCard({ reviews, city, isLight }: { reviews: CommunityReview[]; city: string; isLight: boolean }) {
   const reviewCount = reviews.length;
-  const featuredReview = reviews[0] || communityReviewFallback;
+  const [activeReviewIndex, setActiveReviewIndex] = useState(0);
+  const featuredReview = reviews[activeReviewIndex % reviewCount] || communityReviewFallback;
   const visibleReviewDots = Math.min(reviewCount, 5);
-  const activeReviewIndex = 0;
+  const activeDotIndex = activeReviewIndex % visibleReviewDots;
   const rating = Math.max(1, Math.min(5, Math.round(Number(featuredReview.rating || 5))));
   const photoUrl = featuredReview.photoUrl ? absoluteAssetUrl(featuredReview.photoUrl) : "";
+
+  useEffect(() => {
+    setActiveReviewIndex(0);
+  }, [reviewCount]);
+
+  useEffect(() => {
+    if (reviewCount <= 1) return undefined;
+    const timer = setInterval(() => {
+      setActiveReviewIndex((current) => (current + 1) % reviewCount);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [reviewCount]);
 
   return (
     <View style={[styles.communityReviewCard, isLight && styles.communityReviewCardLight]}>
@@ -183,7 +196,7 @@ const CommunityReviewCard = React.memo(function CommunityReviewCard({ reviews, c
       {reviewCount > 1 ? (
         <View style={styles.communityReviewDots} pointerEvents="none">
           {reviews.slice(0, visibleReviewDots).map((review, index) => (
-            <View key={`${review.id || index}-dot`} style={[styles.communityReviewDot, index === activeReviewIndex && styles.communityReviewDotActive]} />
+            <View key={`${review.id || index}-dot`} style={[styles.communityReviewDot, index === activeDotIndex && styles.communityReviewDotActive]} />
           ))}
         </View>
       ) : <View style={styles.communityReviewPill} />}
