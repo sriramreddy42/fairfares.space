@@ -7375,6 +7375,25 @@ def init_db() -> None:
                 FOREIGN KEY(reviewed_user_id) REFERENCES users(id)
             );
 
+            -- A deliberate, reciprocal member relationship. Contacts and
+            -- shared groups never create one automatically.
+            CREATE TABLE IF NOT EXISTS member_connections (
+                user_low_id INTEGER NOT NULL,
+                user_high_id INTEGER NOT NULL,
+                requested_by_user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                blocked_by_user_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_low_id, user_high_id),
+                CHECK(user_low_id < user_high_id),
+                CHECK(status IN ('PENDING', 'ACCEPTED', 'BLOCKED')),
+                FOREIGN KEY(user_low_id) REFERENCES users(id),
+                FOREIGN KEY(user_high_id) REFERENCES users(id),
+                FOREIGN KEY(requested_by_user_id) REFERENCES users(id),
+                FOREIGN KEY(blocked_by_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS chat_conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 public_id TEXT NOT NULL UNIQUE,
@@ -8901,6 +8920,8 @@ def init_db() -> None:
         con.execute(f"CREATE INDEX IF NOT EXISTS idx_users_phone_digits ON users({normalized_phone_sql('phone')}) WHERE phone IS NOT NULL AND phone != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_relocation_matching ON users(relocation_discoverable, local_connection_discoverable, local_city, relocation_city)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_low ON member_connections(status, user_low_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_high ON member_connections(status, user_high_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
         con.execute("DELETE FROM security_rate_limits WHERE datetime(updated_at) < datetime('now', '-2 days')")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_created ON accommodation_posts(visibility_status, created_at DESC)")
@@ -19099,6 +19120,118 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
     return suggestions[:max(1, min(int(limit or 6), 12))]
 
 
+def member_connection_pair(user_id: int, other_user_id: int) -> tuple[int, int]:
+    return (min(int(user_id), int(other_user_id)), max(int(user_id), int(other_user_id)))
+
+
+def member_connection_state(con: sqlite3.Connection, user_id: int, other_user_id: int) -> str:
+    """Return the viewer-safe state of one explicit member connection."""
+    if not user_id or user_id == other_user_id:
+        return "NONE"
+    low_id, high_id = member_connection_pair(user_id, other_user_id)
+    row = con.execute(
+        """SELECT requested_by_user_id, status, blocked_by_user_id
+           FROM member_connections WHERE user_low_id = ? AND user_high_id = ?""",
+        (low_id, high_id),
+    ).fetchone()
+    if not row:
+        return "NONE"
+    if row_value(row, "status") == "BLOCKED":
+        return "BLOCKED"
+    if row_value(row, "status") == "ACCEPTED":
+        return "CONNECTED"
+    return "OUTGOING_PENDING" if int(row_value(row, "requested_by_user_id") or 0) == int(user_id) else "INCOMING_PENDING"
+
+
+def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
+    """Suggest people through accepted mutual connections and shared groups.
+
+    This intentionally excludes phone contacts and does not reveal either
+    member's address, phone, search history, or private groups. A candidate is
+    useful only when there is at least one mutual accepted connection or one
+    shared Chitthi community.
+    """
+    user_id = int(user_id or 0)
+    if user_id <= 0:
+        return []
+    try:
+        with db() as con:
+            direct_rows = con.execute(
+                """SELECT user_low_id, user_high_id FROM member_connections
+                   WHERE status = 'ACCEPTED' AND (user_low_id = ? OR user_high_id = ?)""",
+                (user_id, user_id),
+            ).fetchall()
+            direct_ids = {
+                int(row_value(row, "user_high_id") if int(row_value(row, "user_low_id") or 0) == user_id else row_value(row, "user_low_id") or 0)
+                for row in direct_rows
+            }
+            mutual_counts: dict[int, int] = {}
+            if direct_ids:
+                placeholders = ",".join("?" for _ in direct_ids)
+                rows = con.execute(
+                    f"""SELECT user_low_id, user_high_id FROM member_connections
+                        WHERE status = 'ACCEPTED' AND (user_low_id IN ({placeholders}) OR user_high_id IN ({placeholders}))""",
+                    (*direct_ids, *direct_ids),
+                ).fetchall()
+                for row in rows:
+                    low_id = int(row_value(row, "user_low_id") or 0)
+                    high_id = int(row_value(row, "user_high_id") or 0)
+                    mutual_id = high_id if low_id in direct_ids else low_id if high_id in direct_ids else 0
+                    if mutual_id and mutual_id != user_id and mutual_id not in direct_ids:
+                        mutual_counts[mutual_id] = mutual_counts.get(mutual_id, 0) + 1
+            shared_rows = con.execute(
+                """SELECT theirs.user_id, COUNT(*) AS shared_count
+                   FROM chat_community_members mine
+                   JOIN chat_community_members theirs ON theirs.community_id = mine.community_id
+                   WHERE mine.user_id = ? AND theirs.user_id != ?
+                   GROUP BY theirs.user_id""",
+                (user_id, user_id),
+            ).fetchall()
+            shared_counts = {
+                int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
+                for row in shared_rows
+            }
+            candidate_ids = (set(mutual_counts) | set(shared_counts)) - direct_ids - {user_id}
+            if not candidate_ids:
+                return []
+            placeholders = ",".join("?" for _ in candidate_ids)
+            rows = con.execute(
+                f"""SELECT id, name, profile_photo_url FROM users
+                    WHERE id IN ({placeholders}) AND is_verified = 1 AND guest_account = 0
+                      AND suspended_at IS NULL""",
+                tuple(candidate_ids),
+            ).fetchall()
+            ratings = user_rating_summaries(con, candidate_ids)
+            suggestions: list[dict[str, object]] = []
+            for row in rows:
+                candidate_id = int(row_value(row, "id") or 0)
+                state = member_connection_state(con, user_id, candidate_id)
+                if state != "NONE":
+                    continue
+                mutual = mutual_counts.get(candidate_id, 0)
+                shared = shared_counts.get(candidate_id, 0)
+                if not mutual and not shared:
+                    continue
+                reasons: list[str] = []
+                if mutual:
+                    reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
+                if shared:
+                    reasons.append(f"{shared} shared {('community' if shared == 1 else 'communities')}")
+                rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
+                suggestions.append({
+                    "id": candidate_id,
+                    "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+                    "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
+                    "reason": " · ".join(reasons),
+                    "ratingSummary": rating,
+                    "score": mutual * 100 + min(shared, 4) * 15 + min(int(rating.get("count") or 0), 5),
+                })
+    except sqlite3.Error:
+        return []
+    suggestions.sort(key=lambda item: (-int(item["score"]), str(item["name"]).casefold(), int(item["id"])))
+    return [{key: value for key, value in item.items() if key != "score"} for item in suggestions[:max(1, min(int(limit or 8), 12))]]
+
+
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
     if not user:
         return None
@@ -19127,6 +19260,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "avatarMode": "DICEBEAR" if row_value(user, "avatar_mode") == "DICEBEAR" else "PHOTO",
         "avatarSeed": row_value(user, "avatar_seed") or "",
         "avatarStyle": row_value(user, "avatar_style") or "",
+        "chatPhoneDiscoverable": bool(int(row_value(user, "chat_phone_discoverable") or 0)),
         "localCity": row_value(user, "local_city") or "",
         "relocationCity": row_value(user, "relocation_city") or "",
         "relocationMonth": row_value(user, "relocation_month") or "",
@@ -28782,6 +28916,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/relocation/suggestions":
             self.api_mobile_relocation_suggestions()
             return
+        if parsed.path == "/api/mobile/people/suggestions":
+            self.api_mobile_people_suggestions()
+            return
         if parsed.path == "/api/mobile/member-ratings":
             self.api_mobile_member_ratings(parsed)
             return
@@ -29197,6 +29334,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
+            "/api/mobile/connections": self.api_mobile_update_connection,
             "/api/mobile/profile/avatar": self.api_mobile_update_avatar,
             "/api/mobile/profile/consent": self.api_mobile_accept_current_policies,
             "/api/mobile/push-token": self.api_mobile_push_token,
@@ -30932,7 +31070,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """
                 SELECT id, name, phone FROM users
                 WHERE is_verified = 1
-                  AND guest_account = 0
+                  AND guest_account = 0 AND chat_phone_discoverable = 1
                   AND id != ?
                 """,
                 (int(user["id"]),),
@@ -30961,7 +31099,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             candidates = con.execute(
                 """SELECT id, name, phone, profile_photo_url FROM users
                    WHERE is_verified = 1
-                     AND guest_account = 0 AND id != ?""",
+                     AND guest_account = 0 AND chat_phone_discoverable = 1 AND id != ?""",
                 (int(user["id"]),),
             ).fetchall()
         matches = []
@@ -42109,6 +42247,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         relocation_company = clean_text_value(payload.get("relocationCompany") if "relocationCompany" in payload else row_value(user, "relocation_company"), 120)
         relocation_discoverable = bool(payload.get("relocationDiscoverable")) if "relocationDiscoverable" in payload else bool(int(row_value(user, "relocation_discoverable") or 0))
         local_connection_discoverable = bool(payload.get("localConnectionDiscoverable")) if "localConnectionDiscoverable" in payload else bool(int(row_value(user, "local_connection_discoverable") or 0))
+        chat_phone_discoverable = bool(payload.get("chatPhoneDiscoverable")) if "chatPhoneDiscoverable" in payload else bool(int(row_value(user, "chat_phone_discoverable") or 0))
         clean_phone = normalize_phone(phone)
         current_password = str(payload.get("currentPassword") or "")
         current_email = normalize_email(row_value(user, "email"))
@@ -42229,19 +42368,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if photo is None:
                     con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, is_verified = ?,
-                                  chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, is_verified = ?
                            WHERE id = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, verified_value, 1 if phone_changed else 0, user["id"]),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, verified_value, user["id"]),
                     )
                 else:
                     cursor = con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, is_verified = ?, profile_photo_url = ?,
-                                  avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}',
-                                  chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, is_verified = ?, profile_photo_url = ?,
+                                  avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}'
                            WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, verified_value, photo, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
                 if email_changed and not photo_conflict:
@@ -43343,6 +43480,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if user_id <= 0:
             self.send_json({"ok": False, "message": "Member not found."}, 404)
             return
+        viewer = self.current_user()
+        viewer_id = int(row_value(viewer, "id") or 0) if viewer else 0
         with db() as con:
             user = con.execute(
                 "SELECT id, name, profile_photo_url FROM users WHERE id = ? AND guest_account = 0 LIMIT 1",
@@ -43365,6 +43504,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 """,
                 (user_id,),
             ).fetchall()
+            connection_state = member_connection_state(con, viewer_id, user_id) if viewer_id else "NONE"
         listings = mobile_housing_posts_for_viewer(mobile_housing_post_payloads(rows), 0)
         self.send_json({
             "ok": True,
@@ -43373,6 +43513,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "name": clean_text_value(row_value(user, "name"), 120) or "FairFares member",
                 "photoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), user_id),
                 "ratingSummary": user_rating_summary(user_id),
+                "connectionState": connection_state,
                 "listings": listings,
             },
         })
@@ -43384,6 +43525,85 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         user_id = int(row_value(user, "id") or 0)
         self.send_json({"ok": True, "suggestions": relocation_suggestions_for_user(user_id)})
+
+    def api_mobile_people_suggestions(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view people suggestions."}, 401)
+            return
+        self.send_json({"ok": True, "suggestions": people_suggestions_for_user(int(row_value(user, "id") or 0))})
+
+    def api_mobile_update_connection(self) -> None:
+        """Create and manage an explicit member connection; never infer one."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to manage connections."}, 401)
+            return
+        payload = self.read_json_body()
+        viewer_id = int(row_value(user, "id") or 0)
+        target_id = int(float_from_value(payload.get("targetUserId") or 0))
+        action = clean_text_value(payload.get("action"), 20).lower()
+        if not target_id or target_id == viewer_id or action not in {"request", "accept", "decline", "remove", "block"}:
+            self.send_json({"ok": False, "error": "Choose a valid member and connection action."}, 400)
+            return
+        low_id, high_id = member_connection_pair(viewer_id, target_id)
+        with db() as con:
+            target = con.execute(
+                """SELECT id FROM users WHERE id = ? AND is_verified = 1
+                   AND guest_account = 0 AND suspended_at IS NULL""",
+                (target_id,),
+            ).fetchone()
+            if not target:
+                self.send_json({"ok": False, "error": "This member is unavailable."}, 404)
+                return
+            row = con.execute(
+                """SELECT requested_by_user_id, status, blocked_by_user_id FROM member_connections
+                   WHERE user_low_id = ? AND user_high_id = ?""",
+                (low_id, high_id),
+            ).fetchone()
+            status = str(row_value(row, "status") or "") if row else ""
+            requester_id = int(row_value(row, "requested_by_user_id") or 0) if row else 0
+            if status == "BLOCKED":
+                self.send_json({"ok": False, "error": "This member is unavailable."}, 404)
+                return
+            if action == "request":
+                if not row:
+                    con.execute(
+                        """INSERT INTO member_connections
+                           (user_low_id, user_high_id, requested_by_user_id, status)
+                           VALUES (?, ?, ?, 'PENDING')""",
+                        (low_id, high_id, viewer_id),
+                    )
+                elif status == "PENDING" and requester_id == target_id:
+                    self.send_json({"ok": False, "error": "This member already invited you. Accept their request instead."}, 409)
+                    return
+            elif action == "accept":
+                if status != "PENDING" or requester_id != target_id:
+                    self.send_json({"ok": False, "error": "There is no connection request to accept."}, 409)
+                    return
+                con.execute(
+                    """UPDATE member_connections SET status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP
+                       WHERE user_low_id = ? AND user_high_id = ?""",
+                    (low_id, high_id),
+                )
+            elif action == "decline":
+                if status == "PENDING" and requester_id == target_id:
+                    con.execute("DELETE FROM member_connections WHERE user_low_id = ? AND user_high_id = ?", (low_id, high_id))
+            elif action == "remove":
+                if status in {"PENDING", "ACCEPTED"}:
+                    con.execute("DELETE FROM member_connections WHERE user_low_id = ? AND user_high_id = ?", (low_id, high_id))
+            elif action == "block":
+                con.execute(
+                    """INSERT INTO member_connections
+                       (user_low_id, user_high_id, requested_by_user_id, status, blocked_by_user_id)
+                       VALUES (?, ?, ?, 'BLOCKED', ?)
+                       ON CONFLICT(user_low_id, user_high_id) DO UPDATE SET
+                         status = 'BLOCKED', blocked_by_user_id = excluded.blocked_by_user_id,
+                         updated_at = CURRENT_TIMESTAMP""",
+                    (low_id, high_id, viewer_id, viewer_id),
+                )
+            next_state = member_connection_state(con, viewer_id, target_id)
+        self.send_json({"ok": True, "connectionState": next_state})
 
     def api_mobile_member_ratings(self, parsed: urllib.parse.ParseResult) -> None:
         """Public, anonymized trust feedback for a member profile."""

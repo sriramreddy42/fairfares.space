@@ -897,6 +897,62 @@ class MobileAuthTest(unittest.TestCase):
             {"LOCAL", "SAME_DESTINATION"},
         )
 
+    def test_contact_discovery_respects_member_preference(self):
+        with app.db() as con:
+            con.execute("INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, 'unused', 1, 1)", ("Finder", "finder@example.com", "+13035550121"))
+            finder_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, 'unused', 1, 0)", ("Private Phone", "private-phone@example.com", "+13035550122"))
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("contact-finder", finder_id))
+        phone_hash = hashlib.sha256("+13035550122".encode("utf-8")).hexdigest()
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [phone_hash]}).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer contact-finder"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(json.loads(response.read().decode("utf-8"))["people"], [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_connection_requests_are_explicit_and_create_mutual_suggestions(self):
+        with app.db() as con:
+            def member(name, email):
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'unused', 1)", (name, email))
+                return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            viewer_id = member("Viewer", "viewer@example.com")
+            mutual_id = member("Mutual", "mutual@example.com")
+            candidate_id = member("Candidate", "candidate@example.com")
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("viewer-connection", viewer_id))
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("mutual-connection", mutual_id))
+        server, thread = self.start_server()
+        try:
+            def connection(token, target_id, action):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/mobile/connections",
+                    data=json.dumps({"targetUserId": target_id, "action": action}).encode("utf-8"), method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            self.assertEqual(connection("viewer-connection", mutual_id, "request")["connectionState"], "OUTGOING_PENDING")
+            self.assertEqual(connection("mutual-connection", viewer_id, "accept")["connectionState"], "CONNECTED")
+            self.assertEqual(connection("mutual-connection", candidate_id, "request")["connectionState"], "OUTGOING_PENDING")
+            # The candidate accepts using a session created after their request arrived.
+            with app.db() as con:
+                con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("candidate-connection", candidate_id))
+            self.assertEqual(connection("candidate-connection", mutual_id, "accept")["connectionState"], "CONNECTED")
+            suggestions = app.people_suggestions_for_user(viewer_id)
+            self.assertEqual([item["id"] for item in suggestions], [candidate_id])
+            self.assertIn("1 mutual connection", suggestions[0]["reason"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_profile_save_preserves_durable_avatar_when_client_returns_delivery_url(self):
         stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/persistent-avatar.png"
         with app.db() as con:

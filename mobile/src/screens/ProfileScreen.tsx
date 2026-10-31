@@ -76,6 +76,7 @@ export function ProfileScreen({
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
+  const [chatPhoneDiscoverable, setChatPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [localCity, setLocalCity] = useState(user?.localCity || "");
   const [relocationCity, setRelocationCity] = useState(user?.relocationCity || "");
@@ -132,6 +133,7 @@ export function ProfileScreen({
     setName(user?.name || "");
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
+    setChatPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
     setDateOfBirth(user?.dateOfBirth || "");
     setLocalCity(user?.localCity || "");
     setRelocationCity(user?.relocationCity || "");
@@ -142,7 +144,7 @@ export function ProfileScreen({
     setProfilePhoto(user?.profilePhotoUrl || "");
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -150,10 +152,11 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
+        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
+        setChatPhoneDiscoverable(draft.chatPhoneDiscoverable ?? Boolean(user.chatPhoneDiscoverable));
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
         setLocalCity(draft.localCity ?? user.localCity ?? "");
         setRelocationCity(draft.relocationCity ?? user.relocationCity ?? "");
@@ -215,10 +218,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, chatPhoneDiscoverable, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
+  }, [chatPhoneDiscoverable, dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
 
   useEffect(() => {
     const query = (cityInputFocused === "local" ? localCity : cityInputFocused === "relocation" ? relocationCity : "").trim();
@@ -442,6 +445,7 @@ export function ProfileScreen({
         name,
         email,
         phone,
+        chatPhoneDiscoverable,
         dateOfBirth,
         localCity,
         relocationCity,
@@ -456,6 +460,7 @@ export function ProfileScreen({
       setName(payload.user?.name || "");
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
+      setChatPhoneDiscoverable(Boolean(payload.user?.chatPhoneDiscoverable));
       setDateOfBirth(payload.user?.dateOfBirth || "");
       setLocalCity(payload.user?.localCity || "");
       setRelocationCity(payload.user?.relocationCity || "");
@@ -709,6 +714,13 @@ export function ProfileScreen({
             <Text style={styles.label}>Phone</Text>
             <TextInput value={phone} onChangeText={(value) => { setPhone(value); setProfileDirty(true); }} style={styles.input} placeholder="Phone number, including +country code" placeholderTextColor={theme.colors.muted} keyboardType="phone-pad" autoComplete="tel" />
             {completingInitialPhone ? <Text style={styles.securityNote}>Include the country code, for example +1 303 555 0123 or +91 98765 43210.</Text> : null}
+            <View style={styles.phoneDiscoveryRow}>
+              <View style={styles.relocationPrivacyCopy}>
+                <Text style={styles.relocationPrivacyTitle}>Find me from my phone number</Text>
+                <Text style={styles.relocationPrivacyHint}>Only people who already have your number in their contacts can find your FairFares profile.</Text>
+              </View>
+              <Switch value={chatPhoneDiscoverable} onValueChange={(value) => { setChatPhoneDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Let people with my phone number find me in Chitthi" />
+            </View>
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
             {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
@@ -1103,6 +1115,7 @@ const styles = StyleSheet.create({
   citySuggestionMain: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
   citySuggestionSecondary: { color: theme.colors.muted, fontSize: 11, marginTop: 1 },
   relocationPrivacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 3, padding: 11, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  phoneDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 2 },
   relocationPrivacyCopy: { flex: 1, minWidth: 0 },
   relocationPrivacyTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
   relocationPrivacyHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },

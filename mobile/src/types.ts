@@ -89,6 +89,8 @@ export type FairFaresUser = {
   avatarMode?: "PHOTO" | "DICEBEAR";
   avatarSeed?: string;
   avatarStyle?: string;
+  /** Lets this member appear only in phone-contact discovery. */
+  chatPhoneDiscoverable?: boolean;
   /** Member-controlled home city. This is never inferred from device location. */
   localCity?: string;
   /** Optional city the member plans to move to. */
@@ -290,6 +292,7 @@ export type CommunityUserProfile = {
   photoUrl: string;
   isGuest?: boolean;
   ratingSummary?: UserRatingSummary;
+  connectionState?: "NONE" | "OUTGOING_PENDING" | "INCOMING_PENDING" | "CONNECTED" | "BLOCKED";
   listings: HousingPost[];
 };
 

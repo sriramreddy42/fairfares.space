@@ -3665,6 +3665,7 @@ export type MobileProfileInput = {
   email?: string;
   phone?: string;
   dateOfBirth?: string;
+  chatPhoneDiscoverable?: boolean;
   localCity?: string;
   relocationCity?: string;
   relocationMonth?: string;
@@ -3693,9 +3694,30 @@ export type RelocationSuggestion = {
   ratingSummary: { average: number; count: number; label: string };
 };
 
+export type PeopleSuggestion = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  reason: string;
+  ratingSummary: { average: number; count: number; label: string };
+};
+
 export async function getRelocationSuggestions() {
   const payload = await request<{ ok: boolean; suggestions: RelocationSuggestion[] }>("/api/mobile/relocation/suggestions");
   return payload.suggestions || [];
+}
+
+export async function getPeopleSuggestions() {
+  const payload = await request<{ ok: boolean; suggestions: PeopleSuggestion[] }>("/api/mobile/people/suggestions");
+  return payload.suggestions || [];
+}
+
+export async function updateMemberConnection(targetUserId: number, action: "request" | "accept" | "decline" | "remove" | "block") {
+  return request<{ ok: boolean; connectionState: "NONE" | "OUTGOING_PENDING" | "INCOMING_PENDING" | "CONNECTED" | "BLOCKED"; error?: string }>("/api/mobile/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetUserId, action }),
+  });
 }
 
 export async function updateDiceBearAvatar(input: { seed: string; backgroundColor?: string }) {
