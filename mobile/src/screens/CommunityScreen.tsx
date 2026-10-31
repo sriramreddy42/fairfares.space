@@ -10,6 +10,7 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
+  getRelocationSuggestions, RelocationSuggestion,
   getHousingActivity, getRentalBookings, getRideActivity,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, uploadCommunityVideo,
@@ -606,6 +607,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [localHasMore, setLocalHasMore] = useState(() => initialFeedSnapshot?.localHasMore || false);
   const [nationalHasMore, setNationalHasMore] = useState(() => initialFeedSnapshot?.nationalHasMore || false);
   const [groups, setGroups] = useState<Community[]>(() => initialGroups || []);
+  const [relocationSuggestions, setRelocationSuggestions] = useState<RelocationSuggestion[]>([]);
   const [groupSuggestionCity, setGroupSuggestionCity] = useState(city);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [cityDraft, setCityDraft] = useState("");
@@ -701,6 +703,20 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [testimonials]);
   const acrossCountryName = locationCountryCodeFromLabel(groupSuggestionCity || city) === "IN" ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.id || !feedReadyForSecondaryReads || loading || refreshing) {
+      setRelocationSuggestions([]);
+      return () => { cancelled = true; };
+    }
+    const timer = setTimeout(() => {
+      void getRelocationSuggestions()
+        .then((suggestions) => { if (!cancelled) setRelocationSuggestions(suggestions); })
+        .catch(() => { if (!cancelled) setRelocationSuggestions([]); });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2074,6 +2090,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </TactilePressable>
       <View><View style={styles.sectionRow}><Text style={[styles.sectionTitle, isLight && styles.textPrimaryLight]}>Popular topics</Text><TouchableOpacity onPress={() => { setSelectedGroup(""); setCategory("ALL"); }}><Text style={styles.manageLink}>View all  ›</Text></TouchableOpacity></View><View style={styles.topicGrid}>{popularTopics.map((item) => <TactilePressable accessibilityRole="button" accessibilityLabel={`${item.title}. ${item.subtitle}`} key={item.value} pressScale={0.94} style={[styles.topicCard, isLight && styles.topicCardLight, { width: "23.5%", backgroundColor: item.color }, category === item.value && styles.topicSelected]} onPress={() => { if (item.value === "HOUSING") { onOpenHousing(); return; } if (item.value === "RIDES") { onOpenRides(); return; } if (item.value === "RENTALS") { onOpenRentalCars(); return; } setSelectedGroup(""); setCategory(item.value); }}><Image source={item.image} style={styles.topicImage} resizeMode="contain" /><Text style={styles.topicTitle}>{item.title}</Text><Text style={styles.topicSubtitle}>{item.subtitle}</Text></TactilePressable>)}</View></View>
       <View style={[styles.feedControls, isLight && styles.feedControlsLight]}><TouchableOpacity style={styles.feedLocationButton} onPress={() => { setCityDraft(groupSuggestionCity); setCityPickerOpen(true); }} accessibilityRole="button" accessibilityLabel={groupSuggestionCity ? `Change feed city. Currently ${groupSuggestionCity}` : "Choose a feed city or use current location"}><View><Text style={[styles.relevanceTitle, isLight && styles.textPrimaryLight]}>{groupSuggestionCity ? `Near ${groupSuggestionCity.split(",", 1)[0]}` : "Choose your location"} <Text style={styles.cityChevron}>⌄</Text></Text><Text style={[styles.relevanceSubtitle, isLight && styles.textSecondaryLight]}>{category !== "ALL" ? categoryLabels[category] : locationResolving && !groupSuggestionCity ? "Finding your current city…" : groupSuggestionCity ? "Current-city posts and listings · Tap to change" : "Use current location or choose a city"}</Text></View></TouchableOpacity><TouchableOpacity style={styles.filterButton} onPress={() => { setQuery(""); setAppliedQuery(""); setSelectedGroup(""); setCategory("ALL"); }} accessibilityRole="button" accessibilityLabel="Reset feed filters"><Text style={[styles.filterIcon, isLight && styles.textBodyLight]}>☷</Text></TouchableOpacity></View>
+      {relocationSuggestions.length ? <View style={[styles.relocationConnections, isLight && styles.relocationConnectionsLight]}>
+        <View style={styles.relocationConnectionsHead}><View><Text style={[styles.relocationConnectionsTitle, isLight && styles.textPrimaryLight]}>Relocation connections</Text><Text style={[styles.relocationConnectionsCopy, isLight && styles.textSecondaryLight]}>Both sides chose to connect around a city.</Text></View><Text style={styles.relocationConnectionsBadge}>OPT-IN</Text></View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relocationConnectionsRail}>
+          {relocationSuggestions.map((suggestion) => <TouchableOpacity key={suggestion.id} style={[styles.relocationConnectionCard, isLight && styles.relocationConnectionCardLight]} onPress={() => openMemberProfile({ id: suggestion.id, name: suggestion.name, photoUrl: suggestion.photoUrl })} accessibilityRole="button" accessibilityLabel={`View ${suggestion.name}'s relocation profile`}>
+            <UserAvatar photoUrl={suggestion.photoUrl} style={styles.relocationConnectionAvatar} imageStyle={styles.relocationConnectionAvatarImage} fallback={<Text style={styles.relocationConnectionInitials}>{initials(suggestion.name)}</Text>} />
+            <Text style={[styles.relocationConnectionName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{suggestion.name}</Text>
+            <Text style={styles.relocationConnectionReason} numberOfLines={2}>{suggestion.reason}</Text>
+            {suggestion.month ? <Text style={styles.relocationConnectionMonth}>{suggestion.month}</Text> : null}
+            {suggestion.ratingSummary?.count ? <Text style={styles.relocationConnectionRating}>⭐ {suggestion.ratingSummary.label}</Text> : null}
+          </TouchableOpacity>)}
+        </ScrollView>
+      </View> : null}
       </>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
       ListFooterComponent={selectedGroup && localHasMore ? renderLocalMore() : null}
@@ -2243,6 +2271,22 @@ const styles = StyleSheet.create({
   authorRatingBadge: { color: "#8b5a00", backgroundColor: "rgba(255,191,0,0.18)", borderRadius: 999, overflow: "hidden", paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, lineHeight: 11, fontWeight: "900" },
   screen: { flex: 1, backgroundColor: theme.colors.bg }, content: { width: "100%", alignSelf: "center", padding: 12, gap: 12 },
   quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 8, paddingHorizontal: 4, paddingTop: 8, paddingBottom: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 7, fontWeight: "800", letterSpacing: .9 }, nationalTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "800", marginTop: 1 }, nationalBody: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, marginTop: 2 }, nationalIcon: { fontSize: 19 }, communityReviewCard: { minHeight: 92, marginTop: 6, marginBottom: 6, marginHorizontal: 1, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 18, borderWidth: 1, borderColor: "rgba(183,205,214,0.48)", backgroundColor: "#ffffff", flexDirection: "row", alignItems: "center", gap: 10, shadowColor: "#12382d", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3 }, communityReviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(120,151,163,0.34)" }, communityReviewAvatarWrap: { width: 50, height: 50, borderRadius: 25, padding: 2.5, backgroundColor: "#12c989", shadowColor: "#0aa66d", shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4 }, communityReviewAvatar: { width: 45, height: 45, borderRadius: 23, backgroundColor: "#ecfdf5" }, communityReviewAvatarImage: { borderRadius: 23 }, communityReviewAvatarFallback: { color: "#065f46", fontSize: 18, fontWeight: "900" }, communityReviewCopy: { flex: 1, minWidth: 0 }, communityReviewTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }, communityReviewName: { flex: 1, minWidth: 0, color: "#101820", fontSize: 13, lineHeight: 16, fontWeight: "900" }, communityReviewStars: { color: "#ffae00", fontSize: 11, letterSpacing: 0.3, fontWeight: "900" }, communityReviewLocation: { color: "#1ecf8d", fontSize: 10, lineHeight: 13, fontWeight: "900", marginTop: 2 }, communityReviewQuote: { color: "#1a1d22", fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 4 }, communityReviewPill: { position: "absolute", alignSelf: "center", bottom: 5, width: 24, height: 6, borderRadius: 999, backgroundColor: "#12d69a", left: "50%", marginLeft: -12 }, communityReviewDots: { position: "absolute", left: 0, right: 0, bottom: 5, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4 }, communityReviewDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(15,23,42,0.18)" }, communityReviewDotActive: { width: 18, backgroundColor: "#12d69a" }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
+  relocationConnections: { marginTop: 12, marginBottom: 3, borderRadius: 18, borderWidth: 1, borderColor: "rgba(76, 202, 154, 0.46)", backgroundColor: "rgba(24, 73, 58, 0.30)", paddingVertical: 12 },
+  relocationConnectionsLight: { backgroundColor: "#f4fffa", borderColor: "#a9e7cf" },
+  relocationConnectionsHead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8, paddingHorizontal: 12 },
+  relocationConnectionsTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  relocationConnectionsCopy: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  relocationConnectionsBadge: { color: "#086946", backgroundColor: "#b8f4d9", borderRadius: 12, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "900", letterSpacing: 0.6 },
+  relocationConnectionsRail: { gap: 9, paddingHorizontal: 12, paddingTop: 11, paddingRight: 18 },
+  relocationConnectionCard: { width: 154, minHeight: 160, borderRadius: 15, borderWidth: 1, borderColor: "rgba(160, 231, 204, 0.34)", backgroundColor: "rgba(6, 42, 30, 0.42)", padding: 10 },
+  relocationConnectionCardLight: { backgroundColor: "#ffffff", borderColor: "#d9eee4" },
+  relocationConnectionAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#d8f7e8" },
+  relocationConnectionAvatarImage: { borderRadius: 18 },
+  relocationConnectionInitials: { color: "#0b6e4f", fontSize: 13, fontWeight: "900" },
+  relocationConnectionName: { color: theme.colors.text, fontSize: 13, fontWeight: "900", marginTop: 8 },
+  relocationConnectionReason: { color: "#65d8a8", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
+  relocationConnectionMonth: { color: theme.colors.muted, fontSize: 10, marginTop: 5 },
+  relocationConnectionRating: { color: "#d89800", fontSize: 10, fontWeight: "900", marginTop: 5 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
   gasPreviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(15,23,42,0.06)", shadowColor: "#14251f", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4 },
   gasPreviewIcon: { width: 42, height: 42, position: "relative", alignItems: "center", justifyContent: "center", overflow: "visible" }, gasPreviewGlyphLayer: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" }, gasPreviewGlyph: { fontSize: 26 }, gasPreviewCopy: { flex: 1, minWidth: 0, paddingHorizontal: 11 }, gasPreviewTitle: { color: "#f5f7f6", fontSize: 14, fontWeight: "800" }, gasPreviewTitleLight: { color: "#151719" }, gasPreviewSubtitle: { color: theme.colors.muted, fontSize: 10, marginTop: 3 }, gasPreviewPriceBlock: { alignItems: "flex-end", marginLeft: 6 }, gasPreviewPrice: { color: "#16b981", fontSize: 17, fontWeight: "900", letterSpacing: -0.3 }, gasPreviewPriceLabel: { color: theme.colors.muted, fontSize: 8, fontWeight: "600", marginTop: 1 }, gasPreviewChevron: { color: "#f5f7f6", fontSize: 27, marginLeft: 8 }, gasPreviewChevronLight: { color: "#151719" },

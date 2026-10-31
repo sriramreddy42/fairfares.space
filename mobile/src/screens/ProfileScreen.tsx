@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { ActivityIndicator, Alert, AppState, Image, ImageSourcePropType, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, sendMobileNotificationTest, updateDiceBearAvatar, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, getRidePlaceSuggestions, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, RidePlaceSuggestion, sendMobileNotificationTest, updateDiceBearAvatar, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { AvatarMotion } from "../components/AvatarMotion";
 import { appAssets } from "../assets";
@@ -77,6 +77,14 @@ export function ProfileScreen({
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
+  const [localCity, setLocalCity] = useState(user?.localCity || "");
+  const [relocationCity, setRelocationCity] = useState(user?.relocationCity || "");
+  const [relocationMonth, setRelocationMonth] = useState(user?.relocationMonth || "");
+  const [relocationCompany, setRelocationCompany] = useState(user?.relocationCompany || "");
+  const [relocationDiscoverable, setRelocationDiscoverable] = useState(Boolean(user?.relocationDiscoverable));
+  const [localConnectionDiscoverable, setLocalConnectionDiscoverable] = useState(Boolean(user?.localConnectionDiscoverable));
+  const [cityInputFocused, setCityInputFocused] = useState<"local" | "relocation" | null>(null);
+  const [citySuggestions, setCitySuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [savingMode, setSavingMode] = useState<"photo" | "details" | "avatar" | "">("");
@@ -125,10 +133,16 @@ export function ProfileScreen({
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
     setDateOfBirth(user?.dateOfBirth || "");
+    setLocalCity(user?.localCity || "");
+    setRelocationCity(user?.relocationCity || "");
+    setRelocationMonth(user?.relocationMonth || "");
+    setRelocationCompany(user?.relocationCompany || "");
+    setRelocationDiscoverable(Boolean(user?.relocationDiscoverable));
+    setLocalConnectionDiscoverable(Boolean(user?.localConnectionDiscoverable));
     setProfilePhoto(user?.profilePhotoUrl || "");
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.profilePhotoUrl]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -136,11 +150,17 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string };
+        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
+        setLocalCity(draft.localCity ?? user.localCity ?? "");
+        setRelocationCity(draft.relocationCity ?? user.relocationCity ?? "");
+        setRelocationMonth(draft.relocationMonth ?? user.relocationMonth ?? "");
+        setRelocationCompany(draft.relocationCompany ?? user.relocationCompany ?? "");
+        setRelocationDiscoverable(draft.relocationDiscoverable ?? Boolean(user.relocationDiscoverable));
+        setLocalConnectionDiscoverable(draft.localConnectionDiscoverable ?? Boolean(user.localConnectionDiscoverable));
         // The server photo is authoritative. Persisting a photo data URL or an
         // old versioned URL here could overwrite the current avatar after a
         // relaunch even though every other screen had already refreshed.
@@ -195,10 +215,27 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [dateOfBirth, email, name, phone, profileDirty, user?.id]);
+  }, [dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
+
+  useEffect(() => {
+    const query = (cityInputFocused === "local" ? localCity : cityInputFocused === "relocation" ? relocationCity : "").trim();
+    if (!cityInputFocused || query.length < 2) {
+      setCitySuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void getRidePlaceSuggestions("", query, false, true)
+        .then((places) => {
+          if (!cancelled) setCitySuggestions(places.filter((place) => place.source !== "google").slice(0, 6));
+        })
+        .catch(() => { if (!cancelled) setCitySuggestions([]); });
+    }, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [cityInputFocused, localCity, relocationCity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -406,6 +443,12 @@ export function ProfileScreen({
         email,
         phone,
         dateOfBirth,
+        localCity,
+        relocationCity,
+        relocationMonth,
+        relocationCompany,
+        relocationDiscoverable,
+        localConnectionDiscoverable,
         currentPassword,
       });
       if (currentProfileUserIdRef.current !== operationUserId || Number(payload.user?.id || 0) !== operationUserId) return;
@@ -414,6 +457,12 @@ export function ProfileScreen({
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
       setDateOfBirth(payload.user?.dateOfBirth || "");
+      setLocalCity(payload.user?.localCity || "");
+      setRelocationCity(payload.user?.relocationCity || "");
+      setRelocationMonth(payload.user?.relocationMonth || "");
+      setRelocationCompany(payload.user?.relocationCompany || "");
+      setRelocationDiscoverable(Boolean(payload.user?.relocationDiscoverable));
+      setLocalConnectionDiscoverable(Boolean(payload.user?.localConnectionDiscoverable));
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
       onProfileUpdated(payload.user);
       setProfileDirty(false);
@@ -496,6 +545,32 @@ export function ProfileScreen({
     } finally {
       setNotificationTestSending(false);
     }
+  }
+
+  function renderCitySuggestions(target: "local" | "relocation") {
+    if (cityInputFocused !== target || !citySuggestions.length) return null;
+    return (
+      <View style={styles.citySuggestionList} accessibilityRole="list" accessibilityLabel="City suggestions">
+        {citySuggestions.map((place) => (
+          <TouchableOpacity
+            key={`${target}-${place.label}`}
+            style={styles.citySuggestionRow}
+            onPress={() => {
+              if (target === "local") setLocalCity(place.label);
+              else setRelocationCity(place.label);
+              setProfileDirty(true);
+              setCityInputFocused(null);
+              setCitySuggestions([]);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Use ${place.label}`}
+          >
+            <Text style={styles.citySuggestionMain} numberOfLines={1}>{place.main || place.label}</Text>
+            <Text style={styles.citySuggestionSecondary} numberOfLines={1}>{place.secondary || place.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
   }
 
   return (
@@ -637,6 +712,41 @@ export function ProfileScreen({
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
             {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
+            <View style={styles.relocationSection}>
+              <Text style={styles.relocationTitle}>Your places</Text>
+              <Text style={styles.relocationCopy}>Choose these yourself. FairFares never changes them from where you open the app.</Text>
+              <Text style={styles.label}>Your local city</Text>
+              <TextInput value={localCity} onFocus={() => setCityInputFocused("local")} onChangeText={(value) => { setLocalCity(value); setProfileDirty(true); }} style={styles.input} placeholder="Start typing a city" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
+              {renderCitySuggestions("local")}
+              <Text style={styles.fieldHint}>Use City, State — or City, State, IN for India.</Text>
+              <Text style={styles.label}>Relocating to (optional)</Text>
+              <TextInput value={relocationCity} onFocus={() => setCityInputFocused("relocation")} onChangeText={(value) => { setRelocationCity(value); setProfileDirty(true); }} style={styles.input} placeholder="Start typing a destination" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
+              {renderCitySuggestions("relocation")}
+              <View style={styles.relocationInlineFields}>
+                <View style={styles.relocationInlineField}>
+                  <Text style={styles.label}>Target month</Text>
+                  <TextInput value={relocationMonth} onChangeText={(value) => { setRelocationMonth(value); setProfileDirty(true); }} style={styles.input} placeholder="2026-12" placeholderTextColor={theme.colors.muted} keyboardType="numbers-and-punctuation" maxLength={7} />
+                </View>
+                <View style={styles.relocationInlineField}>
+                  <Text style={styles.label}>Company or school</Text>
+                  <TextInput value={relocationCompany} onChangeText={(value) => { setRelocationCompany(value); setProfileDirty(true); }} style={styles.input} placeholder="Optional" placeholderTextColor={theme.colors.muted} autoCapitalize="words" maxLength={120} />
+                </View>
+              </View>
+              <View style={styles.relocationPrivacyRow}>
+                <View style={styles.relocationPrivacyCopy}>
+                  <Text style={styles.relocationPrivacyTitle}>Relocation connections</Text>
+                  <Text style={styles.relocationPrivacyHint}>Use this plan for future opt-in introductions. Your details are not public.</Text>
+                </View>
+                <Switch value={relocationDiscoverable} onValueChange={(value) => { setRelocationDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use my relocation plan for opt-in connections" />
+              </View>
+              <View style={styles.relocationPrivacyRow}>
+                <View style={styles.relocationPrivacyCopy}>
+                  <Text style={styles.relocationPrivacyTitle}>Help people moving here</Text>
+                  <Text style={styles.relocationPrivacyHint}>Show your profile only to people who opted in to relocate to your local city.</Text>
+                </View>
+                <Switch value={localConnectionDiscoverable} onValueChange={(value) => { setLocalConnectionDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Help people moving to my local city" />
+              </View>
+            </View>
             {sensitiveChanged && !completingInitialPhone ? (
             <>
               <Text style={styles.securityNote}>Current password is required to change email or phone. Email changes require activation before the next login.</Text>
@@ -982,6 +1092,20 @@ const styles = StyleSheet.create({
   primaryButton: { flex: 1, backgroundColor: theme.colors.blue, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
   buttonContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  relocationSection: { width: "100%", gap: 8, marginTop: 5, paddingTop: 14, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  relocationTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
+  relocationCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginBottom: 2 },
+  fieldHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: -4 },
+  relocationInlineFields: { flexDirection: "row", gap: 9 },
+  relocationInlineField: { flex: 1, minWidth: 0, gap: 4 },
+  citySuggestionList: { overflow: "hidden", marginTop: -3, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2 },
+  citySuggestionRow: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  citySuggestionMain: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
+  citySuggestionSecondary: { color: theme.colors.muted, fontSize: 11, marginTop: 1 },
+  relocationPrivacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 3, padding: 11, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  relocationPrivacyCopy: { flex: 1, minWidth: 0 },
+  relocationPrivacyTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
+  relocationPrivacyHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.pill, paddingVertical: 12, alignItems: "center" },
   secondaryButtonText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" },
   disabled: { opacity: 0.7 },

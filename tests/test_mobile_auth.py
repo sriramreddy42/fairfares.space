@@ -826,6 +826,77 @@ class MobileAuthTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
+    def test_mobile_profile_saves_member_controlled_relocation_plan(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified) VALUES (?, ?, ?, ?, 1)",
+                ("Moving Member", "moving@example.com", "+13035550109", app.hash_password("MovingPassword123!")),
+            )
+        server, thread = self.start_server()
+        try:
+            _status, login = self.post_json(server, "/api/mobile/login", {
+                "identifier": "moving@example.com", "password": "MovingPassword123!",
+            })
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({
+                    "localCity": "Denver, Colorado",
+                    "relocationCity": "Hyderabad, Telangana, India",
+                    "relocationMonth": "2026-12",
+                    "relocationCompany": "FairFares",
+                    "relocationDiscoverable": True,
+                    "localConnectionDiscoverable": True,
+                }).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                saved = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(saved["user"]["localCity"], "Denver, CO")
+            self.assertEqual(saved["user"]["relocationCity"], "Hyderabad, Telangana, IN")
+            self.assertEqual(saved["user"]["relocationMonth"], "2026-12")
+            self.assertEqual(saved["user"]["relocationCompany"], "FairFares")
+            self.assertTrue(saved["user"]["relocationDiscoverable"])
+            self.assertTrue(saved["user"]["localConnectionDiscoverable"])
+
+            invalid = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({"relocationCity": "Austin", "relocationDiscoverable": True}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(invalid, timeout=5)
+            self.assertEqual(raised.exception.code, 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_relocation_suggestions_require_both_members_to_opt_in(self):
+        with app.db() as con:
+            def add_member(name, email, local_city, destination, moving, local_connection):
+                con.execute(
+                    """INSERT INTO users
+                       (name, email, password_hash, is_verified, local_city, relocation_city,
+                        relocation_discoverable, local_connection_discoverable)
+                       VALUES (?, ?, 'unused', 1, ?, ?, ?, ?)""",
+                    (name, email, local_city, destination, moving, local_connection),
+                )
+                return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+            viewer_id = add_member("Mover", "mover@example.com", "Denver, CO", "Austin, TX", 1, 0)
+            local_id = add_member("Austin Local", "local@example.com", "Austin, TX", "", 0, 1)
+            fellow_mover_id = add_member("Fellow Mover", "fellow@example.com", "Parker, CO", "Austin, TX", 1, 0)
+            add_member("Private Austin", "private@example.com", "Austin, TX", "", 0, 0)
+
+        suggestions = app.relocation_suggestions_for_user(viewer_id)
+        self.assertEqual({item["id"] for item in suggestions}, {local_id, fellow_mover_id})
+        self.assertEqual(
+            {item["relationship"] for item in suggestions},
+            {"LOCAL", "SAME_DESTINATION"},
+        )
+
     def test_profile_save_preserves_durable_avatar_when_client_returns_delivery_url(self):
         stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/persistent-avatar.png"
         with app.db() as con:

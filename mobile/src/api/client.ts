@@ -3665,6 +3665,12 @@ export type MobileProfileInput = {
   email?: string;
   phone?: string;
   dateOfBirth?: string;
+  localCity?: string;
+  relocationCity?: string;
+  relocationMonth?: string;
+  relocationCompany?: string;
+  relocationDiscoverable?: boolean;
+  localConnectionDiscoverable?: boolean;
   profilePhoto?: string;
   currentPassword?: string;
 };
@@ -3675,6 +3681,21 @@ export async function updateMobileProfile(input: MobileProfileInput) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });
+}
+
+export type RelocationSuggestion = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  relationship: "LOCAL" | "SAME_DESTINATION" | "INCOMING";
+  reason: string;
+  month: string;
+  ratingSummary: { average: number; count: number; label: string };
+};
+
+export async function getRelocationSuggestions() {
+  const payload = await request<{ ok: boolean; suggestions: RelocationSuggestion[] }>("/api/mobile/relocation/suggestions");
+  return payload.suggestions || [];
 }
 
 export async function updateDiceBearAvatar(input: { seed: string; backgroundColor?: string }) {

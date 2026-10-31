@@ -7026,6 +7026,12 @@ def init_db() -> None:
                 avatar_seed TEXT NOT NULL DEFAULT '',
                 avatar_style TEXT NOT NULL DEFAULT '',
                 avatar_options_json TEXT NOT NULL DEFAULT '{}',
+                local_city TEXT NOT NULL DEFAULT '',
+                relocation_city TEXT NOT NULL DEFAULT '',
+                relocation_month TEXT NOT NULL DEFAULT '',
+                relocation_company TEXT NOT NULL DEFAULT '',
+                relocation_discoverable INTEGER NOT NULL DEFAULT 0,
+                local_connection_discoverable INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -8422,6 +8428,15 @@ def init_db() -> None:
         ensure_column(con, "users", "terms_version", "terms_version TEXT")
         ensure_column(con, "users", "privacy_version", "privacy_version TEXT")
         ensure_column(con, "users", "community_guidelines_version", "community_guidelines_version TEXT")
+        # A member's home and planned destination are deliberately separate
+        # from device location. They are edited by the member and are not
+        # shown to anybody until a later, explicit connection opt-in flow.
+        ensure_column(con, "users", "local_city", "local_city TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "relocation_city", "relocation_city TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "relocation_month", "relocation_month TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "relocation_company", "relocation_company TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "relocation_discoverable", "relocation_discoverable INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "local_connection_discoverable", "local_connection_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "suspended_at", "suspended_at TEXT")
         ensure_column(con, "users", "suspended_reason", "suspended_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "suspended_by", "suspended_by INTEGER")
@@ -8885,6 +8900,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
         con.execute(f"CREATE INDEX IF NOT EXISTS idx_users_phone_digits ON users({normalized_phone_sql('phone')}) WHERE phone IS NOT NULL AND phone != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_relocation_matching ON users(relocation_discoverable, local_connection_discoverable, local_city, relocation_city)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
         con.execute("DELETE FROM security_rate_limits WHERE datetime(updated_at) < datetime('now', '-2 days')")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_created ON accommodation_posts(visibility_status, created_at DESC)")
@@ -13608,6 +13624,31 @@ def community_us_city_variants(value: str) -> tuple[str, ...]:
         return ()
     state_name = next((name.title() for name, state_code in COMMUNITY_US_STATE_NAMES.items() if state_code == code), "")
     return tuple(dict.fromkeys((f"{parts[0]}, {code}", f"{parts[0]}, {state_name}")))
+
+
+def normalize_member_city(value: object) -> str:
+    """Normalize a member-selected city without consulting device location.
+
+    Relocation matching needs an unambiguous, stable city label. We support
+    the two countries currently offered in mobile housing: ``City, ST`` in
+    the United States and ``City, State, IN`` in India. A member can clear the
+    field, but cannot save a bare or ambiguous city such as just "Springfield".
+    """
+    raw = normalize_accommodation_place_label(clean_text_value(value, 120))
+    if not raw:
+        return ""
+    us_variants = community_us_city_variants(raw)
+    if us_variants:
+        return us_variants[0]
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) == 3 and parts[-1].upper() in {"IN", "INDIA"}:
+        city, state = parts[0], parts[1]
+        if (
+            re.fullmatch(r"[A-Za-z][A-Za-z .'-]{0,79}", city)
+            and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{0,79}", state)
+        ):
+            return f"{city}, {state}, IN"
+    return ""
 
 
 def infer_community_post_city(*values: object) -> str:
@@ -18930,6 +18971,134 @@ def create_account_deletion_request(user_id: int, email: str, source: str) -> di
     return account_deletion_payload(row) or {}
 
 
+def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[str, object]]:
+    """Return only reciprocal, city-level relocation introductions.
+
+    A member moving to a city must turn on relocation connections. A local
+    member must separately choose to help people moving there. Two members
+    moving to the same place must both opt in. No device position, address,
+    telephone number, or unconsented profile city is used here.
+    """
+    user_id = int(user_id or 0)
+    if user_id <= 0:
+        return []
+    try:
+        with db() as con:
+            viewer = con.execute(
+                """SELECT id, local_city, relocation_city, relocation_company,
+                          relocation_discoverable, local_connection_discoverable
+                   FROM users WHERE id = ? LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+            if not viewer:
+                return []
+            local_city = str(row_value(viewer, "local_city") or "").strip()
+            destination_city = str(row_value(viewer, "relocation_city") or "").strip()
+            moving_opted_in = bool(int(row_value(viewer, "relocation_discoverable") or 0))
+            local_opted_in = bool(int(row_value(viewer, "local_connection_discoverable") or 0))
+            if not ((moving_opted_in and destination_city) or (local_opted_in and local_city)):
+                return []
+            rows = con.execute(
+                """SELECT id, name, profile_photo_url, local_city, relocation_city,
+                          relocation_month, relocation_company, relocation_discoverable,
+                          local_connection_discoverable,
+                          (SELECT MAX(last_seen_at) FROM sessions WHERE user_id = users.id) AS last_seen_at
+                   FROM users
+                   WHERE id != ?
+                     AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
+                     AND (
+                       (? = 1 AND ? != '' AND local_connection_discoverable = 1
+                        AND lower(trim(local_city)) = lower(trim(?)))
+                       OR (? = 1 AND ? != '' AND relocation_discoverable = 1
+                           AND lower(trim(relocation_city)) = lower(trim(?)))
+                       OR (? = 1 AND ? != '' AND relocation_discoverable = 1
+                           AND lower(trim(relocation_city)) = lower(trim(?)))
+                     )
+                   ORDER BY datetime(last_seen_at) DESC, id DESC
+                   LIMIT 40""",
+                (
+                    user_id,
+                    1 if moving_opted_in else 0, destination_city, destination_city,
+                    1 if moving_opted_in else 0, destination_city, destination_city,
+                    1 if local_opted_in else 0, local_city, local_city,
+                ),
+            ).fetchall()
+            candidate_ids = [int(row_value(row, "id") or 0) for row in rows]
+            ratings = user_rating_summaries(con, candidate_ids)
+            shared_group_counts: dict[int, int] = {}
+            if candidate_ids:
+                placeholders = ",".join("?" for _ in candidate_ids)
+                shared_rows = con.execute(
+                    f"""SELECT theirs.user_id, COUNT(*) AS shared_count
+                        FROM chat_community_members mine
+                        JOIN chat_community_members theirs
+                          ON theirs.community_id = mine.community_id
+                        WHERE mine.user_id = ? AND theirs.user_id IN ({placeholders})
+                        GROUP BY theirs.user_id""",
+                    (user_id, *candidate_ids),
+                ).fetchall()
+                shared_group_counts = {
+                    int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
+                    for row in shared_rows
+                }
+    except sqlite3.Error:
+        return []
+
+    viewer_company = str(row_value(viewer, "relocation_company") or "").strip().casefold()
+    suggestions: list[dict[str, object]] = []
+    for row in rows:
+        candidate_id = int(row_value(row, "id") or 0)
+        candidate_local_city = str(row_value(row, "local_city") or "").strip()
+        candidate_destination_city = str(row_value(row, "relocation_city") or "").strip()
+        candidate_moving = bool(int(row_value(row, "relocation_discoverable") or 0))
+        candidate_local = bool(int(row_value(row, "local_connection_discoverable") or 0))
+        relationship = ""
+        target_city = ""
+        if moving_opted_in and destination_city and candidate_local and candidate_local_city.casefold() == destination_city.casefold():
+            relationship, target_city = "LOCAL", destination_city
+        if moving_opted_in and destination_city and candidate_moving and candidate_destination_city.casefold() == destination_city.casefold():
+            relationship, target_city = "SAME_DESTINATION", destination_city
+        if not relationship and local_opted_in and local_city and candidate_moving and candidate_destination_city.casefold() == local_city.casefold():
+            relationship, target_city = "INCOMING", local_city
+        if not relationship:
+            continue
+        shared_groups = shared_group_counts.get(candidate_id, 0)
+        candidate_company = str(row_value(row, "relocation_company") or "").strip().casefold()
+        score = 0
+        if relationship == "SAME_DESTINATION":
+            score += 50
+        elif relationship == "LOCAL":
+            score += 35
+        else:
+            score += 25
+        if viewer_company and candidate_company and viewer_company == candidate_company:
+            score += 20
+        score += min(shared_groups, 3) * 5
+        rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
+        score += min(int(rating.get("count") or 0), 5)
+        relation_copy = (
+            f"Already in {target_city}"
+            if relationship == "LOCAL"
+            else f"Also moving to {target_city}"
+            if relationship == "SAME_DESTINATION"
+            else f"Moving to {target_city}"
+        )
+        if shared_groups:
+            relation_copy = f"{relation_copy} · {shared_groups} shared {('community' if shared_groups == 1 else 'communities')}"
+        suggestions.append({
+            "id": candidate_id,
+            "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+            "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
+            "relationship": relationship,
+            "reason": relation_copy,
+            "month": str(row_value(row, "relocation_month") or "") if relationship != "LOCAL" else "",
+            "ratingSummary": rating,
+            "score": score,
+        })
+    suggestions.sort(key=lambda item: (-int(item["score"]), str(item["name"]).casefold(), int(item["id"])))
+    return suggestions[:max(1, min(int(limit or 6), 12))]
+
+
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
     if not user:
         return None
@@ -18958,6 +19127,12 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "avatarMode": "DICEBEAR" if row_value(user, "avatar_mode") == "DICEBEAR" else "PHOTO",
         "avatarSeed": row_value(user, "avatar_seed") or "",
         "avatarStyle": row_value(user, "avatar_style") or "",
+        "localCity": row_value(user, "local_city") or "",
+        "relocationCity": row_value(user, "relocation_city") or "",
+        "relocationMonth": row_value(user, "relocation_month") or "",
+        "relocationCompany": row_value(user, "relocation_company") or "",
+        "relocationDiscoverable": bool(int(row_value(user, "relocation_discoverable") or 0)),
+        "localConnectionDiscoverable": bool(int(row_value(user, "local_connection_discoverable") or 0)),
     }
 
 
@@ -28603,6 +28778,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/community/user":
             self.api_mobile_community_user(parsed)
+            return
+        if parsed.path == "/api/mobile/relocation/suggestions":
+            self.api_mobile_relocation_suggestions()
             return
         if parsed.path == "/api/mobile/member-ratings":
             self.api_mobile_member_ratings(parsed)
@@ -41925,6 +42103,12 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         email = normalize_email(payload.get("email") if "email" in payload else row_value(user, "email"))
         phone = clean_text_value(payload.get("phone") if "phone" in payload else row_value(user, "phone"), 40)
         date_of_birth = clean_text_value(payload.get("dateOfBirth") if "dateOfBirth" in payload else row_value(user, "date_of_birth"), 10)
+        local_city = normalize_member_city(payload.get("localCity") if "localCity" in payload else row_value(user, "local_city"))
+        relocation_city = normalize_member_city(payload.get("relocationCity") if "relocationCity" in payload else row_value(user, "relocation_city"))
+        relocation_month = clean_text_value(payload.get("relocationMonth") if "relocationMonth" in payload else row_value(user, "relocation_month"), 7)
+        relocation_company = clean_text_value(payload.get("relocationCompany") if "relocationCompany" in payload else row_value(user, "relocation_company"), 120)
+        relocation_discoverable = bool(payload.get("relocationDiscoverable")) if "relocationDiscoverable" in payload else bool(int(row_value(user, "relocation_discoverable") or 0))
+        local_connection_discoverable = bool(payload.get("localConnectionDiscoverable")) if "localConnectionDiscoverable" in payload else bool(int(row_value(user, "local_connection_discoverable") or 0))
         clean_phone = normalize_phone(phone)
         current_password = str(payload.get("currentPassword") or "")
         current_email = normalize_email(row_value(user, "email"))
@@ -41951,6 +42135,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if birthday > today or birthday.year < today.year - 120:
                 self.send_json({"ok": False, "error": "Use a valid birthday."}, 400)
                 return
+        if "localCity" in payload and payload.get("localCity") and not local_city:
+            self.send_json({"ok": False, "error": "Choose a city and state, for example Denver, CO."}, 400)
+            return
+        if "relocationCity" in payload and payload.get("relocationCity") and not relocation_city:
+            self.send_json({"ok": False, "error": "Choose a destination city and state, for example Austin, TX."}, 400)
+            return
+        if relocation_month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", relocation_month):
+            self.send_json({"ok": False, "error": "Choose a valid relocation month."}, 400)
+            return
+        if relocation_discoverable and not relocation_city:
+            self.send_json({"ok": False, "error": "Add a relocation destination before turning on relocation suggestions."}, 400)
+            return
+        if local_connection_discoverable and not local_city:
+            self.send_json({"ok": False, "error": "Add your local city before helping people who are relocating."}, 400)
+            return
         if email_changed or phone_changed:
             with db() as con:
                 phone_owner = find_other_user_by_phone(
@@ -42029,18 +42228,20 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 verified_value = 0 if email_changed else int(row_value(user, "is_verified") or 0)
                 if photo is None:
                     con.execute(
-                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?,
+                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, is_verified = ?,
                                   chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
                            WHERE id = ?""",
-                        (name, email, phone, date_of_birth or None, verified_value, 1 if phone_changed else 0, user["id"]),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, verified_value, 1 if phone_changed else 0, user["id"]),
                     )
                 else:
                     cursor = con.execute(
-                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?, is_verified = ?, profile_photo_url = ?,
+                        """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, is_verified = ?, profile_photo_url = ?,
                                   avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}',
                                   chat_phone_discoverable = CASE WHEN ? THEN 1 ELSE chat_phone_discoverable END
                            WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
-                        (name, email, phone, date_of_birth or None, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, verified_value, photo, 1 if phone_changed else 0, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
                 if email_changed and not photo_conflict:
@@ -43175,6 +43376,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "listings": listings,
             },
         })
+
+    def api_mobile_relocation_suggestions(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view relocation connections."}, 401)
+            return
+        user_id = int(row_value(user, "id") or 0)
+        self.send_json({"ok": True, "suggestions": relocation_suggestions_for_user(user_id)})
 
     def api_mobile_member_ratings(self, parsed: urllib.parse.ParseResult) -> None:
         """Public, anonymized trust feedback for a member profile."""

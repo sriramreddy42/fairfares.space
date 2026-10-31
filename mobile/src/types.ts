@@ -89,6 +89,14 @@ export type FairFaresUser = {
   avatarMode?: "PHOTO" | "DICEBEAR";
   avatarSeed?: string;
   avatarStyle?: string;
+  /** Member-controlled home city. This is never inferred from device location. */
+  localCity?: string;
+  /** Optional city the member plans to move to. */
+  relocationCity?: string;
+  relocationMonth?: string;
+  relocationCompany?: string;
+  relocationDiscoverable?: boolean;
+  localConnectionDiscoverable?: boolean;
 };
 
 export type StaffPickupBooking = {
