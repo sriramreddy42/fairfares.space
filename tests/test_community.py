@@ -899,6 +899,24 @@ class CommunityFeatureTest(unittest.TestCase):
         self.assertNotIn(private["post"]["id"], national_ids)
         self.assertNotIn(reported["post"]["id"], national_ids)
 
+        _, india_national = self.create_post(token="member-token", title="Mumbai community update", city="Mumbai, Maharashtra, India")
+        _, indiana = self.create_post(token="outsider-token", title="Carmel community update", city="Carmel, IN")
+        # Current clients save the ISO country code while legacy clients used
+        # the country name. Both labels must resolve to the same local feed.
+        status, india_feed = self.request("GET", "/api/mobile/community?city=Hyderabad%2C%20Telangana%2C%20IN&layered=1&limit=20", "owner-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(india_feed["sections"]["national"]["label"], "Across India")
+        self.assertIn(international["post"]["id"], {post["id"] for post in india_feed["sections"]["local"]["posts"]})
+        self.assertIn(india_national["post"]["id"], {post["id"] for post in india_feed["sections"]["national"]["posts"]})
+        self.assertNotIn(national["post"]["id"], {post["id"] for post in india_feed["sections"]["national"]["posts"]})
+        self.assertNotIn(indiana["post"]["id"], {post["id"] for post in india_feed["sections"]["national"]["posts"]})
+
+        _, kamareddy = self.create_post(token="outsider-token", title="Kamareddy local update", city="Kamareddy, TS, IN")
+        status, kamareddy_feed = self.request("GET", "/api/mobile/community?city=Kamareddy%2C%20TS%2C%20IN&layered=1&limit=20", "owner-token")
+        self.assertEqual(status, 200)
+        self.assertIn(kamareddy["post"]["id"], {post["id"] for post in kamareddy_feed["sections"]["local"]["posts"]})
+        self.assertNotIn(kamareddy["post"]["id"], {post["id"] for post in kamareddy_feed["sections"]["national"]["posts"]})
+
         status, denver_feed = self.request("GET", "/api/mobile/community?city=Denver%2C%20CO&layered=1&limit=20")
         self.assertEqual(status, 200)
         denver_local_ids = {post["id"] for post in denver_feed["sections"]["local"]["posts"]}

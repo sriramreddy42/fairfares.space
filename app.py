@@ -4372,6 +4372,31 @@ def ensure_column(con: sqlite3.Connection, table: str, column: str, definition: 
         con.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
+# These records stored the street number in the optional ZIP field before the
+# housing form separated the two values. The replacement ZIPs were verified
+# from each saved listing coordinate. Keep this migration conditional so a
+# later owner edit is never overwritten.
+KNOWN_ACCOMMODATION_ZIP_CORRECTIONS = {
+    "FFH-3A5E8829": ("80202", ""),
+    "FFH-EFBE50D7": ("12150", "80014"),
+    "FFH-16467C84": ("10923", "80134"),
+    "FFH-A5930517": ("17167", "80138"),
+    "FFH-AF694216": ("25586", "80011"),
+}
+
+
+def repair_known_accommodation_zip_codes(con: sqlite3.Connection) -> None:
+    for public_id, (incorrect_zip, corrected_zip) in KNOWN_ACCOMMODATION_ZIP_CORRECTIONS.items():
+        con.execute(
+            """
+            UPDATE accommodation_posts
+            SET zip_code = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE public_id = ? AND trim(zip_code) = ?
+            """,
+            (corrected_zip, public_id, incorrect_zip),
+        )
+
+
 def configured_admin_credentials() -> tuple[str, str]:
     email = normalize_email(os.environ.get("FAIRFARES_ADMIN_EMAIL", ""))
     password = os.environ.get("FAIRFARES_ADMIN_PASSWORD", "")
@@ -8584,6 +8609,7 @@ def init_db() -> None:
         ensure_column(con, "accommodation_posts", "city", "city TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "country", "country TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "accommodation_posts", "zip_code", "zip_code TEXT NOT NULL DEFAULT ''")
+        repair_known_accommodation_zip_codes(con)
         con.execute(
             """
             UPDATE accommodation_posts
@@ -13701,10 +13727,22 @@ def schedule_unlocated_community_post_repair() -> None:
 
 
 def community_local_city_variants(value: str) -> tuple[str, ...]:
-    """Expand a selected US city to its known metro without crossing state lines."""
+    """Expand a selected city to its local feed identities without crossing borders."""
     selected = community_us_city_variants(value)
     if not selected:
-        return (clean_text_value(value, 120),)
+        # India uses a country suffix to distinguish its city/state labels
+        # from similarly named places elsewhere.  Older clients sometimes
+        # wrote ``India`` while current clients write the ISO code ``IN``;
+        # both must reach the same local posts.
+        raw = clean_text_value(value, 120)
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        if (
+            len(parts) == 3
+            and all(re.fullmatch(r"[A-Za-z][A-Za-z .'-]{0,56}", part) for part in parts)
+            and parts[2].upper() in {"IN", "INDIA"}
+        ):
+            return (f"{parts[0]}, {parts[1]}, IN", f"{parts[0]}, {parts[1]}, India")
+        return (raw,)
     selected_keys = {item.lower() for item in selected}
     variants: list[str] = list(selected)
     for group in ACCOMMODATION_METRO_GROUPS.values():
@@ -13751,6 +13789,7 @@ def community_post_rows(
     saved_only: bool = False,
     active_only: bool = False,
     us_only: bool = False,
+    country_code: str = "",
     public_only: bool = False,
     exclude_reported: bool = False,
     exclude_city: str = "",
@@ -13798,7 +13837,8 @@ def community_post_rows(
         filters.append("(posts.community_id IS NULL OR communities.visibility = 'PUBLIC')")
     if exclude_reported:
         filters.append("NOT EXISTS (SELECT 1 FROM ask_community_reports national_reports WHERE national_reports.post_id = posts.id AND national_reports.status = 'OPEN')")
-    if us_only:
+    country_code = clean_text_value(country_code, 3).upper()
+    if us_only or country_code == "US":
         us_regions = tuple(COMMUNITY_US_STATE_CODES) + tuple(COMMUNITY_US_STATE_NAMES)
         us_city_checks: list[str] = []
         for region in us_regions:
@@ -13810,6 +13850,10 @@ def community_post_rows(
             ))
             values.extend((f"%, {region}", f"%, {region}, US", f"%, {region}, USA", f"%, {region}, UNITED STATES"))
         filters.append(f"({' OR '.join(us_city_checks)})")
+    elif country_code == "IN":
+        # India needs a state and country component. A two-part suffix such
+        # as ``Carmel, IN`` is Indiana, not India.
+        filters.append("(UPPER(TRIM(posts.city)) LIKE '%, %, IN' OR UPPER(TRIM(posts.city)) LIKE '%, INDIA')")
     clean_excluded_ids = tuple(clean_text_value(value, 80) for value in exclude_public_ids if clean_text_value(value, 80))
     if clean_excluded_ids:
         filters.append(f"posts.public_id NOT IN ({','.join('?' for _ in clean_excluded_ids)})")
@@ -17491,6 +17535,99 @@ def upsert_accommodation_local_area(
     )
 
 
+def add_user_entered_city_to_location_pool(
+    city_label: str,
+    *,
+    country: str = "US",
+    zip_code: str = "",
+    lat: float = 0,
+    lng: float = 0,
+) -> str:
+    """Make an otherwise unknown state-qualified city available to future members.
+
+    A state-qualified city has enough identity to form a stable city label even
+    when the imported catalogue or a geocoder has no result. Known locations
+    remain untouched. A new entry receives its own metro until richer geography
+    later assigns it elsewhere.
+    """
+    country = clean_text_value(country, 8).upper() or "US"
+    label = normalize_accommodation_place_label(city_label)
+    parts = [part.strip() for part in label.split(",") if part.strip()]
+    if country == "IN" and len(parts) >= 3 and parts[-1].upper() in {"IN", "INDIA"}:
+        city, state = parts[0], parts[1]
+    else:
+        city, state = split_city_state(label)
+    city = clean_text_value(city, 100)
+    state = clean_text_value(state, 80)
+    if country == "US":
+        state = state.upper()
+    if not city or (country == "US" and state not in COMMUNITY_US_STATE_CODES) or (country == "IN" and not state):
+        return label
+    if country not in {"US", "IN"}:
+        return label
+    canonical_label = f"{city}, {state}" if country == "US" else f"{city}, {state}, IN"
+    try:
+        with db() as con:
+            known = con.execute(
+                """
+                SELECT 1
+                FROM accommodation_local_areas
+                JOIN accommodation_metros metro ON metro.id = accommodation_local_areas.metro_id
+                WHERE lower(trim(accommodation_local_areas.city)) = lower(?)
+                  AND lower(trim(accommodation_local_areas.state)) = lower(?)
+                  AND upper(metro.country) = ?
+                LIMIT 1
+                """,
+                (city, state, country),
+            ).fetchone()
+            if known:
+                return canonical_label
+            if country == "US":
+                catalogue_known = con.execute(
+                    """
+                    SELECT 1
+                    FROM location_catalog
+                    WHERE country_code = 'US'
+                      AND admin1_code = ?
+                      AND location_type = 'CITY'
+                      AND (lower(trim(city_name)) = lower(?) OR lower(trim(name)) = lower(?))
+                    LIMIT 1
+                    """,
+                    (state, city, city),
+                ).fetchone()
+                if catalogue_known:
+                    return canonical_label
+            metro_id = upsert_accommodation_metro(
+                con,
+                accommodation_metro_name_from_place(canonical_label) if country == "US" else f"{city}, {state}, India",
+                country=country,
+                state=state,
+                center_city=city,
+                lat=lat,
+                lng=lng,
+                source="USER_ENTERED_CITY",
+                raw={"city": city, "state": state, "zipCode": zip_code, "origin": "mobile-housing"},
+            )
+            upsert_accommodation_local_area(
+                con,
+                metro_id,
+                canonical_label,
+                city=city,
+                state=state,
+                zip_code=zip_code if re.fullmatch(r"\d{5}(?:-\d{4})?|\d{6}", zip_code or "") else "",
+                place_type="LOCALITY",
+                lat=lat,
+                lng=lng,
+                source="USER_ENTERED_CITY",
+                raw={"city": city, "state": state, "origin": "mobile-housing"},
+            )
+    except sqlite3.Error:
+        # Posting must not fail just because the shared location cache is
+        # temporarily unavailable.
+        return canonical_label
+    return canonical_label
+
+
 def seed_accommodation_location_cache(con: sqlite3.Connection) -> None:
     for metro_name, data in ACCOMMODATION_METRO_GROUPS.items():
         sample_place = next(iter(data.get("suggested", ()) or (metro_name,)), metro_name)
@@ -17600,6 +17737,13 @@ def resolve_accommodation_country(place: str, *, allow_refresh: bool = True) -> 
     place = normalize_accommodation_place_label(place)
     if not place:
         return ""
+    # ``IN`` is also Indiana. Treat it as India only in an explicit
+    # City/State/Country label; a two-part ``Carmel, IN`` label is U.S.
+    location_parts = [part.strip() for part in place.split(",") if part.strip()]
+    if re.search(r",\s*India\s*$", place, re.IGNORECASE) or (
+        len(location_parts) >= 3 and location_parts[-1].upper() == "IN"
+    ):
+        return "IN"
     _city, explicit_region = split_city_state(place)
     if explicit_region.upper() in COMMUNITY_US_STATE_CODES:
         return "US"
@@ -17624,7 +17768,13 @@ def inferred_location_country(place: str) -> str:
     clean_place = clean_text_value(place, 160)
     if not clean_place:
         return ""
-    if re.search(r",\s*(?:IN|India)\s*$", clean_place, re.IGNORECASE):
+    # Keep the same distinction as the durable resolver: `IN` alone is the
+    # U.S. state Indiana, while a three-part location can use India's ISO
+    # suffix.
+    location_parts = [part.strip() for part in clean_place.split(",") if part.strip()]
+    if re.search(r",\s*India\s*$", clean_place, re.IGNORECASE) or (
+        len(location_parts) >= 3 and location_parts[-1].upper() == "IN"
+    ):
         return "IN"
     if re.search(r",\s*(?:US|USA|United States)\s*$", clean_place, re.IGNORECASE):
         return "US"
@@ -17643,7 +17793,7 @@ def google_accommodation_geocode(query: str) -> dict[str, object] | None:
         return None
     params_values = {"address": query, "key": api_key}
     _query_city, query_region = split_city_state(query)
-    if re.fullmatch(r"[A-Za-z]{2}", query_region):
+    if query_region.upper() in COMMUNITY_US_STATE_CODES:
         # A City, ST query is explicitly U.S.-scoped. This prevents Google from
         # preferring a same-named locality abroad before the result validator
         # below checks the requested state.
@@ -44976,13 +45126,13 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 )
             local_ids = tuple(str(row_value(row, "public_id") or "") for row in local_rows)
             national_rows: list[sqlite3.Row] = []
-            if include_national and selected_country == "US":
+            if include_national and selected_country in {"US", "IN"}:
                 national_rows = community_post_rows(
                     viewer_id,
                     category=category,
                     query=query,
                     active_only=True,
-                    us_only=True,
+                    country_code=selected_country,
                     public_only=True,
                     exclude_reported=True,
                     exclude_city=city,
@@ -44999,7 +45149,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "posts": combined_posts,
                 "sections": {
                     "local": {"city": city, "posts": local_posts, "hasMore": include_local and len(local_posts) >= section_limit},
-                    "national": {"label": "Across the USA" if selected_country == "US" else "", "posts": national_posts, "hasMore": include_national and selected_country == "US" and len(national_posts) >= section_limit},
+                    "national": {"label": "Across India" if selected_country == "IN" else "Across the USA" if selected_country == "US" else "", "posts": national_posts, "hasMore": include_national and selected_country in {"US", "IN"} and len(national_posts) >= section_limit},
                 },
                 "pagination": {"limit": section_limit, "offset": max(0, offset), "returned": len(combined_posts), "hasMore": (include_local and len(local_posts) >= section_limit) or (include_national and len(national_posts) >= section_limit)},
             })
@@ -46104,6 +46254,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         # fallback text and repairing it only when the community feed loads.
         # This keeps Housing search, Ask Community, sharing, and later edits on
         # the same location identity.
+        if post_country in {"US", "IN"}:
+            city = add_user_entered_city_to_location_pool(
+                city,
+                country=post_country,
+                zip_code=zip_code,
+                lat=post_lat,
+                lng=post_lng,
+            )
         if post_country == "US":
             with db() as con:
                 canonical_city = housing_community_city_label(con, {

@@ -90,6 +90,51 @@ const UPDATE_DISMISS_STORAGE_KEY = "fairfares.mobile.update-dismissed.v1";
 const UPDATE_RECHECK_MS = 15 * 60_000;
 type AppearancePreference = "system" | "dark" | "light";
 
+const US_STATE_OPTIONS = [
+  ["AL", "Alabama"], ["AK", "Alaska"], ["AZ", "Arizona"], ["AR", "Arkansas"], ["CA", "California"], ["CO", "Colorado"], ["CT", "Connecticut"], ["DE", "Delaware"], ["DC", "District of Columbia"], ["FL", "Florida"], ["GA", "Georgia"], ["HI", "Hawaii"], ["ID", "Idaho"], ["IL", "Illinois"], ["IN", "Indiana"], ["IA", "Iowa"], ["KS", "Kansas"], ["KY", "Kentucky"], ["LA", "Louisiana"], ["ME", "Maine"], ["MD", "Maryland"], ["MA", "Massachusetts"], ["MI", "Michigan"], ["MN", "Minnesota"], ["MS", "Mississippi"], ["MO", "Missouri"], ["MT", "Montana"], ["NE", "Nebraska"], ["NV", "Nevada"], ["NH", "New Hampshire"], ["NJ", "New Jersey"], ["NM", "New Mexico"], ["NY", "New York"], ["NC", "North Carolina"], ["ND", "North Dakota"], ["OH", "Ohio"], ["OK", "Oklahoma"], ["OR", "Oregon"], ["PA", "Pennsylvania"], ["RI", "Rhode Island"], ["SC", "South Carolina"], ["SD", "South Dakota"], ["TN", "Tennessee"], ["TX", "Texas"], ["UT", "Utah"], ["VT", "Vermont"], ["VA", "Virginia"], ["WA", "Washington"], ["WV", "West Virginia"], ["WI", "Wisconsin"], ["WY", "Wyoming"]
+] as const;
+const US_STATE_CODES: Set<string> = new Set(US_STATE_OPTIONS.map(([code]) => code));
+const INDIA_STATE_OPTIONS = [
+  "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry"
+] as const;
+const INDIA_STATE_CODES: Record<string, typeof INDIA_STATE_OPTIONS[number]> = {
+  AP: "Andhra Pradesh", AR: "Arunachal Pradesh", AS: "Assam", BR: "Bihar", CT: "Chhattisgarh", GA: "Goa", GJ: "Gujarat", HR: "Haryana", HP: "Himachal Pradesh", JH: "Jharkhand", KA: "Karnataka", KL: "Kerala", MP: "Madhya Pradesh", MH: "Maharashtra", MN: "Manipur", ML: "Meghalaya", MZ: "Mizoram", NL: "Nagaland", OD: "Odisha", OR: "Odisha", PB: "Punjab", RJ: "Rajasthan", SK: "Sikkim", TN: "Tamil Nadu", TS: "Telangana", TG: "Telangana", TR: "Tripura", UP: "Uttar Pradesh", UK: "Uttarakhand", UT: "Uttarakhand", WB: "West Bengal", AN: "Andaman and Nicobar Islands", CH: "Chandigarh", DH: "Dadra and Nagar Haveli and Daman and Diu", DL: "Delhi", JK: "Jammu and Kashmir", LA: "Ladakh", LD: "Lakshadweep", PY: "Puducherry"
+};
+const INDIA_STATE_NAMES = new Map([
+  ...INDIA_STATE_OPTIONS.map((name) => [name.toLocaleLowerCase(), name] as const),
+  ...Object.entries(INDIA_STATE_CODES).map(([code, name]) => [code.toLocaleLowerCase(), name] as const),
+]);
+type ListingRegionOption = { name: string; code: string; country: "US" | "IN" };
+const LISTING_REGION_GROUPS: { label: string; country: "US" | "IN"; regions: ListingRegionOption[] }[] = [
+  { label: "United States", country: "US", regions: US_STATE_OPTIONS.map(([code, name]) => ({ name, code, country: "US" })) },
+  { label: "India", country: "IN", regions: INDIA_STATE_OPTIONS.map((name) => ({ name, code: name, country: "IN" })) },
+];
+
+function splitListingCityAndState(value: string) {
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 2) {
+    const state = parts[1]?.toUpperCase();
+    return state && US_STATE_CODES.has(state) ? { city: parts[0], state, country: "US" as const } : null;
+  }
+  if (parts.length === 3 && parts[2]?.toUpperCase() === "IN") {
+    const state = INDIA_STATE_NAMES.get(parts[1]?.toLocaleLowerCase() || "");
+    return state ? { city: parts[0], state, country: "IN" as const } : null;
+  }
+  return null;
+}
+
+function listingCityName(value: string) {
+  return splitListingCityAndState(value)?.city || value.trim();
+}
+
+function listingStateCode(value: string) {
+  return splitListingCityAndState(value)?.state || "";
+}
+
+function listingCountryCode(value: string) {
+  return splitListingCityAndState(value)?.country || "";
+}
+
 function compareVersions(left: string, right: string) {
   const leftParts = String(left || "0").split(".").map((value) => Number.parseInt(value, 10) || 0);
   const rightParts = String(right || "0").split(".").map((value) => Number.parseInt(value, 10) || 0);
@@ -469,6 +514,8 @@ function FairFaresApp() {
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
   const [listingIntentPickerOpen, setListingIntentPickerOpen] = useState(false);
+  const [listingStatePickerOpen, setListingStatePickerOpen] = useState(false);
+  const [listingCountry, setListingCountry] = useState<"US" | "IN">("US");
   const [listingCitySuggestions, setListingCitySuggestions] = useState<string[]>([]);
   const [listingCityLoading, setListingCityLoading] = useState(false);
   const [listingAddressSuggestions, setListingAddressSuggestions] = useState<RidePlaceSuggestion[]>([]);
@@ -2119,6 +2166,8 @@ function FairFaresApp() {
     setListingValidation({});
     setListingOptionalDetailsOpen(false);
     setListingIntentPickerOpen(false);
+    setListingStatePickerOpen(false);
+    setListingCountry("US");
     setListingAddressSuggestions([]);
     setListingAddressLoading(false);
   }
@@ -2167,6 +2216,8 @@ function FairFaresApp() {
     setRoommatePlaceChoice(null);
     setListingOptionalDetailsOpen(false);
     setListingIntentPickerOpen(false);
+    setListingStatePickerOpen(false);
+    setListingCountry(listingCountryCode(initialForm.city) || "US");
     setListingOpen(true);
   }
 
@@ -2254,6 +2305,8 @@ function FairFaresApp() {
     setHousingListingSuccess(null);
     setListingOptionalDetailsOpen(true);
     setListingIntentPickerOpen(false);
+    setListingStatePickerOpen(false);
+    setListingCountry(listingCountryCode(initialForm.city) || "US");
     setListingOpen(true);
   }
 
@@ -2361,9 +2414,66 @@ function FairFaresApp() {
     setListingValidatedLabel("");
   }
 
+  function updateListingCityName(value: string) {
+    // Starting a new city clears the prior state. This prevents a Denver, CO
+    // selection from turning a later "Hou" query into the invalid "Hou, CO".
+    const nextCity = value.replace(/,/g, "").trimStart();
+    setListingForm((current) => ({ ...current, city: nextCity }));
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next.city;
+      delete next.location;
+      return next;
+    });
+    setListingCitySuggestions([]);
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(false);
+    setListingValidatedLabel("");
+  }
+
+  function selectListingCountry(country: "US" | "IN") {
+    setListingCountry(country);
+    setListingStatePickerOpen(false);
+    setListingForm((current) => {
+      const currentCountry = listingCountryCode(current.city);
+      return currentCountry && currentCountry !== country
+        ? { ...current, city: listingCityName(current.city) }
+        : current;
+    });
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next.city;
+      delete next.location;
+      return next;
+    });
+  }
+
+  function selectListingState(state: string, country: "US" | "IN") {
+    const cityName = listingCityName(listingForm.city);
+    if (!cityName) return;
+    setListingForm((current) => ({
+      ...current,
+      city: country === "IN"
+        ? `${listingCityName(current.city)}, ${state}, IN`
+        : `${listingCityName(current.city)}, ${state}`
+    }));
+    setListingValidation((current) => {
+      const next = { ...current };
+      delete next.city;
+      delete next.location;
+      return next;
+    });
+    setListingCitySuggestions([]);
+    setListingAddressSuggestions([]);
+    setListingAddressValidated(false);
+    setListingValidatedLabel("");
+    setListingStatePickerOpen(false);
+  }
+
   function selectListingCity(value: string) {
     const selectedCity = normalizeCityInput(value);
     setListingForm((current) => ({ ...current, city: selectedCity }));
+    setListingCountry(listingCountryCode(selectedCity) || listingCountry);
     setListingValidation((current) => {
       const next = { ...current };
       delete next.city;
@@ -2431,7 +2541,7 @@ function FairFaresApp() {
       setListingCityLoading(false);
       return;
     }
-    const query = listingForm.city.trim();
+    const query = listingCityName(listingForm.city);
     if (query.length < 2) {
       setListingCitySuggestions([]);
       setListingCityLoading(false);
@@ -4368,10 +4478,35 @@ function FairFaresApp() {
             {renderFormSection(
               "Where is it?",
               <>
-                <View style={styles.twoCol}>
-                  <View style={styles.twoColField}>{renderListingField("City", <TextInput value={listingForm.city} onChangeText={(text) => updateListingLocationField("city", text)} placeholder="Denver, CO" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.city && styles.listingInputInvalid]} />, { required: true, errorKey: "city" })}</View>
-                  <View style={styles.twoColField}>{renderListingField("ZIP", <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Optional" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.twoColInput, listingValidation.zipCode && styles.listingInputInvalid]} keyboardType="number-pad" />, { errorKey: "zipCode" })}</View>
+                <View style={styles.listingCountryRow}>
+                  <Text style={styles.listingFieldLabel}>Country</Text>
+                  <View style={styles.listingCountryChoices}>
+                    <TouchableOpacity style={[styles.listingCountryChoice, listingCountry === "US" && styles.listingCountryChoiceActive]} onPress={() => selectListingCountry("US")} accessibilityRole="radio" accessibilityState={{ checked: listingCountry === "US" }}><Text style={[styles.listingCountryChoiceText, listingCountry === "US" && styles.listingCountryChoiceTextActive]}>United States</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.listingCountryChoice, listingCountry === "IN" && styles.listingCountryChoiceActive]} onPress={() => selectListingCountry("IN")} accessibilityRole="radio" accessibilityState={{ checked: listingCountry === "IN" }}><Text style={[styles.listingCountryChoiceText, listingCountry === "IN" && styles.listingCountryChoiceTextActive]}>India</Text></TouchableOpacity>
+                  </View>
                 </View>
+                <View style={styles.listingCityStateLabels}>
+                  <View style={styles.listingCityStateLabelCity}><Text style={styles.listingFieldLabel}>City <Text style={styles.listingFieldRequired}>*</Text></Text></View>
+                  <View style={styles.listingCityStateLabelRight}><Text style={styles.listingFieldLabel}>State</Text></View>
+                  <View style={styles.listingCityStateLabelZip}><Text style={styles.listingFieldLabel}>ZIP</Text></View>
+                </View>
+                <View style={[styles.listingCityStateControl, (listingValidation.city || listingValidation.zipCode) && styles.listingInputInvalid]}>
+                  <TextInput value={listingCityName(listingForm.city)} onChangeText={updateListingCityName} placeholder="Denver" placeholderTextColor={theme.colors.muted} style={styles.listingCityStateCityInput} autoCorrect={false} autoCapitalize="words" />
+                  <View style={styles.listingCityStateDivider} />
+                  <TouchableOpacity style={[styles.listingCityStatePicker, !listingCityName(listingForm.city) && styles.listingStatePickerDisabled]} onPress={() => { Keyboard.dismiss(); setListingStatePickerOpen((open) => !open); }} disabled={!listingCityName(listingForm.city)} accessibilityRole="button" accessibilityLabel="Choose state"><Text numberOfLines={1} style={[styles.listingStatePickerText, !listingStateCode(listingForm.city) && styles.listingStatePickerPlaceholder]}>{listingStateCode(listingForm.city) || "Select"}</Text><Text style={styles.listingStatePickerChevron}>{listingStatePickerOpen ? "⌃" : "⌄"}</Text></TouchableOpacity>
+                  <View style={styles.listingCityStateDivider} />
+                  <TextInput value={listingForm.zipCode} onChangeText={(text) => updateListingForm("zipCode", text)} placeholder="Optional" placeholderTextColor={theme.colors.muted} style={styles.listingCityStateZipInput} keyboardType="number-pad" />
+                </View>
+                {listingFieldError("city")}
+                {listingFieldError("zipCode")}
+                {listingStatePickerOpen ? <View style={styles.listingStateDropdown}>
+                  <Text style={styles.addressSuggestionTitle}>Choose a state in {listingCountry === "IN" ? "India" : "the United States"}</Text>
+                  <ScrollView style={styles.listingStateDropdownList} contentContainerStyle={styles.listingStateDropdownListContent} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {(LISTING_REGION_GROUPS.find((group) => group.country === listingCountry) || LISTING_REGION_GROUPS[0]).regions.map((region) => <TouchableOpacity key={`${region.country}-${region.code}`} style={[styles.listingStateDropdownOption, listingCountryCode(listingForm.city) === region.country && listingStateCode(listingForm.city) === region.code && styles.countryPickerOptionActive]} onPress={() => selectListingState(region.code, region.country)}>
+                      <Text style={styles.countryPickerLabel}>{region.name}</Text><Text style={styles.countryPickerCode}>{region.country === "US" ? region.code : "IN"}</Text>
+                    </TouchableOpacity>)}
+                  </ScrollView>
+                </View> : null}
                 {listingCityLoading ? <View style={styles.addressStatusRow}><ActivityIndicator size="small" color={theme.colors.blue} /><Text style={styles.addressStatusText}>Finding cities…</Text></View> : null}
                 {listingCitySuggestions.length ? <View style={styles.addressSuggestionPanel}>
                   <Text style={styles.addressSuggestionTitle}>Choose your city</Text>
@@ -4929,6 +5064,11 @@ const styles = StyleSheet.create({
   countryPickerFlag: { fontSize: 22 },
   countryPickerLabel: { flex: 1, color: theme.colors.text, fontSize: 14 },
   countryPickerCode: { color: theme.colors.soft, fontSize: 14, fontWeight: "700" },
+  listingStateDropdown: { maxHeight: 280, overflow: "hidden", borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2 },
+  listingStateDropdownList: { maxHeight: 240 },
+  listingStateDropdownListContent: { paddingBottom: 1 },
+  listingStateGroupLabel: { color: theme.colors.soft, fontSize: 12, fontWeight: "900", letterSpacing: 0.5, paddingHorizontal: 13, paddingTop: 12, paddingBottom: 6, backgroundColor: theme.colors.panel2 },
+  listingStateDropdownOption: { minHeight: 48, flexDirection: "row", alignItems: "center", paddingHorizontal: 13, borderTopWidth: 1, borderTopColor: theme.colors.line },
   input: { backgroundColor: theme.colors.panel2, color: theme.colors.text, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, paddingHorizontal: 14, minHeight: 49, fontSize: 15 },
   searchInputWrap: { position: "relative", justifyContent: "center", borderRadius: theme.radius.md, shadowColor: theme.colors.blue, shadowOpacity: 0.07, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   searchInputWithClear: { paddingRight: 52, minHeight: 56, borderWidth: 1.25, borderColor: "rgba(79,124,255,0.42)", fontSize: 16, fontWeight: "700" },
@@ -4976,6 +5116,25 @@ const styles = StyleSheet.create({
   miniLabel: { color: theme.colors.muted, fontWeight: "900" },
   twoCol: { width: "100%", maxWidth: "100%", flexDirection: "row", gap: theme.spacing.sm },
   twoColInput: { flex: 1, minWidth: 0 },
+  listingCityStateLabels: { flexDirection: "row", alignItems: "center" },
+  listingCountryRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 9 },
+  listingCountryChoices: { flexDirection: "row", gap: 7 },
+  listingCountryChoice: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, alignItems: "center", justifyContent: "center" },
+  listingCountryChoiceActive: { borderColor: theme.colors.green, backgroundColor: "rgba(28, 190, 139, 0.14)" },
+  listingCountryChoiceText: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
+  listingCountryChoiceTextActive: { color: theme.colors.green },
+  listingCityStateLabelCity: { flex: 1, paddingLeft: 14 },
+  listingCityStateLabelRight: { flex: 1, paddingLeft: 13 },
+  listingCityStateLabelZip: { flex: 1, paddingLeft: 12 },
+  listingCityStateControl: { flexDirection: "row", alignItems: "stretch", minHeight: 49, overflow: "hidden", borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 },
+  listingCityStateCityInput: { flexGrow: 1, flexShrink: 1, flexBasis: 0, width: 0, minWidth: 0, color: theme.colors.text, paddingHorizontal: 14, fontSize: 15 },
+  listingCityStateDivider: { width: 1, backgroundColor: theme.colors.line, marginVertical: 8 },
+  listingCityStatePicker: { flexGrow: 1, flexShrink: 1, flexBasis: 0, width: 0, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6, paddingHorizontal: 13 },
+  listingCityStateZipInput: { flexGrow: 1, flexShrink: 1, flexBasis: 0, width: 0, minWidth: 0, color: theme.colors.text, paddingHorizontal: 12, fontSize: 15 },
+  listingStatePickerDisabled: { opacity: 0.55 },
+  listingStatePickerText: { color: theme.colors.text, fontSize: 15 },
+  listingStatePickerPlaceholder: { color: theme.colors.muted },
+  listingStatePickerChevron: { color: theme.colors.muted, fontSize: 17 },
   listingIntentList: { gap: 10 },
   listingIntentCard: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: theme.colors.line, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: theme.colors.panel2 },
   listingIntentCardActive: { borderColor: theme.colors.accent, backgroundColor: "rgba(215,174,94,0.10)" },

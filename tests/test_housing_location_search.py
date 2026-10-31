@@ -165,6 +165,79 @@ class HousingLocationSearchTest(unittest.TestCase):
         }
         self.assertIn("PARKER-METRO-LISTING", ids)
 
+    def test_manual_unknown_city_is_added_to_the_location_pool(self):
+        """A valid member-entered city becomes available to the next member."""
+        city = app.add_user_entered_city_to_location_pool("FairFares Heights, CO", zip_code="80014")
+
+        self.assertEqual(city, "FairFares Heights, CO")
+        self.assertIn("FairFares Heights, CO", app.accommodation_city_suggestions("FairFares Hei"))
+        with app.db() as con:
+            row = con.execute(
+                """
+                SELECT area.city, area.state, area.source, metro.name AS metro_name
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE area.city = 'FairFares Heights' AND area.state = 'CO'
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source"], "USER_ENTERED_CITY")
+        self.assertEqual(row["metro_name"], "FairFares Heights, CO Metro Area")
+
+    def test_indian_city_state_fallback_is_resolved_and_saved(self):
+        """Indian state-qualified cities do not fall through the US-only parser."""
+        self.assertEqual(app.resolve_accommodation_country("Hyderabad, Telangana, IN", allow_refresh=False), "IN")
+        self.assertEqual(app.resolve_accommodation_country("Kamareddy, TS, IN", allow_refresh=False), "IN")
+        self.assertEqual(app.resolve_accommodation_country("Carmel, IN", allow_refresh=False), "US")
+        self.assertEqual(app.inferred_location_country("Carmel, IN"), "US")
+
+        city = app.add_user_entered_city_to_location_pool(
+            "Kamareddy, TS, IN",
+            country="IN",
+            zip_code="500001",
+        )
+
+        self.assertEqual(city, "Kamareddy, TS, IN")
+        self.assertIn("Kamareddy, TS, IN", app.accommodation_city_suggestions("Kamar"))
+        with app.db() as con:
+            row = con.execute(
+                """
+                SELECT area.city, area.state, area.zip_code, area.source, metro.country
+                FROM accommodation_local_areas area
+                JOIN accommodation_metros metro ON metro.id = area.metro_id
+                WHERE area.city = 'Kamareddy' AND area.state = 'TS'
+                """
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["zip_code"], "500001")
+        self.assertEqual(row["source"], "USER_ENTERED_CITY")
+        self.assertEqual(row["country"], "IN")
+
+    def test_known_legacy_listing_zip_corrections_are_conditional(self):
+        with app.db() as con:
+            con.executemany(
+                """
+                INSERT INTO accommodation_posts
+                (public_id, user_id, post_mode, category, title, description, city, country,
+                 zip_code, rent_min, contact_name, contact_phone, contact_email, visibility_status)
+                VALUES (?, ?, 'HAVE_PLACE', 'single_room', 'Location repair', 'Test listing',
+                        'Aurora, CO', 'US', ?, 900, 'Poster', '3035550100',
+                        'poster@example.com', 'ACTIVE')
+                """,
+                [
+                    ("FFH-EFBE50D7", self.user_id, "12150"),
+                    ("FFH-16467C84", self.user_id, "80134"),
+                ],
+            )
+            app.repair_known_accommodation_zip_codes(con)
+            rows = con.execute(
+                "SELECT public_id, zip_code FROM accommodation_posts WHERE public_id IN ('FFH-EFBE50D7', 'FFH-16467C84')"
+            ).fetchall()
+        corrected = {row["public_id"]: row["zip_code"] for row in rows}
+        self.assertEqual(corrected["FFH-EFBE50D7"], "80014")
+        # An owner-corrected value must remain untouched on the next run.
+        self.assertEqual(corrected["FFH-16467C84"], "80134")
+
     def test_formatted_street_address_is_not_repeated_with_city_and_zip(self):
         self.assertEqual(
             app.accommodation_address_label({

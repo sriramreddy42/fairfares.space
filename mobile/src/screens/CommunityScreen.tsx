@@ -27,6 +27,7 @@ import { requestUserLocationPermission } from "../utils/locationPermission";
 import { readCachedDeviceCity, resolveCurrentDeviceCity } from "../utils/deviceCity";
 import { avatarInitials } from "../utils/text";
 import { readGasCache } from "../utils/gasPriceCache";
+import { locationCountryCodeFromLabel } from "../utils/locationRegion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = {
@@ -284,6 +285,8 @@ function communityLinkPreviewUrl(linkUrl: string, body: string) {
 const usStateCodes = new Set(["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC"]);
 const usStateNames: Record<string, string> = { Alabama: "AL", Alaska: "AK", Arizona: "AZ", Arkansas: "AR", California: "CA", Colorado: "CO", Connecticut: "CT", Delaware: "DE", Florida: "FL", Georgia: "GA", Hawaii: "HI", Idaho: "ID", Illinois: "IL", Indiana: "IN", Iowa: "IA", Kansas: "KS", Kentucky: "KY", Louisiana: "LA", Maine: "ME", Maryland: "MD", Massachusetts: "MA", Michigan: "MI", Minnesota: "MN", Mississippi: "MS", Missouri: "MO", Montana: "MT", Nebraska: "NE", Nevada: "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", Ohio: "OH", Oklahoma: "OK", Oregon: "OR", Pennsylvania: "PA", "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", Tennessee: "TN", Texas: "TX", Utah: "UT", Vermont: "VT", Virginia: "VA", Washington: "WA", "West Virginia": "WV", Wisconsin: "WI", Wyoming: "WY", "District of Columbia": "DC" };
 const usStateNameCodes = new Map(Object.entries(usStateNames).map(([name, code]) => [name.toLocaleLowerCase(), code]));
+const indiaStateCodes: Record<string, string> = { AP: "Andhra Pradesh", AR: "Arunachal Pradesh", AS: "Assam", BR: "Bihar", CT: "Chhattisgarh", GA: "Goa", GJ: "Gujarat", HR: "Haryana", HP: "Himachal Pradesh", JH: "Jharkhand", KA: "Karnataka", KL: "Kerala", MP: "Madhya Pradesh", MH: "Maharashtra", MN: "Manipur", ML: "Meghalaya", MZ: "Mizoram", NL: "Nagaland", OD: "Odisha", OR: "Odisha", PB: "Punjab", RJ: "Rajasthan", SK: "Sikkim", TN: "Tamil Nadu", TS: "Telangana", TG: "Telangana", TR: "Tripura", UP: "Uttar Pradesh", UK: "Uttarakhand", UT: "Uttarakhand", WB: "West Bengal", AN: "Andaman and Nicobar Islands", CH: "Chandigarh", DH: "Dadra and Nagar Haveli and Daman and Diu", DL: "Delhi", JK: "Jammu and Kashmir", LA: "Ladakh", LD: "Lakshadweep", PY: "Puducherry" };
+const indiaStateNameCodes = new Map(Object.entries(indiaStateCodes).map(([code, name]) => [name.toLocaleLowerCase(), code]));
 function normalizedUsCityKey(value: string) {
   let parts = value.split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length === 3 && /^(?:US|USA|United States)$/i.test(parts[2])) parts = parts.slice(0, 2);
@@ -291,8 +294,28 @@ function normalizedUsCityKey(value: string) {
   const region = usStateCodes.has(parts[1].toUpperCase()) ? parts[1].toUpperCase() : usStateNameCodes.get(parts[1].toLocaleLowerCase());
   return region ? `${parts[0].toLocaleLowerCase()},${region}` : "";
 }
+function normalizedIndiaCityKey(value: string) {
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  const country = parts[parts.length - 1]?.toUpperCase();
+  if (country !== "IN" && country !== "INDIA") return "";
+  const city = parts[0] || "";
+  if (!city) return "";
+  const rawState = parts.length >= 3 ? parts[1] || "" : "";
+  const code = indiaStateCodes[rawState.toUpperCase()] || indiaStateNameCodes.get(rawState.toLocaleLowerCase()) || rawState.toLocaleUpperCase();
+  return `${city.toLocaleLowerCase()},${code},IN`;
+}
+function normalizedCityKey(value: string) {
+  return normalizedUsCityKey(value) || normalizedIndiaCityKey(value);
+}
 function normalizedLocationLabel(value: string) {
   let parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (/^(?:IN|India)$/i.test(parts[parts.length - 1] || "")) {
+    const city = parts[0] || "";
+    const rawState = parts.length >= 3 ? parts[1] || "" : "";
+    const code = indiaStateCodes[rawState.toUpperCase()] || indiaStateNameCodes.get(rawState.toLocaleLowerCase()) || rawState;
+    const state = indiaStateCodes[code.toUpperCase()] || rawState;
+    return [city, state, "India"].filter(Boolean).join(", ");
+  }
   if (parts.length === 3 && /^(?:US|USA|United States)$/i.test(parts[2])) parts = parts.slice(0, 2);
   if (parts.length !== 2) return value.trim();
   const region = usStateCodes.has(parts[1].toUpperCase()) ? parts[1].toUpperCase() : usStateNameCodes.get(parts[1].toLocaleLowerCase());
@@ -497,12 +520,11 @@ function utcTimestamp(value: string) {
   if (!value) return Number.POSITIVE_INFINITY;
   return new Date(/[zZ]$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime();
 }
-function isActivePublicUsPost(post: CommunityPost, localCity: string, localIds: Set<string>) {
-  const parts = post.city.split(",").map((part) => part.trim()).filter(Boolean);
+function isActivePublicCountryPost(post: CommunityPost, localCity: string, localIds: Set<string>, country: string) {
   const expiresAt = utcTimestamp(post.expiresAt);
-  return parts.length === 2
-    && Boolean(normalizedUsCityKey(post.city))
-    && normalizedUsCityKey(post.city) !== normalizedUsCityKey(localCity)
+  return locationCountryCodeFromLabel(post.city) === country
+    && Boolean(normalizedCityKey(post.city))
+    && normalizedCityKey(post.city) !== normalizedCityKey(localCity)
     && !localIds.has(post.id)
     && post.status === "PUBLISHED"
     && post.fulfillmentStatus === "OPEN"
@@ -677,7 +699,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     const usable = testimonials.filter((item) => Number(item.rating || 0) >= 4 && String(item.message || "").trim().length > 0);
     return usable.length ? usable.slice(0, 8) : [communityReviewFallback];
   }, [testimonials]);
-  const acrossCountryName = /,\s*india\b|\bindia\b/i.test(city) ? "India" : "USA";
+  const acrossCountryName = locationCountryCodeFromLabel(groupSuggestionCity || city) === "IN" ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
 
   useEffect(() => {
@@ -916,7 +938,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         if (feedLoadGeneration.current !== requestedFeedGeneration) return;
         fallbackNationalOffset.current = nationwide.posts?.length || 0;
         const localIds = new Set((feed.posts || []).map((post) => post.id));
-        nextNationalPosts = (nationwide.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds));
+        const selectedCountry = locationCountryCodeFromLabel(groupSuggestionCity) || "US";
+        nextNationalPosts = (nationwide.posts || []).filter((post) => isActivePublicCountryPost(post, groupSuggestionCity, localIds, selectedCountry));
         nextLocalHasMore = Boolean(feed.pagination?.hasMore);
         nextNationalHasMore = Boolean(nationwide.pagination?.hasMore);
       } else {
@@ -991,7 +1014,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     void AsyncStorage.getItem(feedCityStorageKey).then((storedCity) => {
       if (cancelled) return;
       const normalized = normalizedLocationLabel(storedCity || "");
-      if (normalized && normalizedUsCityKey(normalized)) {
+      if (normalized && normalizedCityKey(normalized)) {
         manualFeedCity.current = true;
         setGroupSuggestionCity(normalized);
       }
@@ -1068,13 +1091,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         if (cancelled) return;
         const requestedParts = cityDraft.split(",").map((part) => part.trim()).filter(Boolean);
         const requestedCity = requestedParts[0]?.toLocaleLowerCase() || "";
-        const requestedKey = normalizedUsCityKey(cityDraft);
+        const requestedKey = normalizedCityKey(cityDraft);
         const requestedRegion = requestedKey.split(",")[1] || "";
         const options = (result?.cities || [])
           .map(normalizedLocationLabel)
-          .filter((value) => Boolean(normalizedUsCityKey(value)))
-          .filter((value) => normalizedUsCityKey(value).split(",")[0].startsWith(requestedCity))
-          .filter((value) => !requestedRegion || normalizedUsCityKey(value).endsWith(`,${requestedRegion}`))
+          .filter((value) => Boolean(normalizedCityKey(value)))
+          .filter((value) => normalizedCityKey(value).split(",")[0].startsWith(requestedCity))
+          .filter((value) => !requestedRegion || normalizedCityKey(value).split(",")[1] === requestedRegion)
           .filter((value, index, values) => value && values.indexOf(value) === index)
           .slice(0, 8);
         setCityOptions(options);
@@ -1085,8 +1108,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const chooseFeedCity = (value: string) => {
     const nextCity = normalizedLocationLabel(value);
-    if (!normalizedUsCityKey(nextCity)) {
-      Alert.alert("Choose a city and state", "Select a suggestion or enter a location such as Denver, CO.");
+    if (!normalizedCityKey(nextCity)) {
+      Alert.alert("Choose a city and state", "Select a suggestion or enter a location such as Denver, CO or Kamareddy, Telangana, India.");
       return;
     }
     manualFeedCity.current = true;
@@ -1224,7 +1247,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       if (feedLoadGeneration.current !== requestedFeedGeneration) return;
       if (nationwide) fallbackNationalOffset.current += nationwide.posts?.length || 0;
       const localIds = new Set([...posts, ...nextLocal].map((post) => post.id));
-      const nextNational = feed.sections?.national?.posts || (nationwide?.posts || []).filter((post) => isActivePublicUsPost(post, groupSuggestionCity, localIds));
+        const selectedCountry = locationCountryCodeFromLabel(groupSuggestionCity) || "US";
+        const nextNational = feed.sections?.national?.posts || (nationwide?.posts || []).filter((post) => isActivePublicCountryPost(post, groupSuggestionCity, localIds, selectedCountry));
       if (section === "local") {
         setPosts((current) => [...current, ...nextLocal.filter((post) => !current.some((item) => item.id === post.id))]);
         setLocalHasMore(Boolean(feed.sections?.local?.hasMore ?? feed.pagination?.hasMore));
@@ -1732,11 +1756,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
   const groupOptions = useMemo(() => groups.filter((group) => group.joined), [groups]);
   const suggestedCommunities = useMemo(() => {
-    const currentCity = normalizedUsCityKey(groupSuggestionCity);
+    const currentCity = normalizedCityKey(groupSuggestionCity);
     return groups
       .filter((group) => {
         if (group.visibility !== "PUBLIC") return false;
-        const groupCity = normalizedUsCityKey(group.suggestionCity || group.area || "");
+        const groupCity = normalizedCityKey(group.suggestionCity || group.area || "");
         return Boolean(currentCity && groupCity === currentCity);
       })
       .sort((left, right) => Number(left.joined) - Number(right.joined) || right.memberCount - left.memberCount);
