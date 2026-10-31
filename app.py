@@ -4390,10 +4390,35 @@ def repair_known_accommodation_zip_codes(con: sqlite3.Connection) -> None:
         con.execute(
             """
             UPDATE accommodation_posts
-            SET zip_code = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE public_id = ? AND trim(zip_code) = ?
+            SET zip_code = CASE
+                    WHEN trim(zip_code) = ? THEN ?
+                    ELSE zip_code
+                END,
+                city_area_zip = CASE
+                    WHEN trim(city_area_zip) = trim(city) || ', ' || ?
+                    THEN CASE
+                        WHEN ? <> '' THEN trim(city) || ', ' || ?
+                        ELSE trim(city)
+                    END
+                    ELSE city_area_zip
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE public_id = ?
+              AND (
+                    trim(zip_code) = ?
+                    OR trim(city_area_zip) = trim(city) || ', ' || ?
+              )
             """,
-            (corrected_zip, public_id, incorrect_zip),
+            (
+                incorrect_zip,
+                corrected_zip,
+                incorrect_zip,
+                corrected_zip,
+                corrected_zip,
+                public_id,
+                incorrect_zip,
+                incorrect_zip,
+            ),
         )
 
 

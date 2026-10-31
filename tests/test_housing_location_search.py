@@ -219,22 +219,24 @@ class HousingLocationSearchTest(unittest.TestCase):
                 """
                 INSERT INTO accommodation_posts
                 (public_id, user_id, post_mode, category, title, description, city, country,
-                 zip_code, rent_min, contact_name, contact_phone, contact_email, visibility_status)
+                 zip_code, city_area_zip, rent_min, contact_name, contact_phone, contact_email, visibility_status)
                 VALUES (?, ?, 'HAVE_PLACE', 'single_room', 'Location repair', 'Test listing',
-                        'Aurora, CO', 'US', ?, 900, 'Poster', '3035550100',
+                        'Aurora, CO', 'US', ?, ?, 900, 'Poster', '3035550100',
                         'poster@example.com', 'ACTIVE')
                 """,
                 [
-                    ("FFH-EFBE50D7", self.user_id, "12150"),
-                    ("FFH-16467C84", self.user_id, "80134"),
+                    ("FFH-EFBE50D7", self.user_id, "12150", "Aurora, CO, 12150"),
+                    ("FFH-16467C84", self.user_id, "80134", "Aurora, CO, 80134"),
                 ],
             )
             app.repair_known_accommodation_zip_codes(con)
             rows = con.execute(
-                "SELECT public_id, zip_code FROM accommodation_posts WHERE public_id IN ('FFH-EFBE50D7', 'FFH-16467C84')"
+                "SELECT public_id, zip_code, city_area_zip FROM accommodation_posts WHERE public_id IN ('FFH-EFBE50D7', 'FFH-16467C84')"
             ).fetchall()
         corrected = {row["public_id"]: row["zip_code"] for row in rows}
         self.assertEqual(corrected["FFH-EFBE50D7"], "80014")
+        repaired_location = next(row["city_area_zip"] for row in rows if row["public_id"] == "FFH-EFBE50D7")
+        self.assertEqual(repaired_location, "Aurora, CO, 80014")
         # An owner-corrected value must remain untouched on the next run.
         self.assertEqual(corrected["FFH-16467C84"], "80134")
 
