@@ -921,7 +921,10 @@ class MobileAuthTest(unittest.TestCase):
     def test_connection_requests_are_explicit_and_create_mutual_suggestions(self):
         with app.db() as con:
             def member(name, email):
-                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'unused', 1)", (name, email))
+                con.execute("""INSERT INTO users
+                   (name, email, password_hash, is_verified, people_discoverable,
+                    people_match_mutuals, people_match_groups, share_mutual_connection_count)
+                   VALUES (?, ?, 'unused', 1, 1, 1, 1, 1)""", (name, email))
                 return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
             viewer_id = member("Viewer", "viewer@example.com")
             mutual_id = member("Mutual", "mutual@example.com")
@@ -948,6 +951,47 @@ class MobileAuthTest(unittest.TestCase):
             suggestions = app.people_suggestions_for_user(viewer_id)
             self.assertEqual([item["id"] for item in suggestions], [candidate_id])
             self.assertIn("1 mutual connection", suggestions[0]["reason"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_people_suggestions_require_reciprocal_opt_in_and_honor_hide_feedback(self):
+        with app.db() as con:
+            def member(name, email, discoverable=1, share_count=0):
+                con.execute(
+                    """INSERT INTO users
+                       (name, email, password_hash, is_verified, people_discoverable,
+                        people_match_mutuals, people_match_groups, share_mutual_connection_count)
+                       VALUES (?, ?, 'unused', 1, ?, 1, 1, ?)""",
+                    (name, email, discoverable, share_count),
+                )
+                return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            viewer_id = member("Viewer", "viewer-optin@example.com", 1, 0)
+            mutual_id = member("Mutual", "mutual-optin@example.com", 1, 1)
+            visible_id = member("Visible", "visible-optin@example.com", 1, 0)
+            private_id = member("Private", "private-optin@example.com", 0, 1)
+            for left, right in ((viewer_id, mutual_id), (mutual_id, visible_id), (mutual_id, private_id)):
+                low_id, high_id = sorted((left, right))
+                con.execute(
+                    """INSERT INTO member_connections
+                       (user_low_id, user_high_id, requested_by_user_id, status)
+                       VALUES (?, ?, ?, 'ACCEPTED')""",
+                    (low_id, high_id, left),
+                )
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("viewer-optin", viewer_id))
+        self.assertEqual([item["id"] for item in app.people_suggestions_for_user(viewer_id)], [visible_id])
+        self.assertEqual(app.people_suggestions_for_user(viewer_id)[0]["reason"], "Mutual connection")
+        server, thread = self.start_server()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/people/suggestions/hide",
+                data=json.dumps({"suggestedUserId": visible_id}).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer viewer-optin"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertTrue(json.loads(response.read().decode("utf-8"))["ok"])
+            self.assertEqual(app.people_suggestions_for_user(viewer_id), [])
         finally:
             server.shutdown()
             server.server_close()

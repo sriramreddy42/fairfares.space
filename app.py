@@ -7032,6 +7032,10 @@ def init_db() -> None:
                 relocation_company TEXT NOT NULL DEFAULT '',
                 relocation_discoverable INTEGER NOT NULL DEFAULT 0,
                 local_connection_discoverable INTEGER NOT NULL DEFAULT 0,
+                people_discoverable INTEGER NOT NULL DEFAULT 0,
+                people_match_mutuals INTEGER NOT NULL DEFAULT 1,
+                people_match_groups INTEGER NOT NULL DEFAULT 1,
+                share_mutual_connection_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -7392,6 +7396,19 @@ def init_db() -> None:
                 FOREIGN KEY(user_high_id) REFERENCES users(id),
                 FOREIGN KEY(requested_by_user_id) REFERENCES users(id),
                 FOREIGN KEY(blocked_by_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS member_suggestion_feedback (
+                viewer_user_id INTEGER NOT NULL,
+                suggested_user_id INTEGER NOT NULL,
+                suggestion_kind TEXT NOT NULL DEFAULT 'PEOPLE',
+                feedback TEXT NOT NULL DEFAULT 'HIDDEN',
+                expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(viewer_user_id, suggested_user_id, suggestion_kind),
+                CHECK(feedback IN ('HIDDEN')),
+                FOREIGN KEY(viewer_user_id) REFERENCES users(id),
+                FOREIGN KEY(suggested_user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_conversations (
@@ -8456,6 +8473,10 @@ def init_db() -> None:
         ensure_column(con, "users", "relocation_company", "relocation_company TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "relocation_discoverable", "relocation_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "local_connection_discoverable", "local_connection_discoverable INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "people_discoverable", "people_discoverable INTEGER NOT NULL DEFAULT 0")
+        ensure_column(con, "users", "people_match_mutuals", "people_match_mutuals INTEGER NOT NULL DEFAULT 1")
+        ensure_column(con, "users", "people_match_groups", "people_match_groups INTEGER NOT NULL DEFAULT 1")
+        ensure_column(con, "users", "share_mutual_connection_count", "share_mutual_connection_count INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "suspended_at", "suspended_at TEXT")
         ensure_column(con, "users", "suspended_reason", "suspended_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "suspended_by", "suspended_by INTEGER")
@@ -8922,6 +8943,7 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_relocation_matching ON users(relocation_discoverable, local_connection_discoverable, local_city, relocation_city)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_low ON member_connections(status, user_low_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_high ON member_connections(status, user_high_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_member_suggestion_feedback_expires ON member_suggestion_feedback(viewer_user_id, suggestion_kind, expires_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_seen ON sessions(user_id, last_seen_at)")
         con.execute("DELETE FROM security_rate_limits WHERE datetime(updated_at) < datetime('now', '-2 days')")
         con.execute("CREATE INDEX IF NOT EXISTS idx_accommodation_active_created ON accommodation_posts(visibility_status, created_at DESC)")
@@ -19144,18 +19166,25 @@ def member_connection_state(con: sqlite3.Connection, user_id: int, other_user_id
 
 
 def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
-    """Suggest people through accepted mutual connections and shared groups.
+    """Suggest people through reciprocal, opt-in mutual connections.
 
-    This intentionally excludes phone contacts and does not reveal either
-    member's address, phone, search history, or private groups. A candidate is
-    useful only when there is at least one mutual accepted connection or one
-    shared Chitthi community.
+    Shared groups can strengthen a mutual connection but cannot independently
+    turn a stranger into a People-you-may-know suggestion. Contacts stay in
+    the explicit Chitthi contact finder and are never persisted for this feed.
     """
     user_id = int(user_id or 0)
     if user_id <= 0:
         return []
     try:
         with db() as con:
+            viewer = con.execute(
+                """SELECT people_discoverable, people_match_mutuals,
+                          people_match_groups, share_mutual_connection_count
+                   FROM users WHERE id = ?""",
+                (user_id,),
+            ).fetchone()
+            if not viewer or not bool(int(row_value(viewer, "people_discoverable") or 0)) or not bool(int(row_value(viewer, "people_match_mutuals") or 0)):
+                return []
             direct_rows = con.execute(
                 """SELECT user_low_id, user_high_id FROM member_connections
                    WHERE status = 'ACCEPTED' AND (user_low_id = ? OR user_high_id = ?)""",
@@ -19179,42 +19208,59 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                     mutual_id = high_id if low_id in direct_ids else low_id if high_id in direct_ids else 0
                     if mutual_id and mutual_id != user_id and mutual_id not in direct_ids:
                         mutual_counts[mutual_id] = mutual_counts.get(mutual_id, 0) + 1
-            shared_rows = con.execute(
-                """SELECT theirs.user_id, COUNT(*) AS shared_count
-                   FROM chat_community_members mine
-                   JOIN chat_community_members theirs ON theirs.community_id = mine.community_id
-                   WHERE mine.user_id = ? AND theirs.user_id != ?
-                   GROUP BY theirs.user_id""",
-                (user_id, user_id),
-            ).fetchall()
-            shared_counts = {
-                int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
-                for row in shared_rows
-            }
-            candidate_ids = (set(mutual_counts) | set(shared_counts)) - direct_ids - {user_id}
+            candidate_ids = set(mutual_counts) - direct_ids - {user_id}
             if not candidate_ids:
                 return []
+            shared_counts: dict[int, int] = {}
+            if bool(int(row_value(viewer, "people_match_groups") or 0)):
+                placeholders = ",".join("?" for _ in candidate_ids)
+                shared_rows = con.execute(
+                    f"""SELECT theirs.user_id, COUNT(*) AS shared_count
+                       FROM chat_community_members mine
+                       JOIN chat_community_members theirs ON theirs.community_id = mine.community_id
+                       WHERE mine.user_id = ? AND theirs.user_id IN ({placeholders})
+                       GROUP BY theirs.user_id""",
+                    (user_id, *candidate_ids),
+                ).fetchall()
+                shared_counts = {
+                    int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
+                    for row in shared_rows
+                }
+            hidden_rows = con.execute(
+                """SELECT suggested_user_id FROM member_suggestion_feedback
+                   WHERE viewer_user_id = ? AND suggestion_kind = 'PEOPLE'
+                     AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))""",
+                (user_id,),
+            ).fetchall()
+            hidden_ids = {int(row_value(row, "suggested_user_id") or 0) for row in hidden_rows}
             placeholders = ",".join("?" for _ in candidate_ids)
             rows = con.execute(
-                f"""SELECT id, name, profile_photo_url FROM users
+                f"""SELECT id, name, profile_photo_url, people_match_groups,
+                           share_mutual_connection_count FROM users
                     WHERE id IN ({placeholders}) AND is_verified = 1 AND guest_account = 0
-                      AND suspended_at IS NULL""",
+                      AND suspended_at IS NULL AND people_discoverable = 1
+                      AND people_match_mutuals = 1""",
                 tuple(candidate_ids),
             ).fetchall()
             ratings = user_rating_summaries(con, candidate_ids)
             suggestions: list[dict[str, object]] = []
             for row in rows:
                 candidate_id = int(row_value(row, "id") or 0)
+                if candidate_id in hidden_ids:
+                    continue
                 state = member_connection_state(con, user_id, candidate_id)
                 if state != "NONE":
                     continue
                 mutual = mutual_counts.get(candidate_id, 0)
-                shared = shared_counts.get(candidate_id, 0)
-                if not mutual and not shared:
+                if not mutual:
                     continue
+                can_show_shared_groups = bool(int(row_value(viewer, "people_match_groups") or 0)) and bool(int(row_value(row, "people_match_groups") or 0))
+                shared = shared_counts.get(candidate_id, 0) if can_show_shared_groups else 0
                 reasons: list[str] = []
-                if mutual:
+                if bool(int(row_value(viewer, "share_mutual_connection_count") or 0)) and bool(int(row_value(row, "share_mutual_connection_count") or 0)):
                     reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
+                else:
+                    reasons.append("Mutual connection")
                 if shared:
                     reasons.append(f"{shared} shared {('community' if shared == 1 else 'communities')}")
                 rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
@@ -19267,6 +19313,10 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "relocationCompany": row_value(user, "relocation_company") or "",
         "relocationDiscoverable": bool(int(row_value(user, "relocation_discoverable") or 0)),
         "localConnectionDiscoverable": bool(int(row_value(user, "local_connection_discoverable") or 0)),
+        "peopleDiscoverable": bool(int(row_value(user, "people_discoverable") or 0)),
+        "peopleMatchMutuals": bool(int(row_value(user, "people_match_mutuals") or 0)),
+        "peopleMatchGroups": bool(int(row_value(user, "people_match_groups") or 0)),
+        "shareMutualConnectionCount": bool(int(row_value(user, "share_mutual_connection_count") or 0)),
     }
 
 
@@ -29335,6 +29385,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
             "/api/mobile/connections": self.api_mobile_update_connection,
+            "/api/mobile/people/suggestions/hide": self.api_mobile_hide_people_suggestion,
             "/api/mobile/profile/avatar": self.api_mobile_update_avatar,
             "/api/mobile/profile/consent": self.api_mobile_accept_current_policies,
             "/api/mobile/push-token": self.api_mobile_push_token,
@@ -42248,6 +42299,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         relocation_discoverable = bool(payload.get("relocationDiscoverable")) if "relocationDiscoverable" in payload else bool(int(row_value(user, "relocation_discoverable") or 0))
         local_connection_discoverable = bool(payload.get("localConnectionDiscoverable")) if "localConnectionDiscoverable" in payload else bool(int(row_value(user, "local_connection_discoverable") or 0))
         chat_phone_discoverable = bool(payload.get("chatPhoneDiscoverable")) if "chatPhoneDiscoverable" in payload else bool(int(row_value(user, "chat_phone_discoverable") or 0))
+        people_discoverable = bool(payload.get("peopleDiscoverable")) if "peopleDiscoverable" in payload else bool(int(row_value(user, "people_discoverable") or 0))
+        people_match_mutuals = bool(payload.get("peopleMatchMutuals")) if "peopleMatchMutuals" in payload else bool(int(row_value(user, "people_match_mutuals") or 0))
+        people_match_groups = bool(payload.get("peopleMatchGroups")) if "peopleMatchGroups" in payload else bool(int(row_value(user, "people_match_groups") or 0))
+        share_mutual_connection_count = bool(payload.get("shareMutualConnectionCount")) if "shareMutualConnectionCount" in payload else bool(int(row_value(user, "share_mutual_connection_count") or 0))
         clean_phone = normalize_phone(phone)
         current_password = str(payload.get("currentPassword") or "")
         current_email = normalize_email(row_value(user, "email"))
@@ -42368,17 +42423,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if photo is None:
                     con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, is_verified = ?
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?
                            WHERE id = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, verified_value, user["id"]),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, user["id"]),
                     )
                 else:
                     cursor = con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, is_verified = ?, profile_photo_url = ?,
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?, profile_photo_url = ?,
                                   avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}'
                            WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, verified_value, photo, user["id"], old_photo),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, photo, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
                 if email_changed and not photo_conflict:
@@ -43532,6 +43587,32 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "login_required": True, "error": "Sign in to view people suggestions."}, 401)
             return
         self.send_json({"ok": True, "suggestions": people_suggestions_for_user(int(row_value(user, "id") or 0))})
+
+    def api_mobile_hide_people_suggestion(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to manage suggestions."}, 401)
+            return
+        payload = self.read_json_body()
+        viewer_id = int(row_value(user, "id") or 0)
+        suggested_id = int(float_from_value(payload.get("suggestedUserId") or 0))
+        if not suggested_id or suggested_id == viewer_id:
+            self.send_json({"ok": False, "error": "Choose a valid suggestion."}, 400)
+            return
+        with db() as con:
+            candidate = con.execute("SELECT id FROM users WHERE id = ? AND guest_account = 0", (suggested_id,)).fetchone()
+            if not candidate:
+                self.send_json({"ok": False, "error": "This member is unavailable."}, 404)
+                return
+            con.execute(
+                """INSERT INTO member_suggestion_feedback
+                   (viewer_user_id, suggested_user_id, suggestion_kind, feedback, expires_at)
+                   VALUES (?, ?, 'PEOPLE', 'HIDDEN', datetime('now', '+90 days'))
+                   ON CONFLICT(viewer_user_id, suggested_user_id, suggestion_kind) DO UPDATE SET
+                     feedback = 'HIDDEN', expires_at = excluded.expires_at, created_at = CURRENT_TIMESTAMP""",
+                (viewer_id, suggested_id),
+            )
+        self.send_json({"ok": True})
 
     def api_mobile_update_connection(self) -> None:
         """Create and manage an explicit member connection; never infer one."""

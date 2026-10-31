@@ -10,7 +10,7 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
-  getPeopleSuggestions, PeopleSuggestion, getRelocationSuggestions, RelocationSuggestion,
+  getPeopleSuggestions, hidePeopleSuggestion, PeopleSuggestion, getRelocationSuggestions, RelocationSuggestion,
   getHousingActivity, getRentalBookings, getRideActivity,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, uploadCommunityVideo,
@@ -718,6 +718,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     }, 500);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
+
+  const dismissPeopleSuggestion = useCallback((suggestion: PeopleSuggestion) => {
+    setPeopleSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
+    void hidePeopleSuggestion(suggestion.id).catch(() => {
+      // A dismissed card stays out of this session even if the device is offline.
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2118,13 +2125,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         </ScrollView>
       </View> : null}
       {peopleSuggestions.length ? <View style={[styles.peopleSuggestions, isLight && styles.peopleSuggestionsLight]}>
-        <View style={styles.relocationConnectionsHead}><View><Text style={[styles.relocationConnectionsTitle, isLight && styles.textPrimaryLight]}>People you may know</Text><Text style={[styles.relocationConnectionsCopy, isLight && styles.textSecondaryLight]}>Suggested through mutual connections or a shared community.</Text></View><Text style={styles.peopleSuggestionsBadge}>PRIVATE</Text></View>
+        <View style={styles.relocationConnectionsHead}><View><Text style={[styles.relocationConnectionsTitle, isLight && styles.textPrimaryLight]}>People you may know</Text><Text style={[styles.relocationConnectionsCopy, isLight && styles.textSecondaryLight]}>Mutual connections first; shared communities only add context.</Text></View><Text style={styles.peopleSuggestionsBadge}>OPT-IN</Text></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relocationConnectionsRail}>
           {peopleSuggestions.map((suggestion) => <TouchableOpacity key={suggestion.id} style={[styles.relocationConnectionCard, isLight && styles.relocationConnectionCardLight]} onPress={() => openMemberProfile({ id: suggestion.id, name: suggestion.name, photoUrl: suggestion.photoUrl })} accessibilityRole="button" accessibilityLabel={`View ${suggestion.name}'s profile`}>
             <UserAvatar photoUrl={suggestion.photoUrl} style={styles.relocationConnectionAvatar} imageStyle={styles.relocationConnectionAvatarImage} fallback={<Text style={styles.relocationConnectionInitials}>{initials(suggestion.name)}</Text>} />
             <Text style={[styles.relocationConnectionName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{suggestion.name}</Text>
             <Text style={styles.peopleSuggestionReason} numberOfLines={2}>{suggestion.reason}</Text>
             {suggestion.ratingSummary?.count ? <Text style={styles.relocationConnectionRating}>⭐ {suggestion.ratingSummary.label}</Text> : null}
+            <TouchableOpacity style={styles.hidePeopleSuggestion} onPress={(event) => { event.stopPropagation(); dismissPeopleSuggestion(suggestion); }} accessibilityRole="button" accessibilityLabel={`Hide ${suggestion.name} from people suggestions`}><Text style={styles.hidePeopleSuggestionText}>Hide</Text></TouchableOpacity>
           </TouchableOpacity>)}
         </ScrollView>
       </View> : null}
@@ -2315,6 +2323,8 @@ const styles = StyleSheet.create({
   relocationConnectionName: { color: theme.colors.text, fontSize: 13, fontWeight: "900", marginTop: 8 },
   relocationConnectionReason: { color: "#65d8a8", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
   peopleSuggestionReason: { color: "#829bf5", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
+  hidePeopleSuggestion: { alignSelf: "flex-start", minHeight: 26, paddingHorizontal: 8, justifyContent: "center", marginTop: 6, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.14)" },
+  hidePeopleSuggestionText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" },
   relocationConnectionMonth: { color: theme.colors.muted, fontSize: 10, marginTop: 5 },
   relocationConnectionRating: { color: "#d89800", fontSize: 10, fontWeight: "900", marginTop: 5 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },

@@ -77,6 +77,10 @@ export function ProfileScreen({
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
   const [chatPhoneDiscoverable, setChatPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
+  const [peopleDiscoverable, setPeopleDiscoverable] = useState(Boolean(user?.peopleDiscoverable));
+  const [peopleMatchMutuals, setPeopleMatchMutuals] = useState(user?.peopleMatchMutuals !== false);
+  const [peopleMatchGroups, setPeopleMatchGroups] = useState(user?.peopleMatchGroups !== false);
+  const [shareMutualConnectionCount, setShareMutualConnectionCount] = useState(Boolean(user?.shareMutualConnectionCount));
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [localCity, setLocalCity] = useState(user?.localCity || "");
   const [relocationCity, setRelocationCity] = useState(user?.relocationCity || "");
@@ -134,6 +138,10 @@ export function ProfileScreen({
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
     setChatPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
+    setPeopleDiscoverable(Boolean(user?.peopleDiscoverable));
+    setPeopleMatchMutuals(user?.peopleMatchMutuals !== false);
+    setPeopleMatchGroups(user?.peopleMatchGroups !== false);
+    setShareMutualConnectionCount(Boolean(user?.shareMutualConnectionCount));
     setDateOfBirth(user?.dateOfBirth || "");
     setLocalCity(user?.localCity || "");
     setRelocationCity(user?.relocationCity || "");
@@ -144,7 +152,7 @@ export function ProfileScreen({
     setProfilePhoto(user?.profilePhotoUrl || "");
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.peopleDiscoverable, user?.peopleMatchMutuals, user?.peopleMatchGroups, user?.shareMutualConnectionCount, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -152,11 +160,15 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
+        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; peopleDiscoverable?: boolean; peopleMatchMutuals?: boolean; peopleMatchGroups?: boolean; shareMutualConnectionCount?: boolean; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
         setChatPhoneDiscoverable(draft.chatPhoneDiscoverable ?? Boolean(user.chatPhoneDiscoverable));
+        setPeopleDiscoverable(draft.peopleDiscoverable ?? Boolean(user.peopleDiscoverable));
+        setPeopleMatchMutuals(draft.peopleMatchMutuals ?? user.peopleMatchMutuals !== false);
+        setPeopleMatchGroups(draft.peopleMatchGroups ?? user.peopleMatchGroups !== false);
+        setShareMutualConnectionCount(draft.shareMutualConnectionCount ?? Boolean(user.shareMutualConnectionCount));
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
         setLocalCity(draft.localCity ?? user.localCity ?? "");
         setRelocationCity(draft.relocationCity ?? user.relocationCity ?? "");
@@ -218,10 +230,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, chatPhoneDiscoverable, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [chatPhoneDiscoverable, dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
+  }, [chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
 
   useEffect(() => {
     const query = (cityInputFocused === "local" ? localCity : cityInputFocused === "relocation" ? relocationCity : "").trim();
@@ -446,6 +458,10 @@ export function ProfileScreen({
         email,
         phone,
         chatPhoneDiscoverable,
+        peopleDiscoverable,
+        peopleMatchMutuals,
+        peopleMatchGroups,
+        shareMutualConnectionCount,
         dateOfBirth,
         localCity,
         relocationCity,
@@ -461,6 +477,10 @@ export function ProfileScreen({
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
       setChatPhoneDiscoverable(Boolean(payload.user?.chatPhoneDiscoverable));
+      setPeopleDiscoverable(Boolean(payload.user?.peopleDiscoverable));
+      setPeopleMatchMutuals(payload.user?.peopleMatchMutuals !== false);
+      setPeopleMatchGroups(payload.user?.peopleMatchGroups !== false);
+      setShareMutualConnectionCount(Boolean(payload.user?.shareMutualConnectionCount));
       setDateOfBirth(payload.user?.dateOfBirth || "");
       setLocalCity(payload.user?.localCity || "");
       setRelocationCity(payload.user?.relocationCity || "");
@@ -720,6 +740,31 @@ export function ProfileScreen({
                 <Text style={styles.relocationPrivacyHint}>Only people who already have your number in their contacts can find your FairFares profile.</Text>
               </View>
               <Switch value={chatPhoneDiscoverable} onValueChange={(value) => { setChatPhoneDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Let people with my phone number find me in Chitthi" />
+            </View>
+            <View style={styles.peopleMatchingSection}>
+              <Text style={styles.relocationTitle}>People you may know</Text>
+              <Text style={styles.relocationCopy}>FairFares uses only opted-in mutual connections and shared communities. It never uses your private messages, profile views, or live location.</Text>
+              <View style={styles.relocationPrivacyRow}>
+                <View style={styles.relocationPrivacyCopy}>
+                  <Text style={styles.relocationPrivacyTitle}>Appear in people suggestions</Text>
+                  <Text style={styles.relocationPrivacyHint}>Others can see you only when you both enable discovery.</Text>
+                </View>
+                <Switch value={peopleDiscoverable} onValueChange={(value) => { setPeopleDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Appear in people you may know suggestions" />
+              </View>
+              {peopleDiscoverable ? <>
+                <View style={styles.peopleMatchRow}>
+                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use mutual connections</Text><Text style={styles.relocationPrivacyHint}>A mutual connection is required before FairFares suggests a person.</Text></View>
+                  <Switch value={peopleMatchMutuals} onValueChange={(value) => { setPeopleMatchMutuals(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use mutual connections for people suggestions" />
+                </View>
+                <View style={styles.peopleMatchRow}>
+                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use shared communities</Text><Text style={styles.relocationPrivacyHint}>Shared groups can strengthen a mutual match; they do not create one by themselves.</Text></View>
+                  <Switch value={peopleMatchGroups} onValueChange={(value) => { setPeopleMatchGroups(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use shared communities for people suggestions" />
+                </View>
+                <View style={styles.peopleMatchRow}>
+                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show mutual-connection counts</Text><Text style={styles.relocationPrivacyHint}>Counts are visible only when both members choose to share them.</Text></View>
+                  <Switch value={shareMutualConnectionCount} onValueChange={(value) => { setShareMutualConnectionCount(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Show mutual connection counts" />
+                </View>
+              </> : null}
             </View>
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
@@ -1116,6 +1161,8 @@ const styles = StyleSheet.create({
   citySuggestionSecondary: { color: theme.colors.muted, fontSize: 11, marginTop: 1 },
   relocationPrivacyRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 3, padding: 11, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
   phoneDiscoveryRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 10, paddingBottom: 2 },
+  peopleMatchingSection: { width: "100%", marginTop: 12, paddingTop: 14, borderTopWidth: 1, borderTopColor: theme.colors.line, gap: 8 },
+  peopleMatchRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 5, paddingVertical: 4 },
   relocationPrivacyCopy: { flex: 1, minWidth: 0 },
   relocationPrivacyTitle: { color: theme.colors.text, fontSize: 13, fontWeight: "800" },
   relocationPrivacyHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },

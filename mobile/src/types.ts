@@ -91,6 +91,10 @@ export type FairFaresUser = {
   avatarStyle?: string;
   /** Lets this member appear only in phone-contact discovery. */
   chatPhoneDiscoverable?: boolean;
+  peopleDiscoverable?: boolean;
+  peopleMatchMutuals?: boolean;
+  peopleMatchGroups?: boolean;
+  shareMutualConnectionCount?: boolean;
   /** Member-controlled home city. This is never inferred from device location. */
   localCity?: string;
   /** Optional city the member plans to move to. */

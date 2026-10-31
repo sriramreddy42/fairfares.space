@@ -3666,6 +3666,10 @@ export type MobileProfileInput = {
   phone?: string;
   dateOfBirth?: string;
   chatPhoneDiscoverable?: boolean;
+  peopleDiscoverable?: boolean;
+  peopleMatchMutuals?: boolean;
+  peopleMatchGroups?: boolean;
+  shareMutualConnectionCount?: boolean;
   localCity?: string;
   relocationCity?: string;
   relocationMonth?: string;
@@ -3710,6 +3714,14 @@ export async function getRelocationSuggestions() {
 export async function getPeopleSuggestions() {
   const payload = await request<{ ok: boolean; suggestions: PeopleSuggestion[] }>("/api/mobile/people/suggestions");
   return payload.suggestions || [];
+}
+
+export async function hidePeopleSuggestion(suggestedUserId: number) {
+  return request<{ ok: boolean }>("/api/mobile/people/suggestions/hide", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ suggestedUserId }),
+  });
 }
 
 export async function updateMemberConnection(targetUserId: number, action: "request" | "accept" | "decline" | "remove" | "block") {
