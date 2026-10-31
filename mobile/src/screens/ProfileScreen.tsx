@@ -747,7 +747,7 @@ export function ProfileScreen({
               <View style={styles.relocationPrivacyRow}>
                 <View style={styles.relocationPrivacyCopy}>
                   <Text style={styles.relocationPrivacyTitle}>Appear in people suggestions</Text>
-                  <Text style={styles.relocationPrivacyHint}>Others can see you only when you both enable discovery.</Text>
+                  <Text style={styles.relocationPrivacyHint}>Turn this off anytime to stop appearing in People you may know.</Text>
                 </View>
                 <Switch value={peopleDiscoverable} onValueChange={(value) => { setPeopleDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Appear in people you may know suggestions" />
               </View>

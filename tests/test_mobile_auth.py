@@ -958,19 +958,19 @@ class MobileAuthTest(unittest.TestCase):
 
     def test_people_suggestions_require_reciprocal_opt_in_and_honor_hide_feedback(self):
         with app.db() as con:
-            def member(name, email, discoverable=1, share_count=0):
+            def member(name, email, discoverable=1, share_count=0, configured=0):
                 con.execute(
                     """INSERT INTO users
-                       (name, email, password_hash, is_verified, people_discoverable,
+                       (name, email, password_hash, is_verified, people_discoverable, people_discovery_configured,
                         people_match_mutuals, people_match_groups, share_mutual_connection_count)
-                       VALUES (?, ?, 'unused', 1, ?, 1, 1, ?)""",
-                    (name, email, discoverable, share_count),
+                       VALUES (?, ?, 'unused', 1, ?, ?, 1, 1, ?)""",
+                    (name, email, discoverable, configured, share_count),
                 )
                 return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
             viewer_id = member("Viewer", "viewer-optin@example.com", 1, 0)
             mutual_id = member("Mutual", "mutual-optin@example.com", 1, 1)
             visible_id = member("Visible", "visible-optin@example.com", 1, 0)
-            private_id = member("Private", "private-optin@example.com", 0, 1)
+            private_id = member("Private", "private-optin@example.com", 0, 1, 1)
             for left, right in ((viewer_id, mutual_id), (mutual_id, visible_id), (mutual_id, private_id)):
                 low_id, high_id = sorted((left, right))
                 con.execute(
@@ -996,6 +996,21 @@ class MobileAuthTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_people_discovery_defaults_on_and_shared_community_can_suggest(self):
+        with app.db() as con:
+            def member(name, email):
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES (?, ?, 'unused', 1)", (name, email))
+                return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            viewer_id = member("Viewer", "viewer-default@example.com")
+            group_member_id = member("Group Member", "group-default@example.com")
+            con.execute("INSERT INTO chat_communities (public_id, name) VALUES (?, ?)", ("FFC-DEFAULT-PEOPLE", "Denver arrivals"))
+            group_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)", (group_id, viewer_id))
+            con.execute("INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)", (group_id, group_member_id))
+        suggestions = app.people_suggestions_for_user(viewer_id)
+        self.assertEqual([item["id"] for item in suggestions], [group_member_id])
+        self.assertEqual(suggestions[0]["reason"], "1 shared community")
 
     def test_profile_save_preserves_durable_avatar_when_client_returns_delivery_url(self):
         stored_photo = f"r2://{app.R2_BUCKET_NAME}/fairfares/profiles/persistent-avatar.png"
