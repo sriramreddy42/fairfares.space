@@ -19200,6 +19200,44 @@ def member_city_map_location(city: object) -> dict[str, object]:
     }
 
 
+def housing_post_location_intent(payload: dict, category: str, destination: str) -> dict | None:
+    raw = payload.get("housingLocation")
+    if raw is None:
+        return None  # Older clients never change a profile implicitly.
+    if category not in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} or not isinstance(raw, dict):
+        raise ValueError("Location confirmation is only available for housing posts.")
+    current = community_post_city_label(raw.get("currentCity"))
+    if not current or not destination:
+        raise ValueError("Choose your current city and the listing city.")
+    if not isinstance(raw.get("moving"), bool) or not isinstance(raw.get("showOnMap"), bool):
+        raise ValueError("Confirm whether you are moving and want to appear on the map.")
+    moving = raw["moving"]
+    if moving and current.casefold() == destination.casefold():
+        raise ValueError("Your destination must differ from your current city.")
+    month = clean_text_value(raw.get("moveMonth"), 20) if moving else ""
+    if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise ValueError("Use YYYY-MM for the move month, or leave it blank.")
+    if payload.get("videoUpload"):
+        raise ValueError("Finish uploading your housing video before publishing location changes.")
+    return {"currentCity": current, "destination": destination, "moving": moving,
+            "moveMonth": month, "showOnMap": moving and raw["showOnMap"]}
+
+
+
+def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: dict | None) -> None:
+    if intent is None:
+        return
+    # Only fill a missing current city. A new listing never overwrites home.
+    con.execute("UPDATE users SET local_city = ? WHERE id = ? AND trim(local_city) = ''",
+                (intent["currentCity"], user_id))
+    if intent["moving"]:
+        con.execute(
+            "UPDATE users SET relocation_city = ?, relocation_month = ?, relocation_discoverable = ? WHERE id = ?",
+            (intent["destination"], intent["moveMonth"], int(intent["showOnMap"]), user_id),
+        )
+
+
+
 def people_map_city_pool(viewer_id: int, city: object, company_or_school: object = "") -> dict[str, object]:
     """Return an eligible, city-centre-only Friends Map pool.
 
@@ -19216,27 +19254,25 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
     try:
         with db() as con:
             eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
-                                  AND suspended_at IS NULL AND local_connection_discoverable = 1
-                                  AND lower(trim(local_city)) = lower(trim(?))
-                                  AND (people_discovery_configured = 0 OR people_discoverable = 1)"""
+                AND suspended_at IS NULL
+                AND ((local_connection_discoverable = 1 AND lower(trim(local_city)) = lower(trim(?)))
+                  OR (relocation_discoverable = 1 AND lower(trim(relocation_city)) = lower(trim(?))))
+                AND (people_discovery_configured = 0 OR people_discoverable = 1)"""
+            args = (int(viewer_id or 0), target_city, target_city)
             count_row = con.execute(
                 f"""SELECT COUNT(*) AS total,
-                           SUM(CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
+                    SUM(CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
                     FROM users WHERE {eligibility_where}""",
-                (affiliation, affiliation, int(viewer_id or 0), target_city),
+                (affiliation, affiliation, *args),
             ).fetchone()
             rows = con.execute(
-                """SELECT id, name, profile_photo_url, relocation_company,
-                          people_discoverable, people_discovery_configured
-                   FROM users
-                   WHERE id != ? AND guest_account = 0 AND is_verified = 1
-                     AND suspended_at IS NULL AND local_connection_discoverable = 1
-                     AND lower(trim(local_city)) = lower(trim(?))
-                     AND (people_discovery_configured = 0 OR people_discoverable = 1)
-                   ORDER BY CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 0 ELSE 1 END,
-                            name COLLATE NOCASE, id
-                   LIMIT 24""",
-                (int(viewer_id or 0), target_city, affiliation, affiliation),
+                f"""SELECT id, name, profile_photo_url, relocation_company, local_city,
+                    relocation_city, relocation_month, relocation_discoverable,
+                    people_discoverable, people_discovery_configured
+                    FROM users WHERE {eligibility_where}
+                    ORDER BY CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 0 ELSE 1 END,
+                    name COLLATE NOCASE, id LIMIT 24""",
+                (*args, affiliation, affiliation),
             ).fetchall()
     except sqlite3.Error:
         rows = []
@@ -19250,6 +19286,8 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "city": target["city"],
         "latitude": target["latitude"],
         "longitude": target["longitude"],
+        "moving": bool(row_value(row, "relocation_discoverable") and str(row_value(row, "relocation_city") or "").strip().casefold() == target_city.casefold() and str(row_value(row, "local_city") or "").strip().casefold() != target_city.casefold()),
+        "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and str(row_value(row, "relocation_city") or "").strip().casefold() == target_city.casefold() else "",
         "companyMatch": bool(affiliation and str(row_value(row, "relocation_company") or "").strip().casefold() == affiliation),
     } for row in eligible[:24]]
     return {**target, "total": total, "companyMatches": company_matches, "people": people}
@@ -45840,6 +45878,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not city and not group_public_id:
             self.send_json({"ok": False, "error": "Choose a city and state before publishing so nearby members can find your post."}, 400)
             return
+        try:
+            housing_location = housing_post_location_intent(payload, category, city)
+            if housing_location and row_value(user, "local_city"):
+                saved_city = community_post_city_label(row_value(user, "local_city"))
+                if saved_city.casefold() != housing_location["currentCity"].casefold():
+                    raise ValueError("Your current city changed. Reopen the form and confirm your move.")
+        except ValueError as error:
+            self.send_json({"ok": False, "error": str(error)}, 400)
+            return
         expires_in_days = max(7, min(int(float_from_value(payload.get("expiresInDays")) or 45), 90))
         expires_at = (datetime.utcnow() + timedelta(days=expires_in_days)).isoformat(timespec="seconds")
         if post_type not in COMMUNITY_POST_TYPES or category not in COMMUNITY_CATEGORIES:
@@ -45932,6 +45979,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (public_id, int(user["id"]), community_id, post_type, title, body, category, city, area, link_url, json.dumps(details, separators=(",", ":")), expires_at, "UPLOADING" if video_upload else "READY", now, now),
             )
             database_id = int(cursor.lastrowid)
+            apply_housing_post_location(con, int(user["id"]), housing_location)
             for index, (media_data, media_type) in enumerate(valid_media, start=1):
                 if media_type == "VIDEO" and is_saved_community_video(media_data, int(user["id"])):
                     con.execute(
@@ -45947,7 +45995,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if category == "HAVE_PLACE":
             invalidate_mobile_search_cache("housing")
         row = community_post_rows(int(user["id"]), post_public_id=public_id, limit=1)[0]
-        self.send_json({"ok": True, "post": community_post_payload(row, int(user["id"])), "videoUpload": upload_authorization}, 201)
+        with db() as con:
+            updated_user = con.execute("SELECT * FROM users WHERE id = ?", (int(user["id"]),)).fetchone()
+        self.send_json({"ok": True, "user": mobile_user_payload(updated_user), "post": community_post_payload(row, int(user["id"])), "videoUpload": upload_authorization}, 201)
 
     def api_mobile_authorize_community_video(self) -> None:
         user = self.current_user()
@@ -46717,6 +46767,15 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         title = clean_text_value(payload.get("title"), 140)
         description = clean_multiline_text_value(payload.get("description"), 1800)
         city = clean_text_value(payload.get("city"), 120)
+        try:
+            housing_location = None if editing_public_id else housing_post_location_intent(payload, mode, community_post_city_label(city))
+            if housing_location and row_value(user, "local_city"):
+                saved_city = community_post_city_label(row_value(user, "local_city"))
+                if saved_city.casefold() != housing_location["currentCity"].casefold():
+                    raise ValueError("Your current city changed. Reopen the form and confirm your move.")
+        except ValueError as error:
+            self.send_json({"ok": False, "error": str(error)}, 400)
+            return
         street_address = clean_text_value(payload.get("streetAddress") or payload.get("street_address"), 180)
         zip_code = clean_text_value(payload.get("zipCode") or payload.get("zip_code"), 20)
         area = clean_text_value(payload.get("area") or payload.get("area_or_apartment"), 140)
@@ -47071,6 +47130,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 ),
                 )
                 post_id = int(cursor.lastrowid)
+            apply_housing_post_location(con, int(user["id"]), housing_location)
             image_sort_start = existing_image_count if existing_listing else 0
             for index, image_value in enumerate(valid_mobile_images, start=image_sort_start + 1):
                 image_url = save_data_url_payload_locally(
@@ -47118,7 +47178,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 user_id=int(user["id"]),
                 metadata={"source": "housing_create_api"},
             )
-        self.send_json({"ok": True, "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
+        with db() as con:
+            updated_user = con.execute("SELECT * FROM users WHERE id = ?", (int(user["id"]),)).fetchone()
+        self.send_json({"ok": True, "user": mobile_user_payload(updated_user), "post": mobile_housing_post_payload(row)}, 200 if existing_listing else 201)
 
     def api_mobile_complete_housing(self) -> None:
         """Let a poster explicitly confirm a successful FairFares housing outcome."""
