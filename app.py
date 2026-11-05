@@ -19176,6 +19176,85 @@ def people_discovery_enabled(user: sqlite3.Row | dict[str, object] | None) -> bo
     return bool(int(row_value(user, "people_discoverable") or 0))
 
 
+def member_city_map_location(city: object) -> dict[str, object]:
+    """Return a city-centre only; this is never a member's live location."""
+    label = clean_text_value(city, 160)
+    if not label:
+        return {"city": "", "latitude": 0.0, "longitude": 0.0}
+    # The housing place resolver has curated metro fallbacks for our active
+    # cities (including Denver and its suburbs), whereas the imported global
+    # catalogue may not have been loaded on a fresh/local database yet.
+    point = accommodation_location_point(label, allow_refresh=False)
+    if point:
+        return {
+            "city": label,
+            "latitude": float(point.get("lat") or 0),
+            "longitude": float(point.get("lng") or 0),
+        }
+    places = location_catalog_suggestions(label, limit=1, cities_only=True)
+    place = places[0] if places else {}
+    return {
+        "city": label,
+        "latitude": float(place.get("lat") or 0) if isinstance(place, dict) else 0.0,
+        "longitude": float(place.get("lng") or 0) if isinstance(place, dict) else 0.0,
+    }
+
+
+def people_map_city_pool(viewer_id: int, city: object, company_or_school: object = "") -> dict[str, object]:
+    """Return an eligible, city-centre-only Friends Map pool.
+
+    A pool contains a representative sample plus a total count—never member
+    addresses or live device locations. Only members who chose local
+    connection discovery are eligible.
+    """
+    target_city = clean_text_value(city, 160)
+    if not target_city:
+        return {"city": "", "latitude": 0.0, "longitude": 0.0, "total": 0, "companyMatches": 0, "people": []}
+    target = member_city_map_location(target_city)
+    affiliation = clean_text_value(company_or_school, 120).casefold()
+    count_row: sqlite3.Row | None = None
+    try:
+        with db() as con:
+            eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
+                                  AND suspended_at IS NULL AND local_connection_discoverable = 1
+                                  AND lower(trim(local_city)) = lower(trim(?))
+                                  AND (people_discovery_configured = 0 OR people_discoverable = 1)"""
+            count_row = con.execute(
+                f"""SELECT COUNT(*) AS total,
+                           SUM(CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
+                    FROM users WHERE {eligibility_where}""",
+                (affiliation, affiliation, int(viewer_id or 0), target_city),
+            ).fetchone()
+            rows = con.execute(
+                """SELECT id, name, profile_photo_url, relocation_company,
+                          people_discoverable, people_discovery_configured
+                   FROM users
+                   WHERE id != ? AND guest_account = 0 AND is_verified = 1
+                     AND suspended_at IS NULL AND local_connection_discoverable = 1
+                     AND lower(trim(local_city)) = lower(trim(?))
+                     AND (people_discovery_configured = 0 OR people_discoverable = 1)
+                   ORDER BY CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 0 ELSE 1 END,
+                            name COLLATE NOCASE, id
+                   LIMIT 24""",
+                (int(viewer_id or 0), target_city, affiliation, affiliation),
+            ).fetchall()
+    except sqlite3.Error:
+        rows = []
+    eligible = [row for row in rows if people_discovery_enabled(row)]
+    total = int(row_value(count_row, "total") or 0) if count_row else 0
+    company_matches = int(row_value(count_row, "company_matches") or 0) if count_row else 0
+    people = [{
+        "id": int(row_value(row, "id") or 0),
+        "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+        "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "id") or 0)),
+        "city": target["city"],
+        "latitude": target["latitude"],
+        "longitude": target["longitude"],
+        "companyMatch": bool(affiliation and str(row_value(row, "relocation_company") or "").strip().casefold() == affiliation),
+    } for row in eligible[:24]]
+    return {**target, "total": total, "companyMatches": company_matches, "people": people}
+
+
 def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
     """Suggest people through reciprocal, opt-in mutual connections.
 
@@ -28977,6 +29056,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/relocation/suggestions":
             self.api_mobile_relocation_suggestions()
+            return
+        if parsed.path == "/api/mobile/people/map":
+            self.api_mobile_people_map(parsed)
             return
         if parsed.path == "/api/mobile/people/suggestions":
             self.api_mobile_people_suggestions()
@@ -43593,6 +43675,16 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         user_id = int(row_value(user, "id") or 0)
         self.send_json({"ok": True, "suggestions": relocation_suggestions_for_user(user_id)})
+
+    def api_mobile_people_map(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to explore the friends map."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        city = params.get("city", [""])[0]
+        company_or_school = params.get("company", [""])[0]
+        self.send_json({"ok": True, "area": people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school)})
 
     def api_mobile_people_suggestions(self) -> None:
         user = self.current_user()

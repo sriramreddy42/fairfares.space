@@ -106,6 +106,35 @@ class MobileAuthTest(unittest.TestCase):
             con.execute("UPDATE accommodation_posts SET visibility_status = 'EXPIRED' WHERE id = ?", (post_id,))
         self.assertEqual(app.housing_unread_inquiries_by_post(owner_id), {})
 
+    def test_people_map_city_pool_visibility_and_coordinates(self):
+        with app.db() as con:
+            for i in range(30):
+                con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city, local_connection_discoverable, relocation_company, people_discovery_configured, people_discoverable) VALUES (?, ?, 'unused', 1, 'Denver, CO', 1, 'Amazon', 1, 0)", (f"Hidden {i}", f"hidden-map-{i}@example.com"))
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city, local_connection_discoverable, relocation_company) VALUES ('Visible', 'visible-map@example.com', 'unused', 1, 'Denver, CO', 1, 'Amazon')")
+            member_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+        pool = app.people_map_city_pool(0, "Denver, CO", " amazon ")
+        self.assertEqual(pool["total"], 1)
+        self.assertEqual(pool["companyMatches"], 1)
+        self.assertEqual([p["id"] for p in pool["people"]], [member_id])
+        self.assertTrue(pool["people"][0]["companyMatch"])
+        self.assertAlmostEqual(pool["latitude"], 39.74, delta=.2)
+        self.assertAlmostEqual(pool["longitude"], -104.99, delta=.2)
+        empty = app.people_map_city_pool(0, "Centennial, CO", "Amazon")
+        self.assertEqual(empty["total"], 0)
+        self.assertNotEqual((empty["latitude"], empty["longitude"]), (0, 0))
+
+    def test_people_map_route_requires_login(self):
+        server, thread = self.start_server()
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/api/mobile/people/map?city=Denver")
+            self.assertEqual(caught.exception.code, 401)
+            self.assertTrue(json.loads(caught.exception.read())["login_required"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")
