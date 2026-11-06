@@ -9029,6 +9029,7 @@ def init_db() -> None:
                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        backfill_existing_housing_member_cities(con)
         receipt_migration = "explicit_per_recipient_chat_receipts_v1"
         if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (receipt_migration,)).fetchone():
             # Preserve historical per-person read cursors, but never copy a
@@ -19198,6 +19199,57 @@ def member_city_map_location(city: object) -> dict[str, object]:
         "latitude": float(place.get("lat") or 0) if isinstance(place, dict) else 0.0,
         "longitude": float(place.get("lng") or 0) if isinstance(place, dict) else 0.0,
     }
+
+
+def backfill_existing_housing_member_cities(con: sqlite3.Connection) -> int:
+    """One-time city-only backfill; preserve saved locations and visibility."""
+    key = "existing_housing_member_cities_v1"
+    if con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (key,)).fetchone():
+        return 0
+    con.execute("""CREATE TABLE IF NOT EXISTS housing_member_city_backfill_audit (
+        user_id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, source_id TEXT NOT NULL,
+        old_current_city TEXT NOT NULL, old_moving_city TEXT NOT NULL,
+        new_current_city TEXT NOT NULL, new_moving_city TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    rows = con.execute("""
+        SELECT user_id, city, source_kind, source_id, created_at FROM (
+            SELECT user_id, city, 'HOUSING' AS source_kind, public_id AS source_id, created_at
+            FROM accommodation_posts WHERE visibility_status IN ('ACTIVE', 'EXPIRED')
+            UNION ALL
+            SELECT author_id, city, 'ASK', public_id, created_at FROM ask_community_posts
+            WHERE category IN ('HAVE_PLACE', 'NEED_PLACE', 'NEED_ROOMMATE')
+              AND status IN ('PUBLISHED', 'LOCKED') AND upload_state = 'READY'
+              AND COALESCE(source_kind, '') != 'HOUSING'
+        ) WHERE user_id IS NOT NULL AND trim(city) != ''
+        ORDER BY datetime(created_at) DESC, source_kind, source_id DESC
+    """).fetchall()
+    seen = set()
+    changed = 0
+    for row in rows:
+        uid = int(row["user_id"])
+        if uid in seen:
+            continue
+        city = community_post_city_label(row["city"])
+        if not city:
+            continue
+        seen.add(uid)
+        user = con.execute("SELECT local_city, relocation_city FROM users WHERE id = ? AND guest_account = 0 AND suspended_at IS NULL", (uid,)).fetchone()
+        if not user:
+            continue
+        current = str(user["local_city"] or "").strip()
+        moving = str(user["relocation_city"] or "").strip()
+        new_current = current or city
+        new_moving = moving or city
+        if (current, moving) == (new_current, new_moving):
+            continue
+        con.execute("INSERT INTO housing_member_city_backfill_audit (user_id, source_kind, source_id, old_current_city, old_moving_city, new_current_city, new_moving_city) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (uid, row["source_kind"], row["source_id"], current, moving, new_current, new_moving))
+        con.execute("UPDATE users SET local_city = ?, relocation_city = ? WHERE id = ?",
+                    (new_current, new_moving, uid))
+        changed += 1
+    con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (key,))
+    return changed
 
 
 def housing_post_location_intent(payload: dict, category: str, destination: str) -> dict | None:

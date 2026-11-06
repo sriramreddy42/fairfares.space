@@ -109,6 +109,31 @@ class HousingMoveTest(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_existing_listing_backfill_uses_latest_city_once_and_preserves_consent(self):
+        with app.db() as con:
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'existing_housing_member_cities_v1'")
+            con.execute("UPDATE users SET local_city = '', relocation_city = '', relocation_discoverable = 0 WHERE id = ?", (self.uid,))
+            for key, city, date in [("old", "Houston, TX", "2026-01-01"), ("latest", "Denver, CO", "2026-02-01")]:
+                con.execute("INSERT INTO accommodation_posts (public_id, user_id, post_mode, city, created_at) VALUES (?, ?, 'NEED_PLACE', ?, ?)", (key, self.uid, city, date))
+            self.assertEqual(app.backfill_existing_housing_member_cities(con), 1)
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.uid,)).fetchone()
+            self.assertEqual((user["local_city"], user["relocation_city"]), ("Denver, CO", "Denver, CO"))
+            self.assertEqual(user["relocation_discoverable"], 0)
+            con.execute("UPDATE users SET local_city = 'Austin, TX' WHERE id = ?", (self.uid,))
+            self.assertEqual(app.backfill_existing_housing_member_cities(con), 0)
+            self.assertEqual(con.execute("SELECT local_city FROM users WHERE id = ?", (self.uid,)).fetchone()[0], "Austin, TX")
+
+    def test_existing_listing_backfill_preserves_known_origin(self):
+        with app.db() as con:
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'existing_housing_member_cities_v1'")
+            con.execute("INSERT INTO ask_community_posts (public_id, author_id, title, body, category, city) VALUES ('move-ask', ?, 'Need a place', 'Looking for a home', 'NEED_ROOMMATE', 'Denver, CO')", (self.uid,))
+            self.assertEqual(app.backfill_existing_housing_member_cities(con), 1)
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.uid,)).fetchone()
+            self.assertEqual((user["local_city"], user["relocation_city"]), ("Houston, TX", "Denver, CO"))
+            audit = con.execute("SELECT * FROM housing_member_city_backfill_audit WHERE user_id = ?", (self.uid,)).fetchone()
+            self.assertEqual(audit["old_current_city"], "Houston, TX")
+            self.assertEqual(audit["source_kind"], "ASK")
+
     def test_transaction_rollback_does_not_save_move(self):
         with self.assertRaises(RuntimeError):
             with app.db() as con:
