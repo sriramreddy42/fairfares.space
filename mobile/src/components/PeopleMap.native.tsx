@@ -7,24 +7,33 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
   const points = useMemo(() => members.filter((member) => Number.isFinite(member.latitude) && Number.isFinite(member.longitude) && !(member.latitude === 0 && member.longitude === 0)), [members]);
-  // A city is an area, not a precise location. Members in the same city share a
-  // single friendly cluster, so dense places remain readable and never expose a
-  // street-level position.
-  const areas = useMemo(() => {
-    const grouped = new Map<string, PeopleMapMember[]>();
-    for (const member of points) {
-      const key = member.city.trim().toLocaleLowerCase() || `${member.latitude.toFixed(2)},${member.longitude.toFixed(2)}`;
-      grouped.set(key, [...(grouped.get(key) || []), member]);
-    }
-    return [...grouped.values()].map((areaMembers) => ({
-      key: `${areaMembers[0].city}-${areaMembers[0].latitude}-${areaMembers[0].longitude}`,
-      city: areaMembers[0].city || "Nearby",
-      latitude: areaMembers.reduce((total, member) => total + member.latitude, 0) / areaMembers.length,
-      longitude: areaMembers.reduce((total, member) => total + member.longitude, 0) / areaMembers.length,
-      members: areaMembers,
-      total: Math.max(areaMembers.length, ...areaMembers.map((member) => Number(member.areaTotal || 1))),
-      companyMatches: Math.max(...areaMembers.map((member) => Number(member.companyMatchCount || 0))),
-    }));
+  // Each person gets their own pin, but every pin is deliberately offset around
+  // the city centre. This gives a useful visual spread without representing an
+  // address, device position, or exact neighbourhood.
+  const markers = useMemo(() => {
+    const groups = new Map<string, PeopleMapMember[]>();
+    points.forEach((member) => {
+      const cityKey = member.city.trim().toLocaleLowerCase() || `${member.latitude.toFixed(2)},${member.longitude.toFixed(2)}`;
+      groups.set(cityKey, [...(groups.get(cityKey) || []), member]);
+    });
+    return [...groups.entries()].flatMap(([cityKey, cityMembers]) => cityMembers
+      .sort((left, right) => left.id - right.id)
+      .map((member, index) => {
+        // Space a city's members around concentric city-level rings. The outer
+        // ring stays within the general city area and is deliberately unrelated
+        // to homes, listings, or live device positions.
+        const ringIndex = Math.floor(index / 8);
+        const slots = Math.min(8, cityMembers.length - ringIndex * 8);
+        const slot = index % 8;
+        const angle = ((stableHash(cityKey) % 360) + (slot * 360) / slots) * Math.PI / 180;
+        const radius = .018 + ringIndex * .016;
+        return {
+          ...member,
+          key: `${member.id}-${cityKey}`,
+          latitude: member.latitude + Math.cos(angle) * radius,
+          longitude: member.longitude + Math.sin(angle) * radius * .82,
+        };
+      }));
   }, [points]);
 
   useEffect(() => {
@@ -35,9 +44,9 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
         return;
       }
       if (points.length) {
-        if (areas.length === 1) {
-          const area = areas[0];
-          mapRef.current?.animateToRegion({ latitude: area.latitude, longitude: area.longitude, latitudeDelta: .18, longitudeDelta: .18 }, 300);
+        if (markers.length === 1) {
+          const marker = markers[0];
+          mapRef.current?.animateToRegion({ latitude: marker.latitude, longitude: marker.longitude, latitudeDelta: .18, longitudeDelta: .18 }, 300);
           return;
         }
         mapRef.current?.fitToCoordinates(points.map((member) => ({ latitude: member.latitude, longitude: member.longitude })), {
@@ -51,7 +60,7 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
       }
     }, 180);
     return () => clearTimeout(timer);
-  }, [areas, focus, focusSelected, points, mapReady]);
+  }, [focus, focusSelected, markers, points, mapReady]);
 
   const center = (focusSelected ? focus : null) || points[0] || focus || { latitude: 20, longitude: 0 };
   return <MapView
@@ -70,19 +79,21 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
     moveOnMarkerPress={false}
     onRegionChangeComplete={onRegionChangeComplete}
   >
-    {areas.map((area, index) => <PeopleMapAreaPin key={area.key} area={area} index={index} onPress={onAreaPress} />)}
+    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} onPress={onAreaPress} />)}
   </MapView>;
 }
 
-function PeopleMapAreaPin({ area, index, onPress }: { onPress?: () => void; area: { city: string; latitude: number; longitude: number; members: PeopleMapMember[]; total: number; companyMatches: number }; index: number }) {
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+
+function PeopleMapPersonPin({ member, index, onPress }: { onPress?: () => void; member: PeopleMapMember & { latitude: number; longitude: number }; index: number }) {
   const float = useRef(new Animated.Value(0)).current;
-  const primary = area.members[0];
-  const isContact = area.members.some((member) => member.source === "CONTACT");
-  const count = area.total;
-  const hasCompanyMatch = area.companyMatches > 0;
-  const firstName = primary.name.trim().split(/\s+/)[0] || "Friend";
-  const label = count === 1 ? firstName : area.city.replace(/,\s*[A-Z]{2}$/i, "");
-  const housingLabel = housingIntentLabel(primary.housingIntent);
+  const isContact = member.source === "CONTACT";
+  const hasCompanyMatch = Boolean(member.boosted);
+  const housingLabel = housingIntentLabel(member.housingIntent);
 
   useEffect(() => {
     // Keep the map alive without a storm of animated markers on a dense map.
@@ -99,26 +110,24 @@ function PeopleMapAreaPin({ area, index, onPress }: { onPress?: () => void; area
 
   return <Marker
     onPress={onPress}
-    coordinate={{ latitude: area.latitude, longitude: area.longitude }}
-    title={count === 1 ? primary.name : `${count} people in ${area.city}`}
-    description={area.city}
+    coordinate={{ latitude: member.latitude, longitude: member.longitude }}
+    title={member.name}
+    description={member.city}
     anchor={{ x: .5, y: .52 }}
     tracksViewChanges={index < 6}
   >
-    <Animated.View style={[styles.pinWrap, { transform: [{ scale: hasCompanyMatch ? 1.15 + Math.min(.35, Math.log2(area.companyMatches + 1) * .07) : 1 }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
+    <Animated.View style={[styles.pinWrap, { transform: [{ scale: hasCompanyMatch ? 1.16 : 1 }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
       <View style={[styles.pinHalo, isContact && styles.pinHaloContact, hasCompanyMatch && styles.pinHaloBoosted]} />
       <View style={[styles.marker, isContact && styles.markerContact, hasCompanyMatch && styles.markerBoosted]}>
-        {primary.photoUrl ? <Image source={{ uri: primary.photoUrl }} style={styles.markerImage} /> : <Text style={styles.markerInitial}>{primary.name.slice(0, 1).toUpperCase()}</Text>}
-        <View style={[styles.pinStatus, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{count > 1 ? count : isContact ? "✓" : "✦"}</Text></View>
+        {member.photoUrl ? <Image source={{ uri: member.photoUrl }} style={styles.markerImage} /> : <Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
+        <View style={[styles.pinStatus, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
-      <View style={styles.pinNameTag}><Text style={styles.pinName} numberOfLines={1}>{label}</Text><View style={[styles.pinDot, isContact && styles.pinDotContact]} /></View>
-      {housingLabel ? <View style={styles.pinIntentTag}><Text style={styles.pinIntent}>{housingLabel}</Text></View> : null}
     </Animated.View>
     <Callout tooltip>
       <View style={styles.callout}>
-        <Text style={styles.calloutTitle}>{count === 1 ? primary.name : `${count} people around ${area.city}`}</Text>
-        {hasCompanyMatch ? <Text style={styles.calloutMatch}>{area.companyMatches} company / school match{area.companyMatches === 1 ? "" : "es"}</Text> : null}
-        <Text style={styles.calloutCopy} numberOfLines={3}>{area.members.map((member) => `${member.name} · ${housingIntentLabel(member.housingIntent) || (member.moving ? `Moving to ${area.city}` : "Living here")}`).join("\n")}</Text>
+        <Text style={styles.calloutTitle}>{member.name}</Text>
+        {hasCompanyMatch ? <Text style={styles.calloutMatch}>Company / school match</Text> : null}
+        <Text style={styles.calloutCopy}>{housingLabel || (member.moving ? `Moving to ${member.city}` : `In ${member.city}`)}</Text>
         <Text style={styles.calloutPrivacy}>City area only</Text>
       </View>
     </Callout>
@@ -146,12 +155,6 @@ const styles = StyleSheet.create({
   pinStatusContact: { backgroundColor: "#12a876" },
   pinStatusBoosted: { backgroundColor: "#dc9700" },
   pinStatusText: { color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
-  pinNameTag: { maxWidth: 86, minHeight: 20, marginTop: 3, flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 10, borderWidth: 1, borderColor: "rgba(20, 39, 63, .14)", backgroundColor: "rgba(255,255,255,.96)", paddingHorizontal: 6, shadowColor: "#173a32", shadowOpacity: .14, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
-  pinName: { maxWidth: 58, color: "#18322d", fontSize: 9, lineHeight: 11, fontWeight: "900" },
-  pinIntentTag: { maxWidth: 88, marginTop: 2, borderRadius: 8, backgroundColor: "rgba(16,43,37,.90)", paddingHorizontal: 5, paddingVertical: 2 },
-  pinIntent: { color: "#ffffff", fontSize: 8, lineHeight: 10, fontWeight: "900" },
-  pinDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#7189ff" },
-  pinDotContact: { backgroundColor: "#20c995" },
   callout: { width: 188, borderRadius: 14, backgroundColor: "#ffffff", paddingHorizontal: 12, paddingVertical: 10, shadowColor: "#0a1f19", shadowOpacity: .25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   calloutTitle: { color: "#102b25", fontSize: 12, fontWeight: "900" },
   calloutCopy: { color: "#526560", fontSize: 10, lineHeight: 14, marginTop: 3 },
