@@ -9030,6 +9030,7 @@ def init_db() -> None:
                )"""
         )
         backfill_existing_housing_member_cities(con)
+        activate_existing_housing_map_members(con)
         receipt_migration = "explicit_per_recipient_chat_receipts_v1"
         if not con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (receipt_migration,)).fetchone():
             # Preserve historical per-person read cursors, but never copy a
@@ -19252,6 +19253,55 @@ def backfill_existing_housing_member_cities(con: sqlite3.Connection) -> int:
     return changed
 
 
+def activate_existing_housing_map_members(con: sqlite3.Connection) -> int:
+    """Show legacy housing authors at their listing city on the city-level map."""
+    key = "existing_housing_member_map_activation_v1"
+    if con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (key,)).fetchone():
+        return 0
+    rows = con.execute("""
+        SELECT user_id, city, source_kind, source_id, created_at FROM (
+            SELECT user_id, city, 'HOUSING' AS source_kind, public_id AS source_id, created_at
+            FROM accommodation_posts WHERE visibility_status IN ('ACTIVE', 'EXPIRED')
+            UNION ALL
+            SELECT author_id, city, 'ASK', public_id, created_at FROM ask_community_posts
+            WHERE category IN ('HAVE_PLACE', 'NEED_PLACE', 'NEED_ROOMMATE')
+              AND status IN ('PUBLISHED', 'LOCKED') AND upload_state = 'READY'
+              AND COALESCE(source_kind, '') != 'HOUSING'
+        ) WHERE user_id IS NOT NULL AND trim(city) != ''
+        ORDER BY datetime(created_at) DESC, source_kind, source_id DESC
+    """).fetchall()
+    seen: set[int] = set()
+    changed = 0
+    for row in rows:
+        uid = int(row["user_id"])
+        if uid in seen:
+            continue
+        city = community_post_city_label(row["city"])
+        if not city:
+            continue
+        seen.add(uid)
+        user = con.execute(
+            "SELECT id, local_city, relocation_city, local_connection_discoverable, relocation_discoverable "
+            "FROM users WHERE id = ? AND guest_account = 0 AND suspended_at IS NULL",
+            (uid,),
+        ).fetchone()
+        if not user:
+            continue
+        if (str(user["local_city"] or "") == city and str(user["relocation_city"] or "") == city
+                and int(user["local_connection_discoverable"] or 0) == 1
+                and int(user["relocation_discoverable"] or 0) == 0):
+            continue
+        con.execute(
+            """UPDATE users SET local_city = ?, relocation_city = ?,
+               local_connection_discoverable = 1, relocation_discoverable = 0
+               WHERE id = ?""",
+            (city, city, uid),
+        )
+        changed += 1
+    con.execute("INSERT INTO app_data_migrations (migration_key) VALUES (?)", (key,))
+    return changed
+
+
 def housing_post_location_intent(payload: dict, category: str, destination: str) -> dict | None:
     raw = payload.get("housingLocation")
     if raw is None:
@@ -19272,7 +19322,8 @@ def housing_post_location_intent(payload: dict, category: str, destination: str)
     if payload.get("videoUpload"):
         raise ValueError("Finish uploading your housing video before publishing location changes.")
     return {"currentCity": current, "destination": destination, "moving": moving,
-            "moveMonth": month, "showOnMap": moving and raw["showOnMap"]}
+            "moveMonth": month, "showOnMap": moving and raw["showOnMap"],
+            "showCurrentOnMap": raw.get("showCurrentOnMap") is True}
 
 
 
@@ -19282,6 +19333,8 @@ def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: d
     # Only fill a missing current city. A new listing never overwrites home.
     con.execute("UPDATE users SET local_city = ? WHERE id = ? AND trim(local_city) = ''",
                 (intent["currentCity"], user_id))
+    if intent.get("showCurrentOnMap"):
+        con.execute("UPDATE users SET local_connection_discoverable = 1 WHERE id = ?", (user_id,))
     if intent["moving"]:
         con.execute(
             "UPDATE users SET relocation_city = ?, relocation_month = ?, relocation_discoverable = ? WHERE id = ?",
@@ -19290,30 +19343,44 @@ def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: d
 
 
 
-def people_map_city_pool(viewer_id: int, city: object, company_or_school: object = "") -> dict[str, object]:
+def people_map_city_key(value: object) -> str:
+    return (normalize_member_city(value) or community_post_city_label(value)).casefold()
+
+
+def people_map_company_key(value: object) -> str:
+    words = re.sub(r"[^\w\s]", " ", clean_text_value(value, 120).casefold()).split()
+    while words and words[-1] in {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation"}:
+        words.pop()
+    return " ".join(words)
+
+
+def people_map_city_pool(viewer_id: int, city: object, company_or_school: object = "", offset: int = 0) -> dict[str, object]:
     """Return an eligible, city-centre-only Friends Map pool.
 
     A pool contains a representative sample plus a total count—never member
     addresses or live device locations. Only members who chose local
     connection discovery are eligible.
     """
-    target_city = clean_text_value(city, 160)
+    target_city = normalize_member_city(city) or community_post_city_label(city)
+    offset = max(0, int(offset))
     if not target_city:
         return {"city": "", "latitude": 0.0, "longitude": 0.0, "total": 0, "companyMatches": 0, "people": []}
     target = member_city_map_location(target_city)
-    affiliation = clean_text_value(company_or_school, 120).casefold()
+    affiliation = people_map_company_key(company_or_school)
     count_row: sqlite3.Row | None = None
     try:
         with db() as con:
+            con.create_function("map_city", 1, people_map_city_key, deterministic=True)
+            con.create_function("map_company", 1, people_map_company_key, deterministic=True)
             eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
                 AND suspended_at IS NULL
-                AND ((local_connection_discoverable = 1 AND lower(trim(local_city)) = lower(trim(?)))
-                  OR (relocation_discoverable = 1 AND lower(trim(relocation_city)) = lower(trim(?))))
+                AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?))
+                  OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?)))
                 AND (people_discovery_configured = 0 OR people_discoverable = 1)"""
             args = (int(viewer_id or 0), target_city, target_city)
             count_row = con.execute(
                 f"""SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
+                    SUM(CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
                     FROM users WHERE {eligibility_where}""",
                 (affiliation, affiliation, *args),
             ).fetchone()
@@ -19322,12 +19389,12 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
                     relocation_city, relocation_month, relocation_discoverable,
                     people_discoverable, people_discovery_configured
                     FROM users WHERE {eligibility_where}
-                    ORDER BY CASE WHEN lower(trim(relocation_company)) = ? AND ? != '' THEN 0 ELSE 1 END,
-                    name COLLATE NOCASE, id LIMIT 24""",
-                (*args, affiliation, affiliation),
+                    ORDER BY CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 0 ELSE 1 END,
+                    name COLLATE NOCASE, id LIMIT 24 OFFSET ?""",
+                (*args, affiliation, affiliation, offset),
             ).fetchall()
     except sqlite3.Error:
-        rows = []
+        raise
     eligible = [row for row in rows if people_discovery_enabled(row)]
     total = int(row_value(count_row, "total") or 0) if count_row else 0
     company_matches = int(row_value(count_row, "company_matches") or 0) if count_row else 0
@@ -19338,11 +19405,11 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "city": target["city"],
         "latitude": target["latitude"],
         "longitude": target["longitude"],
-        "moving": bool(row_value(row, "relocation_discoverable") and str(row_value(row, "relocation_city") or "").strip().casefold() == target_city.casefold() and str(row_value(row, "local_city") or "").strip().casefold() != target_city.casefold()),
-        "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and str(row_value(row, "relocation_city") or "").strip().casefold() == target_city.casefold() else "",
-        "companyMatch": bool(affiliation and str(row_value(row, "relocation_company") or "").strip().casefold() == affiliation),
+        "moving": bool(row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) and people_map_city_key(row_value(row, "local_city")) != people_map_city_key(target_city)),
+        "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) else "",
+        "companyMatch": bool(affiliation and people_map_company_key(row_value(row, "relocation_company")) == affiliation),
     } for row in eligible[:24]]
-    return {**target, "total": total, "companyMatches": company_matches, "people": people}
+    return {**target, "total": total, "companyMatches": company_matches, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
 
 
 def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
@@ -42476,7 +42543,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         email = normalize_email(payload.get("email") if "email" in payload else row_value(user, "email"))
         phone = clean_text_value(payload.get("phone") if "phone" in payload else row_value(user, "phone"), 40)
         date_of_birth = clean_text_value(payload.get("dateOfBirth") if "dateOfBirth" in payload else row_value(user, "date_of_birth"), 10)
-        local_city = normalize_member_city(payload.get("localCity") if "localCity" in payload else row_value(user, "local_city"))
+        local_city = normalize_member_city(payload.get("localCity")) if payload.get("confirmCurrentCity") is True else normalize_member_city(row_value(user, "local_city"))
+        if payload.get("confirmCurrentCity") is True and payload.get("localCity") and not local_city:
+            self.send_json({"ok": False, "error": "Choose your current city and state."}, 400)
+            return
         relocation_city = normalize_member_city(payload.get("relocationCity") if "relocationCity" in payload else row_value(user, "relocation_city"))
         relocation_month = clean_text_value(payload.get("relocationMonth") if "relocationMonth" in payload else row_value(user, "relocation_month"), 7)
         relocation_company = clean_text_value(payload.get("relocationCompany") if "relocationCompany" in payload else row_value(user, "relocation_company"), 120)
@@ -43774,7 +43844,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = params.get("city", [""])[0]
         company_or_school = params.get("company", [""])[0]
-        self.send_json({"ok": True, "area": people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school)})
+        try:
+            offset = max(0, int(params.get("offset", ["0"])[0]))
+            if not people_map_city_key(city):
+                self.send_json({"ok": False, "error": "Choose a city and state from the suggestions."}, 400)
+                return
+            area = people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school, offset)
+        except ValueError:
+            self.send_json({"ok": False, "error": "Invalid city search."}, 400)
+            return
+        except sqlite3.Error:
+            self.send_json({"ok": False, "error": "People search is temporarily unavailable. Please try again."}, 503)
+            return
+        self.send_json({"ok": True, "area": area})
 
     def api_mobile_people_suggestions(self) -> None:
         user = self.current_user()
