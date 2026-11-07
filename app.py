@@ -19387,11 +19387,14 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
             rows = con.execute(
                 f"""SELECT id, name, profile_photo_url, relocation_company, local_city,
                     relocation_city, relocation_month, relocation_discoverable,
-                    people_discoverable, people_discovery_configured
+                    people_discoverable, people_discovery_configured,
+                    (SELECT post_mode FROM accommodation_posts WHERE user_id = users.id
+                       AND visibility_status = 'ACTIVE' AND map_city(city) = map_city(?)
+                       ORDER BY datetime(created_at) DESC, id DESC LIMIT 1) AS housing_intent
                     FROM users WHERE {eligibility_where}
                     ORDER BY CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 0 ELSE 1 END,
                     name COLLATE NOCASE, id LIMIT 24 OFFSET ?""",
-                (*args, affiliation, affiliation, offset),
+                (target_city, *args, affiliation, affiliation, offset),
             ).fetchall()
     except sqlite3.Error:
         raise
@@ -19408,6 +19411,7 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "moving": bool(row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) and people_map_city_key(row_value(row, "local_city")) != people_map_city_key(target_city)),
         "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) else "",
         "companyMatch": bool(affiliation and people_map_company_key(row_value(row, "relocation_company")) == affiliation),
+        "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
     } for row in eligible[:24]]
     return {**target, "total": total, "companyMatches": company_matches, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
 
