@@ -95,12 +95,13 @@ export type FairFaresUser = {
   peopleMatchMutuals?: boolean;
   peopleMatchGroups?: boolean;
   shareMutualConnectionCount?: boolean;
-  /** Member-controlled home city. This is never inferred from device location. */
+  /** Current city is confirmed from foreground device-location observations. */
   localCity?: string;
   /** Optional city the member plans to move to. */
   relocationCity?: string;
   relocationMonth?: string;
   relocationCompany?: string;
+  relocationReason?: "NEW_JOB" | "SCHOOL_COLLEGE" | "FAMILY" | "OTHER" | "";
   relocationDiscoverable?: boolean;
   localConnectionDiscoverable?: boolean;
 };

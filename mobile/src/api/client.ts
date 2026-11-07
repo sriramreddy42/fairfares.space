@@ -773,6 +773,14 @@ export async function getBootstrap(city = "") {
   }
 }
 
+export async function recordCurrentCityObservation(city: string) {
+  return request<{ ok: boolean; location: { city: string; status: "CANDIDATE" | "CURRENT"; currentCity: string; daysObserved: number; daysUntilCurrent: number } }>("/api/mobile/location-observation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ city }),
+  }, { attempts: 1, silentNetworkFailure: true });
+}
+
 export async function getHousing(
   city: string,
   area: string,
@@ -1318,6 +1326,7 @@ export async function getCommunityPost(postId: string) {
 }
 
 export type CommunityPostInput = {
+  housingLocation?: { currentCity: string; moving: boolean; moveMonth: string; showOnMap: boolean; showCurrentOnMap?: boolean };
   type: CommunityPost["type"];
   category: CommunityPost["category"];
   title: string;
@@ -1338,7 +1347,7 @@ async function communityPostRequest<T>(path: string, body: Record<string, unknow
 }
 
 export async function createCommunityPost(input: CommunityPostInput) {
-  return communityPostRequest<{ ok: boolean; post: CommunityPost; videoUpload?: CommunityVideoUploadAuthorization }>("/api/mobile/community", input);
+  return communityPostRequest<{ ok: boolean; post: CommunityPost; user?: NonNullable<BootstrapPayload["user"]>; videoUpload?: CommunityVideoUploadAuthorization }>("/api/mobile/community", input);
 }
 
 export type CommunityVideoUploadAuthorization = {
@@ -3505,12 +3514,26 @@ export async function findChatPersonByPhone(phone: string) {
   return request<{ ok: boolean; person: { id: number; name: string } }>(`/api/chat/people/by-phone?phone=${encodeURIComponent(phone)}`);
 }
 
+export type FairFaresContact = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  city: string;
+  latitude: number;
+  longitude: number;
+};
+
 export async function findChatPeopleByContactHashes(phoneHashes: string[]) {
-  return request<{ ok: boolean; people: Array<{ id: number; name: string; photoUrl: string; phoneHash: string }> }>("/api/chat/people/by-contacts", {
+  return request<{ ok: boolean; people: Array<FairFaresContact & { phoneHash: string }> }>("/api/chat/people/by-contacts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ phoneHashes })
   }, { attempts: 3 });
+}
+
+export async function getPeopleContactPool() {
+  const payload = await request<{ ok: boolean; people: FairFaresContact[] }>("/api/mobile/people/contact-pool");
+  return payload.people || [];
 }
 
 export async function openChatWithPerson(targetUserId: number) {
@@ -3570,14 +3593,14 @@ export async function completeSocialPhone(continuationToken: string, phone: stri
   return payload;
 }
 
-export async function mobileSignup(name: string, email: string, phone: string, password: string, countryCode = "", consentAccepted = false) {
+export async function mobileSignup(name: string, email: string, phone: string, password: string, countryCode = "", consentAccepted = false, relocationCompany = "") {
   if (!communityGuestToken) communityGuestToken = await guestStorageGet(COMMUNITY_GUEST_TOKEN_KEY);
   const payload = await request<{ ok: boolean; activationRequired: boolean; message: string; activationLink?: string; token?: string; user?: BootstrapPayload["user"] }>(
     "/api/mobile/signup",
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(communityGuestToken ? { "X-FairFares-Guest-Token": communityGuestToken } : {}) },
-      body: JSON.stringify({ name, email, phone, countryCode, password, consentAccepted })
+      body: JSON.stringify({ name, email, phone, countryCode, password, consentAccepted, relocationCompany })
     }
   );
   if (payload.token) {
@@ -3587,6 +3610,7 @@ export async function mobileSignup(name: string, email: string, phone: string, p
 }
 
 export type MobileHousingPostInput = {
+  housingLocation?: CommunityPostInput["housingLocation"];
   listingId?: string;
   postMode: "HAVE_PLACE" | "NEED_PLACE";
   category: string;
@@ -3633,7 +3657,7 @@ export type MobileHousingPostInput = {
 };
 
 export async function createMobileHousingPost(input: MobileHousingPostInput) {
-  return request<{ ok: boolean; post: HousingPost }>("/api/mobile/housing", {
+  return request<{ ok: boolean; post: HousingPost; user?: NonNullable<BootstrapPayload["user"]> }>("/api/mobile/housing", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
@@ -3661,6 +3685,7 @@ export async function mobileLogout() {
 }
 
 export type MobileProfileInput = {
+  confirmCurrentCity?: boolean;
   name?: string;
   email?: string;
   phone?: string;
@@ -3674,6 +3699,7 @@ export type MobileProfileInput = {
   relocationCity?: string;
   relocationMonth?: string;
   relocationCompany?: string;
+  relocationReason?: "NEW_JOB" | "SCHOOL_COLLEGE" | "FAMILY" | "OTHER" | "";
   relocationDiscoverable?: boolean;
   localConnectionDiscoverable?: boolean;
   profilePhoto?: string;
@@ -3704,6 +3730,30 @@ export type PeopleSuggestion = {
   photoUrl: string;
   reason: string;
   ratingSummary: { average: number; count: number; label: string };
+  city: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type PeopleMapCityPool = {
+  nextOffset?: number | null;
+  city: string;
+  latitude: number;
+  longitude: number;
+  total: number;
+  companyMatches: number;
+  people: Array<{
+    id: number;
+    name: string;
+    photoUrl: string;
+    city: string;
+    latitude: number;
+    longitude: number;
+    companyMatch: boolean;
+    moving?: boolean;
+    fromCity?: string;
+    housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
+  }>;
 };
 
 export async function getRelocationSuggestions() {
@@ -3714,6 +3764,22 @@ export async function getRelocationSuggestions() {
 export async function getPeopleSuggestions() {
   const payload = await request<{ ok: boolean; suggestions: PeopleSuggestion[] }>("/api/mobile/people/suggestions");
   return payload.suggestions || [];
+}
+
+export async function getPeopleMapCityPool(city: string, company = "", offset = 0) {
+  const params = new URLSearchParams({ city, offset: String(offset) });
+  if (company.trim()) params.set("company", company.trim());
+  const payload = await request<{ ok: boolean; area: PeopleMapCityPool }>(`/api/mobile/people/map?${params.toString()}`);
+  const area = payload.area;
+  if (!payload.ok || !area || !area.city || !Array.isArray(area.people)) {
+    throw new Error("City results are unavailable. Please try again.");
+  }
+  if (!Number.isFinite(area.latitude) || !Number.isFinite(area.longitude)
+      || Math.abs(area.latitude) > 90 || Math.abs(area.longitude) > 180
+      || (area.latitude === 0 && area.longitude === 0)) {
+    throw new Error("City not found. Choose a city and state from the suggestions.");
+  }
+  return area;
 }
 
 export async function hidePeopleSuggestion(suggestedUserId: number) {

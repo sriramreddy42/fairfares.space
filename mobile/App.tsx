@@ -418,6 +418,8 @@ function FairFaresApp() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [identifier, setIdentifier] = useState("");
+  const [signupCompany, setSignupCompany] = useState("");
+  const [profileCompletionCompany, setProfileCompletionCompany] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupPhone, setSignupPhone] = useState("");
   const [signupCallingCode, setSignupCallingCode] = useState("+1");
@@ -510,6 +512,20 @@ function FairFaresApp() {
   const [listingOpen, setListingOpen] = useState(false);
   const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
+  const [moveCurrentCity, setMoveCurrentCity] = useState("");
+  const [listingMoveAnswer, setListingMoveAnswer] = useState<"" | "YES" | "NO">("");
+  const [listingMoveMonth, setListingMoveMonth] = useState("");
+  const [listingMoveVisible, setListingMoveVisible] = useState(false);
+  const listingMovesCity = Boolean(moveCurrentCity.trim() && listingForm.city.trim()
+    && normalizeCityInput(moveCurrentCity).toLowerCase() !== normalizeCityInput(listingForm.city).toLowerCase());
+  useEffect(() => {
+    if (listingOpen) setMoveCurrentCity(data?.user?.localCity || "");
+  }, [listingOpen]);
+  useEffect(() => {
+    setListingMoveAnswer("");
+    setListingMoveMonth("");
+    setListingMoveVisible(false);
+  }, [listingOpen, listingForm.city, moveCurrentCity, listingForm.postMode]);
   const [listingValidation, setListingValidation] = useState<Record<string, string>>({});
   const [roommatePlaceChoice, setRoommatePlaceChoice] = useState<boolean | null>(null);
   const [listingOptionalDetailsOpen, setListingOptionalDetailsOpen] = useState(false);
@@ -1186,9 +1202,10 @@ function FairFaresApp() {
 
   useEffect(() => {
     setProfileCompletionName(data?.user?.name || "");
+    setProfileCompletionCompany(data?.user?.relocationCompany || "");
     setProfileCompletionEmail(data?.user?.email || "");
     setProfileCompletionPhone(data?.user?.phone || "");
-  }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone]);
+  }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone, data?.user?.relocationCompany]);
 
   useEffect(() => {
     setCharacterAvatarChoice(null);
@@ -2637,7 +2654,28 @@ function FairFaresApp() {
       setListingValidation(validation);
       return;
     }
+    if (!listingForm.listingId) {
+      if (!moveCurrentCity.includes(",")) {
+        Alert.alert("Add your current city", "Enter city and state, such as Houston, TX.");
+        return;
+      }
+      if (listingMovesCity && !listingMoveAnswer) {
+        Alert.alert("Confirm your move", "Choose whether you are moving to the listing city.");
+        return;
+      }
+      if (listingMoveAnswer === "YES" && listingMoveMonth && !/^\d{4}-(0[1-9]|1[0-2])$/.test(listingMoveMonth)) {
+        Alert.alert("Check move month", "Use YYYY-MM or leave it blank.");
+        return;
+      }
+    }
     const listingPayload: MobileHousingPostInput = {
+      housingLocation: listingForm.listingId ? undefined : {
+        currentCity: normalizeCityInput(moveCurrentCity),
+        moving: listingMovesCity && listingMoveAnswer === "YES",
+        moveMonth: listingMoveMonth,
+        showOnMap: listingMovesCity && listingMoveAnswer === "YES" && listingMoveVisible,
+        showCurrentOnMap: !listingMovesCity && listingMoveVisible ? true : undefined,
+      },
       ...listingForm,
       title: generatedTitle,
       description: listingForm.description.trim(),
@@ -2675,6 +2713,7 @@ function FairFaresApp() {
     setListingSubmitting(true);
     try {
       const payload = await createMobileHousingPost(listingPayload);
+      if (payload.user) updateLocalUser(payload.user);
       if (!listingPayload.listingId) {
         const eventName = payload.post.mode === "HAVE_PLACE"
           ? "housing_have_place_listed"
@@ -3126,7 +3165,7 @@ function FairFaresApp() {
     setAuthBusy(true);
     setAuthMessage("Creating account...");
     try {
-      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupCallingCode, signupConsentAccepted);
+      const payload = await mobileSignup(cleanName, cleanEmail, nationalPhone, password, signupCallingCode, signupConsentAccepted, signupCompany.trim());
       void trackProductEvent("signup_completed", { source: "email_signup" });
       const authenticatedPassword = password;
       setAuthMessage(payload.message || "Account created. Please activate your account from email before logging in.");
@@ -3209,8 +3248,8 @@ function FairFaresApp() {
     setProfileConsentBusy(true);
     let nextUser = user;
     try {
-      if (name !== user.name || email !== user.email || phone !== user.phone) {
-        const profile = await updateMobileProfile({ name, email, phone });
+      if (name !== user.name || email !== user.email || phone !== user.phone || profileCompletionCompany.trim() !== (user.relocationCompany || "")) {
+        const profile = await updateMobileProfile({ name, email, phone, relocationCompany: profileCompletionCompany.trim() });
         if (profile.user) {
           nextUser = profile.user;
           updateLocalUser(profile.user);
@@ -3428,6 +3467,7 @@ function FairFaresApp() {
           setPendingGroupInvite(`community:${communityId}`);
           setActiveTab("messenger");
         }}
+        onProfileUpdated={updateLocalUser}
         onOpenUserChat={(userId) => {
           void (async () => {
             try {
@@ -3993,6 +4033,7 @@ function FairFaresApp() {
                 style={[styles.input, styles.authInput]}
               />
             ) : null}
+            {authMode === "signup" ? <TextInput accessibilityLabel="Company or school" value={signupCompany} onChangeText={setSignupCompany} placeholder="Company or school (optional)" placeholderTextColor={theme.colors.muted} style={[styles.input, styles.authInput]} /> : null}
             <TextInput
               value={identifier}
               onChangeText={setIdentifier}
@@ -4283,6 +4324,7 @@ function FairFaresApp() {
               {!data?.user?.email?.trim() ? <TextInput value={profileCompletionEmail} onChangeText={setProfileCompletionEmail} placeholder="Email" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="none" keyboardType="email-address" /> : null}
               {!data?.user?.phone?.trim() ? <TextInput value={profileCompletionPhone} onChangeText={setProfileCompletionPhone} placeholder="Phone number, including country code" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} keyboardType="phone-pad" autoComplete="tel" /> : null}
             </View> : null}
+            <TextInput accessibilityLabel="Company or school" value={profileCompletionCompany} onChangeText={setProfileCompletionCompany} placeholder="Company or school (optional)" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} />
             {data?.user?.consentPending ? (
               <View style={styles.signupConsentRow}>
                 <TouchableOpacity
@@ -4514,6 +4556,24 @@ function FairFaresApp() {
                     <Text style={styles.addressSuggestionPin}>⌖</Text>
                     <Text style={styles.addressSuggestionMain}>{suggestion}</Text>
                   </TouchableOpacity>)}
+                </View> : null}
+                {!listingForm.listingId ? <View style={{ gap: 10 }}>
+                  {!data?.user?.localCity ? <>
+                    <Text style={styles.addressSuggestionTitle}>Which city do you currently live in?</Text>
+                    <TextInput accessibilityLabel="Current home city" value={moveCurrentCity} onChangeText={setMoveCurrentCity} placeholder="Houston, TX" placeholderTextColor={theme.colors.muted} style={styles.input} editable={!listingSubmitting} />
+                  </> : <Text style={styles.addressStatusText}>Currently living in {moveCurrentCity}</Text>}
+          {!listingMovesCity ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: listingMoveVisible }} onPress={() => setListingMoveVisible((value) => !value)}><Text style={styles.addressSuggestionMain}>{listingMoveVisible ? "☑" : "☐"} Show me in this city on the people map</Text></TouchableOpacity> : null}
+                  {listingMovesCity ? <>
+                    <Text style={styles.addressSuggestionTitle}>{listingHasPropertyDetails ? "Are you also moving" : "Are you moving"} from {moveCurrentCity} to {listingForm.city}?</Text>
+                    {(["YES", "NO"] as const).map((answer) => <TouchableOpacity key={answer} disabled={listingSubmitting} accessibilityRole="radio" accessibilityState={{ checked: listingMoveAnswer === answer }} onPress={() => { setListingMoveAnswer(answer); setListingMoveVisible(false); }} style={styles.addressSuggestion}>
+                      <Text style={styles.addressSuggestionMain}>{listingMoveAnswer === answer ? "● " : "○ "}{answer === "YES" ? "Yes, I’m moving there" : "No, this post doesn’t change where I live"}</Text>
+                    </TouchableOpacity>)}
+                    {listingMoveAnswer === "YES" ? <>
+                      <TextInput accessibilityLabel="Move month" value={listingMoveMonth} onChangeText={setListingMoveMonth} placeholder="Move month (optional): YYYY-MM" placeholderTextColor={theme.colors.muted} style={styles.input} maxLength={7} editable={!listingSubmitting} />
+                      <TouchableOpacity disabled={listingSubmitting} accessibilityRole="checkbox" accessibilityState={{ checked: listingMoveVisible }} onPress={() => setListingMoveVisible((value) => !value)}><Text style={styles.addressSuggestionMain}>{listingMoveVisible ? "☑" : "☐"} Show my move on the people map</Text></TouchableOpacity>
+                      <Text style={styles.addressStatusText}>Shows your destination city and where you’re moving from. No address or live location.</Text>
+                    </> : null}
+                  </> : null}
                 </View> : null}
                 {listingHasPropertyDetails ? (
                   <>

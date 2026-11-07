@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { ActivityIndicator, Alert, AppState, Image, ImageSourcePropType, Linking, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
-import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, getRidePlaceSuggestions, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, RidePlaceSuggestion, sendMobileNotificationTest, updateDiceBearAvatar, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
+import { createSupportTicket, getHousingActivity, getMobileNotificationPreferences, getRentalBookings, getRideActivity, MobileNotificationPreferences, requestAccountDeletion as submitAccountDeletionRequest, sendMobileNotificationTest, updateDiceBearAvatar, updateMobileNotificationPreferences, updateMobileProfile } from "../api/client";
 import { UserAvatar } from "../components/UserAvatar";
 import { AvatarMotion } from "../components/AvatarMotion";
 import { appAssets } from "../assets";
@@ -77,19 +77,17 @@ export function ProfileScreen({
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState(user?.phone || "");
   const [chatPhoneDiscoverable, setChatPhoneDiscoverable] = useState(Boolean(user?.chatPhoneDiscoverable));
+  const [mapProfile, setMapProfile] = useState({
+    localCity: user?.localCity || "", relocationCity: user?.relocationCity || "",
+    relocationCompany: user?.relocationCompany || "",
+    localConnectionDiscoverable: Boolean(user?.localConnectionDiscoverable),
+    relocationDiscoverable: Boolean(user?.relocationDiscoverable),
+  });
   const [peopleDiscoverable, setPeopleDiscoverable] = useState(Boolean(user?.peopleDiscoverable));
   const [peopleMatchMutuals, setPeopleMatchMutuals] = useState(user?.peopleMatchMutuals !== false);
   const [peopleMatchGroups, setPeopleMatchGroups] = useState(user?.peopleMatchGroups !== false);
   const [shareMutualConnectionCount, setShareMutualConnectionCount] = useState(Boolean(user?.shareMutualConnectionCount));
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
-  const [localCity, setLocalCity] = useState(user?.localCity || "");
-  const [relocationCity, setRelocationCity] = useState(user?.relocationCity || "");
-  const [relocationMonth, setRelocationMonth] = useState(user?.relocationMonth || "");
-  const [relocationCompany, setRelocationCompany] = useState(user?.relocationCompany || "");
-  const [relocationDiscoverable, setRelocationDiscoverable] = useState(Boolean(user?.relocationDiscoverable));
-  const [localConnectionDiscoverable, setLocalConnectionDiscoverable] = useState(Boolean(user?.localConnectionDiscoverable));
-  const [cityInputFocused, setCityInputFocused] = useState<"local" | "relocation" | null>(null);
-  const [citySuggestions, setCitySuggestions] = useState<RidePlaceSuggestion[]>([]);
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [savingMode, setSavingMode] = useState<"photo" | "details" | "avatar" | "">("");
@@ -139,20 +137,17 @@ export function ProfileScreen({
     setPhone(user?.phone || "");
     setChatPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
     setPeopleDiscoverable(Boolean(user?.peopleDiscoverable));
+    setMapProfile({ localCity: user?.localCity || "", relocationCity: user?.relocationCity || "",
+      relocationCompany: user?.relocationCompany || "", localConnectionDiscoverable: Boolean(user?.localConnectionDiscoverable),
+      relocationDiscoverable: Boolean(user?.relocationDiscoverable) });
     setPeopleMatchMutuals(user?.peopleMatchMutuals !== false);
     setPeopleMatchGroups(user?.peopleMatchGroups !== false);
     setShareMutualConnectionCount(Boolean(user?.shareMutualConnectionCount));
     setDateOfBirth(user?.dateOfBirth || "");
-    setLocalCity(user?.localCity || "");
-    setRelocationCity(user?.relocationCity || "");
-    setRelocationMonth(user?.relocationMonth || "");
-    setRelocationCompany(user?.relocationCompany || "");
-    setRelocationDiscoverable(Boolean(user?.relocationDiscoverable));
-    setLocalConnectionDiscoverable(Boolean(user?.localConnectionDiscoverable));
     setProfilePhoto(user?.profilePhotoUrl || "");
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.peopleDiscoverable, user?.peopleMatchMutuals, user?.peopleMatchGroups, user?.shareMutualConnectionCount, user?.dateOfBirth, user?.localCity, user?.relocationCity, user?.relocationMonth, user?.relocationCompany, user?.relocationDiscoverable, user?.localConnectionDiscoverable, user?.profilePhotoUrl]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.peopleDiscoverable, user?.peopleMatchMutuals, user?.peopleMatchGroups, user?.shareMutualConnectionCount, user?.dateOfBirth, user?.profilePhotoUrl, user?.localCity, user?.relocationCity, user?.relocationCompany, user?.localConnectionDiscoverable, user?.relocationDiscoverable]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -160,22 +155,17 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; peopleDiscoverable?: boolean; peopleMatchMutuals?: boolean; peopleMatchGroups?: boolean; shareMutualConnectionCount?: boolean; dateOfBirth?: string; localCity?: string; relocationCity?: string; relocationMonth?: string; relocationCompany?: string; relocationDiscoverable?: boolean; localConnectionDiscoverable?: boolean };
+        const draft = JSON.parse(saved) as { mapProfile?: typeof mapProfile; name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; peopleDiscoverable?: boolean; peopleMatchMutuals?: boolean; peopleMatchGroups?: boolean; shareMutualConnectionCount?: boolean; dateOfBirth?: string };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
         setChatPhoneDiscoverable(draft.chatPhoneDiscoverable ?? Boolean(user.chatPhoneDiscoverable));
+        if (draft.mapProfile) setMapProfile(draft.mapProfile);
         setPeopleDiscoverable(draft.peopleDiscoverable ?? Boolean(user.peopleDiscoverable));
         setPeopleMatchMutuals(draft.peopleMatchMutuals ?? user.peopleMatchMutuals !== false);
         setPeopleMatchGroups(draft.peopleMatchGroups ?? user.peopleMatchGroups !== false);
         setShareMutualConnectionCount(draft.shareMutualConnectionCount ?? Boolean(user.shareMutualConnectionCount));
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
-        setLocalCity(draft.localCity ?? user.localCity ?? "");
-        setRelocationCity(draft.relocationCity ?? user.relocationCity ?? "");
-        setRelocationMonth(draft.relocationMonth ?? user.relocationMonth ?? "");
-        setRelocationCompany(draft.relocationCompany ?? user.relocationCompany ?? "");
-        setRelocationDiscoverable(draft.relocationDiscoverable ?? Boolean(user.relocationDiscoverable));
-        setLocalConnectionDiscoverable(draft.localConnectionDiscoverable ?? Boolean(user.localConnectionDiscoverable));
         // The server photo is authoritative. Persisting a photo data URL or an
         // old versioned URL here could overwrite the current avatar after a
         // relaunch even though every other screen had already refreshed.
@@ -230,27 +220,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ name, email, phone, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, localCity, relocationCity, relocationMonth, relocationCompany, relocationDiscoverable, localConnectionDiscoverable }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ mapProfile, name, email, phone, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, email, localCity, localConnectionDiscoverable, name, phone, profileDirty, relocationCity, relocationCompany, relocationDiscoverable, relocationMonth, user?.id]);
-
-  useEffect(() => {
-    const query = (cityInputFocused === "local" ? localCity : cityInputFocused === "relocation" ? relocationCity : "").trim();
-    if (!cityInputFocused || query.length < 2) {
-      setCitySuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void getRidePlaceSuggestions("", query, false, true)
-        .then((places) => {
-          if (!cancelled) setCitySuggestions(places.filter((place) => place.source !== "google").slice(0, 6));
-        })
-        .catch(() => { if (!cancelled) setCitySuggestions([]); });
-    }, 180);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [cityInputFocused, localCity, relocationCity]);
+  }, [mapProfile, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, email, name, phone, profileDirty, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -458,17 +431,13 @@ export function ProfileScreen({
         email,
         phone,
         chatPhoneDiscoverable,
+        ...mapProfile,
+        confirmCurrentCity: true,
         peopleDiscoverable,
         peopleMatchMutuals,
         peopleMatchGroups,
         shareMutualConnectionCount,
         dateOfBirth,
-        localCity,
-        relocationCity,
-        relocationMonth,
-        relocationCompany,
-        relocationDiscoverable,
-        localConnectionDiscoverable,
         currentPassword,
       });
       if (currentProfileUserIdRef.current !== operationUserId || Number(payload.user?.id || 0) !== operationUserId) return;
@@ -482,12 +451,6 @@ export function ProfileScreen({
       setPeopleMatchGroups(payload.user?.peopleMatchGroups !== false);
       setShareMutualConnectionCount(Boolean(payload.user?.shareMutualConnectionCount));
       setDateOfBirth(payload.user?.dateOfBirth || "");
-      setLocalCity(payload.user?.localCity || "");
-      setRelocationCity(payload.user?.relocationCity || "");
-      setRelocationMonth(payload.user?.relocationMonth || "");
-      setRelocationCompany(payload.user?.relocationCompany || "");
-      setRelocationDiscoverable(Boolean(payload.user?.relocationDiscoverable));
-      setLocalConnectionDiscoverable(Boolean(payload.user?.localConnectionDiscoverable));
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
       onProfileUpdated(payload.user);
       setProfileDirty(false);
@@ -570,32 +533,6 @@ export function ProfileScreen({
     } finally {
       setNotificationTestSending(false);
     }
-  }
-
-  function renderCitySuggestions(target: "local" | "relocation") {
-    if (cityInputFocused !== target || !citySuggestions.length) return null;
-    return (
-      <View style={styles.citySuggestionList} accessibilityRole="list" accessibilityLabel="City suggestions">
-        {citySuggestions.map((place) => (
-          <TouchableOpacity
-            key={`${target}-${place.label}`}
-            style={styles.citySuggestionRow}
-            onPress={() => {
-              if (target === "local") setLocalCity(place.label);
-              else setRelocationCity(place.label);
-              setProfileDirty(true);
-              setCityInputFocused(null);
-              setCitySuggestions([]);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Use ${place.label}`}
-          >
-            <Text style={styles.citySuggestionMain} numberOfLines={1}>{place.main || place.label}</Text>
-            <Text style={styles.citySuggestionSecondary} numberOfLines={1}>{place.secondary || place.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
   }
 
   return (
@@ -711,7 +648,7 @@ export function ProfileScreen({
             <Text style={styles.primaryButtonText}>Login / Sign up</Text>
           </TouchableOpacity>
         </View>
-      ) : (
+      ) : (<>
         <View style={[styles.card, isLight && styles.flatLightCard]}>
           <TouchableOpacity
             style={styles.profileDetailsHeader}
@@ -743,7 +680,7 @@ export function ProfileScreen({
             </View>
             <View style={styles.peopleMatchingSection}>
               <Text style={styles.relocationTitle}>People you may know</Text>
-              <Text style={styles.relocationCopy}>FairFares uses only opted-in mutual connections and shared communities. It never uses your private messages, profile views, or live location.</Text>
+              <Text style={styles.relocationCopy}>FairFares uses mutual connections and shared communities you control. It never uses your private messages, profile views, or live location.</Text>
               <View style={styles.relocationPrivacyRow}>
                 <View style={styles.relocationPrivacyCopy}>
                   <Text style={styles.relocationPrivacyTitle}>Appear in people suggestions</Text>
@@ -751,13 +688,20 @@ export function ProfileScreen({
                 </View>
                 <Switch value={peopleDiscoverable} onValueChange={(value) => { setPeopleDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Appear in people you may know suggestions" />
               </View>
+              <Text style={styles.relocationPrivacyTitle}>Your cities on the people map</Text>
+              <Text style={styles.relocationPrivacyHint}>City areas only. Save your profile to apply changes. People suggestions must also be enabled to appear.</Text>
+              <TextInput accessibilityLabel="Current city" style={styles.input} placeholder="Current city, e.g. Houston, TX" placeholderTextColor={theme.colors.muted} value={mapProfile.localCity} onChangeText={(value) => { setMapProfile((p) => ({ ...p, localCity: value })); setProfileDirty(true); }} />
+              <View style={styles.relocationPrivacyRow}><View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show me in my current city</Text></View><Switch accessibilityLabel="Show me in my current city" value={mapProfile.localConnectionDiscoverable} onValueChange={(value) => { setMapProfile((p) => ({ ...p, localConnectionDiscoverable: value })); setProfileDirty(true); }} /></View>
+              <TextInput accessibilityLabel="Moving city" style={styles.input} placeholder="Moving city (optional)" placeholderTextColor={theme.colors.muted} value={mapProfile.relocationCity} onChangeText={(value) => { setMapProfile((p) => ({ ...p, relocationCity: value })); setProfileDirty(true); }} />
+              <View style={styles.relocationPrivacyRow}><View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show my move on the map</Text></View><Switch accessibilityLabel="Show my move on the map" value={mapProfile.relocationDiscoverable} onValueChange={(value) => { setMapProfile((p) => ({ ...p, relocationDiscoverable: value })); setProfileDirty(true); }} /></View>
+              <TextInput accessibilityLabel="Company or school" style={styles.input} placeholder="Company or school (optional)" placeholderTextColor={theme.colors.muted} value={mapProfile.relocationCompany} onChangeText={(value) => { setMapProfile((p) => ({ ...p, relocationCompany: value })); setProfileDirty(true); }} />
               {peopleDiscoverable ? <>
                 <View style={styles.peopleMatchRow}>
-                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use mutual connections</Text><Text style={styles.relocationPrivacyHint}>A mutual connection is required before FairFares suggests a person.</Text></View>
+                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use mutual connections</Text><Text style={styles.relocationPrivacyHint}>Prioritize people connected through members you both know.</Text></View>
                   <Switch value={peopleMatchMutuals} onValueChange={(value) => { setPeopleMatchMutuals(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use mutual connections for people suggestions" />
                 </View>
                 <View style={styles.peopleMatchRow}>
-                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use shared communities</Text><Text style={styles.relocationPrivacyHint}>Shared groups can strengthen a mutual match; they do not create one by themselves.</Text></View>
+                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use shared communities</Text><Text style={styles.relocationPrivacyHint}>Shared groups can also qualify someone for a suggestion when both members allow it.</Text></View>
                   <Switch value={peopleMatchGroups} onValueChange={(value) => { setPeopleMatchGroups(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use shared communities for people suggestions" />
                 </View>
                 <View style={styles.peopleMatchRow}>
@@ -769,41 +713,6 @@ export function ProfileScreen({
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
             {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
-            <View style={styles.relocationSection}>
-              <Text style={styles.relocationTitle}>Your places</Text>
-              <Text style={styles.relocationCopy}>Choose these yourself. FairFares never changes them from where you open the app.</Text>
-              <Text style={styles.label}>Your local city</Text>
-              <TextInput value={localCity} onFocus={() => setCityInputFocused("local")} onChangeText={(value) => { setLocalCity(value); setProfileDirty(true); }} style={styles.input} placeholder="Start typing a city" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
-              {renderCitySuggestions("local")}
-              <Text style={styles.fieldHint}>Use City, State — or City, State, IN for India.</Text>
-              <Text style={styles.label}>Relocating to (optional)</Text>
-              <TextInput value={relocationCity} onFocus={() => setCityInputFocused("relocation")} onChangeText={(value) => { setRelocationCity(value); setProfileDirty(true); }} style={styles.input} placeholder="Start typing a destination" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
-              {renderCitySuggestions("relocation")}
-              <View style={styles.relocationInlineFields}>
-                <View style={styles.relocationInlineField}>
-                  <Text style={styles.label}>Target month</Text>
-                  <TextInput value={relocationMonth} onChangeText={(value) => { setRelocationMonth(value); setProfileDirty(true); }} style={styles.input} placeholder="2026-12" placeholderTextColor={theme.colors.muted} keyboardType="numbers-and-punctuation" maxLength={7} />
-                </View>
-                <View style={styles.relocationInlineField}>
-                  <Text style={styles.label}>Company or school</Text>
-                  <TextInput value={relocationCompany} onChangeText={(value) => { setRelocationCompany(value); setProfileDirty(true); }} style={styles.input} placeholder="Optional" placeholderTextColor={theme.colors.muted} autoCapitalize="words" maxLength={120} />
-                </View>
-              </View>
-              <View style={styles.relocationPrivacyRow}>
-                <View style={styles.relocationPrivacyCopy}>
-                  <Text style={styles.relocationPrivacyTitle}>Relocation connections</Text>
-                  <Text style={styles.relocationPrivacyHint}>Use this plan for future opt-in introductions. Your details are not public.</Text>
-                </View>
-                <Switch value={relocationDiscoverable} onValueChange={(value) => { setRelocationDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use my relocation plan for opt-in connections" />
-              </View>
-              <View style={styles.relocationPrivacyRow}>
-                <View style={styles.relocationPrivacyCopy}>
-                  <Text style={styles.relocationPrivacyTitle}>Help people moving here</Text>
-                  <Text style={styles.relocationPrivacyHint}>Show your profile only to people who opted in to relocate to your local city.</Text>
-                </View>
-                <Switch value={localConnectionDiscoverable} onValueChange={(value) => { setLocalConnectionDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Help people moving to my local city" />
-              </View>
-            </View>
             {sensitiveChanged && !completingInitialPhone ? (
             <>
               <Text style={styles.securityNote}>Current password is required to change email or phone. Email changes require activation before the next login.</Text>
@@ -818,7 +727,7 @@ export function ProfileScreen({
             </View>
           </> : null}
         </View>
-      )}
+      </>) }
 
       <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
         <View>
@@ -1150,6 +1059,21 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "700" },
   buttonContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   relocationSection: { width: "100%", gap: 8, marginTop: 5, paddingTop: 14, borderTopWidth: 1, borderTopColor: theme.colors.line },
+  placesCard: { gap: 14 },
+  placesSection: { width: "100%", gap: 8 },
+  detectedLocationField: { borderWidth: 1, borderColor: theme.colors.line, borderRadius: 12, backgroundColor: theme.colors.panel2, paddingHorizontal: 12, paddingVertical: 10, gap: 4 },
+  detectedLocationValue: { color: theme.colors.text, fontSize: 14, fontWeight: "800" },
+  detectedLocationHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15 },
+  relocationPlanAction: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: theme.radius.md, backgroundColor: "rgba(32, 201, 135, 0.10)", borderWidth: 1, borderColor: "rgba(32, 201, 135, 0.42)" },
+  relocationPlanActionCopy: { flex: 1, minWidth: 0 },
+  relocationPlanActionTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  relocationPlanActionHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  relocationPlanActionChevron: { color: theme.colors.green, fontSize: 27, lineHeight: 28, fontWeight: "500" },
+  relocationEditor: { gap: 8, padding: 11, borderRadius: theme.radius.md, backgroundColor: theme.colors.panel2, borderWidth: 1, borderColor: theme.colors.line },
+  relocationEditorHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  relocationEditorTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  relocationEditorClose: { color: theme.colors.green, fontSize: 12, fontWeight: "900", paddingHorizontal: 3, paddingVertical: 3 },
+  relocationMatchHint: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: -1 },
   relocationTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   relocationCopy: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginBottom: 2 },
   fieldHint: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: -4 },

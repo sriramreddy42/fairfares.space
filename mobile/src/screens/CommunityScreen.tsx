@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Contacts from "expo-contacts";
 import * as Location from "expo-location";
 import { VideoView, useVideoPlayer } from "expo-video";
 import {
@@ -10,14 +11,15 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
-  getPeopleSuggestions, hidePeopleSuggestion, PeopleSuggestion, getRelocationSuggestions, RelocationSuggestion,
+  findChatPeopleByContactHashes, getPeopleContactPool, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
   getHousingActivity, getRentalBookings, getRideActivity,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
-  updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, uploadCommunityVideo,
+  updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, updateMobileProfile, uploadCommunityVideo,
 } from "../api/client";
-import type { ChatLinkPreview } from "../api/client";
+import type { ChatLinkPreview, FairFaresContact } from "../api/client";
 import { BootstrapPayload, Car, Community, CommunityAnswer, CommunityPost, FairFaresUser, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { UserAvatar } from "../components/UserAvatar";
+import { PeopleMap, PeopleMapMember, PeopleMapRegion } from "../components/PeopleMap";
 import { TactilePressable } from "../components/TactilePressable";
 import { MemberProfileSheet, MemberProfileSheetHandle, MemberProfileTarget } from "../components/MemberProfileSheet";
 import { theme } from "../theme";
@@ -27,6 +29,7 @@ import { useResponsiveLayout } from "../utils/layout";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 import { readCachedDeviceCity, resolveCurrentDeviceCity } from "../utils/deviceCity";
 import { avatarInitials } from "../utils/text";
+import { contactDiscoveryHash, contactDiscoveryVariants } from "../utils/chatCrypto";
 import { readGasCache } from "../utils/gasPriceCache";
 import { locationCountryCodeFromLabel } from "../utils/locationRegion";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -47,6 +50,7 @@ type Props = {
   gasPriceRefreshKey?: number;
   onOpenCommunity: (communityId: string) => void;
   onOpenUserChat: (userId: number) => void;
+  onProfileUpdated: (user: BootstrapPayload["user"]) => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
   initialPostId?: string;
   onInitialPostOpened?: () => void;
@@ -66,6 +70,13 @@ const categoryLabels: Record<string, string> = {
   LOCAL: "Local", PLACES: "Places", STUDENT: "Students", SERVICES: "Services", SAFETY: "Safety",
 };
 const categoryIcons: Record<string, string> = { GENERAL: "💬", NEED_ROOMMATE: "👥", NEED_PLACE: "🔑", HAVE_PLACE: "🏠", CARPOOL_RIDE: "🚗" };
+const relocationReasons = [
+  { value: "NEW_JOB", label: "New job" },
+  { value: "SCHOOL_COLLEGE", label: "School / college" },
+  { value: "FAMILY", label: "Family" },
+  { value: "OTHER", label: "Other" },
+] as const;
+type RelocationReason = typeof relocationReasons[number]["value"] | "";
 const reactionOptions = [
   { value: "LIKE", emoji: "👍", label: "Like" },
   { value: "LOVE", emoji: "❤️", label: "Love" },
@@ -206,6 +217,135 @@ const CommunityReviewCard = React.memo(function CommunityReviewCard({ reviews, c
       ) : <View style={styles.communityReviewPill} />}
     </View>
   );
+});
+
+// Decorative only: the motion is intentionally slow, subtle, and disabled
+// when the system asks for reduced motion. It makes the discovery rail feel
+// alive without competing with the people or their trust signals.
+const PeopleDiscoveryBubbles = React.memo(function PeopleDiscoveryBubbles() {
+  const drift = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      drift.stopAnimation();
+      pulse.stopAnimation();
+      return undefined;
+    }
+    const animation = Animated.parallel([
+      Animated.loop(Animated.sequence([
+        Animated.timing(drift, { toValue: 1, duration: 7200, useNativeDriver: true }),
+        Animated.timing(drift, { toValue: 0, duration: 7200, useNativeDriver: true }),
+      ])),
+      Animated.loop(Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 4000, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 4000, useNativeDriver: true }),
+      ])),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [drift, pulse, reduceMotion]);
+
+  const driftRight = drift.interpolate({ inputRange: [0, 1], outputRange: [0, 16] });
+  const driftLeft = drift.interpolate({ inputRange: [0, 1], outputRange: [0, -12] });
+  const softOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.28, 0.52] });
+
+  return <View pointerEvents="none" style={styles.peopleDiscoveryBubbles}>
+    <Animated.View style={[styles.peopleDiscoveryBubble, styles.peopleDiscoveryBubbleOne, { opacity: softOpacity, transform: [{ translateX: driftRight }] }]} />
+    <Animated.View style={[styles.peopleDiscoveryBubble, styles.peopleDiscoveryBubbleTwo, { opacity: softOpacity, transform: [{ translateX: driftLeft }] }]} />
+    <Animated.View style={[styles.peopleDiscoveryBubble, styles.peopleDiscoveryBubbleThree, { transform: [{ translateX: driftRight }] }]} />
+  </View>;
+});
+
+function peopleSuggestionTag(reason: string) {
+  const normalized = reason.toLowerCase();
+  if (normalized.includes("mutual") && normalized.includes("near")) return "Nearby mutual";
+  if (normalized.includes("mutual")) return "Mutual connection";
+  if (normalized.includes("shared") && normalized.includes("near")) return "Nearby community";
+  if (normalized.includes("shared")) return "Shared community";
+  return "Near you";
+}
+
+type FloatingPersonSuggestion = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  tag: string;
+  ratingLabel?: string;
+  canDismiss?: boolean;
+  sourceSuggestion?: PeopleSuggestion;
+};
+
+const floatingPersonPositions = [
+  { left: "5%", top: 14, size: 82 },
+  { left: "36%", top: 58, size: 94 },
+  { right: "5%", top: 16, size: 78 },
+  { left: "14%", top: 159, size: 88 },
+  { right: "19%", top: 158, size: 98 },
+] as const;
+const floatingPersonCompactPositions = [
+  { left: "7%", top: 5, size: 54 },
+  { left: "39%", top: 23, size: 64 },
+  { right: "7%", top: 5, size: 54 },
+] as const;
+
+const FloatingPersonBubble = React.memo(function FloatingPersonBubble({ member, index, compact = false, isLight, onOpen, onDismiss }: {
+  member: FloatingPersonSuggestion;
+  index: number;
+  compact?: boolean;
+  isLight: boolean;
+  onOpen: () => void;
+  onDismiss?: () => void;
+}) {
+  const bounce = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const positions = compact ? floatingPersonCompactPositions : floatingPersonPositions;
+  const position = positions[index % positions.length];
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      bounce.stopAnimation();
+      return undefined;
+    }
+    const animation = Animated.loop(Animated.sequence([
+      Animated.delay(index * 220),
+      Animated.timing(bounce, { toValue: 1, duration: 1750 + index * 95, useNativeDriver: true }),
+      Animated.timing(bounce, { toValue: 0, duration: 1750 + index * 95, useNativeDriver: true }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, [bounce, index, reduceMotion]);
+
+  const translateY = bounce.interpolate({ inputRange: [0, 1], outputRange: [0, index % 2 ? -8 : -11] });
+  const translateX = bounce.interpolate({ inputRange: [0, 1], outputRange: [0, index % 2 ? 2 : -2] });
+  return <Animated.View style={[styles.floatingPerson, position, { width: position.size + 18, transform: [{ translateY }, { translateX }] }]}>
+    <TouchableOpacity style={[styles.floatingPersonTap, { width: position.size, height: position.size, borderRadius: position.size / 2 }, isLight && styles.floatingPersonTapLight]} onPress={onOpen} accessibilityRole="button" accessibilityLabel={`View ${member.name}'s profile`}>
+      <UserAvatar photoUrl={member.photoUrl} style={[styles.floatingPersonAvatar, { width: position.size - 8, height: position.size - 8, borderRadius: (position.size - 8) / 2 }]} imageStyle={{ borderRadius: (position.size - 8) / 2 }} fallback={<Text style={styles.floatingPersonInitials}>{initials(member.name)}</Text>} />
+      <View style={styles.floatingPersonStatus}><Text style={styles.floatingPersonStatusText}>✦</Text></View>
+    </TouchableOpacity>
+    <View style={[styles.floatingPersonNameTag, isLight && styles.floatingPersonNameTagLight]}>
+      <Text style={[styles.floatingPersonName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{member.name}</Text>
+      <Text style={styles.floatingPersonReason} numberOfLines={1}>{member.tag}{member.ratingLabel ? ` · ★ ${member.ratingLabel}` : ""}</Text>
+    </View>
+    {member.canDismiss && onDismiss ? <TouchableOpacity style={styles.floatingPersonDismiss} onPress={onDismiss} accessibilityRole="button" accessibilityLabel={`Hide ${member.name} from people suggestions`}><Text style={styles.floatingPersonDismissText}>×</Text></TouchableOpacity> : null}
+  </Animated.View>;
 });
 
 function communityFeedSnapshotKey(userId: number, city: string, category: string, query: string, groupId: string) {
@@ -590,7 +730,7 @@ function SharedLinkCard({ url }: { url: string }) {
   );
 }
 
-export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onRequestGuestNotifications, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenRentalBooking, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
+export function CommunityScreen({ user, city, cars, testimonials = [], onRequireLogin, onRequireSignup, onRequestGuestNotifications, onOpenHousing, onOpenRides, onOpenRentalCars, onOpenRentalBooking, onOpenGas, gasPriceRefreshKey = 0, onOpenCommunity, onOpenUserChat, onProfileUpdated, onBottomTabsHiddenChange, initialPostId = "", onInitialPostOpened }: Props) {
   const layout = useResponsiveLayout();
   const { width: viewportWidth } = useWindowDimensions();
   const compactPostActions = !layout.isTablet && viewportWidth < 390;
@@ -609,6 +749,29 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [groups, setGroups] = useState<Community[]>(() => initialGroups || []);
   const [relocationSuggestions, setRelocationSuggestions] = useState<RelocationSuggestion[]>([]);
   const [peopleSuggestions, setPeopleSuggestions] = useState<PeopleSuggestion[]>([]);
+  const [contactSuggestions, setContactSuggestions] = useState<FairFaresContact[]>([]);
+  const [contactSuggestionsLoading, setContactSuggestionsLoading] = useState(false);
+  const [contactSuggestionsChecked, setContactSuggestionsChecked] = useState(false);
+  const [peopleDiscoveryGuideOpen, setPeopleDiscoveryGuideOpen] = useState(false);
+  const [peopleMapOpen, setPeopleMapOpen] = useState(false);
+  const [peopleMapPlannerOpen, setPeopleMapPlannerOpen] = useState(false);
+  const [peopleMapInitialFocus, setPeopleMapInitialFocus] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [peopleMapListOpen, setPeopleMapListOpen] = useState(false);
+  const [peopleMapCompany, setPeopleMapCompany] = useState("");
+  const [peopleMapMoreBusy, setPeopleMapMoreBusy] = useState(false);
+  const [peopleMapCityPool, setPeopleMapCityPool] = useState<PeopleMapCityPool | null>(null);
+  const peopleMapViewportKeyRef = useRef("");
+  const peopleMapViewportRequestRef = useRef(0);
+  const peopleMapPlannerEntrance = useRef(new Animated.Value(0)).current;
+  const peopleMapPlannerPulse = useRef(new Animated.Value(0)).current;
+  const [relocationPlannerOpen, setRelocationPlannerOpen] = useState(false);
+  const [relocationCityDraft, setRelocationCityDraft] = useState(user?.relocationCity || "");
+  const [relocationMonthDraft, setRelocationMonthDraft] = useState(user?.relocationCity ? user.relocationMonth || "" : "");
+  const [relocationCompanyDraft, setRelocationCompanyDraft] = useState(user?.relocationCity ? user.relocationCompany || "" : "");
+  const [relocationReasonDraft, setRelocationReasonDraft] = useState<RelocationReason>(user?.relocationCity ? user.relocationReason || "" : "");
+  const [relocationCityOptions, setRelocationCityOptions] = useState<string[]>([]);
+  const [relocationCityOptionsLoading, setRelocationCityOptionsLoading] = useState(false);
+  const [relocationSaving, setRelocationSaving] = useState(false);
   const [groupSuggestionCity, setGroupSuggestionCity] = useState(city);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [cityDraft, setCityDraft] = useState("");
@@ -628,6 +791,40 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [actionNoticeRefreshKey, setActionNoticeRefreshKey] = useState(0);
   const actionNoticeMotion = useRef(new Animated.Value(0)).current;
   const actionNoticeVisible = useRef(false);
+
+  useEffect(() => {
+    peopleMapPlannerEntrance.stopAnimation();
+    peopleMapPlannerPulse.stopAnimation();
+    if (!peopleMapPlannerOpen) {
+      peopleMapPlannerEntrance.setValue(0);
+      peopleMapPlannerPulse.setValue(0);
+      return undefined;
+    }
+    peopleMapPlannerEntrance.setValue(0);
+    const entrance = Animated.spring(peopleMapPlannerEntrance, {
+      toValue: 1,
+      damping: 15,
+      stiffness: 155,
+      mass: 0.82,
+      useNativeDriver: true,
+    });
+    entrance.start();
+    let pulse: Animated.CompositeAnimation | null = null;
+    let active = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduceMotion) => {
+      if (!active || reduceMotion) return;
+      pulse = Animated.loop(Animated.sequence([
+        Animated.timing(peopleMapPlannerPulse, { toValue: 1, duration: 1700, useNativeDriver: true }),
+        Animated.timing(peopleMapPlannerPulse, { toValue: 0, duration: 1700, useNativeDriver: true }),
+      ]));
+      pulse.start();
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      entrance.stop();
+      pulse?.stop();
+    };
+  }, [peopleMapPlannerEntrance, peopleMapPlannerOpen, peopleMapPlannerPulse]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -664,6 +861,27 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [guestBenefitsOpen, setGuestBenefitsOpen] = useState(false);
   const pendingGuestAuth = useRef<"signup" | "login" | "">("");
   const [form, setForm] = useState(emptyCommunityPostForm);
+  const [listingCity, setListingCity] = useState("");
+  const [housingCurrentCity, setHousingCurrentCity] = useState("");
+  const [housingMoveAnswer, setHousingMoveAnswer] = useState<"" | "YES" | "NO">("");
+  const [housingMoveMonth, setHousingMoveMonth] = useState("");
+  const [housingMoveVisible, setHousingMoveVisible] = useState(false);
+  const isNewHousingPost = !editingPostId && ["HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"].includes(form.category);
+  const housingCitiesDiffer = Boolean(normalizedCityKey(housingCurrentCity) && normalizedCityKey(listingCity)
+    && normalizedCityKey(housingCurrentCity) !== normalizedCityKey(listingCity));
+  useEffect(() => {
+    if (!composerOpen) return;
+    setListingCity(groupSuggestionCity);
+    setHousingCurrentCity(user?.localCity || "");
+    setHousingMoveAnswer("");
+    setHousingMoveMonth("");
+    setHousingMoveVisible(false);
+  }, [composerOpen]);
+  useEffect(() => {
+    setHousingMoveAnswer("");
+    setHousingMoveMonth("");
+    setHousingMoveVisible(false);
+  }, [listingCity, housingCurrentCity, form.category]);
   const [postValidation, setPostValidation] = useState<{ title?: string; body?: string }>({});
   const fieldExamples = postFieldExamples(form.category);
   const composerLinkPreviewUrl = useMemo(() => communityLinkPreviewUrl(form.linkUrl, form.body), [form.linkUrl, form.body]);
@@ -704,6 +922,65 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [testimonials]);
   const acrossCountryName = locationCountryCodeFromLabel(groupSuggestionCity || city) === "IN" ? "India" : "USA";
   const displayedGasPrice = lowestGasPrice ?? 3.54;
+  const peopleDiscoveryMembers = useMemo<FloatingPersonSuggestion[]>(() => {
+    const contactIds = new Set(contactSuggestions.map((suggestion) => suggestion.id));
+    return [
+      ...contactSuggestions.map((suggestion) => ({
+        id: suggestion.id,
+        name: suggestion.name,
+        photoUrl: suggestion.photoUrl,
+        tag: "In your contacts",
+      })),
+      ...peopleSuggestions
+        .filter((suggestion) => !contactIds.has(suggestion.id))
+        .map((suggestion) => ({
+          id: suggestion.id,
+          name: suggestion.name,
+          photoUrl: suggestion.photoUrl,
+          tag: peopleSuggestionTag(suggestion.reason),
+          ratingLabel: suggestion.ratingSummary?.count ? suggestion.ratingSummary.label : undefined,
+          canDismiss: true,
+          sourceSuggestion: suggestion,
+        })),
+    ].slice(0, floatingPersonPositions.length);
+  }, [contactSuggestions, peopleSuggestions]);
+  const peopleMapMembers = useMemo<PeopleMapMember[]>(() => {
+    if (peopleMapCityPool) {
+      return peopleMapCityPool.people.map((person) => ({
+        ...person,
+        source: "MUTUAL" as const,
+        areaTotal: peopleMapCityPool.total,
+        companyMatchCount: peopleMapCityPool.companyMatches,
+        boosted: person.companyMatch,
+      }));
+    }
+    const contactIds = new Set(contactSuggestions.map((suggestion) => suggestion.id));
+    return [
+      ...contactSuggestions.map((suggestion) => ({ ...suggestion, source: "CONTACT" as const })),
+      ...peopleSuggestions.filter((suggestion) => !contactIds.has(suggestion.id)).map((suggestion) => ({
+        id: suggestion.id,
+        name: suggestion.name,
+        photoUrl: suggestion.photoUrl,
+        city: suggestion.city || "",
+        latitude: Number(suggestion.latitude || 0),
+        longitude: Number(suggestion.longitude || 0),
+        source: "MUTUAL" as const,
+      })),
+    ];
+  }, [contactSuggestions, peopleMapCityPool, peopleSuggestions]);
+
+  const dismissPeopleDiscoveryGuide = useCallback(() => {
+    setPeopleDiscoveryGuideOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id || !peopleDiscoveryMembers.length) {
+      setPeopleDiscoveryGuideOpen(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setPeopleDiscoveryGuideOpen(true), 3200);
+    return () => clearTimeout(timer);
+  }, [peopleDiscoveryMembers.length, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -716,6 +993,20 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         .then((suggestions) => { if (!cancelled) setRelocationSuggestions(suggestions); })
         .catch(() => { if (!cancelled) setRelocationSuggestions([]); });
     }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.id || !feedReadyForSecondaryReads || loading || refreshing) {
+      setContactSuggestions([]);
+      return () => { cancelled = true; };
+    }
+    const timer = setTimeout(() => {
+      void getPeopleContactPool()
+        .then((people) => { if (!cancelled) setContactSuggestions(people); })
+        .catch(() => { if (!cancelled) setContactSuggestions([]); });
+    }, 700);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
 
@@ -912,6 +1203,74 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     memberProfileSheetRef.current?.open(author);
   }, [detail]);
 
+  const findPeopleFromContacts = useCallback(async () => {
+    if (!user?.id) {
+      onRequireLogin();
+      return false;
+    }
+    if (Platform.OS === "web" || !(await Contacts.isAvailableAsync())) {
+      Alert.alert("Contacts unavailable", "Contact matching is available in the FairFares Android and iOS apps.");
+      return false;
+    }
+    setContactSuggestionsLoading(true);
+    try {
+      let permission = await Contacts.getPermissionsAsync();
+      if (permission.status !== "granted" && permission.canAskAgain) permission = await Contacts.requestPermissionsAsync();
+      if (permission.status !== "granted") {
+        Alert.alert("Allow Contacts access", "Allow Contacts to find FairFares members you already know. Your phone numbers are matched as hashes, not uploaded as an address book.");
+        return false;
+      }
+      const response = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+        sort: Contacts.SortTypes.FirstName,
+      });
+      const phoneHashes = new Set<string>();
+      response.data.forEach((contact) => {
+        (contact.phoneNumbers || []).forEach((entry) => {
+          contactDiscoveryVariants(String(entry.number || "")).forEach((value) => phoneHashes.add(contactDiscoveryHash(value)));
+        });
+      });
+      if (!phoneHashes.size) {
+        setContactSuggestions([]);
+        setContactSuggestionsChecked(true);
+        return true;
+      }
+      const peopleById = new Map<number, { id: number; name: string; photoUrl: string; city: string; latitude: number; longitude: number }>();
+      const hashes = Array.from(phoneHashes);
+      for (let offset = 0; offset < hashes.length; offset += 5000) {
+        const found = await findChatPeopleByContactHashes(hashes.slice(offset, offset + 5000));
+        found.people.forEach((person) => peopleById.set(person.id, { id: person.id, name: person.name, photoUrl: person.photoUrl, city: person.city || "", latitude: Number(person.latitude || 0), longitude: Number(person.longitude || 0) }));
+      }
+      const matches = Array.from(peopleById.values()).sort((left, right) => left.name.localeCompare(right.name));
+      setContactSuggestions(matches);
+      setContactSuggestionsChecked(true);
+      if (!matches.length) Alert.alert("No FairFares contacts yet", "We couldn't find a FairFares member in your contacts. You can refresh later.");
+      return true;
+    } catch (error) {
+      Alert.alert("Contact search failed", error instanceof Error ? error.message : "Could not check your contacts.");
+      return false;
+    } finally {
+      setContactSuggestionsLoading(false);
+    }
+  }, [onRequireLogin, user?.id]);
+
+  const openPeopleMap = useCallback(async () => {
+    if (!user?.id) { onRequireLogin(); return; }
+    setRelocationCityDraft(user.localCity || user.relocationCity || groupSuggestionCity);
+    setRelocationCompanyDraft(user.relocationCompany || "");
+    setPeopleMapListOpen(false);
+    setPeopleMapPlannerOpen(true);
+    setPeopleMapOpen(true);
+    setPeopleMapInitialFocus(null);
+    const initialCity = user.localCity || user.relocationCity || groupSuggestionCity;
+    if (initialCity) {
+      try {
+        const area = await getPeopleMapCityPool(normalizedLocationLabel(initialCity));
+        setPeopleMapInitialFocus({ latitude: area.latitude, longitude: area.longitude });
+      } catch { /* Keep search available when the initial city cannot resolve. */ }
+    }
+  }, [user?.id, user?.localCity, user?.relocationCity, user?.relocationCompany, groupSuggestionCity, onRequireLogin]);
+
   const openPostPhoto = (post: CommunityPost, images: string[], index: number) => {
     const openedFromPostSheet = detail?.id === post.id;
     const viewer = { images, index, returnToPost: openedFromPostSheet ? post : null };
@@ -1076,10 +1435,13 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           if (cachedCity && !cancelled && !manualFeedCity.current) setGroupSuggestionCity(cachedCity);
         }
         const result = await resolveCurrentDeviceCity({ allowCachedFallback: true });
-        if (!result || cancelled || manualFeedCity.current) return;
+        if (!result || cancelled) return;
         setGasPreviewCoordinates({ latitude: result.latitude, longitude: result.longitude });
         const currentCity = normalizedLocationLabel(result.city);
-        if (currentCity) setGroupSuggestionCity(currentCity);
+        if (currentCity) {
+          if (!manualFeedCity.current) setGroupSuggestionCity(currentCity);
+          if (user?.id) void recordCurrentCityObservation(currentCity).catch(() => undefined);
+        }
       } catch {
         // The selected feed city remains the fallback when device location is unavailable.
       } finally {
@@ -1143,6 +1505,136 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [cityDraft, cityPickerOpen]);
+
+  useEffect(() => {
+    if ((!relocationPlannerOpen && !peopleMapPlannerOpen) || relocationCityDraft.trim().length < 2) {
+      setRelocationCityOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setRelocationCityOptionsLoading(true);
+      void getAccommodationLocationOptions(relocationCityDraft.trim()).then((result) => {
+        if (cancelled) return;
+        const requestedCity = relocationCityDraft.split(",")[0]?.trim().toLocaleLowerCase() || "";
+        const options = (result?.cities || [])
+          .map(normalizedLocationLabel)
+          .filter((value) => Boolean(normalizedCityKey(value)))
+          .filter((value) => normalizedCityKey(value).split(",")[0].startsWith(requestedCity))
+          .filter((value, index, values) => value && values.indexOf(value) === index)
+          .slice(0, 6);
+        setRelocationCityOptions(options);
+      }).finally(() => { if (!cancelled) setRelocationCityOptionsLoading(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [peopleMapPlannerOpen, relocationCityDraft, relocationPlannerOpen]);
+
+  useEffect(() => {
+    if (relocationPlannerOpen || peopleMapPlannerOpen) return;
+    setRelocationCityDraft(user?.relocationCity || "");
+    setRelocationMonthDraft(user?.relocationCity ? user.relocationMonth || "" : "");
+    setRelocationCompanyDraft(user?.relocationCity ? user.relocationCompany || "" : "");
+    setRelocationReasonDraft(user?.relocationCity ? user.relocationReason || "" : "");
+  }, [peopleMapPlannerOpen, relocationPlannerOpen, user?.id, user?.relocationCity, user?.relocationCompany, user?.relocationMonth, user?.relocationReason]);
+
+  const searchPeopleMap = useCallback(async () => {
+    if (!user?.id) { onRequireLogin(); return; }
+    const query = relocationCityDraft.trim();
+    if (!query) { Alert.alert("Choose a city", "Enter a city such as Denver or Centennial, CO."); return; }
+    setRelocationSaving(true);
+    try {
+      const options = await getAccommodationLocationOptions(query).catch(() => null);
+      const destination = (options?.cities || []).map(normalizedLocationLabel).find(
+        (value) => value.split(",")[0].trim().toLocaleLowerCase() === query.split(",")[0].trim().toLocaleLowerCase()
+          && (!query.includes(",") || value.toLocaleLowerCase() === normalizedLocationLabel(query).toLocaleLowerCase())
+      ) || normalizedLocationLabel(query);
+      const pool = await getPeopleMapCityPool(destination, relocationCompanyDraft.trim());
+      if (!pool.latitude && !pool.longitude) throw new Error("City not found. Choose a city and state from the suggestions.");
+      setPeopleMapCityPool(pool);
+      setPeopleMapCompany(relocationCompanyDraft.trim());
+      setPeopleMapListOpen(false);
+      setPeopleMapPlannerOpen(false);
+    } catch (error) {
+      Alert.alert("Could not load city", error instanceof Error ? error.message : "Please try again.");
+    } finally { setRelocationSaving(false); }
+  }, [onRequireLogin, relocationCityDraft, relocationCompanyDraft, user?.id]);
+
+  const loadMoreMapPeople = async () => {
+    if (!peopleMapCityPool || peopleMapCityPool.nextOffset == null || peopleMapMoreBusy) return;
+    const pool = peopleMapCityPool;
+    setPeopleMapMoreBusy(true);
+    try {
+      const next = await getPeopleMapCityPool(pool.city, peopleMapCompany, pool.nextOffset ?? 0);
+      setPeopleMapCityPool((current) => current === pool ? {
+        ...next, people: [...pool.people, ...next.people.filter((person) => !pool.people.some((existing) => existing.id === person.id))],
+      } : current);
+    } catch (error) {
+      Alert.alert("Could not load more people", error instanceof Error ? error.message : "Please try again.");
+    } finally { setPeopleMapMoreBusy(false); }
+  };
+
+  const loadPeopleForMapViewport = useCallback(async (region: PeopleMapRegion) => {
+    if (!user?.id || peopleMapPlannerOpen || region.latitudeDelta > 3 || region.longitudeDelta > 3) return;
+    const viewportKey = `${region.latitude.toFixed(2)},${region.longitude.toFixed(2)}`;
+    if (viewportKey === peopleMapViewportKeyRef.current) return;
+    peopleMapViewportKeyRef.current = viewportKey;
+    const requestId = peopleMapViewportRequestRef.current + 1;
+    peopleMapViewportRequestRef.current = requestId;
+    try {
+      const [address] = await Location.reverseGeocodeAsync({ latitude: region.latitude, longitude: region.longitude });
+      const city = String(address?.city || address?.subregion || "").trim();
+      const state = String(address?.region || "").trim();
+      if (!city) return;
+      const destination = normalizedLocationLabel(state ? `${city}, ${state}` : city);
+      if (!destination || normalizedCityKey(destination) === normalizedCityKey(peopleMapCityPool?.city || "")) return;
+      const pool = await getPeopleMapCityPool(destination, peopleMapCompany);
+      if (peopleMapViewportRequestRef.current !== requestId) return;
+      setPeopleMapCityPool(pool);
+      setPeopleMapListOpen(false);
+    } catch {
+      // The map remains usable if reverse geocoding is unavailable; a city can
+      // still be chosen directly from the search sheet.
+    }
+  }, [peopleMapCityPool?.city, peopleMapCompany, peopleMapPlannerOpen, user?.id]);
+
+  const saveRelocationPlan = useCallback(async () => {
+    if (!user?.id) {
+      onRequireLogin();
+      return;
+    }
+    const destination = relocationCityDraft.trim();
+    if (!destination) {
+      Alert.alert("Add a destination", "Choose the city you are moving to before turning on relocation connections.");
+      return;
+    }
+    if (!relocationReasonDraft) {
+      Alert.alert("Why are you moving?", "Choose the reason that best fits your move so we can prioritize the right people.");
+      return;
+    }
+    setRelocationSaving(true);
+    try {
+      const result = await updateMobileProfile({
+        relocationCity: destination,
+        relocationMonth: relocationMonthDraft.trim(),
+        relocationCompany: relocationCompanyDraft.trim(),
+        relocationReason: relocationReasonDraft,
+        relocationDiscoverable: true,
+      });
+      onProfileUpdated(result.user);
+      const [suggestions, mapPool] = await Promise.all([
+        getRelocationSuggestions().catch(() => []),
+        getPeopleMapCityPool(destination, relocationCompanyDraft.trim()),
+      ]);
+      setRelocationSuggestions(suggestions);
+      setPeopleMapCityPool(mapPool);
+      setRelocationPlannerOpen(false);
+      setPeopleMapPlannerOpen(false);
+    } catch (error) {
+      Alert.alert("Could not load relocation connections", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setRelocationSaving(false);
+    }
+  }, [onProfileUpdated, onRequireLogin, relocationCityDraft, relocationCompanyDraft, relocationMonthDraft, relocationReasonDraft, user?.id]);
 
   const chooseFeedCity = (value: string) => {
     const nextCity = normalizedLocationLabel(value);
@@ -1465,6 +1957,26 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   };
 
   const publish = async () => {
+    const housingLocation = isNewHousingPost ? {
+      currentCity: normalizedLocationLabel(housingCurrentCity),
+      moving: housingCitiesDiffer && housingMoveAnswer === "YES",
+      moveMonth: housingMoveMonth.trim(),
+      showOnMap: housingCitiesDiffer && housingMoveAnswer === "YES" && housingMoveVisible,
+        showCurrentOnMap: !housingCitiesDiffer && housingMoveVisible ? true : undefined,
+    } : undefined;
+    if (isNewHousingPost && (!normalizedCityKey(listingCity) || !normalizedCityKey(housingCurrentCity))) {
+      Alert.alert("Choose city and state", "Enter your current city and the listing city, such as Houston, TX or Denver, CO.");
+      return;
+    }
+    if (isNewHousingPost && housingCitiesDiffer && !housingMoveAnswer) {
+      Alert.alert("Confirm your move", "Choose whether you are moving to the listing city.");
+      return;
+    }
+    if (housingLocation?.moving && housingLocation.moveMonth && !/^\d{4}-(0[1-9]|1[0-2])$/.test(housingLocation.moveMonth)) {
+      Alert.alert("Check move month", "Use YYYY-MM, such as 2027-01, or leave it blank.");
+      return;
+    }
+
     const titleLength = form.title.trim().length;
     const bodyLength = form.body.trim().length;
     const validation = {
@@ -1487,7 +1999,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         setVideoUploadProgress(0);
         setVideoUploadPath("preparing");
         preparedVideo = await prepareCommunityVideoForFeed(pendingVideo, (progress) => setVideoUploadProgress(Math.max(0, Math.min(0.18, progress * 0.18))));
-        if (!editingPostId) {
+        if (!editingPostId && !housingLocation) {
           const nextTitle = form.title.trim();
           const nextBody = form.body.trim();
           const nextLinkUrl = form.linkUrl.trim();
@@ -1546,8 +2058,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         }));
         void load(true);
       } else {
-        const result = await createCommunityPost({ ...form, media, city: groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl });
+        const result = await createCommunityPost({ ...form, housingLocation, media, city: isNewHousingPost ? normalizedLocationLabel(listingCity) : groupSuggestionCity, title: nextTitle, body: nextBody, area: form.area.trim(), linkUrl: nextLinkUrl });
         setPosts((current) => [result.post, ...current]);
+        if (result.user) onProfileUpdated(result.user);
       }
       const emptyForm = emptyCommunityPostForm();
       composerBaselineRef.current = composerFingerprint(emptyForm);
@@ -2124,18 +2637,31 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           </TouchableOpacity>)}
         </ScrollView>
       </View> : null}
-      {peopleSuggestions.length ? <View style={[styles.peopleSuggestions, isLight && styles.peopleSuggestionsLight]}>
-        <View style={styles.relocationConnectionsHead}><View><Text style={[styles.relocationConnectionsTitle, isLight && styles.textPrimaryLight]}>People you may know</Text><Text style={[styles.relocationConnectionsCopy, isLight && styles.textSecondaryLight]}>Suggested through mutual connections and shared communities.</Text></View><Text style={styles.peopleSuggestionsBadge}>RELEVANT</Text></View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relocationConnectionsRail}>
-          {peopleSuggestions.map((suggestion) => <TouchableOpacity key={suggestion.id} style={[styles.relocationConnectionCard, isLight && styles.relocationConnectionCardLight]} onPress={() => openMemberProfile({ id: suggestion.id, name: suggestion.name, photoUrl: suggestion.photoUrl })} accessibilityRole="button" accessibilityLabel={`View ${suggestion.name}'s profile`}>
-            <UserAvatar photoUrl={suggestion.photoUrl} style={styles.relocationConnectionAvatar} imageStyle={styles.relocationConnectionAvatarImage} fallback={<Text style={styles.relocationConnectionInitials}>{initials(suggestion.name)}</Text>} />
-            <Text style={[styles.relocationConnectionName, isLight && styles.textPrimaryLight]} numberOfLines={1}>{suggestion.name}</Text>
-            <Text style={styles.peopleSuggestionReason} numberOfLines={2}>{suggestion.reason}</Text>
-            {suggestion.ratingSummary?.count ? <Text style={styles.relocationConnectionRating}>⭐ {suggestion.ratingSummary.label}</Text> : null}
-            <TouchableOpacity style={styles.hidePeopleSuggestion} onPress={(event) => { event.stopPropagation(); dismissPeopleSuggestion(suggestion); }} accessibilityRole="button" accessibilityLabel={`Hide ${suggestion.name} from people suggestions`}><Text style={styles.hidePeopleSuggestionText}>Hide</Text></TouchableOpacity>
-          </TouchableOpacity>)}
-        </ScrollView>
-      </View> : null}
+      <View style={[styles.peopleSuggestions, isLight && styles.peopleSuggestionsLight]}>
+        <View style={styles.peopleDiscoveryContent}>
+          {peopleDiscoveryGuideOpen ? <View style={[styles.peopleDiscoveryInlineGuide, isLight && styles.peopleDiscoveryInlineGuideLight]}>
+            <TouchableOpacity style={styles.peopleDiscoveryInlineGuideClose} onPress={dismissPeopleDiscoveryGuide} accessibilityRole="button" accessibilityLabel="Dismiss people suggestions explanation"><Text style={styles.peopleDiscoveryInlineGuideCloseText}>×</Text></TouchableOpacity>
+            <View style={styles.peopleDiscoveryInlineGuideRow}>
+              <View style={styles.peopleDiscoveryGuidePair} pointerEvents="none">
+                {peopleDiscoveryMembers.slice(0, 2).map((member, index) => <View key={`guide-${member.id}`} style={[styles.peopleDiscoveryGuideAvatarWrap, index === 1 && styles.peopleDiscoveryGuideAvatarSecond]}><UserAvatar photoUrl={member.photoUrl} style={styles.peopleDiscoveryGuideAvatar} imageStyle={styles.peopleDiscoveryGuideAvatarImage} fallback={<Text style={styles.peopleDiscoveryGuideAvatarInitials}>{initials(member.name)}</Text>} /></View>)}
+                <View style={styles.peopleDiscoveryGuidePairLink}><Text style={styles.peopleDiscoveryGuidePairLinkText}>✦</Text></View>
+              </View>
+              <View style={styles.peopleDiscoveryInlineGuideCopy}>
+                <Text style={styles.peopleDiscoveryInlineGuideEyebrow}>DISCOVER MUTUAL FRIENDS</Text>
+                <Text style={[styles.peopleDiscoveryInlineGuideTitle, isLight && styles.textPrimaryLight]}>Find friends around you</Text>
+                <Text style={[styles.peopleDiscoveryInlineGuideBody, isLight && styles.textSecondaryLight]}>Find friends who work at the same company or attend the same school or college, and live in the same area.</Text>
+                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => { dismissPeopleDiscoveryGuide(); void openPeopleMap(); }} accessibilityRole="button" accessibilityLabel="Find friends from my contacts and open the people map"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Show friends ›</Text></TouchableOpacity>
+              </View>
+            </View>
+          </View> : null}
+          {!peopleDiscoveryGuideOpen ? <TouchableOpacity style={[styles.peopleMapReopen, isLight && styles.peopleMapReopenLight]} onPress={() => void openPeopleMap()} accessibilityRole="button" accessibilityLabel="Open friends map">
+            <Text style={styles.peopleMapReopenIcon}>✦</Text><Text style={[styles.peopleMapReopenText, isLight && styles.textPrimaryLight]}>Friends map</Text><Text style={styles.peopleMapReopenHint}>{user?.id ? "Explore your circle" : "Sign in to explore"}</Text><Text style={styles.peopleMapReopenChevron}>›</Text>
+          </TouchableOpacity> : null}
+          {peopleDiscoveryMembers.length ? <View style={styles.floatingPeopleStageCompact}>
+            {peopleDiscoveryMembers.slice(0, 3).map((member, index) => <FloatingPersonBubble key={`preview-${member.id}-${member.tag}`} member={member} index={index} compact isLight={isLight} onOpen={() => openMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} />)}
+          </View> : null}
+        </View>
+      </View>
       </>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.colors.brand} size="large" /> : null}
       ListFooterComponent={selectedGroup && localHasMore ? renderLocalMore() : null}
@@ -2184,9 +2710,91 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </View></View>
     </Modal>
 
+    <Modal visible={peopleMapOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPeopleMapOpen(false)}>
+      <View style={[styles.peopleMapScreen, isLight && styles.peopleMapScreenLight]}>
+        <View style={styles.peopleMapHeader}>
+          <View style={styles.peopleMapHeaderCopy}><Text style={styles.peopleMapEyebrow}>FRIENDS MAP</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>People around your circle</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>City-level areas only — never live locations.</Text></View>
+          <TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleMapOpen(false)} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
+        </View>
+        <View style={styles.peopleMapCanvas}>
+          <PeopleMap onAreaPress={() => setPeopleMapListOpen(true)} onRegionChangeComplete={loadPeopleForMapViewport} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
+          {peopleMapPlannerOpen ? <View style={styles.peopleMapPlannerOverlay}>
+            <Animated.View pointerEvents="none" style={[styles.peopleMapPlannerAura, { opacity: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.26, .56] }), transform: [{ scale: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.86, 1.13] }) }] }]} />
+            <Animated.View style={[styles.peopleMapPlannerCard, isLight && styles.peopleMapPlannerCardLight, { opacity: peopleMapPlannerEntrance, transform: [{ translateY: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }]}>
+              <View style={styles.peopleMapPlannerTopline}>
+                <View style={styles.peopleMapPlannerOrb}><Text style={styles.peopleMapPlannerOrbText}>✦</Text></View>
+                <View style={styles.peopleMapPlannerToplineCopy}><Text style={styles.peopleMapPlannerEyebrow}>FIND YOUR PEOPLE</Text><Text style={[styles.peopleMapPlannerHint, isLight && styles.peopleMapPlannerHintLight]}>Search a city and optionally highlight your company</Text></View>
+                <View style={styles.peopleMapPlannerProgress}><Text style={styles.peopleMapPlannerProgressText}>1 · 2</Text></View>
+                <TouchableOpacity style={styles.peopleMapPlannerClose} onPress={() => { if (!relocationSaving) { if (peopleMapCityPool) setPeopleMapPlannerOpen(false); else setPeopleMapOpen(false); } }} disabled={relocationSaving} accessibilityRole="button" accessibilityLabel="Dismiss find your people setup"><Text style={styles.peopleMapPlannerCloseText}>×</Text></TouchableOpacity>
+              </View>
+              <View style={styles.peopleMapPlannerQuestion}><View style={styles.peopleMapPlannerStep}><Text style={styles.peopleMapPlannerStepText}>1</Text></View><View><Text style={[styles.peopleMapPlannerTitle, isLight && styles.textPrimaryLight]}>Which city do you want to explore?</Text><Text style={[styles.peopleMapPlannerQuestionHint, isLight && styles.peopleMapPlannerQuestionHintLight]}>Choose a city so we can look in the right place.</Text></View></View>
+              <TextInput style={[styles.peopleMapPlannerInput, isLight && styles.peopleMapPlannerInputLight]} value={relocationCityDraft} onChangeText={setRelocationCityDraft} placeholder="Denver or Centennial, CO" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
+              {relocationCityOptionsLoading ? <ActivityIndicator size="small" color={theme.colors.brand} style={styles.peopleMapPlannerLoader} /> : null}
+              {relocationCityOptions.map((option) => <TouchableOpacity key={option} style={[styles.peopleMapPlannerOption, isLight && styles.peopleMapPlannerOptionLight]} onPress={() => { setRelocationCityDraft(option); setRelocationCityOptions([]); }} accessibilityRole="button" accessibilityLabel={`Choose ${option}`}><Text style={[styles.peopleMapPlannerOptionText, isLight && styles.textPrimaryLight]}>{option}</Text><Text style={styles.peopleMapPlannerOptionArrow}>›</Text></TouchableOpacity>)}
+              <View style={styles.peopleMapPlannerReasonHeading}><View style={styles.peopleMapPlannerStep}><Text style={styles.peopleMapPlannerStepText}>2</Text></View><View><Text style={[styles.peopleMapPlannerLabel, isLight && styles.peopleMapPlannerLabelLight]}>Company or school (optional)</Text><Text style={[styles.peopleMapPlannerQuestionHint, isLight && styles.peopleMapPlannerQuestionHintLight]}>Choose work or school to highlight matching people.</Text></View></View>
+              <View style={styles.peopleMapPlannerReasons}>{relocationReasons.slice(0, 2).map((item) => <TouchableOpacity key={item.value} style={[styles.peopleMapPlannerReason, isLight && styles.peopleMapPlannerReasonLight, relocationReasonDraft === item.value && styles.peopleMapPlannerReasonSelected]} onPress={() => setRelocationReasonDraft(item.value)} accessibilityRole="button" accessibilityState={{ selected: relocationReasonDraft === item.value }}><Text style={styles.peopleMapPlannerReasonIcon}>{item.value === "NEW_JOB" ? "💼" : "🎓"}</Text><Text style={[styles.peopleMapPlannerReasonText, isLight && styles.peopleMapPlannerReasonTextLight, relocationReasonDraft === item.value && styles.peopleMapPlannerReasonTextSelected]}>{item.label}</Text></TouchableOpacity>)}</View>
+              {relocationReasonDraft ? <><Text style={[styles.peopleMapPlannerCompanyLabel, isLight && styles.peopleMapPlannerLabelLight]}>{relocationReasonDraft === "NEW_JOB" ? "Where will you work?" : "Which school or college?"}</Text><TextInput style={[styles.peopleMapPlannerInput, isLight && styles.peopleMapPlannerInputLight]} value={relocationCompanyDraft} onChangeText={setRelocationCompanyDraft} placeholder={relocationReasonDraft === "NEW_JOB" ? "Company name" : "School or college name"} placeholderTextColor={theme.colors.muted} autoCapitalize="words" /></> : null}
+              <TouchableOpacity style={[styles.peopleMapPlannerAction, relocationSaving && styles.disabled]} onPress={() => void searchPeopleMap()} disabled={relocationSaving} accessibilityRole="button" accessibilityLabel="Show friends on the map"><Text style={styles.peopleMapPlannerActionIcon}>✦</Text><Text style={styles.peopleMapPlannerActionText}>{relocationSaving ? "Searching…" : "Show people on map"}</Text><Text style={styles.peopleMapPlannerActionArrow}>›</Text></TouchableOpacity>
+            </Animated.View>
+          </View> : null}
+          {!peopleMapPlannerOpen ? <TouchableOpacity style={{ backgroundColor: "#ffffff", padding: 12, margin: 12, borderRadius: 12 }} onPress={() => setPeopleMapPlannerOpen(true)} accessibilityRole="button" accessibilityLabel="Search another city"><Text style={{ color: "#102b25", fontWeight: "800" }}>{peopleMapCityPool ? `${peopleMapCityPool.city}: ${peopleMapCityPool.total} discoverable users · ${peopleMapCityPool.companyMatches} company / school matches` : "Search a city"} · Change city</Text></TouchableOpacity> : null}
+          {!peopleMapPlannerOpen && peopleMapCityPool && peopleMapCityPool.total > 0 ? <View style={{ position: "absolute", bottom: 76, left: 12, right: 12, maxHeight: "45%", borderRadius: 16, padding: 12, backgroundColor: "#fff" }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={peopleMapListOpen ? "Hide city people" : "View city people"} onPress={() => setPeopleMapListOpen((value) => !value)}><Text style={{ color: "#102b25", fontWeight: "800" }}>{peopleMapListOpen ? "Hide people" : `View ${peopleMapCityPool.total} people`} {peopleMapListOpen ? "⌄" : "⌃"}</Text></TouchableOpacity>
+            {peopleMapListOpen ? <ScrollView style={{ marginTop: 8 }} keyboardShouldPersistTaps="handled">
+              {peopleMapCityPool.people.map((person) => <View key={person.id} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#e6ece9" }}>
+                <View style={{ width: person.companyMatch ? 44 : 34, height: person.companyMatch ? 44 : 34, borderRadius: 24, backgroundColor: person.companyMatch ? "#fff0c2" : "#e3f5ee", alignItems: "center", justifyContent: "center" }}><Text style={{ color: "#102b25", fontWeight: "800" }}>{person.name.slice(0, 1)}</Text></View>
+                <View style={{ flex: 1 }}><Text style={{ color: "#102b25", fontWeight: "700" }}>{person.name}</Text><Text style={{ color: "#526560", fontSize: 12 }}>{person.moving ? `Moving from ${person.fromCity || "another city"} to ${peopleMapCityPool.city}` : `Living in ${peopleMapCityPool.city}`}</Text>{person.companyMatch ? <Text style={{ color: "#986100", fontSize: 12 }}>Company / school match</Text> : null}</View>
+              </View>)}
+              {peopleMapCityPool.nextOffset != null ? <TouchableOpacity disabled={peopleMapMoreBusy} onPress={() => void loadMoreMapPeople()} accessibilityRole="button"><Text style={{ color: "#087254", paddingVertical: 12, fontWeight: "800" }}>{peopleMapMoreBusy ? "Loading…" : "Load more people"}</Text></TouchableOpacity> : null}
+            </ScrollView> : null}
+          </View> : null}
+          {!peopleMapPlannerOpen ? <View pointerEvents="none" style={styles.peopleMapLegend}>{peopleMapCityPool ? <Text style={styles.peopleMapLegendText}>City-level people</Text> : <><Text style={styles.peopleMapLegendText}>● Contacts</Text><Text style={styles.peopleMapLegendText}>● Mutuals</Text></>}<Text style={styles.peopleMapLegendHint}>Drag to explore · pinch to zoom</Text></View> : null}
+        </View>
+      </View>
+    </Modal>
+
+    <Modal visible={relocationPlannerOpen} transparent animationType="slide" onRequestClose={() => setRelocationPlannerOpen(false)}>
+      <KeyboardAvoidingView style={styles.relocationPlannerBackdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={[styles.relocationPlannerSheet, isLight && styles.relocationPlannerSheetLight]}>
+          <View style={styles.relocationPlannerHeader}><View style={styles.relocationPlannerHeaderCopy}><Text style={[styles.relocationPlannerTitle, isLight && styles.textPrimaryLight]}>Plan a move</Text><Text style={[styles.relocationPlannerSubtitle, isLight && styles.textSecondaryLight]}>Meet people moving to the same city and locals who want to help.</Text></View><TouchableOpacity onPress={() => setRelocationPlannerOpen(false)} accessibilityRole="button" accessibilityLabel="Close relocation plan"><Text style={styles.relocationPlannerClose}>×</Text></TouchableOpacity></View>
+          <Text style={styles.relocationPlannerLabel}>Destination city</Text>
+          <TextInput style={[styles.relocationPlannerInput, isLight && styles.relocationPlannerInputLight]} value={relocationCityDraft} onChangeText={setRelocationCityDraft} placeholder="Start typing a city" placeholderTextColor={theme.colors.muted} autoCapitalize="words" />
+          {relocationCityOptionsLoading ? <ActivityIndicator size="small" color={theme.colors.brand} /> : null}
+          {relocationCityOptions.map((option) => <TouchableOpacity key={option} style={styles.relocationPlannerOption} onPress={() => { setRelocationCityDraft(option); setRelocationCityOptions([]); }} accessibilityRole="button" accessibilityLabel={`Choose ${option}`}><Text style={[styles.relocationPlannerOptionText, isLight && styles.textPrimaryLight]}>{option}</Text><Text style={styles.relocationPlannerOptionArrow}>›</Text></TouchableOpacity>)}
+          <Text style={styles.relocationPlannerLabel}>Why are you moving?</Text>
+          <View style={styles.relocationReasonChoices}>{relocationReasons.map((item) => <TouchableOpacity key={item.value} style={[styles.relocationReasonChoice, relocationReasonDraft === item.value && styles.relocationReasonChoiceSelected]} onPress={() => setRelocationReasonDraft(item.value)} accessibilityRole="button" accessibilityState={{ selected: relocationReasonDraft === item.value }}><Text style={[styles.relocationReasonChoiceText, relocationReasonDraft === item.value && styles.relocationReasonChoiceTextSelected]}>{item.label}</Text></TouchableOpacity>)}</View>
+          <View style={styles.relocationPlannerFields}>
+            <View style={styles.relocationPlannerField}><Text style={styles.relocationPlannerLabel}>Target month</Text><TextInput style={[styles.relocationPlannerInput, isLight && styles.relocationPlannerInputLight]} value={relocationMonthDraft} onChangeText={setRelocationMonthDraft} placeholder="2026-12" placeholderTextColor={theme.colors.muted} keyboardType="numbers-and-punctuation" maxLength={7} /></View>
+            <View style={styles.relocationPlannerField}><Text style={styles.relocationPlannerLabel}>{relocationReasonDraft === "NEW_JOB" ? "Company" : relocationReasonDraft === "SCHOOL_COLLEGE" ? "School or college" : "Organization"}</Text><TextInput style={[styles.relocationPlannerInput, isLight && styles.relocationPlannerInputLight]} value={relocationCompanyDraft} onChangeText={setRelocationCompanyDraft} placeholder="Optional" placeholderTextColor={theme.colors.muted} autoCapitalize="words" maxLength={120} /></View>
+          </View>
+          <Text style={[styles.relocationPlannerPrivacy, isLight && styles.textSecondaryLight]}>We show you members who chose the same destination or to welcome newcomers. Company or school only helps order introductions.</Text>
+          <TouchableOpacity style={[styles.relocationPlannerSave, relocationSaving && styles.disabled]} onPress={() => void saveRelocationPlan()} disabled={relocationSaving} accessibilityRole="button" accessibilityLabel="See relocation connections"><Text style={styles.relocationPlannerSaveText}>{relocationSaving ? "Finding people…" : "See people"}</Text></TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+
     <Modal visible={composerOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestCommunityComposerClose}>
       <View style={styles.modal}><View style={[styles.modalHead, { marginTop: modalHeaderTopInset }]}><TouchableOpacity onPress={requestCommunityComposerClose} accessibilityRole="button" accessibilityLabel="Cancel community post"><Text style={styles.cancel}>Cancel</Text></TouchableOpacity><Text style={styles.modalTitle}>{editingPostId ? "Edit post" : "Create post"}</Text><TouchableOpacity disabled={publishing} onPress={() => void publish()} accessibilityRole="button" accessibilityLabel={editingPostId ? "Save community post" : "Publish community post"} accessibilityState={{ disabled: publishing }}><Text style={[styles.publish, publishing && styles.disabled]}>{publishing ? videoUploadProgress !== null ? `Uploading ${Math.round(videoUploadProgress * 100)}%` : "Posting…" : editingPostId ? "Save" : "Post"}</Text></TouchableOpacity></View><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
         <Text style={styles.formLabel}>What do you need?</Text><View style={styles.needGrid}>{categories.slice(1).map((item) => <TouchableOpacity key={item} style={[styles.needOption, form.category === item && styles.optionActive]} onPress={() => setForm((current) => ({ ...current, category: item as CommunityPost["category"] }))} accessibilityRole="button" accessibilityState={{ selected: form.category === item }}><Text style={styles.needIcon}>{categoryIcons[item]}</Text><Text style={[styles.needText, form.category === item && styles.optionTextActive]}>{categoryLabels[item]}</Text></TouchableOpacity>)}</View>
+        {isNewHousingPost ? <View style={styles.detailFields}>
+          <Text style={styles.fieldLabel}>Listing city</Text>
+          <TextInput accessibilityLabel="Listing city" style={styles.input} value={listingCity} onChangeText={setListingCity} placeholder="Denver, CO" placeholderTextColor={theme.colors.muted} editable={!publishing} />
+          {!user?.localCity ? <><Text style={styles.fieldLabel}>Which city do you currently live in?</Text>
+            <TextInput accessibilityLabel="Current home city" style={styles.input} value={housingCurrentCity} onChangeText={setHousingCurrentCity} placeholder="Houston, TX" placeholderTextColor={theme.colors.muted} editable={!publishing} /></> : <Text style={styles.fieldHint}>Currently living in {housingCurrentCity}</Text>}
+          {!housingCitiesDiffer ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: housingMoveVisible }} onPress={() => setHousingMoveVisible((value) => !value)}><Text style={styles.fieldLabel}>{housingMoveVisible ? "☑" : "☐"} Show me in this city on the people map</Text></TouchableOpacity> : null}
+          {housingCitiesDiffer ? <>
+            <Text style={styles.fieldLabel}>{form.category === "HAVE_PLACE" ? "Are you also moving" : "Are you moving"} from {housingCurrentCity} to {listingCity}?</Text>
+            {(["YES", "NO"] as const).map((answer) => <TouchableOpacity key={answer} disabled={publishing} style={[styles.input, { justifyContent: "center" }, housingMoveAnswer === answer && styles.optionActive]} accessibilityRole="radio" accessibilityState={{ checked: housingMoveAnswer === answer }} onPress={() => { setHousingMoveAnswer(answer); setHousingMoveVisible(false); }}>
+              <Text style={styles.fieldLabel}>{answer === "YES" ? "Yes, I’m moving there" : "No, this post doesn’t change where I live"}</Text>
+            </TouchableOpacity>)}
+            {housingMoveAnswer === "YES" ? <>
+              <Text style={styles.fieldLabel}>Move month (optional)</Text>
+              <TextInput accessibilityLabel="Move month" style={styles.input} value={housingMoveMonth} onChangeText={setHousingMoveMonth} placeholder="YYYY-MM" placeholderTextColor={theme.colors.muted} maxLength={7} editable={!publishing} />
+              <TouchableOpacity disabled={publishing} accessibilityRole="checkbox" accessibilityState={{ checked: housingMoveVisible }} onPress={() => setHousingMoveVisible((value) => !value)}><Text style={styles.fieldLabel}>{housingMoveVisible ? "☑" : "☐"} Show my move on the people map</Text></TouchableOpacity>
+              <Text style={styles.fieldHint}>Shows your destination city and where you’re moving from. No address or live location.</Text>
+            </> : null}
+          </> : null}
+        </View> : null}
         {(form.category === "NEED_ROOMMATE" || form.category === "NEED_PLACE") ? <View style={styles.detailFields}>
           <Text style={styles.formLabel}>Housing details <Text style={styles.formLabelOptional}>Optional</Text></Text>
           <Text style={styles.fieldLabel}>Monthly budget</Text>
@@ -2307,24 +2915,166 @@ const styles = StyleSheet.create({
   quickComposer: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 6, padding: 8, backgroundColor: theme.colors.panel, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line }, composerAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.panel2 }, composerAvatarImage: { borderRadius: 21 }, composerPrompt: { flex: 1, minWidth: 84, minHeight: 42, justifyContent: "center", paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, composerPromptText: { color: theme.colors.muted, fontSize: 13 }, composerAsk: { minHeight: 42, justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.brand, paddingHorizontal: 13 }, composerAskText: { color: "#06291e", fontSize: 12, fontWeight: "900" }, feedControls: { minHeight: 66, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, feedLocationButton: { flex: 1, minHeight: 58, justifyContent: "center" }, relevanceTitle: { color: theme.colors.text, fontSize: 21, fontWeight: "800" }, cityChevron: { color: theme.colors.brand, fontSize: 17, fontWeight: "700" }, relevanceSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 3 }, filterButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: theme.colors.panel }, filterIcon: { color: theme.colors.soft, fontSize: 23, transform: [{ rotate: "90deg" }] }, localFeedNote: { paddingHorizontal: 4, paddingVertical: 6 }, localFeedNoteTitle: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, localFeedNoteBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, marginTop: 3 }, nationalSectionHead: { marginTop: 8, paddingHorizontal: 4, paddingTop: 8, paddingBottom: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.line, backgroundColor: "transparent" }, nationalEyebrow: { color: theme.colors.brand, fontSize: 7, fontWeight: "800", letterSpacing: .9 }, nationalTitle: { color: theme.colors.text, fontSize: 15, lineHeight: 18, fontWeight: "800", marginTop: 1 }, nationalBody: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, marginTop: 2 }, nationalIcon: { fontSize: 19 }, communityReviewCard: { minHeight: 92, marginTop: 6, marginBottom: 6, marginHorizontal: 1, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 18, borderWidth: 1, borderColor: "rgba(183,205,214,0.48)", backgroundColor: "#ffffff", flexDirection: "row", alignItems: "center", gap: 10, shadowColor: "#12382d", shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3 }, communityReviewCardLight: { backgroundColor: "#ffffff", borderColor: "rgba(120,151,163,0.34)" }, communityReviewAvatarWrap: { width: 50, height: 50, borderRadius: 25, padding: 2.5, backgroundColor: "#12c989", shadowColor: "#0aa66d", shadowOpacity: 0.28, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4 }, communityReviewAvatar: { width: 45, height: 45, borderRadius: 23, backgroundColor: "#ecfdf5" }, communityReviewAvatarImage: { borderRadius: 23 }, communityReviewAvatarFallback: { color: "#065f46", fontSize: 18, fontWeight: "900" }, communityReviewCopy: { flex: 1, minWidth: 0 }, communityReviewTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }, communityReviewName: { flex: 1, minWidth: 0, color: "#101820", fontSize: 13, lineHeight: 16, fontWeight: "900" }, communityReviewStars: { color: "#ffae00", fontSize: 11, letterSpacing: 0.3, fontWeight: "900" }, communityReviewLocation: { color: "#1ecf8d", fontSize: 10, lineHeight: 13, fontWeight: "900", marginTop: 2 }, communityReviewQuote: { color: "#1a1d22", fontSize: 12, lineHeight: 16, fontWeight: "800", marginTop: 4 }, communityReviewPill: { position: "absolute", alignSelf: "center", bottom: 5, width: 24, height: 6, borderRadius: 999, backgroundColor: "#12d69a", left: "50%", marginLeft: -12 }, communityReviewDots: { position: "absolute", left: 0, right: 0, bottom: 5, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4 }, communityReviewDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "rgba(15,23,42,0.18)" }, communityReviewDotActive: { width: 18, backgroundColor: "#12d69a" }, feedEndNote: { color: theme.colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center", paddingHorizontal: 20, paddingVertical: 12 },
   relocationConnections: { marginTop: 12, marginBottom: 3, borderRadius: 18, borderWidth: 1, borderColor: "rgba(76, 202, 154, 0.46)", backgroundColor: "rgba(24, 73, 58, 0.30)", paddingVertical: 12 },
   relocationConnectionsLight: { backgroundColor: "#f4fffa", borderColor: "#a9e7cf" },
-  peopleSuggestions: { marginTop: 12, marginBottom: 3, borderRadius: 18, borderWidth: 1, borderColor: "rgba(91, 130, 230, 0.42)", backgroundColor: "rgba(31, 48, 99, 0.24)", paddingVertical: 12 },
-  peopleSuggestionsLight: { backgroundColor: "#f6f8ff", borderColor: "#cbd7ff" },
+  peopleSuggestions: { position: "relative", overflow: "hidden", marginTop: 12, marginBottom: 3, borderRadius: 21, borderWidth: 1, borderColor: "rgba(116, 145, 255, 0.48)", backgroundColor: "rgba(27, 43, 91, 0.34)", paddingVertical: 14, shadowColor: "#0b173f", shadowOpacity: 0.20, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
+  peopleSuggestionsLight: { backgroundColor: "#f7f9ff", borderColor: "#cad7ff", shadowColor: "#667db8", shadowOpacity: 0.15 },
+  peopleDiscoveryBubbles: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
+  peopleDiscoveryBubble: { position: "absolute", borderRadius: 999, backgroundColor: "#7d9dff" },
+  peopleDiscoveryBubbleOne: { width: 142, height: 142, right: -57, top: -75, opacity: 0.42 },
+  peopleDiscoveryBubbleTwo: { width: 90, height: 90, left: -47, bottom: -50, opacity: 0.32 },
+  peopleDiscoveryBubbleThree: { width: 28, height: 28, right: 30, bottom: 33, opacity: 0.38 },
+  peopleMapReopen: { minHeight: 46, marginHorizontal: 10, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, borderWidth: 1, borderColor: "rgba(123, 151, 255, .40)", backgroundColor: "rgba(245,248,255,.78)", paddingHorizontal: 12 },
+  peopleMapReopenLight: { backgroundColor: "rgba(255,255,255,.74)", borderColor: "#d8e1fb" },
+  peopleMapReopenIcon: { color: "#5579ee", fontSize: 15, fontWeight: "900" },
+  peopleMapReopenText: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  peopleMapReopenHint: { flex: 1, color: theme.colors.muted, fontSize: 10, fontWeight: "700" },
+  peopleMapReopenChevron: { color: "#20ad7d", fontSize: 22, lineHeight: 23, fontWeight: "700" },
+  peopleDiscoveryContent: { position: "relative", zIndex: 1 },
+  peopleDiscoveryEyebrow: { color: "#7797ff", fontSize: 8, lineHeight: 10, fontWeight: "900", letterSpacing: 1.05, marginBottom: 2 },
+  floatingPeopleStage: { position: "relative", height: 282, marginTop: 8, overflow: "hidden" },
+  floatingPeopleStageCompact: { position: "relative", height: 126, marginHorizontal: 12, marginBottom: 7, overflow: "hidden" },
+  floatingPeopleEmpty: { minHeight: 112, justifyContent: "center", paddingHorizontal: 24 },
+  floatingPeopleEmptyText: { color: theme.colors.muted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  floatingPerson: { position: "absolute", alignItems: "center" },
+  floatingPersonTap: { alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(77, 221, 172, 0.95)", backgroundColor: "rgba(10, 61, 51, 0.92)", shadowColor: "#0c7e5d", shadowOpacity: 0.30, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 5 },
+  floatingPersonTapLight: { borderColor: "#20c995", backgroundColor: "#ffffff", shadowColor: "#339b7d", shadowOpacity: 0.23 },
+  floatingPersonAvatar: { backgroundColor: "#d8f7e8" },
+  floatingPersonInitials: { color: "#087254", fontSize: 17, fontWeight: "900" },
+  floatingPersonStatus: { position: "absolute", right: -1, bottom: 2, width: 23, height: 23, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#0e3028", backgroundColor: "#f7bd1d" },
+  floatingPersonStatusText: { color: "#533b00", fontSize: 11, lineHeight: 13, fontWeight: "900" },
+  floatingPersonNameTag: { width: "100%", marginTop: 6, alignItems: "center", borderRadius: 10, borderWidth: 1, borderColor: "rgba(130, 163, 255, 0.32)", backgroundColor: "rgba(13, 29, 72, 0.72)", paddingHorizontal: 5, paddingVertical: 4 },
+  floatingPersonNameTagLight: { borderColor: "rgba(153, 181, 237, 0.42)", backgroundColor: "rgba(255,255,255,0.90)" },
+  floatingPersonName: { width: "100%", color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900", textAlign: "center" },
+  floatingPersonReason: { width: "100%", color: "#7ce0c0", fontSize: 8, lineHeight: 10, fontWeight: "800", textAlign: "center", marginTop: 1 },
+  floatingPersonDismiss: { position: "absolute", right: 0, top: -3, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.48)", backgroundColor: "rgba(23,31,47,0.84)" },
+  floatingPersonDismissText: { color: "#ffffff", fontSize: 16, lineHeight: 18, fontWeight: "500" },
+  peopleDiscoveryInlineGuide: { position: "relative", marginTop: 8, marginHorizontal: 12, marginBottom: 6, borderRadius: 18, borderWidth: 1, borderColor: "rgba(126, 157, 255, 0.38)", backgroundColor: "rgba(12, 30, 72, 0.76)", padding: 12 },
+  peopleDiscoveryInlineGuideLight: { borderColor: "#d0dcff", backgroundColor: "rgba(255,255,255,0.90)" },
+  peopleDiscoveryInlineGuideRow: { minHeight: 101, flexDirection: "row", alignItems: "center", gap: 9, paddingRight: 19 },
+  peopleDiscoveryGuidePair: { width: 91, height: 91, position: "relative", alignItems: "center", justifyContent: "center" },
+  peopleDiscoveryGuideAvatarWrap: { position: "absolute", left: 1, top: 10, width: 59, height: 59, borderRadius: 30, padding: 3, borderWidth: 2, borderColor: "#2ecb99", backgroundColor: "#ffffff" },
+  peopleDiscoveryGuideAvatarSecond: { left: 33, top: 22, borderColor: "#8ca7ff" },
+  peopleDiscoveryGuideAvatar: { width: 49, height: 49, borderRadius: 25, backgroundColor: "#d8f7e8" },
+  peopleDiscoveryGuideAvatarImage: { borderRadius: 25 },
+  peopleDiscoveryGuideAvatarInitials: { color: "#087254", fontSize: 16, fontWeight: "900" },
+  peopleDiscoveryGuidePairLink: { position: "absolute", left: 36, top: 56, width: 23, height: 23, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#0e3028", backgroundColor: "#f7bd1d", zIndex: 3 },
+  peopleDiscoveryGuidePairLinkText: { color: "#503900", fontSize: 12, lineHeight: 14, fontWeight: "900" },
+  peopleDiscoveryInlineGuideCopy: { flex: 1, minWidth: 0 },
+  peopleDiscoveryInlineGuideEyebrow: { color: "#86a2ff", fontSize: 8, fontWeight: "900", letterSpacing: .9 },
+  peopleDiscoveryInlineGuideTitle: { color: "#ffffff", fontSize: 14, lineHeight: 17, fontWeight: "900", marginTop: 2 },
+  peopleDiscoveryInlineGuideBody: { color: "#bdc9de", fontSize: 9, lineHeight: 12, marginTop: 3 },
+  peopleDiscoveryInlineGuideAction: { alignSelf: "flex-start", minHeight: 25, justifyContent: "center", marginTop: 6, borderRadius: 13, backgroundColor: "#24c995", paddingHorizontal: 9 },
+  peopleDiscoveryInlineGuideActionText: { color: "#063427", fontSize: 10, fontWeight: "900" },
+  peopleDiscoveryInlineGuideClose: { position: "absolute", top: 8, right: 8, width: 25, height: 25, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: "rgba(255,255,255,0.12)", zIndex: 4 },
+  peopleDiscoveryInlineGuideCloseText: { color: "#d6e1f6", fontSize: 21, lineHeight: 24, fontWeight: "500" },
+  peopleMapScreen: { flex: 1, backgroundColor: theme.colors.bg },
+  peopleMapScreenLight: { backgroundColor: "#f6f8fb" },
+  peopleMapHeader: { minHeight: 84, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 18, paddingTop: 8, borderBottomWidth: 1, borderBottomColor: "#e1e7f1", backgroundColor: "#ffffff" },
+  peopleMapHeaderCopy: { flex: 1, minWidth: 0 },
+  peopleMapEyebrow: { color: "#5d7fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  peopleMapTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "900", marginTop: 2 },
+  peopleMapSubtitle: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 },
+  peopleMapClose: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: theme.colors.panel2 },
+  peopleMapCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
+  peopleMapCanvas: { flex: 1, overflow: "hidden", backgroundColor: "#dce8e2" },
+  peopleMapPlannerOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: "center", padding: 10, backgroundColor: "rgba(7, 20, 27, .12)" },
+  peopleMapPlannerAura: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -78, right: -60, backgroundColor: "#7c9cff" },
+  peopleMapPlannerCard: { maxHeight: "90%", borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(152, 178, 255, .66)", backgroundColor: "rgba(10, 29, 51, .84)", padding: 12, shadowColor: "#06151d", shadowOpacity: .28, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 8 },
+  peopleMapPlannerCardLight: { borderColor: "rgba(159, 181, 255, .76)", backgroundColor: "rgba(255,255,255,.86)" },
+  peopleMapPlannerTopline: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 7 },
+  peopleMapPlannerOrb: { width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(217,255,240,.9)", borderWidth: 1, borderColor: "#75dfbb" },
+  peopleMapPlannerOrbText: { color: "#087254", fontSize: 14, fontWeight: "900" },
+  peopleMapPlannerToplineCopy: { flex: 1, minWidth: 0 },
+  peopleMapPlannerEyebrow: { color: "#6389ff", fontSize: 8, fontWeight: "900", letterSpacing: 1.15 },
+  peopleMapPlannerHint: { color: "#b9c7d9", fontSize: 8, lineHeight: 11, fontWeight: "700", marginTop: 1 },
+  peopleMapPlannerHintLight: { color: "#718096" },
+  peopleMapPlannerProgress: { borderRadius: 10, backgroundColor: "rgba(114,143,255,.17)", paddingHorizontal: 7, paddingVertical: 4 },
+  peopleMapPlannerProgressText: { color: "#6488fd", fontSize: 9, fontWeight: "900" },
+  peopleMapPlannerClose: { width: 23, height: 23, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "rgba(27, 48, 78, .10)" },
+  peopleMapPlannerCloseText: { color: "#53647e", fontSize: 21, lineHeight: 22, fontWeight: "500" },
+  peopleMapPlannerQuestion: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
+  peopleMapPlannerStep: { width: 18, height: 18, marginTop: 1, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "#20c995" },
+  peopleMapPlannerStepText: { color: "#073326", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+  peopleMapPlannerTitle: { color: "#ffffff", fontSize: 16, lineHeight: 19, fontWeight: "900" },
+  peopleMapPlannerQuestionHint: { color: "#bdc9de", fontSize: 8, lineHeight: 11, marginTop: 1 },
+  peopleMapPlannerQuestionHintLight: { color: "#718096" },
+  peopleMapPlannerInput: { minHeight: 38, marginTop: 6, borderRadius: 12, borderWidth: 1, borderColor: "rgba(150,177,235,.42)", backgroundColor: "rgba(255,255,255,.11)", color: "#ffffff", paddingHorizontal: 11, fontSize: 11, fontWeight: "800" },
+  peopleMapPlannerInputLight: { borderColor: "#d4dfef", backgroundColor: "rgba(245,247,251,.82)", color: "#151719" },
+  peopleMapPlannerLoader: { marginTop: 4 },
+  peopleMapPlannerOption: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(154,177,234,.28)" },
+  peopleMapPlannerOptionLight: { borderBottomColor: "#e1e8f2" },
+  peopleMapPlannerOptionText: { color: "#ffffff", fontSize: 11, fontWeight: "800" },
+  peopleMapPlannerOptionArrow: { color: "#5fe1b6", fontSize: 19, lineHeight: 20 },
+  peopleMapPlannerReasonHeading: { flexDirection: "row", alignItems: "flex-start", gap: 7, marginTop: 7 },
+  peopleMapPlannerLabel: { color: "#aebed2", fontSize: 11, lineHeight: 13, fontWeight: "900" },
+  peopleMapPlannerLabelLight: { color: "#344255" },
+  peopleMapPlannerReasons: { flexDirection: "row", gap: 7, marginTop: 5 },
+  peopleMapPlannerReason: { minHeight: 39, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 12, borderWidth: 1, borderColor: "rgba(150,177,235,.42)", backgroundColor: "rgba(255,255,255,.08)", paddingHorizontal: 7 },
+  peopleMapPlannerReasonLight: { borderColor: "#d4dfef", backgroundColor: "rgba(248,250,255,.84)" },
+  peopleMapPlannerReasonSelected: { borderColor: "#20c995", backgroundColor: "rgba(32,201,149,.18)" },
+  peopleMapPlannerReasonIcon: { fontSize: 13 },
+  peopleMapPlannerReasonText: { color: "#d0d9e8", fontSize: 10, fontWeight: "900" },
+  peopleMapPlannerReasonTextLight: { color: "#4b5a70" },
+  peopleMapPlannerReasonTextSelected: { color: "#087254" },
+  peopleMapPlannerCompanyLabel: { color: "#aebed2", fontSize: 9, fontWeight: "900", letterSpacing: .35, textTransform: "uppercase", marginTop: 10 },
+  peopleMapPlannerAction: { minHeight: 39, marginTop: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 13, backgroundColor: "#20c995", shadowColor: "#169a72", shadowOpacity: .22, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
+  peopleMapPlannerActionIcon: { color: "#073326", fontSize: 13, fontWeight: "900" },
+  peopleMapPlannerActionText: { color: "#073326", fontSize: 12, fontWeight: "900" },
+  peopleMapPlannerActionArrow: { color: "#073326", fontSize: 20, lineHeight: 21, fontWeight: "700" },
+  peopleMapLegend: { position: "absolute", bottom: 24, left: 12, right: 12, flexDirection: "row", flexWrap: "wrap", gap: 7, borderRadius: 15, backgroundColor: "rgba(255,255,255,.93)", paddingHorizontal: 10, paddingVertical: 7, shadowColor: "#102a21", shadowOpacity: .14, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  peopleMapLegendText: { color: "#316b5a", fontSize: 9, fontWeight: "900" },
+  peopleMapLegendHint: { color: "#5e6d83", fontSize: 9, fontWeight: "800" },
+  peopleMapListHead: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  peopleMapListTitle: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
+  peopleMapListCount: { color: theme.colors.muted, fontSize: 12, fontWeight: "800" },
+  peopleMapList: { padding: 12, gap: 8, paddingBottom: 35 },
+  peopleMapPerson: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, paddingHorizontal: 10 },
+  peopleMapPersonLight: { borderColor: "#e2e7ed", backgroundColor: "#ffffff" },
+  peopleMapPersonAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#d8f7e8" },
+  peopleMapPersonAvatarImage: { borderRadius: 18 },
+  peopleMapPersonInitials: { color: "#087254", fontSize: 13, fontWeight: "900" },
+  peopleMapPersonCopy: { flex: 1, minWidth: 0 },
+  peopleMapPersonName: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  peopleMapPersonCity: { color: theme.colors.muted, fontSize: 10, marginTop: 2 },
+  peopleMapSource: { color: "#5c74d9", backgroundColor: "rgba(92,116,217,.12)", borderRadius: 999, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "900" },
+  peopleMapSourceContact: { color: "#087254", backgroundColor: "rgba(32,201,149,.15)" },
+  peopleMapNoPeople: { color: theme.colors.muted, textAlign: "center", fontSize: 12, lineHeight: 18, padding: 24 },
+  relocationPlannerLink: { minHeight: 42, marginTop: 8, marginHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 11, backgroundColor: "rgba(32, 201, 135, 0.10)", borderWidth: 1, borderColor: "rgba(32, 201, 135, 0.32)" },
+  relocationPlannerLinkCopy: { flex: 1, minWidth: 0 },
+  relocationPlannerLinkTitle: { color: theme.colors.text, fontSize: 12, fontWeight: "900" },
+  relocationPlannerLinkHint: { color: theme.colors.muted, fontSize: 10, lineHeight: 13, marginTop: 1 },
+  relocationPlannerLinkChevron: { color: theme.colors.brand, fontSize: 23, lineHeight: 24 },
+  contactSuggestionsCopy: { flex: 1, minWidth: 0 },
+  contactSuggestionsButton: { minHeight: 32, justifyContent: "center", alignItems: "center", borderRadius: 16, backgroundColor: theme.colors.brand, paddingHorizontal: 11 },
+  contactSuggestionsButtonText: { color: "#06291e", fontSize: 10, fontWeight: "900" },
+  contactSuggestionReason: { color: "#18a878", fontSize: 11, lineHeight: 15, fontWeight: "800", marginTop: 4 },
   relocationConnectionsHead: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8, paddingHorizontal: 12 },
   relocationConnectionsTitle: { color: theme.colors.text, fontSize: 16, fontWeight: "900" },
   relocationConnectionsCopy: { color: theme.colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   relocationConnectionsBadge: { color: "#086946", backgroundColor: "#b8f4d9", borderRadius: 12, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "900", letterSpacing: 0.6 },
-  peopleSuggestionsBadge: { color: "#274ca7", backgroundColor: "#dce5ff", borderRadius: 12, overflow: "hidden", paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "900", letterSpacing: 0.6 },
-  relocationConnectionsRail: { gap: 9, paddingHorizontal: 12, paddingTop: 11, paddingRight: 18 },
+  relocationConnectionsRail: { gap: 10, paddingHorizontal: 12, paddingTop: 12, paddingRight: 20 },
   relocationConnectionCard: { width: 154, minHeight: 160, borderRadius: 15, borderWidth: 1, borderColor: "rgba(160, 231, 204, 0.34)", backgroundColor: "rgba(6, 42, 30, 0.42)", padding: 10 },
   relocationConnectionCardLight: { backgroundColor: "#ffffff", borderColor: "#d9eee4" },
+  peopleDiscoveryCard: { width: 174, minHeight: 183, overflow: "hidden", borderRadius: 18, borderWidth: 1, borderColor: "rgba(174, 223, 207, 0.62)", backgroundColor: "rgba(7, 33, 49, 0.72)", padding: 12, shadowColor: "#081a2d", shadowOpacity: 0.20, shadowRadius: 9, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  peopleDiscoveryCardLight: { borderColor: "#d7e9e0", backgroundColor: "rgba(255,255,255,0.94)", shadowColor: "#5c6d79", shadowOpacity: 0.12 },
+  peopleDiscoveryCardGlow: { position: "absolute", width: 112, height: 112, borderRadius: 56, backgroundColor: "rgba(75, 209, 165, 0.12)", right: -46, top: -52 },
+  peopleDiscoveryCardTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 7 },
+  peopleDiscoveryAvatarRing: { width: 46, height: 46, borderRadius: 23, padding: 2, backgroundColor: "#47d7ad", shadowColor: "#20c38a", shadowOpacity: 0.27, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  peopleDiscoveryAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#d8f7e8" },
+  peopleDiscoveryAvatarImage: { borderRadius: 21 },
+  peopleDiscoveryTag: { maxWidth: 93, overflow: "hidden", color: "#5fe1b6", backgroundColor: "rgba(50, 189, 141, 0.16)", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, lineHeight: 10, fontWeight: "900", letterSpacing: 0.35, textTransform: "uppercase" },
+  peopleDiscoveryName: { color: theme.colors.text, fontSize: 14, lineHeight: 18, fontWeight: "900", marginTop: 9 },
+  peopleDiscoveryCardFooter: { minHeight: 30, marginTop: "auto", paddingTop: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 4 },
+  peopleDiscoveryRating: { flex: 1, minWidth: 0, color: "#f3b41a", fontSize: 10, fontWeight: "900" },
+  peopleDiscoveryNew: { flex: 1, minWidth: 0, color: "#74dabb", fontSize: 10, fontWeight: "800" },
+  peopleDiscoveryOpen: { color: "#78d9bd", fontSize: 10, fontWeight: "900", marginTop: "auto", paddingTop: 13 },
   relocationConnectionAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#d8f7e8" },
   relocationConnectionAvatarImage: { borderRadius: 18 },
   relocationConnectionInitials: { color: "#0b6e4f", fontSize: 13, fontWeight: "900" },
   relocationConnectionName: { color: theme.colors.text, fontSize: 13, fontWeight: "900", marginTop: 8 },
   relocationConnectionReason: { color: "#65d8a8", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
-  peopleSuggestionReason: { color: "#829bf5", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
-  hidePeopleSuggestion: { alignSelf: "flex-start", minHeight: 26, paddingHorizontal: 8, justifyContent: "center", marginTop: 6, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.14)" },
-  hidePeopleSuggestionText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" },
+  peopleSuggestionReason: { color: "#91a9ff", fontSize: 11, lineHeight: 15, fontWeight: "700", marginTop: 3 },
+  hidePeopleSuggestion: { alignSelf: "flex-start", minHeight: 25, paddingHorizontal: 8, justifyContent: "center", borderRadius: 13, borderWidth: 1, borderColor: "rgba(255,255,255,0.15)", backgroundColor: "rgba(255,255,255,0.10)" },
+  hidePeopleSuggestionText: { color: theme.colors.muted, fontSize: 9, fontWeight: "900" },
   relocationConnectionMonth: { color: theme.colors.muted, fontSize: 10, marginTop: 5 },
   relocationConnectionRating: { color: "#d89800", fontSize: 10, fontWeight: "900", marginTop: 5 },
   gasPreviewCard: { minHeight: 66, marginTop: 10, marginHorizontal: 1, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", borderRadius: 17, borderWidth: 1, borderColor: "rgba(30,202,147,0.28)", backgroundColor: "rgba(12,47,37,0.74)" },
@@ -2347,6 +3097,7 @@ const styles = StyleSheet.create({
   rentalFeatureActionText: { color: "#f1d27f", fontSize: 11, fontWeight: "800" },
   rentalFeatureArrow: { color: "#f1d27f", fontSize: 20, lineHeight: 21 },
   cityPickerBackdrop: { flex: 1, justifyContent: "center", padding: 18, backgroundColor: "rgba(0,0,0,.72)" }, cityPickerCard: { maxHeight: "78%", gap: 12, padding: 18, borderRadius: 22, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, cityPickerHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }, cityPickerTitle: { color: theme.colors.text, fontSize: 19, fontWeight: "800" }, cityPickerSubtitle: { color: theme.colors.muted, fontSize: 11, marginTop: 4 }, cityPickerClose: { color: theme.colors.soft, fontSize: 28, lineHeight: 28 }, cityPickerInput: { minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: "#386753", backgroundColor: theme.colors.panel2, color: theme.colors.text, paddingHorizontal: 14, fontSize: 15 }, cityPickerLoader: { marginVertical: 4 }, cityPickerResults: { maxHeight: 250 }, cityPickerOption: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 4 }, cityPickerOptionText: { color: theme.colors.text, fontSize: 14, fontWeight: "700" }, cityPickerOptionArrow: { color: theme.colors.brand, fontSize: 23 }, cityPickerUseTyped: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "#173b2d" }, cityPickerUseTypedText: { color: "#a9f2d2", fontWeight: "800" }, currentLocationButton: { minHeight: 44, alignItems: "center", justifyContent: "center" }, currentLocationText: { color: theme.colors.brand, fontWeight: "800" },
+  relocationPlannerBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,.48)" }, relocationPlannerSheet: { gap: 11, padding: 20, paddingBottom: 30, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: theme.colors.panel }, relocationPlannerSheetLight: { backgroundColor: "#ffffff" }, relocationPlannerHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }, relocationPlannerHeaderCopy: { flex: 1, minWidth: 0 }, relocationPlannerTitle: { color: theme.colors.text, fontSize: 20, fontWeight: "900" }, relocationPlannerSubtitle: { color: theme.colors.muted, fontSize: 12, lineHeight: 17, marginTop: 3 }, relocationPlannerClose: { color: theme.colors.soft, fontSize: 29, lineHeight: 31 }, relocationPlannerLabel: { color: theme.colors.muted, fontSize: 10, fontWeight: "900", letterSpacing: .5, textTransform: "uppercase" }, relocationPlannerInput: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, color: theme.colors.text, paddingHorizontal: 13, fontSize: 15 }, relocationPlannerInputLight: { backgroundColor: "#f5f7f8" }, relocationPlannerOption: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: theme.colors.line, paddingHorizontal: 5 }, relocationPlannerOptionText: { color: theme.colors.text, fontSize: 13, fontWeight: "800" }, relocationPlannerOptionArrow: { color: theme.colors.brand, fontSize: 21 }, relocationReasonChoices: { flexDirection: "row", flexWrap: "wrap", gap: 7 }, relocationReasonChoice: { minHeight: 33, justifyContent: "center", paddingHorizontal: 10, borderRadius: 17, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2 }, relocationReasonChoiceSelected: { borderColor: theme.colors.brand, backgroundColor: "rgba(32, 201, 135, 0.16)" }, relocationReasonChoiceText: { color: theme.colors.muted, fontSize: 11, fontWeight: "800" }, relocationReasonChoiceTextSelected: { color: theme.colors.green }, relocationPlannerFields: { flexDirection: "row", gap: 9 }, relocationPlannerField: { flex: 1, minWidth: 0, gap: 5 }, relocationPlannerPrivacy: { color: theme.colors.muted, fontSize: 10, lineHeight: 14 }, relocationPlannerSave: { minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: theme.colors.brand, marginTop: 3 }, relocationPlannerSaveText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
   housingSearchAction: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, housingSearchIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, housingSearchIconText: { color: "#06291e", fontSize: 28, lineHeight: 31, fontWeight: "800" }, housingSearchCopy: { flex: 1 }, housingSearchTitle: { color: theme.colors.text, fontSize: 15, fontWeight: "900" }, housingSearchBody: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 }, housingSearchArrow: { color: theme.colors.brand, fontSize: 30, fontWeight: "300" },
   currentLocationCard: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, currentLocationPin: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 }, currentLocationPinText: { color: theme.colors.brand, fontSize: 25, lineHeight: 28, fontWeight: "800" }, currentLocationCopy: { flex: 1 }, currentLocationEyebrow: { color: theme.colors.brand, fontSize: 8, fontWeight: "900", letterSpacing: .8 }, currentLocationCity: { color: theme.colors.text, fontSize: 15, fontWeight: "900", marginTop: 2 }, currentLocationArea: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 }, currentLocationArrow: { color: theme.colors.brand, fontSize: 28, lineHeight: 30, fontWeight: "300" },
   inlineCommunities: { marginVertical: 10, paddingVertical: 16, gap: 9, borderRadius: 19, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, overflow: "hidden" }, inlineCommunityHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16 }, inlineCommunityEyebrow: { color: theme.colors.brand, fontSize: 9, fontWeight: "900", letterSpacing: .8 }, inlineCommunityTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", marginTop: 2 }, inlineCommunitySwipe: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, minHeight: 31, borderRadius: 999, backgroundColor: theme.colors.panel2 }, inlineCommunitySwipeText: { color: theme.colors.muted, fontSize: 10, fontWeight: "800" }, inlineCommunitySwipeArrow: { color: theme.colors.brand, fontSize: 20, fontWeight: "900", marginTop: -1 }, inlineCommunityBody: { color: theme.colors.muted, fontSize: 11, lineHeight: 16, paddingHorizontal: 16 }, inlineCommunityRail: { paddingHorizontal: 16, gap: 10 }, inlineCommunityCard: { width: 140, minHeight: 170, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel2, alignItems: "center" }, inlineCommunityPhoto: { width: 54, height: 54, borderRadius: 27, marginBottom: 7, backgroundColor: theme.colors.panel }, inlineCommunityPhotoImage: { borderRadius: 27 }, inlineCommunityPhotoGlyph: { fontSize: 25 }, inlineCommunityName: { color: theme.colors.text, fontSize: 12, lineHeight: 14, fontWeight: "900", minHeight: 28, textAlign: "center" }, inlineCommunityMeta: { color: theme.colors.muted, fontSize: 9, marginTop: 2, maxWidth: "100%" }, inlineCommunityMembers: { color: theme.colors.muted, fontSize: 9, fontWeight: "700", marginTop: 2, marginBottom: 7 }, inlineJoinButton: { width: "100%", minHeight: 31, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, paddingHorizontal: 11 }, inlineJoinedButton: { borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel }, inlineJoinText: { color: "#06291e", fontSize: 11, fontWeight: "900" }, inlineJoinedText: { color: theme.colors.text },
