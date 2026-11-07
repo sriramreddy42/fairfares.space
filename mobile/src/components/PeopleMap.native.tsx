@@ -3,7 +3,7 @@ import { Animated, Image, Platform, StyleSheet, Text, View } from "react-native"
 import MapView, { Callout, Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { PeopleMapMember, PeopleMapProps } from "./PeopleMap";
 
-export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegionChangeComplete }: PeopleMapProps) {
+export function PeopleMap({ members, focus, focusSelected, onRegionChangeComplete }: PeopleMapProps) {
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
   const points = useMemo(() => members.filter((member) => Number.isFinite(member.latitude) && Number.isFinite(member.longitude) && !(member.latitude === 0 && member.longitude === 0)), [members]);
@@ -26,7 +26,7 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
         const slots = Math.min(8, cityMembers.length - ringIndex * 8);
         const slot = index % 8;
         const angle = ((stableHash(cityKey) % 360) + (slot * 360) / slots) * Math.PI / 180;
-        const radius = .018 + ringIndex * .016;
+        const radius = .030 + ringIndex * .024;
         return {
           ...member,
           key: `${member.id}-${cityKey}`,
@@ -79,7 +79,7 @@ export function PeopleMap({ members, focus, focusSelected, onAreaPress, onRegion
     moveOnMarkerPress={false}
     onRegionChangeComplete={onRegionChangeComplete}
   >
-    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} onPress={onAreaPress} />)}
+    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} />)}
   </MapView>;
 }
 
@@ -89,11 +89,16 @@ function stableHash(value: string) {
   return hash >>> 0;
 }
 
-function PeopleMapPersonPin({ member, index, onPress }: { onPress?: () => void; member: PeopleMapMember & { latitude: number; longitude: number }; index: number }) {
+function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { latitude: number; longitude: number }; index: number }) {
   const float = useRef(new Animated.Value(0)).current;
   const isContact = member.source === "CONTACT";
   const hasCompanyMatch = Boolean(member.boosted);
   const housingLabel = housingIntentLabel(member.housingIntent);
+  const intentStyle = member.housingIntent === "HAVE_PLACE"
+    ? { halo: styles.pinHaloHavePlace, marker: styles.markerHavePlace, status: styles.pinStatusHavePlace }
+    : member.housingIntent === "NEED_ROOMMATE"
+      ? { halo: styles.pinHaloNeedRoommate, marker: styles.markerNeedRoommate, status: styles.pinStatusNeedRoommate }
+      : { halo: styles.pinHaloNeedPlace, marker: styles.markerNeedPlace, status: styles.pinStatusNeedPlace };
 
   useEffect(() => {
     // Keep the map alive without a storm of animated markers on a dense map.
@@ -109,7 +114,6 @@ function PeopleMapPersonPin({ member, index, onPress }: { onPress?: () => void; 
   }, [float, index]);
 
   return <Marker
-    onPress={onPress}
     coordinate={{ latitude: member.latitude, longitude: member.longitude }}
     title={member.name}
     description={member.city}
@@ -117,10 +121,10 @@ function PeopleMapPersonPin({ member, index, onPress }: { onPress?: () => void; 
     tracksViewChanges={index < 6}
   >
     <Animated.View style={[styles.pinWrap, { transform: [{ scale: hasCompanyMatch ? 1.16 : 1 }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
-      <View style={[styles.pinHalo, isContact && styles.pinHaloContact, hasCompanyMatch && styles.pinHaloBoosted]} />
-      <View style={[styles.marker, isContact && styles.markerContact, hasCompanyMatch && styles.markerBoosted]}>
+      <View style={[styles.pinHalo, intentStyle.halo, isContact && styles.pinHaloContact, hasCompanyMatch && styles.pinHaloBoosted]} />
+      <View style={[styles.marker, intentStyle.marker, isContact && styles.markerContact, hasCompanyMatch && styles.markerBoosted]}>
         {member.photoUrl ? <Image source={{ uri: member.photoUrl }} style={styles.markerImage} /> : <Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
-        <View style={[styles.pinStatus, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
+        <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
     </Animated.View>
     <Callout tooltip>
@@ -145,14 +149,23 @@ const styles = StyleSheet.create({
   pinWrap: { width: 88, alignItems: "center", paddingVertical: 4 },
   pinHalo: { position: "absolute", top: 0, width: 54, height: 54, borderRadius: 27, backgroundColor: "rgba(114, 137, 255, .18)", borderWidth: 1, borderColor: "rgba(94, 117, 231, .38)" },
   pinHaloContact: { backgroundColor: "rgba(32, 201, 149, .18)", borderColor: "rgba(13, 148, 105, .38)" },
+  pinHaloHavePlace: { backgroundColor: "rgba(32, 201, 149, .18)", borderColor: "rgba(13, 148, 105, .42)" },
+  pinHaloNeedPlace: { backgroundColor: "rgba(114, 137, 255, .18)", borderColor: "rgba(94, 117, 231, .42)" },
+  pinHaloNeedRoommate: { backgroundColor: "rgba(255, 168, 51, .20)", borderColor: "rgba(218, 126, 17, .44)" },
   pinHaloBoosted: { backgroundColor: "rgba(255, 190, 43, .24)", borderColor: "#e9a810" },
   marker: { width: 45, height: 45, borderRadius: 23, padding: 3, borderWidth: 2.5, borderColor: "#7189ff", backgroundColor: "#ffffff", shadowColor: "#0a1f19", shadowOpacity: .28, shadowRadius: 7, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   markerContact: { borderColor: "#20c995" },
+  markerHavePlace: { borderColor: "#18ad7a" },
+  markerNeedPlace: { borderColor: "#7189ff" },
+  markerNeedRoommate: { borderColor: "#e18a13" },
   markerBoosted: { borderColor: "#e9a810", borderWidth: 3 },
   markerImage: { width: 33, height: 33, borderRadius: 17, backgroundColor: "#d8f7e8" },
   markerInitial: { flex: 1, color: "#087254", fontSize: 15, fontWeight: "900", textAlign: "center", textAlignVertical: "center" },
   pinStatus: { position: "absolute", right: -4, bottom: -3, minWidth: 18, paddingHorizontal: 4, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "#ffffff", backgroundColor: "#6f88ff" },
   pinStatusContact: { backgroundColor: "#12a876" },
+  pinStatusHavePlace: { backgroundColor: "#12a876" },
+  pinStatusNeedPlace: { backgroundColor: "#6079ef" },
+  pinStatusNeedRoommate: { backgroundColor: "#d87e0c" },
   pinStatusBoosted: { backgroundColor: "#dc9700" },
   pinStatusText: { color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
   callout: { width: 188, borderRadius: 14, backgroundColor: "#ffffff", paddingHorizontal: 12, paddingVertical: 10, shadowColor: "#0a1f19", shadowOpacity: .25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },

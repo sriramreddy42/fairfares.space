@@ -2717,7 +2717,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleMapOpen(false)} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
         </View>
         <View style={styles.peopleMapCanvas}>
-          <PeopleMap onAreaPress={() => setPeopleMapListOpen(true)} onRegionChangeComplete={loadPeopleForMapViewport} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
+          <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
           {peopleMapPlannerOpen ? <View style={styles.peopleMapPlannerOverlay}>
             <Animated.View pointerEvents="none" style={[styles.peopleMapPlannerAura, { opacity: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.26, .56] }), transform: [{ scale: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.86, 1.13] }) }] }]} />
             <Animated.View style={[styles.peopleMapPlannerCard, isLight && styles.peopleMapPlannerCardLight, { opacity: peopleMapPlannerEntrance, transform: [{ translateY: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }]}>
@@ -2748,7 +2748,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
               {peopleMapCityPool.nextOffset != null ? <TouchableOpacity disabled={peopleMapMoreBusy} onPress={() => void loadMoreMapPeople()} accessibilityRole="button"><Text style={{ color: "#087254", paddingVertical: 12, fontWeight: "800" }}>{peopleMapMoreBusy ? "Loading…" : "Load more people"}</Text></TouchableOpacity> : null}
             </ScrollView> : null}
           </View> : null}
-          {!peopleMapPlannerOpen ? <View pointerEvents="none" style={styles.peopleMapLegend}>{peopleMapCityPool ? <Text style={styles.peopleMapLegendText}>City-level people</Text> : <><Text style={styles.peopleMapLegendText}>● Contacts</Text><Text style={styles.peopleMapLegendText}>● Mutuals</Text></>}<Text style={styles.peopleMapLegendHint}>Drag to explore · pinch to zoom</Text></View> : null}
+          {!peopleMapPlannerOpen ? <View pointerEvents="none" style={styles.peopleMapLegend}>{peopleMapCityPool ? <><Text style={styles.peopleMapLegendText}>Green: have place · Blue: need place · Orange: roommates</Text></> : <><Text style={styles.peopleMapLegendText}>● Contacts</Text><Text style={styles.peopleMapLegendText}>● Mutuals</Text></>}<Text style={styles.peopleMapLegendHint}>Drag to explore · pinch to zoom</Text></View> : null}
         </View>
       </View>
     </Modal>
