@@ -8,13 +8,14 @@ export type PeopleMapMember = {
   city: string;
   latitude: number;
   longitude: number;
-  source: "CONTACT" | "MUTUAL";
+  source: "CONTACT" | "MUTUAL" | "SAVED_CONTACT";
   areaTotal?: number;
   companyMatchCount?: number;
   boosted?: boolean;
   moving?: boolean;
   fromCity?: string;
   housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
+  savedContactAddress?: boolean;
 };
 
 export type PeopleMapFocus = {

@@ -750,9 +750,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [relocationSuggestions, setRelocationSuggestions] = useState<RelocationSuggestion[]>([]);
   const [peopleSuggestions, setPeopleSuggestions] = useState<PeopleSuggestion[]>([]);
   const [contactSuggestions, setContactSuggestions] = useState<FairFaresContact[]>([]);
+  const [savedContactMapPins, setSavedContactMapPins] = useState<PeopleMapMember[]>([]);
   const [contactSuggestionsLoading, setContactSuggestionsLoading] = useState(false);
   const [contactSuggestionsChecked, setContactSuggestionsChecked] = useState(false);
-  const [peopleDiscoveryGuideOpen, setPeopleDiscoveryGuideOpen] = useState(false);
   const [peopleMapOpen, setPeopleMapOpen] = useState(false);
   const [peopleMapPlannerOpen, setPeopleMapPlannerOpen] = useState(false);
   const [peopleMapInitialFocus, setPeopleMapInitialFocus] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -946,17 +946,19 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [contactSuggestions, peopleSuggestions]);
   const peopleMapMembers = useMemo<PeopleMapMember[]>(() => {
     if (peopleMapCityPool) {
-      return peopleMapCityPool.people.map((person) => ({
+      const cityPeople = peopleMapCityPool.people.map((person) => ({
         ...person,
         source: "MUTUAL" as const,
         areaTotal: peopleMapCityPool.total,
         companyMatchCount: peopleMapCityPool.companyMatches,
         boosted: person.companyMatch,
       }));
+      return [...cityPeople, ...savedContactMapPins.filter((contact) => normalizedCityKey(contact.city) === normalizedCityKey(peopleMapCityPool.city))];
     }
     const contactIds = new Set(contactSuggestions.map((suggestion) => suggestion.id));
     return [
       ...contactSuggestions.map((suggestion) => ({ ...suggestion, source: "CONTACT" as const })),
+      ...savedContactMapPins,
       ...peopleSuggestions.filter((suggestion) => !contactIds.has(suggestion.id)).map((suggestion) => ({
         id: suggestion.id,
         name: suggestion.name,
@@ -967,20 +969,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         source: "MUTUAL" as const,
       })),
     ];
-  }, [contactSuggestions, peopleMapCityPool, peopleSuggestions]);
-
-  const dismissPeopleDiscoveryGuide = useCallback(() => {
-    setPeopleDiscoveryGuideOpen(false);
-  }, []);
-
-  useEffect(() => {
-    if (!user?.id || !peopleDiscoveryMembers.length) {
-      setPeopleDiscoveryGuideOpen(false);
-      return undefined;
-    }
-    const timer = setTimeout(() => setPeopleDiscoveryGuideOpen(true), 3200);
-    return () => clearTimeout(timer);
-  }, [peopleDiscoveryMembers.length, user?.id]);
+  }, [contactSuggestions, peopleMapCityPool, peopleSuggestions, savedContactMapPins]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1002,9 +991,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       setContactSuggestions([]);
       return () => { cancelled = true; };
     }
+    const cacheKey = `fairfares:people-contact-suggestions:v1:${user.id}`;
+    void AsyncStorage.getItem(cacheKey).then((stored) => {
+      if (cancelled || !stored) return;
+      try {
+        const cached = JSON.parse(stored) as { savedAt?: number; people?: FairFaresContact[] };
+        if (Date.now() - Number(cached.savedAt || 0) < 6 * 60 * 60 * 1000 && Array.isArray(cached.people)) setContactSuggestions(cached.people);
+      } catch { /* Ignore an invalid local cache. */ }
+    });
     const timer = setTimeout(() => {
       void getPeopleContactPool()
-        .then((people) => { if (!cancelled) setContactSuggestions(people); })
+        .then((people) => {
+          if (cancelled) return;
+          setContactSuggestions(people);
+          void AsyncStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), people }));
+        })
         .catch(() => { if (!cancelled) setContactSuggestions([]); });
     }, 700);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -1023,9 +1024,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       setPeopleSuggestions([]);
       return () => { cancelled = true; };
     }
+    const cacheKey = `fairfares:people-suggestions:v1:${user.id}`;
+    void AsyncStorage.getItem(cacheKey).then((stored) => {
+      if (cancelled || !stored) return;
+      try {
+        const cached = JSON.parse(stored) as { savedAt?: number; people?: PeopleSuggestion[] };
+        if (Date.now() - Number(cached.savedAt || 0) < 6 * 60 * 60 * 1000 && Array.isArray(cached.people)) setPeopleSuggestions(cached.people);
+      } catch { /* Ignore an invalid local cache. */ }
+    });
     const timer = setTimeout(() => {
       void getPeopleSuggestions()
-        .then((suggestions) => { if (!cancelled) setPeopleSuggestions(suggestions); })
+        .then((suggestions) => {
+          if (cancelled) return;
+          setPeopleSuggestions(suggestions);
+          void AsyncStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), people: suggestions }));
+        })
         .catch(() => { if (!cancelled) setPeopleSuggestions([]); });
     }, 850);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -1221,7 +1234,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         return false;
       }
       const response = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers],
+        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Addresses, Contacts.Fields.Image],
         sort: Contacts.SortTypes.FirstName,
       });
       const phoneHashes = new Set<string>();
@@ -1230,6 +1243,24 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           contactDiscoveryVariants(String(entry.number || "")).forEach((value) => phoneHashes.add(contactDiscoveryHash(value)));
         });
       });
+      const contactCities = new Map<string, { id: string; name: string; photoUrl: string; city: string }>();
+      response.data.forEach((contact) => {
+        const address = (contact.addresses || []).find((item) => String(item.city || "").trim());
+        const city = String(address?.city || "").trim();
+        const region = String(address?.region || "").trim();
+        const label = normalizedLocationLabel(region ? `${city}, ${region}` : city);
+        if (!contact.id || !city || !label || contactCities.has(contact.id)) return;
+        contactCities.set(contact.id, { id: contact.id, name: String(contact.name || "Contact"), photoUrl: String(contact.image?.uri || ""), city: label });
+      });
+      const coordinateEntries = await Promise.all([...new Set([...contactCities.values()].map((contact) => contact.city))].slice(0, 40).map(async (city) => {
+        const [point] = await Location.geocodeAsync(city).catch(() => []);
+        return [city, point ? { latitude: point.latitude, longitude: point.longitude } : null] as const;
+      }));
+      const coordinates = new Map(coordinateEntries);
+      setSavedContactMapPins([...contactCities.values()].flatMap((contact, index) => {
+        const point = coordinates.get(contact.city);
+        return point ? [{ id: -(index + 1), name: contact.name, photoUrl: contact.photoUrl, city: contact.city, latitude: point.latitude, longitude: point.longitude, source: "SAVED_CONTACT" as const, savedContactAddress: true }] : [];
+      }));
       if (!phoneHashes.size) {
         setContactSuggestions([]);
         setContactSuggestionsChecked(true);
@@ -2639,24 +2670,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </View> : null}
       <View style={[styles.peopleSuggestions, isLight && styles.peopleSuggestionsLight]}>
         <View style={styles.peopleDiscoveryContent}>
-          {peopleDiscoveryGuideOpen ? <View style={[styles.peopleDiscoveryInlineGuide, isLight && styles.peopleDiscoveryInlineGuideLight]}>
-            <TouchableOpacity style={styles.peopleDiscoveryInlineGuideClose} onPress={dismissPeopleDiscoveryGuide} accessibilityRole="button" accessibilityLabel="Dismiss people suggestions explanation"><Text style={styles.peopleDiscoveryInlineGuideCloseText}>×</Text></TouchableOpacity>
+          <View style={[styles.peopleDiscoveryInlineGuide, isLight && styles.peopleDiscoveryInlineGuideLight]}>
             <View style={styles.peopleDiscoveryInlineGuideRow}>
               <View style={styles.peopleDiscoveryGuidePair} pointerEvents="none">
                 {peopleDiscoveryMembers.slice(0, 2).map((member, index) => <View key={`guide-${member.id}`} style={[styles.peopleDiscoveryGuideAvatarWrap, index === 1 && styles.peopleDiscoveryGuideAvatarSecond]}><UserAvatar photoUrl={member.photoUrl} style={styles.peopleDiscoveryGuideAvatar} imageStyle={styles.peopleDiscoveryGuideAvatarImage} fallback={<Text style={styles.peopleDiscoveryGuideAvatarInitials}>{initials(member.name)}</Text>} /></View>)}
+                {!peopleDiscoveryMembers.length ? <View style={styles.peopleDiscoveryGuideAvatarWrap}><Text style={styles.peopleDiscoveryGuideAvatarInitials}>✦</Text></View> : null}
                 <View style={styles.peopleDiscoveryGuidePairLink}><Text style={styles.peopleDiscoveryGuidePairLinkText}>✦</Text></View>
               </View>
               <View style={styles.peopleDiscoveryInlineGuideCopy}>
                 <Text style={styles.peopleDiscoveryInlineGuideEyebrow}>DISCOVER MUTUAL FRIENDS</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideTitle, isLight && styles.textPrimaryLight]}>Find friends around you</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideBody, isLight && styles.textSecondaryLight]}>Find friends who work at the same company or attend the same school or college, and live in the same area.</Text>
-                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => { dismissPeopleDiscoveryGuide(); void openPeopleMap(); }} accessibilityRole="button" accessibilityLabel="Find friends from my contacts and open the people map"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Show friends ›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => void openPeopleMap()} accessibilityRole="button" accessibilityLabel="Find friends from my contacts and open the people map"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Show friends ›</Text></TouchableOpacity>
               </View>
             </View>
-          </View> : null}
-          {!peopleDiscoveryGuideOpen ? <TouchableOpacity style={[styles.peopleMapReopen, isLight && styles.peopleMapReopenLight]} onPress={() => void openPeopleMap()} accessibilityRole="button" accessibilityLabel="Open friends map">
-            <Text style={styles.peopleMapReopenIcon}>✦</Text><Text style={[styles.peopleMapReopenText, isLight && styles.textPrimaryLight]}>Friends map</Text><Text style={styles.peopleMapReopenHint}>{user?.id ? "Explore your circle" : "Sign in to explore"}</Text><Text style={styles.peopleMapReopenChevron}>›</Text>
-          </TouchableOpacity> : null}
+          </View>
           {peopleDiscoveryMembers.length ? <View style={styles.floatingPeopleStageCompact}>
             {peopleDiscoveryMembers.slice(0, 3).map((member, index) => <FloatingPersonBubble key={`preview-${member.id}-${member.tag}`} member={member} index={index} compact isLight={isLight} onOpen={() => openMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} />)}
           </View> : null}
@@ -2712,8 +2740,8 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
     <Modal visible={peopleMapOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPeopleMapOpen(false)}>
       <View style={[styles.peopleMapScreen, isLight && styles.peopleMapScreenLight]}>
-        <View style={styles.peopleMapHeader}>
-          <View style={styles.peopleMapHeaderCopy}><Text style={styles.peopleMapEyebrow}>FRIENDS MAP</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>People around your circle</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>City-level areas only — never live locations.</Text></View>
+          <View style={styles.peopleMapHeader}>
+          <View style={styles.peopleMapHeaderCopy}><Text style={styles.peopleMapEyebrow}>FRIENDS MAP</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>People map</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>City-level only · never live locations</Text></View>
           <TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleMapOpen(false)} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
         </View>
         <View style={styles.peopleMapCanvas}>
@@ -2737,7 +2765,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
               <TouchableOpacity style={[styles.peopleMapPlannerAction, relocationSaving && styles.disabled]} onPress={() => void searchPeopleMap()} disabled={relocationSaving} accessibilityRole="button" accessibilityLabel="Show friends on the map"><Text style={styles.peopleMapPlannerActionIcon}>✦</Text><Text style={styles.peopleMapPlannerActionText}>{relocationSaving ? "Searching…" : "Show people on map"}</Text><Text style={styles.peopleMapPlannerActionArrow}>›</Text></TouchableOpacity>
             </Animated.View>
           </View> : null}
-          {!peopleMapPlannerOpen ? <TouchableOpacity style={{ backgroundColor: "#ffffff", padding: 12, margin: 12, borderRadius: 12 }} onPress={() => setPeopleMapPlannerOpen(true)} accessibilityRole="button" accessibilityLabel="Search another city"><Text style={{ color: "#102b25", fontWeight: "800" }}>{peopleMapCityPool ? `${peopleMapCityPool.city}: ${peopleMapCityPool.total} discoverable users · ${peopleMapCityPool.companyMatches} company / school matches` : "Search a city"} · Change city</Text></TouchableOpacity> : null}
+          {!peopleMapPlannerOpen ? <TouchableOpacity style={{ alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,.94)", paddingHorizontal: 12, paddingVertical: 9, margin: 12, borderRadius: 20, shadowColor: "#102a21", shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 }} onPress={() => setPeopleMapPlannerOpen(true)} accessibilityRole="button" accessibilityLabel="Search another city"><Text style={{ color: "#102b25", fontSize: 12, fontWeight: "900" }}>{peopleMapCityPool ? `${peopleMapCityPool.city} · ${peopleMapCityPool.total} people${peopleMapCityPool.companyMatches ? ` · ${peopleMapCityPool.companyMatches} match${peopleMapCityPool.companyMatches === 1 ? "" : "es"}` : ""}` : "Search a city"} <Text style={{ color: "#087254" }}>Change</Text></Text></TouchableOpacity> : null}
           {!peopleMapPlannerOpen && peopleMapCityPool && peopleMapCityPool.total > 0 ? <View style={{ position: "absolute", bottom: 76, left: 12, right: 12, maxHeight: "45%", borderRadius: 16, padding: 12, backgroundColor: "#fff" }}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={peopleMapListOpen ? "Hide city people" : "View city people"} onPress={() => setPeopleMapListOpen((value) => !value)}><Text style={{ color: "#102b25", fontWeight: "800" }}>{peopleMapListOpen ? "Hide people" : `View ${peopleMapCityPool.total} people`} {peopleMapListOpen ? "⌄" : "⌃"}</Text></TouchableOpacity>
             {peopleMapListOpen ? <ScrollView style={{ marginTop: 8 }} keyboardShouldPersistTaps="handled">
@@ -2748,7 +2776,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
               {peopleMapCityPool.nextOffset != null ? <TouchableOpacity disabled={peopleMapMoreBusy} onPress={() => void loadMoreMapPeople()} accessibilityRole="button"><Text style={{ color: "#087254", paddingVertical: 12, fontWeight: "800" }}>{peopleMapMoreBusy ? "Loading…" : "Load more people"}</Text></TouchableOpacity> : null}
             </ScrollView> : null}
           </View> : null}
-          {!peopleMapPlannerOpen ? <View pointerEvents="none" style={styles.peopleMapLegend}>{peopleMapCityPool ? <><Text style={styles.peopleMapLegendText}>Green: have place · Blue: need place · Orange: roommates</Text></> : <><Text style={styles.peopleMapLegendText}>● Contacts</Text><Text style={styles.peopleMapLegendText}>● Mutuals</Text></>}<Text style={styles.peopleMapLegendHint}>Drag to explore · pinch to zoom</Text></View> : null}
+          {!peopleMapPlannerOpen ? <View pointerEvents="none" style={styles.peopleMapLegend}>{peopleMapCityPool ? <><Text style={styles.peopleMapLegendText}>● Have place</Text><Text style={[styles.peopleMapLegendText, { color: "#6079ef" }]}>● Need place</Text><Text style={[styles.peopleMapLegendText, { color: "#d87e0c" }]}>● Roommates</Text></> : <><Text style={styles.peopleMapLegendText}>● Contacts</Text><Text style={styles.peopleMapLegendText}>● Mutuals</Text></>}<Text style={styles.peopleMapLegendHint}>Explore map</Text></View> : null}
         </View>
       </View>
     </Modal>
@@ -2968,11 +2996,11 @@ const styles = StyleSheet.create({
   peopleDiscoveryInlineGuideCloseText: { color: "#d6e1f6", fontSize: 21, lineHeight: 24, fontWeight: "500" },
   peopleMapScreen: { flex: 1, backgroundColor: theme.colors.bg },
   peopleMapScreenLight: { backgroundColor: "#f6f8fb" },
-  peopleMapHeader: { minHeight: 84, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 18, paddingTop: 8, borderBottomWidth: 1, borderBottomColor: "#e1e7f1", backgroundColor: "#ffffff" },
+  peopleMapHeader: { minHeight: 70, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 18, paddingTop: 6, borderBottomWidth: 1, borderBottomColor: "#e1e7f1", backgroundColor: "#ffffff" },
   peopleMapHeaderCopy: { flex: 1, minWidth: 0 },
   peopleMapEyebrow: { color: "#5d7fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
-  peopleMapTitle: { color: theme.colors.text, fontSize: 18, lineHeight: 22, fontWeight: "900", marginTop: 2 },
-  peopleMapSubtitle: { color: theme.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 2 },
+  peopleMapTitle: { color: theme.colors.text, fontSize: 17, lineHeight: 20, fontWeight: "900", marginTop: 1 },
+  peopleMapSubtitle: { color: theme.colors.muted, fontSize: 9, lineHeight: 12, marginTop: 1 },
   peopleMapClose: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: theme.colors.panel2 },
   peopleMapCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
   peopleMapCanvas: { flex: 1, overflow: "hidden", backgroundColor: "#dce8e2" },
@@ -3020,7 +3048,7 @@ const styles = StyleSheet.create({
   peopleMapPlannerActionIcon: { color: "#073326", fontSize: 13, fontWeight: "900" },
   peopleMapPlannerActionText: { color: "#073326", fontSize: 12, fontWeight: "900" },
   peopleMapPlannerActionArrow: { color: "#073326", fontSize: 20, lineHeight: 21, fontWeight: "700" },
-  peopleMapLegend: { position: "absolute", bottom: 24, left: 12, right: 12, flexDirection: "row", flexWrap: "wrap", gap: 7, borderRadius: 15, backgroundColor: "rgba(255,255,255,.93)", paddingHorizontal: 10, paddingVertical: 7, shadowColor: "#102a21", shadowOpacity: .14, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  peopleMapLegend: { position: "absolute", bottom: 24, left: 12, right: 12, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7, borderRadius: 15, backgroundColor: "rgba(255,255,255,.88)", paddingHorizontal: 10, paddingVertical: 6, shadowColor: "#102a21", shadowOpacity: .12, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   peopleMapLegendText: { color: "#316b5a", fontSize: 9, fontWeight: "900" },
   peopleMapLegendHint: { color: "#5e6d83", fontSize: 9, fontWeight: "800" },
   peopleMapListHead: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.line },

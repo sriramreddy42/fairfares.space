@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Image, Platform, StyleSheet, Text, View } from "react-native";
+import { Animated, Platform, StyleSheet, Text, View } from "react-native";
 import MapView, { Callout, Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { PeopleMapMember, PeopleMapProps } from "./PeopleMap";
+import { UserAvatar } from "./UserAvatar";
 
 export function PeopleMap({ members, focus, focusSelected, onRegionChangeComplete }: PeopleMapProps) {
   const mapRef = useRef<MapView>(null);
@@ -67,6 +68,7 @@ export function PeopleMap({ members, focus, focusSelected, onRegionChangeComplet
     ref={mapRef}
     onMapReady={() => setMapReady(true)}
     provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+    mapType={Platform.OS === "ios" ? "mutedStandard" : "standard"}
     style={StyleSheet.absoluteFillObject}
     initialRegion={{ latitude: center.latitude, longitude: center.longitude, latitudeDelta: focus || points.length ? .18 : 100, longitudeDelta: focus || points.length ? .18 : 100 }}
     toolbarEnabled={false}
@@ -91,7 +93,7 @@ function stableHash(value: string) {
 
 function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { latitude: number; longitude: number }; index: number }) {
   const float = useRef(new Animated.Value(0)).current;
-  const isContact = member.source === "CONTACT";
+  const isContact = member.source === "CONTACT" || member.source === "SAVED_CONTACT";
   const hasCompanyMatch = Boolean(member.boosted);
   const housingLabel = housingIntentLabel(member.housingIntent);
   const intentStyle = member.housingIntent === "HAVE_PLACE"
@@ -123,7 +125,12 @@ function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { lat
     <Animated.View style={[styles.pinWrap, { transform: [{ scale: hasCompanyMatch ? 1.16 : 1 }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
       <View style={[styles.pinHalo, intentStyle.halo, isContact && styles.pinHaloContact, hasCompanyMatch && styles.pinHaloBoosted]} />
       <View style={[styles.marker, intentStyle.marker, isContact && styles.markerContact, hasCompanyMatch && styles.markerBoosted]}>
-        {member.photoUrl ? <Image source={{ uri: member.photoUrl }} style={styles.markerImage} /> : <Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
+        <UserAvatar
+          photoUrl={member.photoUrl}
+          style={styles.markerImage}
+          imageStyle={styles.markerImage}
+          fallback={<Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
+        />
         <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
     </Animated.View>
@@ -131,7 +138,7 @@ function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { lat
       <View style={styles.callout}>
         <Text style={styles.calloutTitle}>{member.name}</Text>
         {hasCompanyMatch ? <Text style={styles.calloutMatch}>Company / school match</Text> : null}
-        <Text style={styles.calloutCopy}>{housingLabel || (member.moving ? `Moving to ${member.city}` : `In ${member.city}`)}</Text>
+        <Text style={styles.calloutCopy}>{member.savedContactAddress ? "Your contact · saved address, not verified" : housingLabel || (member.moving ? `Moving to ${member.city}` : `In ${member.city}`)}</Text>
         <Text style={styles.calloutPrivacy}>City area only</Text>
       </View>
     </Callout>
