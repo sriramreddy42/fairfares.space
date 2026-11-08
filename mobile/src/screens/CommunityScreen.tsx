@@ -850,6 +850,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
+  const pendingMapMemberProfileRef = useRef<MemberProfileTarget | null>(null);
   const pendingPhotoViewerRef = useRef<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const pendingPhotoReturnRef = useRef<CommunityPost | null>(null);
   const [answer, setAnswer] = useState("");
@@ -1610,7 +1611,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   };
 
   const loadPeopleForMapViewport = useCallback(async (region: PeopleMapRegion) => {
-    if (!user?.id || peopleMapPlannerOpen || region.latitudeDelta > 3 || region.longitudeDelta > 3) return;
+    if (!peopleMapOpen || !user?.id || peopleMapPlannerOpen || region.latitudeDelta > 3 || region.longitudeDelta > 3) return;
     const viewportKey = `${region.latitude.toFixed(2)},${region.longitude.toFixed(2)}`;
     if (viewportKey === peopleMapViewportKeyRef.current) return;
     peopleMapViewportKeyRef.current = viewportKey;
@@ -1631,7 +1632,31 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       // The map remains usable if reverse geocoding is unavailable; a city can
       // still be chosen directly from the search sheet.
     }
-  }, [peopleMapCityPool?.city, peopleMapCompany, peopleMapPlannerOpen, user?.id]);
+  }, [peopleMapCityPool?.city, peopleMapCompany, peopleMapOpen, peopleMapPlannerOpen, user?.id]);
+
+  const closePeopleMap = useCallback(() => {
+    // Invalidate reverse-geocoding and city-pool work started by the map before
+    // the page-sheet closes, so it cannot update the Ask screen afterward.
+    peopleMapViewportRequestRef.current += 1;
+    peopleMapViewportKeyRef.current = "";
+    setPeopleMapListOpen(false);
+    setPeopleMapPlannerOpen(false);
+    setPeopleMapOpen(false);
+  }, []);
+
+  const openMapMemberProfile = useCallback((member: MemberProfileTarget) => {
+    if (!member.id) return;
+    // iOS cannot present a second modal over the page-sheet map reliably.
+    // Dismiss the map first, then present the member sheet from the root.
+    pendingMapMemberProfileRef.current = member;
+    closePeopleMap();
+  }, [closePeopleMap]);
+
+  const handlePeopleMapDismiss = useCallback(() => {
+    const member = pendingMapMemberProfileRef.current;
+    pendingMapMemberProfileRef.current = null;
+    if (member) requestAnimationFrame(() => memberProfileSheetRef.current?.open(member));
+  }, []);
 
   const saveRelocationPlan = useCallback(async () => {
     if (!user?.id) {
@@ -2743,14 +2768,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       </View></View>
     </Modal>
 
-    <Modal visible={peopleMapOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPeopleMapOpen(false)}>
+    <Modal visible={peopleMapOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={closePeopleMap} onDismiss={handlePeopleMapDismiss}>
       <View style={[styles.peopleMapScreen, isLight && styles.peopleMapScreenLight]}>
           <View style={styles.peopleMapHeader}>
           <View style={styles.peopleMapHeaderCopy}><Text style={styles.peopleMapEyebrow}>FRIENDS MAP</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>People map</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>City-level only · never live locations</Text></View>
-          <TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleMapOpen(false)} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.peopleMapClose} onPress={closePeopleMap} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
         </View>
         <View style={styles.peopleMapCanvas}>
-          <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} onMemberPress={(member) => openMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
+          <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} onMemberPress={(member) => openMapMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
           {peopleMapPlannerOpen ? <View style={styles.peopleMapPlannerOverlay}>
             <Animated.View pointerEvents="none" style={[styles.peopleMapPlannerAura, { opacity: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.26, .56] }), transform: [{ scale: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.86, 1.13] }) }] }]} />
             <Animated.View style={[styles.peopleMapPlannerCard, isLight && styles.peopleMapPlannerCardLight, { opacity: peopleMapPlannerEntrance, transform: [{ translateY: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }]}>
