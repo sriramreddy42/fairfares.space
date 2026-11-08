@@ -96,6 +96,7 @@ function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { lat
   const isContact = member.source === "CONTACT" || member.source === "SAVED_CONTACT";
   const hasCompanyMatch = Boolean(member.boosted);
   const housingLabel = housingIntentLabel(member.housingIntent);
+  const demandScale = member.housingIntent === "NEED_PLACE" ? 1.2 : 1;
   const intentStyle = member.housingIntent === "HAVE_PLACE"
     ? { halo: styles.pinHaloHavePlace, marker: styles.markerHavePlace, status: styles.pinStatusHavePlace }
     : member.housingIntent === "NEED_ROOMMATE"
@@ -122,7 +123,7 @@ function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { lat
     anchor={{ x: .5, y: .52 }}
     tracksViewChanges={index < 6}
   >
-    <Animated.View style={[styles.pinWrap, { transform: [{ scale: hasCompanyMatch ? 1.16 : 1 }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
+    <Animated.View style={[styles.pinWrap, { transform: [{ scale: (hasCompanyMatch ? 1.16 : 1) * demandScale }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
       <View style={[styles.pinHalo, intentStyle.halo, isContact && styles.pinHaloContact, hasCompanyMatch && styles.pinHaloBoosted]} />
       <View style={[styles.marker, intentStyle.marker, isContact && styles.markerContact, hasCompanyMatch && styles.markerBoosted]}>
         <UserAvatar

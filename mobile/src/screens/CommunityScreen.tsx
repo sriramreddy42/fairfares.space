@@ -970,6 +970,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       })),
     ];
   }, [contactSuggestions, peopleMapCityPool, peopleSuggestions, savedContactMapPins]);
+  const peopleMapIntentCounts = useMemo(() => ({
+    needPlace: peopleMapCityPool?.people.filter((person) => person.housingIntent === "NEED_PLACE").length || 0,
+    havePlace: peopleMapCityPool?.people.filter((person) => person.housingIntent === "HAVE_PLACE").length || 0,
+    roommates: peopleMapCityPool?.people.filter((person) => person.housingIntent === "NEED_ROOMMATE").length || 0,
+  }), [peopleMapCityPool]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2765,7 +2770,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
               <TouchableOpacity style={[styles.peopleMapPlannerAction, relocationSaving && styles.disabled]} onPress={() => void searchPeopleMap()} disabled={relocationSaving} accessibilityRole="button" accessibilityLabel="Show friends on the map"><Text style={styles.peopleMapPlannerActionIcon}>✦</Text><Text style={styles.peopleMapPlannerActionText}>{relocationSaving ? "Searching…" : "Show people on map"}</Text><Text style={styles.peopleMapPlannerActionArrow}>›</Text></TouchableOpacity>
             </Animated.View>
           </View> : null}
-          {!peopleMapPlannerOpen ? <TouchableOpacity style={{ alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,.94)", paddingHorizontal: 12, paddingVertical: 9, margin: 12, borderRadius: 20, shadowColor: "#102a21", shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 }} onPress={() => setPeopleMapPlannerOpen(true)} accessibilityRole="button" accessibilityLabel="Search another city"><Text style={{ color: "#102b25", fontSize: 12, fontWeight: "900" }}>{peopleMapCityPool ? `${peopleMapCityPool.city} · ${peopleMapCityPool.total} people${peopleMapCityPool.companyMatches ? ` · ${peopleMapCityPool.companyMatches} match${peopleMapCityPool.companyMatches === 1 ? "" : "es"}` : ""}` : "Search a city"} <Text style={{ color: "#087254" }}>Change</Text></Text></TouchableOpacity> : null}
+          {!peopleMapPlannerOpen ? <TouchableOpacity style={{ alignSelf: "flex-start", backgroundColor: "rgba(255,255,255,.94)", paddingHorizontal: 12, paddingVertical: 9, margin: 12, borderRadius: 20, shadowColor: "#102a21", shadowOpacity: .12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 }} onPress={() => setPeopleMapPlannerOpen(true)} accessibilityRole="button" accessibilityLabel="Search another city"><Text style={{ color: "#102b25", fontSize: 12, fontWeight: "900" }}>{peopleMapCityPool ? <><Text>{peopleMapCityPool.city} · </Text><Text style={{ color: "#6079ef" }}>{peopleMapIntentCounts.needPlace} need place</Text><Text> · </Text><Text style={{ color: "#087254" }}>{peopleMapIntentCounts.havePlace} have place</Text><Text> · </Text><Text style={{ color: "#d87e0c" }}>{peopleMapIntentCounts.roommates} roommates</Text></> : "Search a city"} <Text style={{ color: "#087254" }}>Change</Text></Text></TouchableOpacity> : null}
           {!peopleMapPlannerOpen && peopleMapCityPool && peopleMapCityPool.total > 0 ? <View style={{ position: "absolute", bottom: 76, left: 12, right: 12, maxHeight: "45%", borderRadius: 16, padding: 12, backgroundColor: "#fff" }}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={peopleMapListOpen ? "Hide city people" : "View city people"} onPress={() => setPeopleMapListOpen((value) => !value)}><Text style={{ color: "#102b25", fontWeight: "800" }}>{peopleMapListOpen ? "Hide people" : `View ${peopleMapCityPool.total} people`} {peopleMapListOpen ? "⌄" : "⌃"}</Text></TouchableOpacity>
             {peopleMapListOpen ? <ScrollView style={{ marginTop: 8 }} keyboardShouldPersistTaps="handled">
