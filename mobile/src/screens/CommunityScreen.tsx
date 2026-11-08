@@ -12,7 +12,7 @@ import {
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
   findChatPeopleByContactHashes, getPeopleContactPool, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
-  getHousingActivity, getRentalBookings, getRideActivity,
+  getHousingActivity, getRentalBookings, getRideActivity, getCommunityUserProfile,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, updateMobileProfile, uploadCommunityVideo,
 } from "../api/client";
@@ -760,8 +760,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [peopleMapCompany, setPeopleMapCompany] = useState("");
   const [peopleMapMoreBusy, setPeopleMapMoreBusy] = useState(false);
   const [peopleMapCityPool, setPeopleMapCityPool] = useState<PeopleMapCityPool | null>(null);
+  const [peopleMapMember, setPeopleMapMember] = useState<MemberProfileTarget | null>(null);
+  const [peopleMapMemberProfile, setPeopleMapMemberProfile] = useState<Awaited<ReturnType<typeof getCommunityUserProfile>> | null>(null);
+  const [peopleMapMemberLoading, setPeopleMapMemberLoading] = useState(false);
   const peopleMapViewportKeyRef = useRef("");
   const peopleMapViewportRequestRef = useRef(0);
+  const peopleMapMemberRequestRef = useRef(0);
   const peopleMapPlannerEntrance = useRef(new Animated.Value(0)).current;
   const peopleMapPlannerPulse = useRef(new Animated.Value(0)).current;
   const [relocationPlannerOpen, setRelocationPlannerOpen] = useState(false);
@@ -850,7 +854,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [photoViewer, setPhotoViewer] = useState<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const memberProfileSheetRef = useRef<MemberProfileSheetHandle>(null);
   const pendingMemberProfileRef = useRef<MemberProfileTarget | null>(null);
-  const pendingMapMemberProfileRef = useRef<MemberProfileTarget | null>(null);
+  const pendingMapActionRef = useRef<{ type: "chat"; userId: number } | { type: "housing"; postId: string } | null>(null);
   const pendingPhotoViewerRef = useRef<{ images: string[]; index: number; returnToPost: CommunityPost | null } | null>(null);
   const pendingPhotoReturnRef = useRef<CommunityPost | null>(null);
   const [answer, setAnswer] = useState("");
@@ -1641,22 +1645,52 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     peopleMapViewportKeyRef.current = "";
     setPeopleMapListOpen(false);
     setPeopleMapPlannerOpen(false);
+    setPeopleMapMember(null);
+    setPeopleMapMemberProfile(null);
+    setPeopleMapMemberLoading(false);
+    peopleMapMemberRequestRef.current += 1;
     setPeopleMapOpen(false);
   }, []);
 
   const openMapMemberProfile = useCallback((member: MemberProfileTarget) => {
     if (!member.id) return;
-    // iOS cannot present a second modal over the page-sheet map reliably.
-    // Dismiss the map first, then present the member sheet from the root.
-    pendingMapMemberProfileRef.current = member;
+    // Keep the card inside the existing map page-sheet. Presenting another
+    // native modal above it can leave iOS with a black, unresponsive screen.
+    const requestId = peopleMapMemberRequestRef.current + 1;
+    peopleMapMemberRequestRef.current = requestId;
+    setPeopleMapMember(member);
+    setPeopleMapMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl, listings: [] });
+    setPeopleMapMemberLoading(true);
+    void getCommunityUserProfile(member.id).then((profile) => {
+      if (peopleMapMemberRequestRef.current === requestId) setPeopleMapMemberProfile(profile);
+    }).catch(() => {
+      // The immediately-visible member card remains useful even when profile
+      // details are briefly unavailable.
+    }).finally(() => {
+      if (peopleMapMemberRequestRef.current === requestId) setPeopleMapMemberLoading(false);
+    });
+  }, []);
+
+  const openMapChat = useCallback(() => {
+    if (!peopleMapMember?.id) return;
+    pendingMapActionRef.current = { type: "chat", userId: peopleMapMember.id };
+    closePeopleMap();
+  }, [closePeopleMap, peopleMapMember?.id]);
+
+  const openMapListing = useCallback((postId: string) => {
+    pendingMapActionRef.current = { type: "housing", postId };
     closePeopleMap();
   }, [closePeopleMap]);
 
   const handlePeopleMapDismiss = useCallback(() => {
-    const member = pendingMapMemberProfileRef.current;
-    pendingMapMemberProfileRef.current = null;
-    if (member) requestAnimationFrame(() => memberProfileSheetRef.current?.open(member));
-  }, []);
+    const action = pendingMapActionRef.current;
+    pendingMapActionRef.current = null;
+    if (!action) return;
+    requestAnimationFrame(() => {
+      if (action.type === "chat") onOpenUserChat(action.userId);
+      else onOpenHousing(action.postId);
+    });
+  }, [onOpenHousing, onOpenUserChat]);
 
   const saveRelocationPlan = useCallback(async () => {
     if (!user?.id) {
@@ -2776,6 +2810,18 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         </View>
         <View style={styles.peopleMapCanvas}>
           <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} onMemberPress={(member) => openMapMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
+          {peopleMapMember ? <View style={styles.peopleMapMemberBackdrop}>
+            <View style={[styles.peopleMapMemberCard, isLight && styles.peopleMapMemberCardLight]}>
+              <TouchableOpacity style={[styles.peopleMapMemberClose, isLight && styles.peopleMapMemberCloseLight]} onPress={() => { peopleMapMemberRequestRef.current += 1; setPeopleMapMember(null); setPeopleMapMemberProfile(null); setPeopleMapMemberLoading(false); }} accessibilityRole="button" accessibilityLabel="Close member details"><Text style={[styles.peopleMapMemberCloseText, isLight && styles.peopleMapMemberCloseTextLight]}>×</Text></TouchableOpacity>
+              <UserAvatar photoUrl={peopleMapMemberProfile?.photoUrl || peopleMapMember.photoUrl} style={styles.peopleMapMemberAvatar} imageStyle={styles.peopleMapMemberAvatarImage} fallback={<Text style={styles.peopleMapMemberInitials}>{avatarInitials(peopleMapMember.name)}</Text>} />
+              <Text style={[styles.peopleMapMemberName, isLight && styles.textPrimaryLight]}>{peopleMapMemberProfile?.name || peopleMapMember.name}</Text>
+              <Text style={[styles.peopleMapMemberMeta, isLight && styles.textSecondaryLight]}>{peopleMapMemberLoading ? "Loading profile…" : `${peopleMapMemberProfile?.listings.length || 0} active ${(peopleMapMemberProfile?.listings.length || 0) === 1 ? "listing" : "listings"}`}</Text>
+              <TouchableOpacity style={styles.peopleMapMemberMessage} onPress={openMapChat} accessibilityRole="button" accessibilityLabel={`Message ${peopleMapMember.name}`}><Text style={styles.peopleMapMemberMessageText}>Message</Text></TouchableOpacity>
+              {!peopleMapMemberLoading && peopleMapMemberProfile?.listings.length ? <ScrollView style={styles.peopleMapMemberListings} contentContainerStyle={styles.peopleMapMemberListingsContent}>
+                {peopleMapMemberProfile.listings.map((listing) => <TouchableOpacity key={listing.id} style={[styles.peopleMapMemberListing, isLight && styles.peopleMapMemberListingLight]} onPress={() => openMapListing(listing.id)} accessibilityRole="button" accessibilityLabel={`Open ${listing.title}`}><View style={{ flex: 1 }}><Text style={[styles.peopleMapMemberListingTitle, isLight && styles.textPrimaryLight]} numberOfLines={2}>{listing.title}</Text><Text style={[styles.peopleMapMemberListingMeta, isLight && styles.textSecondaryLight]} numberOfLines={1}>{listing.addressLabel || listing.location} · {listing.rent}</Text></View><Text style={styles.peopleMapMemberListingArrow}>›</Text></TouchableOpacity>)}
+              </ScrollView> : !peopleMapMemberLoading ? <Text style={[styles.peopleMapMemberEmpty, isLight && styles.textSecondaryLight]}>No active listings right now.</Text> : <ActivityIndicator color={theme.colors.brand} />}
+            </View>
+          </View> : null}
           {peopleMapPlannerOpen ? <View style={styles.peopleMapPlannerOverlay}>
             <Animated.View pointerEvents="none" style={[styles.peopleMapPlannerAura, { opacity: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.26, .56] }), transform: [{ scale: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.86, 1.13] }) }] }]} />
             <Animated.View style={[styles.peopleMapPlannerCard, isLight && styles.peopleMapPlannerCardLight, { opacity: peopleMapPlannerEntrance, transform: [{ translateY: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }]}>
@@ -3034,6 +3080,15 @@ const styles = StyleSheet.create({
   peopleMapClose: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: theme.colors.panel2 },
   peopleMapCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
   peopleMapCanvas: { flex: 1, overflow: "hidden", backgroundColor: "#dce8e2" },
+  peopleMapMemberBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", padding: 12, backgroundColor: "rgba(12, 32, 26, .20)" },
+  peopleMapMemberCard: { maxHeight: "67%", borderRadius: 24, backgroundColor: "#102b25", padding: 18, alignItems: "center", shadowColor: "#071a14", shadowOpacity: .32, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 10 },
+  peopleMapMemberCardLight: { backgroundColor: "#fff" },
+  peopleMapMemberClose: { position: "absolute", top: 11, right: 11, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,.14)", zIndex: 2 },
+  peopleMapMemberCloseLight: { backgroundColor: "#eef1f3" }, peopleMapMemberCloseText: { color: "#fff", fontSize: 25, lineHeight: 28, fontWeight: "400" }, peopleMapMemberCloseTextLight: { color: "#17231e" },
+  peopleMapMemberAvatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#d9f5e9", borderWidth: 3, borderColor: "#30c796" }, peopleMapMemberAvatarImage: { borderRadius: 33 }, peopleMapMemberInitials: { color: "#102b25", fontSize: 21, fontWeight: "900" },
+  peopleMapMemberName: { color: "#fff", marginTop: 8, fontSize: 21, fontWeight: "900" }, peopleMapMemberMeta: { color: "#a9c2b8", marginTop: 3, fontSize: 12, fontWeight: "700" },
+  peopleMapMemberMessage: { alignSelf: "stretch", minHeight: 48, marginTop: 14, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brand }, peopleMapMemberMessageText: { color: "#06291e", fontSize: 14, fontWeight: "900" },
+  peopleMapMemberListings: { alignSelf: "stretch", width: "100%", marginTop: 11 }, peopleMapMemberListingsContent: { gap: 7 }, peopleMapMemberListing: { minHeight: 61, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 13, backgroundColor: "rgba(255,255,255,.09)" }, peopleMapMemberListingLight: { backgroundColor: "#f3f6f5" }, peopleMapMemberListingTitle: { color: "#fff", fontSize: 13, fontWeight: "900" }, peopleMapMemberListingMeta: { color: "#b8d2c8", fontSize: 11, fontWeight: "700", marginTop: 3 }, peopleMapMemberListingArrow: { color: theme.colors.brand, fontSize: 27, lineHeight: 29 }, peopleMapMemberEmpty: { color: "#b8d2c8", marginTop: 14, marginBottom: 4, fontSize: 12, fontWeight: "700" },
   peopleMapPlannerOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: "center", padding: 10, backgroundColor: "rgba(7, 20, 27, .12)" },
   peopleMapPlannerAura: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -78, right: -60, backgroundColor: "#7c9cff" },
   peopleMapPlannerCard: { maxHeight: "90%", borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(152, 178, 255, .66)", backgroundColor: "rgba(10, 29, 51, .84)", padding: 12, shadowColor: "#06151d", shadowOpacity: .28, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 8 },
