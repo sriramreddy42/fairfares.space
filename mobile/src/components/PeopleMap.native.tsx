@@ -117,6 +117,7 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
   }, [float, index]);
 
   return <Marker
+    onPress={() => { if (member.id > 0) onPress?.(member); }}
     coordinate={{ latitude: member.latitude, longitude: member.longitude }}
     title={member.name}
     description={member.city}
@@ -135,12 +136,12 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
         <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
     </Animated.View>
-    <Callout tooltip onPress={() => { if (member.id > 0) onPress?.(member); }}>
+    <Callout tooltip>
       <View style={styles.callout}>
         <Text style={styles.calloutTitle}>{member.name}</Text>
         {hasCompanyMatch ? <Text style={styles.calloutMatch}>Company / school match</Text> : null}
         <Text style={styles.calloutCopy}>{member.savedContactAddress ? "Your contact · saved address, not verified" : housingLabel ? `${housingLabel} in ${member.city}` : member.moving ? `Moving to ${member.city}` : `In ${member.city}`}</Text>
-        {!member.savedContactAddress && member.id > 0 ? <Text style={styles.calloutAction}>{member.housingIntent === "NEED_PLACE" ? "Tap to offer a place" : member.housingIntent === "HAVE_PLACE" ? "Tap to ask about the place" : "Tap to connect"}</Text> : null}
+        {!member.savedContactAddress && member.id > 0 ? <Text style={styles.calloutAction}>{member.housingIntent === "NEED_PLACE" ? "Open profile to offer a place" : member.housingIntent === "HAVE_PLACE" ? "Open profile to ask about the place" : "Open profile to connect"}</Text> : null}
         <Text style={styles.calloutPrivacy}>City area only</Text>
       </View>
     </Callout>
