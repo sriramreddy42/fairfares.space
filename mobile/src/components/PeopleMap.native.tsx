@@ -4,7 +4,7 @@ import MapView, { Callout, Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { PeopleMapMember, PeopleMapProps } from "./PeopleMap";
 import { UserAvatar } from "./UserAvatar";
 
-export function PeopleMap({ members, focus, focusSelected, onRegionChangeComplete }: PeopleMapProps) {
+export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegionChangeComplete }: PeopleMapProps) {
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
   const points = useMemo(() => members.filter((member) => Number.isFinite(member.latitude) && Number.isFinite(member.longitude) && !(member.latitude === 0 && member.longitude === 0)), [members]);
@@ -81,7 +81,7 @@ export function PeopleMap({ members, focus, focusSelected, onRegionChangeComplet
     moveOnMarkerPress={false}
     onRegionChangeComplete={onRegionChangeComplete}
   >
-    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} />)}
+    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} onPress={onMemberPress} />)}
   </MapView>;
 }
 
@@ -91,7 +91,7 @@ function stableHash(value: string) {
   return hash >>> 0;
 }
 
-function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { latitude: number; longitude: number }; index: number }) {
+function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMember & { latitude: number; longitude: number }; index: number; onPress?: (member: PeopleMapMember) => void }) {
   const float = useRef(new Animated.Value(0)).current;
   const isContact = member.source === "CONTACT" || member.source === "SAVED_CONTACT";
   const hasCompanyMatch = Boolean(member.boosted);
@@ -135,11 +135,12 @@ function PeopleMapPersonPin({ member, index }: { member: PeopleMapMember & { lat
         <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
     </Animated.View>
-    <Callout tooltip>
+    <Callout tooltip onPress={() => { if (member.id > 0) onPress?.(member); }}>
       <View style={styles.callout}>
         <Text style={styles.calloutTitle}>{member.name}</Text>
         {hasCompanyMatch ? <Text style={styles.calloutMatch}>Company / school match</Text> : null}
-        <Text style={styles.calloutCopy}>{member.savedContactAddress ? "Your contact · saved address, not verified" : housingLabel || (member.moving ? `Moving to ${member.city}` : `In ${member.city}`)}</Text>
+        <Text style={styles.calloutCopy}>{member.savedContactAddress ? "Your contact · saved address, not verified" : housingLabel ? `${housingLabel} in ${member.city}` : member.moving ? `Moving to ${member.city}` : `In ${member.city}`}</Text>
+        {!member.savedContactAddress && member.id > 0 ? <Text style={styles.calloutAction}>{member.housingIntent === "NEED_PLACE" ? "Tap to offer a place" : member.housingIntent === "HAVE_PLACE" ? "Tap to ask about the place" : "Tap to connect"}</Text> : null}
         <Text style={styles.calloutPrivacy}>City area only</Text>
       </View>
     </Callout>
@@ -180,5 +181,6 @@ const styles = StyleSheet.create({
   calloutTitle: { color: "#102b25", fontSize: 12, fontWeight: "900" },
   calloutCopy: { color: "#526560", fontSize: 10, lineHeight: 14, marginTop: 3 },
   calloutMatch: { color: "#a46700", fontSize: 10, lineHeight: 14, marginTop: 4, fontWeight: "900" },
+  calloutAction: { color: "#087254", fontSize: 10, lineHeight: 14, marginTop: 6, fontWeight: "900" },
   calloutPrivacy: { color: "#11865e", fontSize: 9, fontWeight: "900", marginTop: 6 },
 });

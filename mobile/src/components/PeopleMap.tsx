@@ -31,6 +31,7 @@ export type PeopleMapRegion = PeopleMapFocus & {
 export type PeopleMapProps = {
   members: PeopleMapMember[];
   onAreaPress?: () => void;
+  onMemberPress?: (member: PeopleMapMember) => void;
   // The viewer's own device/city focus. This is never rendered as another
   // member's location and is used only to give an empty map a useful start.
   focus?: PeopleMapFocus | null;

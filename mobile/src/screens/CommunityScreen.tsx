@@ -2750,7 +2750,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           <TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleMapOpen(false)} accessibilityRole="button" accessibilityLabel="Close friends map"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity>
         </View>
         <View style={styles.peopleMapCanvas}>
-          <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
+          <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} onMemberPress={(member) => openMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
           {peopleMapPlannerOpen ? <View style={styles.peopleMapPlannerOverlay}>
             <Animated.View pointerEvents="none" style={[styles.peopleMapPlannerAura, { opacity: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.26, .56] }), transform: [{ scale: peopleMapPlannerPulse.interpolate({ inputRange: [0, 1], outputRange: [.86, 1.13] }) }] }]} />
             <Animated.View style={[styles.peopleMapPlannerCard, isLight && styles.peopleMapPlannerCardLight, { opacity: peopleMapPlannerEntrance, transform: [{ translateY: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: peopleMapPlannerEntrance.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }]}>
