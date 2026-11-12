@@ -2761,7 +2761,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
                 <Text style={styles.peopleDiscoveryInlineGuideEyebrow}>DISCOVER MUTUAL FRIENDS</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideTitle, isLight && styles.textPrimaryLight]}>Find friends around you</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideBody, isLight && styles.textSecondaryLight]}>Find friends who work at the same company or attend the same school or college, and live in the same area.</Text>
-                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => setPeopleNetworkOpen(true)} accessibilityRole="button" accessibilityLabel="Explore your people, friends, mutuals, and contacts"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Explore people ›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => void openPeopleMap()} accessibilityRole="button" accessibilityLabel="Open the people map"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Open people map ›</Text></TouchableOpacity>
               </View>
             </View>
           </View>
@@ -2820,7 +2820,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
 
     <Modal visible={peopleNetworkOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPeopleNetworkOpen(false)}>
       <View style={[styles.peopleNetworkScreen, isLight && styles.peopleNetworkScreenLight]}>
-        <View style={styles.peopleNetworkHeader}><View><Text style={styles.peopleMapEyebrow}>YOUR PEOPLE</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>Connections</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>Contacts are opt-in. Friends are always mutual.</Text></View><TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleNetworkOpen(false)} accessibilityLabel="Close connections"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity></View>
+        <View style={styles.peopleNetworkHeader}><View><Text style={styles.peopleMapEyebrow}>YOUR PEOPLE</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>People nearby</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>Discover nearby members, communities, and opt-in connections.</Text></View><TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleNetworkOpen(false)} accessibilityLabel="Close people nearby"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity></View>
         <View style={styles.peopleNetworkTabs}>{([['FOR_YOU', 'For you'], ['FRIENDS', `Friends ${connections.length || ''}`], ['MUTUALS', 'Mutuals'], ['CONTACTS', `Contacts ${contactSuggestions.length || ''}`]] as const).map(([value, label]) => <TouchableOpacity key={value} onPress={() => setPeopleNetworkTab(value)} style={[styles.peopleNetworkTab, peopleNetworkTab === value && styles.peopleNetworkTabActive]} accessibilityRole="tab" accessibilityState={{ selected: peopleNetworkTab === value }}><Text style={[styles.peopleNetworkTabText, peopleNetworkTab === value && styles.peopleNetworkTabTextActive]}>{label}</Text></TouchableOpacity>)}</View>
         <ScrollView contentContainerStyle={styles.peopleNetworkList}>
           {peopleNetworkTab === 'CONTACTS' && !contactSuggestions.length ? <View style={styles.peopleNetworkEmpty}><Text style={[styles.peopleNetworkEmptyTitle, isLight && styles.textPrimaryLight]}>Find people you already know</Text><Text style={[styles.peopleNetworkEmptyCopy, isLight && styles.textSecondaryLight]}>Choose contacts to match by secure phone hash. Contacts who are not FairFares members stay private and never appear on the map.</Text><TouchableOpacity style={styles.peopleNetworkPrimary} onPress={() => void findPeopleFromContacts()}><Text style={styles.peopleNetworkPrimaryText}>{contactSuggestionsLoading ? 'Checking contacts…' : 'Find contacts'}</Text></TouchableOpacity></View> : null}
@@ -2841,7 +2841,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         </View>
         <View style={styles.peopleMapCanvas}>
           <PeopleMap onRegionChangeComplete={loadPeopleForMapViewport} onMemberPress={(member) => openMapMemberProfile({ id: member.id, name: member.name, photoUrl: member.photoUrl })} members={peopleMapMembers} focus={peopleMapCityPool || peopleMapInitialFocus || gasPreviewCoordinates} focusSelected={Boolean(peopleMapCityPool)} />
-          {peopleMapMember ? <View style={styles.peopleMapMemberBackdrop}>
+          {peopleMapMember ? <View pointerEvents="box-none" style={styles.peopleMapMemberBackdrop}>
             <View style={[styles.peopleMapMemberCard, isLight && styles.peopleMapMemberCardLight]}>
               <TouchableOpacity style={[styles.peopleMapMemberClose, isLight && styles.peopleMapMemberCloseLight]} onPress={() => { peopleMapMemberRequestRef.current += 1; setPeopleMapMember(null); setPeopleMapMemberProfile(null); setPeopleMapMemberLoading(false); }} accessibilityRole="button" accessibilityLabel="Close member details"><Text style={[styles.peopleMapMemberCloseText, isLight && styles.peopleMapMemberCloseTextLight]}>×</Text></TouchableOpacity>
               <UserAvatar photoUrl={peopleMapMemberProfile?.photoUrl || peopleMapMember.photoUrl} style={styles.peopleMapMemberAvatar} imageStyle={styles.peopleMapMemberAvatarImage} fallback={<Text style={styles.peopleMapMemberInitials}>{avatarInitials(peopleMapMember.name)}</Text>} />
@@ -3118,7 +3118,7 @@ const styles = StyleSheet.create({
   peopleMapClose: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: theme.colors.panel2 },
   peopleMapCloseText: { color: theme.colors.soft, fontSize: 25, lineHeight: 28 },
   peopleMapCanvas: { flex: 1, overflow: "hidden", backgroundColor: "#dce8e2" },
-  peopleMapMemberBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", padding: 12, backgroundColor: "rgba(12, 32, 26, .20)" },
+  peopleMapMemberBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", padding: 12 },
   peopleMapMemberCard: { maxHeight: "67%", borderRadius: 24, backgroundColor: "#102b25", padding: 18, alignItems: "center", shadowColor: "#071a14", shadowOpacity: .32, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 10 },
   peopleMapMemberCardLight: { backgroundColor: "#fff" },
   peopleMapMemberClose: { position: "absolute", top: 11, right: 11, width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,.14)", zIndex: 2 },

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Platform, StyleSheet, Text, View } from "react-native";
-import MapView, { Callout, Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { PeopleMapMember, PeopleMapProps } from "./PeopleMap";
 import { UserAvatar } from "./UserAvatar";
 
@@ -95,7 +95,6 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
   const float = useRef(new Animated.Value(0)).current;
   const isContact = member.source === "CONTACT" || member.source === "SAVED_CONTACT";
   const hasCompanyMatch = Boolean(member.boosted);
-  const housingLabel = housingIntentLabel(member.housingIntent);
   const demandScale = member.housingIntent === "NEED_PLACE" ? 1.2 : 1;
   const intentStyle = member.housingIntent === "HAVE_PLACE"
     ? { halo: styles.pinHaloHavePlace, marker: styles.markerHavePlace, status: styles.pinStatusHavePlace }
@@ -136,23 +135,7 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
         <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isContact ? "✓" : "✦"}</Text></View>
       </View>
     </Animated.View>
-    <Callout tooltip>
-      <View style={styles.callout}>
-        <Text style={styles.calloutTitle}>{member.name}</Text>
-        {hasCompanyMatch ? <Text style={styles.calloutMatch}>Company / school match</Text> : null}
-        <Text style={styles.calloutCopy}>{member.savedContactAddress ? "Your contact · saved address, not verified" : housingLabel ? `${housingLabel} in ${member.city}` : member.moving ? `Moving to ${member.city}` : `In ${member.city}`}</Text>
-        {!member.savedContactAddress && member.id > 0 ? <Text style={styles.calloutAction}>{member.housingIntent === "NEED_PLACE" ? "Open profile to offer a place" : member.housingIntent === "HAVE_PLACE" ? "Open profile to ask about the place" : "Open profile to connect"}</Text> : null}
-        <Text style={styles.calloutPrivacy}>City area only</Text>
-      </View>
-    </Callout>
   </Marker>;
-}
-
-function housingIntentLabel(intent?: string) {
-  if (intent === "HAVE_PLACE") return "I have a place";
-  if (intent === "NEED_PLACE") return "I need a place";
-  if (intent === "NEED_ROOMMATE") return "Need roommates";
-  return "";
 }
 
 const styles = StyleSheet.create({
@@ -178,10 +161,4 @@ const styles = StyleSheet.create({
   pinStatusNeedRoommate: { backgroundColor: "#d87e0c" },
   pinStatusBoosted: { backgroundColor: "#dc9700" },
   pinStatusText: { color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
-  callout: { width: 188, borderRadius: 14, backgroundColor: "#ffffff", paddingHorizontal: 12, paddingVertical: 10, shadowColor: "#0a1f19", shadowOpacity: .25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
-  calloutTitle: { color: "#102b25", fontSize: 12, fontWeight: "900" },
-  calloutCopy: { color: "#526560", fontSize: 10, lineHeight: 14, marginTop: 3 },
-  calloutMatch: { color: "#a46700", fontSize: 10, lineHeight: 14, marginTop: 4, fontWeight: "900" },
-  calloutAction: { color: "#087254", fontSize: 10, lineHeight: 14, marginTop: 6, fontWeight: "900" },
-  calloutPrivacy: { color: "#11865e", fontSize: 9, fontWeight: "900", marginTop: 6 },
 });
