@@ -118,8 +118,6 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
   return <Marker
     onPress={() => { if (member.id > 0) onPress?.(member); }}
     coordinate={{ latitude: member.latitude, longitude: member.longitude }}
-    title={member.name}
-    description={member.city}
     anchor={{ x: .5, y: .52 }}
     tracksViewChanges={index < 6}
   >
