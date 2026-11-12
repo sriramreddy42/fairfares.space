@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 import json
+import sqlite3
+import urllib.parse
 import threading
 import urllib.request
 from unittest import mock
@@ -133,6 +135,60 @@ class HousingMoveTest(unittest.TestCase):
             audit = con.execute("SELECT * FROM housing_member_city_backfill_audit WHERE user_id = ?", (self.uid,)).fetchone()
             self.assertEqual(audit["old_current_city"], "Houston, TX")
             self.assertEqual(audit["source_kind"], "ASK")
+
+    def test_existing_listing_activation_shows_author_at_latest_listing_city(self):
+        with app.db() as con:
+            con.execute("DELETE FROM app_data_migrations WHERE migration_key = 'existing_housing_member_map_activation_v1'")
+            con.execute("UPDATE users SET local_city = 'Houston, TX', relocation_city = '', local_connection_discoverable = 0, relocation_discoverable = 1 WHERE id = ?", (self.uid,))
+            con.execute("INSERT INTO accommodation_posts (public_id, user_id, post_mode, city, created_at) VALUES ('parker-home', ?, 'HAVE_PLACE', 'Parker, CO', '2026-03-01')", (self.uid,))
+            self.assertEqual(app.activate_existing_housing_map_members(con), 1)
+            user = con.execute("SELECT * FROM users WHERE id = ?", (self.uid,)).fetchone()
+        self.assertEqual((user["local_city"], user["relocation_city"]), ("Parker, CO", "Parker, CO"))
+        self.assertEqual((user["local_connection_discoverable"], user["relocation_discoverable"]), (1, 0))
+        self.assertEqual(app.people_map_city_pool(0, "Parker, CO")["total"], 1)
+
+    def test_map_normalizes_city_and_company_variants(self):
+        with app.db() as con:
+            con.execute("UPDATE users SET local_city = 'Denver, Colorado', local_connection_discoverable = 1, relocation_company = 'Amazon, Inc.' WHERE id = ?", (self.uid,))
+        for city in ("Denver, CO", "Denver,CO", "denver, colorado", "Denver, CO, USA"):
+            pool = app.people_map_city_pool(0, city, "Amazon")
+            self.assertEqual(pool["total"], 1, city)
+            self.assertEqual(pool["companyMatches"], 1, city)
+            self.assertTrue(pool["people"][0]["companyMatch"])
+            self.assertNotEqual(pool["latitude"], 0)
+        self.assertEqual(app.people_map_company_key("Amazon Web Services"), "amazon web services")
+
+    def test_map_pages_are_unique_with_full_total(self):
+        with app.db() as con:
+            for i in range(30):
+                con.execute("INSERT INTO users (name,email,password_hash,is_verified,local_city,local_connection_discoverable) VALUES (?,?,'unused',1,'Denver, CO',1)", (f"Person {i:02}", f"person{i}@example.com"))
+        first = app.people_map_city_pool(0, "Denver, CO")
+        second = app.people_map_city_pool(0, "Denver, CO", offset=first["nextOffset"])
+        self.assertEqual(first["total"], 30)
+        self.assertEqual(len(first["people"]), 24)
+        self.assertEqual(len(second["people"]), 6)
+        self.assertIsNone(second["nextOffset"])
+        self.assertFalse({p["id"] for p in first["people"]} & {p["id"] for p in second["people"]})
+
+    def test_map_database_failure_is_503_not_zero(self):
+        handler = object.__new__(app.FairFaresHandler)
+        handler.current_user = lambda: {"id": self.uid}
+        sent = []
+        handler.send_json = lambda payload, status=200: sent.append((status, payload))
+        with mock.patch.object(app, "db", side_effect=sqlite3.OperationalError("busy")):
+            handler.api_mobile_people_map(urllib.parse.urlparse("/api/mobile/people/map?city=Denver%2C%20CO"))
+        self.assertEqual(sent[0][0], 503)
+        self.assertFalse(sent[0][1]["ok"])
+        self.assertNotIn("area", sent[0][1])
+
+    def test_same_city_housing_opt_in_enables_local_map(self):
+        intent = app.housing_post_location_intent({"housingLocation": {
+            "currentCity": "Houston, TX", "moving": False, "showOnMap": False,
+            "showCurrentOnMap": True,
+        }}, "NEED_PLACE", "Houston, TX")
+        with app.db() as con:
+            app.apply_housing_post_location(con, self.uid, intent)
+        self.assertEqual(app.people_map_city_pool(0, "Houston, TX")["total"], 1)
 
     def test_transaction_rollback_does_not_save_move(self):
         with self.assertRaises(RuntimeError):

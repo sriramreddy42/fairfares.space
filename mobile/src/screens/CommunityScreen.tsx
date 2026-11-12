@@ -11,7 +11,7 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
-  findChatPeopleByContactHashes, getPeopleContactPool, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
+  findChatPeopleByContactHashes, getPeopleContactPool, getPeopleConnections, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
   getHousingActivity, getRentalBookings, getRideActivity, getCommunityUserProfile,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, updateMobileProfile, uploadCommunityVideo,
@@ -750,6 +750,9 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [relocationSuggestions, setRelocationSuggestions] = useState<RelocationSuggestion[]>([]);
   const [peopleSuggestions, setPeopleSuggestions] = useState<PeopleSuggestion[]>([]);
   const [contactSuggestions, setContactSuggestions] = useState<FairFaresContact[]>([]);
+  const [connections, setConnections] = useState<FairFaresContact[]>([]);
+  const [peopleNetworkOpen, setPeopleNetworkOpen] = useState(false);
+  const [peopleNetworkTab, setPeopleNetworkTab] = useState<"FOR_YOU" | "FRIENDS" | "MUTUALS" | "CONTACTS">("FOR_YOU");
   const [savedContactMapPins, setSavedContactMapPins] = useState<PeopleMapMember[]>([]);
   const [contactSuggestionsLoading, setContactSuggestionsLoading] = useState(false);
   const [contactSuggestionsChecked, setContactSuggestionsChecked] = useState(false);
@@ -980,6 +983,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     havePlace: peopleMapCityPool?.people.filter((person) => person.housingIntent === "HAVE_PLACE").length || 0,
     roommates: peopleMapCityPool?.people.filter((person) => person.housingIntent === "NEED_ROOMMATE").length || 0,
   }), [peopleMapCityPool]);
+  const peopleNetworkPeople = useMemo(() => {
+    if (peopleNetworkTab === "FRIENDS") return connections.map((person) => ({ ...person, relationshipLabel: "Connected friend" }));
+    if (peopleNetworkTab === "CONTACTS") return contactSuggestions.map((person) => ({ ...person, relationshipLabel: "In your contacts" }));
+    const mutualsOnly = peopleNetworkTab === "MUTUALS";
+    return peopleSuggestions
+      .filter((person) => person.reason.toLowerCase().includes("mutual") === mutualsOnly)
+      .map((person) => ({ ...person, relationshipLabel: person.reason }));
+  }, [connections, contactSuggestions, peopleNetworkTab, peopleSuggestions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -993,6 +1004,11 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         .catch(() => { if (!cancelled) setRelocationSuggestions([]); });
     }, 500);
     return () => { cancelled = true; clearTimeout(timer); };
+  }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !feedReadyForSecondaryReads || loading || refreshing) { setConnections([]); return; }
+    void getPeopleConnections().then(setConnections).catch(() => setConnections([]));
   }, [feedReadyForSecondaryReads, loading, refreshing, user?.id]);
 
   useEffect(() => {
@@ -2745,7 +2761,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
                 <Text style={styles.peopleDiscoveryInlineGuideEyebrow}>DISCOVER MUTUAL FRIENDS</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideTitle, isLight && styles.textPrimaryLight]}>Find friends around you</Text>
                 <Text style={[styles.peopleDiscoveryInlineGuideBody, isLight && styles.textSecondaryLight]}>Find friends who work at the same company or attend the same school or college, and live in the same area.</Text>
-                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => void openPeopleMap()} accessibilityRole="button" accessibilityLabel="Find friends from my contacts and open the people map"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Show friends ›</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.peopleDiscoveryInlineGuideAction} onPress={() => setPeopleNetworkOpen(true)} accessibilityRole="button" accessibilityLabel="Explore your people, friends, mutuals, and contacts"><Text style={styles.peopleDiscoveryInlineGuideActionText}>Explore people ›</Text></TouchableOpacity>
               </View>
             </View>
           </View>
@@ -2800,6 +2816,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
         {cityDraft.trim().length >= 2 ? <TouchableOpacity style={styles.cityPickerUseTyped} onPress={() => chooseFeedCity(cityDraft)}><Text style={styles.cityPickerUseTypedText}>Use “{cityDraft.trim()}”</Text></TouchableOpacity> : null}
         <TouchableOpacity style={styles.currentLocationButton} disabled={locationResolving} accessibilityRole="button" accessibilityLabel="Use my current location" onPress={() => { void useCurrentFeedLocation(); }}>{locationResolving ? <ActivityIndicator color={theme.colors.brand} /> : <Text style={styles.currentLocationText}>⌖ Use my current location</Text>}</TouchableOpacity>
       </View></View>
+    </Modal>
+
+    <Modal visible={peopleNetworkOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPeopleNetworkOpen(false)}>
+      <View style={[styles.peopleNetworkScreen, isLight && styles.peopleNetworkScreenLight]}>
+        <View style={styles.peopleNetworkHeader}><View><Text style={styles.peopleMapEyebrow}>YOUR PEOPLE</Text><Text style={[styles.peopleMapTitle, isLight && styles.textPrimaryLight]}>Connections</Text><Text style={[styles.peopleMapSubtitle, isLight && styles.textSecondaryLight]}>Contacts are opt-in. Friends are always mutual.</Text></View><TouchableOpacity style={styles.peopleMapClose} onPress={() => setPeopleNetworkOpen(false)} accessibilityLabel="Close connections"><Text style={styles.peopleMapCloseText}>×</Text></TouchableOpacity></View>
+        <View style={styles.peopleNetworkTabs}>{([['FOR_YOU', 'For you'], ['FRIENDS', `Friends ${connections.length || ''}`], ['MUTUALS', 'Mutuals'], ['CONTACTS', `Contacts ${contactSuggestions.length || ''}`]] as const).map(([value, label]) => <TouchableOpacity key={value} onPress={() => setPeopleNetworkTab(value)} style={[styles.peopleNetworkTab, peopleNetworkTab === value && styles.peopleNetworkTabActive]} accessibilityRole="tab" accessibilityState={{ selected: peopleNetworkTab === value }}><Text style={[styles.peopleNetworkTabText, peopleNetworkTab === value && styles.peopleNetworkTabTextActive]}>{label}</Text></TouchableOpacity>)}</View>
+        <ScrollView contentContainerStyle={styles.peopleNetworkList}>
+          {peopleNetworkTab === 'CONTACTS' && !contactSuggestions.length ? <View style={styles.peopleNetworkEmpty}><Text style={[styles.peopleNetworkEmptyTitle, isLight && styles.textPrimaryLight]}>Find people you already know</Text><Text style={[styles.peopleNetworkEmptyCopy, isLight && styles.textSecondaryLight]}>Choose contacts to match by secure phone hash. Contacts who are not FairFares members stay private and never appear on the map.</Text><TouchableOpacity style={styles.peopleNetworkPrimary} onPress={() => void findPeopleFromContacts()}><Text style={styles.peopleNetworkPrimaryText}>{contactSuggestionsLoading ? 'Checking contacts…' : 'Find contacts'}</Text></TouchableOpacity></View> : null}
+          {peopleNetworkTab === 'FRIENDS' && !connections.length ? <View style={styles.peopleNetworkEmpty}><Text style={[styles.peopleNetworkEmptyTitle, isLight && styles.textPrimaryLight]}>No friends yet</Text><Text style={[styles.peopleNetworkEmptyCopy, isLight && styles.textSecondaryLight]}>When both people accept a connection, they appear here. A phone contact never becomes a friend automatically.</Text></View> : null}
+          {peopleNetworkTab === 'MUTUALS' && !peopleNetworkPeople.length ? <View style={styles.peopleNetworkEmpty}><Text style={[styles.peopleNetworkEmptyTitle, isLight && styles.textPrimaryLight]}>No mutual connections yet</Text><Text style={[styles.peopleNetworkEmptyCopy, isLight && styles.textSecondaryLight]}>Mutuals appear after you and other members build accepted FairFares connections.</Text></View> : null}
+          {peopleNetworkTab === 'FOR_YOU' && !peopleNetworkPeople.length ? <View style={styles.peopleNetworkEmpty}><Text style={[styles.peopleNetworkEmptyTitle, isLight && styles.textPrimaryLight]}>People will appear here</Text><Text style={[styles.peopleNetworkEmptyCopy, isLight && styles.textSecondaryLight]}>Join a community, add your city, or connect with someone to receive relevant introductions.</Text></View> : null}
+          {peopleNetworkPeople.map((person) => <TouchableOpacity key={person.id} style={[styles.peopleNetworkPerson, isLight && styles.peopleNetworkPersonLight]} onPress={() => openMemberProfile({ id: person.id, name: person.name, photoUrl: person.photoUrl })} accessibilityRole="button" accessibilityLabel={`View ${person.name}`}><UserAvatar photoUrl={person.photoUrl} style={styles.peopleNetworkAvatar} imageStyle={styles.peopleNetworkAvatarImage} fallback={<Text style={styles.peopleNetworkInitials}>{avatarInitials(person.name)}</Text>} /><View style={{ flex: 1 }}><Text style={[styles.peopleNetworkName, isLight && styles.textPrimaryLight]}>{person.name}</Text><Text style={[styles.peopleNetworkReason, isLight && styles.textSecondaryLight]}>{person.relationshipLabel}</Text></View><Text style={styles.peopleNetworkArrow}>›</Text></TouchableOpacity>)}
+        </ScrollView>
+        <TouchableOpacity style={styles.peopleNetworkMapButton} onPress={() => { setPeopleNetworkOpen(false); void openPeopleMap(); }}><Text style={styles.peopleNetworkMapButtonText}>Open people map</Text></TouchableOpacity>
+      </View>
     </Modal>
 
     <Modal visible={peopleMapOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={closePeopleMap} onDismiss={handlePeopleMapDismiss}>
@@ -3021,6 +3052,13 @@ const styles = StyleSheet.create({
   relocationConnectionsLight: { backgroundColor: "#f4fffa", borderColor: "#a9e7cf" },
   peopleSuggestions: { position: "relative", overflow: "hidden", marginTop: 12, marginBottom: 3, borderRadius: 21, borderWidth: 1, borderColor: "rgba(116, 145, 255, 0.48)", backgroundColor: "rgba(27, 43, 91, 0.34)", paddingVertical: 14, shadowColor: "#0b173f", shadowOpacity: 0.20, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   peopleSuggestionsLight: { backgroundColor: "#f7f9ff", borderColor: "#cad7ff", shadowColor: "#667db8", shadowOpacity: 0.15 },
+  peopleNetworkScreen: { flex: 1, backgroundColor: theme.colors.bg }, peopleNetworkScreenLight: { backgroundColor: "#f7f9fb" },
+  peopleNetworkHeader: { minHeight: 92, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 16, paddingTop: 15, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.line },
+  peopleNetworkTabs: { flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: theme.colors.line }, peopleNetworkTab: { flex: 1, minHeight: 35, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: theme.colors.panel2, paddingHorizontal: 5 }, peopleNetworkTabActive: { backgroundColor: theme.colors.brand }, peopleNetworkTabText: { color: theme.colors.muted, fontSize: 10, fontWeight: "900" }, peopleNetworkTabTextActive: { color: "#06291e" },
+  peopleNetworkList: { flexGrow: 1, gap: 8, padding: 12, paddingBottom: 96 }, peopleNetworkEmpty: { alignItems: "center", gap: 8, paddingHorizontal: 24, paddingVertical: 42 }, peopleNetworkEmptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: "900", textAlign: "center" }, peopleNetworkEmptyCopy: { color: theme.colors.muted, fontSize: 13, lineHeight: 19, fontWeight: "600", textAlign: "center" },
+  peopleNetworkPrimary: { minHeight: 46, marginTop: 7, alignSelf: "stretch", alignItems: "center", justifyContent: "center", borderRadius: 23, backgroundColor: theme.colors.brand }, peopleNetworkPrimaryText: { color: "#06291e", fontSize: 13, fontWeight: "900" },
+  peopleNetworkPerson: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: 11, borderRadius: 16, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, paddingHorizontal: 11, paddingVertical: 9 }, peopleNetworkPersonLight: { borderColor: "#e1e7ec", backgroundColor: "#fff" }, peopleNetworkAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#d8f7e8" }, peopleNetworkAvatarImage: { borderRadius: 22 }, peopleNetworkInitials: { color: "#087254", fontSize: 15, fontWeight: "900" }, peopleNetworkName: { color: theme.colors.text, fontSize: 14, fontWeight: "900" }, peopleNetworkReason: { color: "#5c74d9", marginTop: 3, fontSize: 11, fontWeight: "800" }, peopleNetworkArrow: { color: theme.colors.brand, fontSize: 26, lineHeight: 28 },
+  peopleNetworkMapButton: { minHeight: 52, alignItems: "center", justifyContent: "center", marginHorizontal: 12, marginBottom: 16, borderRadius: 16, backgroundColor: "#12382e" }, peopleNetworkMapButtonText: { color: "#bdf6dc", fontSize: 14, fontWeight: "900" },
   peopleDiscoveryBubbles: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
   peopleDiscoveryBubble: { position: "absolute", borderRadius: 999, backgroundColor: "#7d9dff" },
   peopleDiscoveryBubbleOne: { width: 142, height: 142, right: -57, top: -75, opacity: 0.42 },

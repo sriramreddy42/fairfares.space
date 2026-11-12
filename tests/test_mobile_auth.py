@@ -106,35 +106,6 @@ class MobileAuthTest(unittest.TestCase):
             con.execute("UPDATE accommodation_posts SET visibility_status = 'EXPIRED' WHERE id = ?", (post_id,))
         self.assertEqual(app.housing_unread_inquiries_by_post(owner_id), {})
 
-    def test_people_map_city_pool_visibility_and_coordinates(self):
-        with app.db() as con:
-            for i in range(30):
-                con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city, local_connection_discoverable, relocation_company, people_discovery_configured, people_discoverable) VALUES (?, ?, 'unused', 1, 'Denver, CO', 1, 'Amazon', 1, 0)", (f"Hidden {i}", f"hidden-map-{i}@example.com"))
-            con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city, local_connection_discoverable, relocation_company) VALUES ('Visible', 'visible-map@example.com', 'unused', 1, 'Denver, CO', 1, 'Amazon')")
-            member_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
-        pool = app.people_map_city_pool(0, "Denver, CO", " amazon ")
-        self.assertEqual(pool["total"], 1)
-        self.assertEqual(pool["companyMatches"], 1)
-        self.assertEqual([p["id"] for p in pool["people"]], [member_id])
-        self.assertTrue(pool["people"][0]["companyMatch"])
-        self.assertAlmostEqual(pool["latitude"], 39.74, delta=.2)
-        self.assertAlmostEqual(pool["longitude"], -104.99, delta=.2)
-        empty = app.people_map_city_pool(0, "Centennial, CO", "Amazon")
-        self.assertEqual(empty["total"], 0)
-        self.assertNotEqual((empty["latitude"], empty["longitude"]), (0, 0))
-
-    def test_people_map_route_requires_login(self):
-        server, thread = self.start_server()
-        try:
-            with self.assertRaises(urllib.error.HTTPError) as caught:
-                urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/api/mobile/people/map?city=Denver")
-            self.assertEqual(caught.exception.code, 401)
-            self.assertTrue(json.loads(caught.exception.read())["login_required"])
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
-
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_db_path = os.environ.get("FAIRFARES_DB_PATH")
@@ -414,6 +385,51 @@ class MobileAuthTest(unittest.TestCase):
                     (int(member["id"]),),
                 ).fetchone()["count"]
             self.assertEqual(int(participant_count), 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_contact_match_creates_reusable_member_pool_without_contact_data(self):
+        with app.db() as con:
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, 'unused', 1, 1)",
+                ("Pool Viewer", "pool-viewer@example.com", "+13035550001"),
+            )
+            viewer_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute(
+                "INSERT INTO users (name, email, phone, password_hash, is_verified, chat_phone_discoverable) VALUES (?, ?, ?, 'unused', 1, 1)",
+                ("Saved Friend", "saved-friend@example.com", "+13035550002"),
+            )
+            friend_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", ("contact-pool-viewer", viewer_id))
+        server, thread = self.start_server()
+        try:
+            phone_hash = hashlib.sha256(b"13035550002").hexdigest()
+            scan_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/chat/people/by-contacts",
+                data=json.dumps({"phoneHashes": [phone_hash]}).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json", "Authorization": "Bearer contact-pool-viewer"},
+            )
+            with urllib.request.urlopen(scan_request, timeout=5) as response:
+                self.assertEqual([person["id"] for person in json.loads(response.read().decode("utf-8"))["people"]], [friend_id])
+            with app.db() as con:
+                pool_row = con.execute(
+                    "SELECT viewer_user_id, member_user_id FROM member_contact_pools WHERE viewer_user_id = ?",
+                    (viewer_id,),
+                ).fetchone()
+                pool_columns = {row["name"] for row in con.execute("PRAGMA table_info(member_contact_pools)").fetchall()}
+            self.assertEqual((int(pool_row["viewer_user_id"]), int(pool_row["member_user_id"])), (viewer_id, friend_id))
+            self.assertFalse({"phone", "phone_hash", "contact_hash", "address_book"} & pool_columns)
+
+            pool_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/people/contact-pool",
+                headers={"Authorization": "Bearer contact-pool-viewer"},
+            )
+            with urllib.request.urlopen(pool_request, timeout=5) as response:
+                people = json.loads(response.read().decode("utf-8"))["people"]
+            self.assertEqual([person["id"] for person in people], [friend_id])
+            self.assertNotIn("phoneHash", people[0])
         finally:
             server.shutdown()
             server.server_close()
@@ -869,24 +885,57 @@ class MobileAuthTest(unittest.TestCase):
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
                 data=json.dumps({
+                    # Older clients may send this field, but current city is
+                    # no longer member-editable from a profile save.
                     "localCity": "Denver, Colorado",
                     "relocationCity": "Hyderabad, Telangana, India",
                     "relocationMonth": "2026-12",
                     "relocationCompany": "FairFares",
+                    "relocationReason": "NEW_JOB",
                     "relocationDiscoverable": True,
-                    "localConnectionDiscoverable": True,
+                    "localConnectionDiscoverable": False,
                 }).encode("utf-8"),
                 method="POST",
                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
             )
             with urllib.request.urlopen(request, timeout=5) as response:
                 saved = json.loads(response.read().decode("utf-8"))
-            self.assertEqual(saved["user"]["localCity"], "Denver, CO")
+            self.assertEqual(saved["user"]["localCity"], "")
             self.assertEqual(saved["user"]["relocationCity"], "Hyderabad, Telangana, IN")
             self.assertEqual(saved["user"]["relocationMonth"], "2026-12")
             self.assertEqual(saved["user"]["relocationCompany"], "FairFares")
+            self.assertEqual(saved["user"]["relocationReason"], "NEW_JOB")
             self.assertTrue(saved["user"]["relocationDiscoverable"])
-            self.assertTrue(saved["user"]["localConnectionDiscoverable"])
+            self.assertFalse(saved["user"]["localConnectionDiscoverable"])
+
+            observation_url = f"http://127.0.0.1:{server.server_port}/api/mobile/location-observation"
+            def observe_city():
+                observation_request = urllib.request.Request(
+                    observation_url,
+                    data=json.dumps({"city": "Denver, Colorado"}).encode("utf-8"),
+                    method="POST",
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+                )
+                with urllib.request.urlopen(observation_request, timeout=5) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            first_observation = observe_city()
+            self.assertEqual(first_observation["location"]["status"], "CANDIDATE")
+            with app.db() as con:
+                con.execute("UPDATE user_location_stays SET first_seen_at = datetime('now', '-11 days') WHERE city = 'Denver, CO'")
+            promoted_observation = observe_city()
+            self.assertEqual(promoted_observation["location"]["status"], "CURRENT")
+
+            local_opt_in_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
+                data=json.dumps({"localConnectionDiscoverable": True}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {login['token']}"},
+            )
+            with urllib.request.urlopen(local_opt_in_request, timeout=5) as response:
+                local_opt_in = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(local_opt_in["user"]["localCity"], "Denver, CO")
+            self.assertTrue(local_opt_in["user"]["localConnectionDiscoverable"])
 
             invalid = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/mobile/profile",
@@ -925,6 +974,83 @@ class MobileAuthTest(unittest.TestCase):
             {item["relationship"] for item in suggestions},
             {"LOCAL", "SAME_DESTINATION"},
         )
+
+    def test_stable_device_city_promotes_after_ten_days_and_keeps_history(self):
+        with app.db() as con:
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified) VALUES ('Traveler', 'traveler@example.com', 'unused', 1)")
+            user_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        first = app.record_member_location_observation(user_id, "Denver, CO")
+        self.assertEqual(first["status"], "CANDIDATE")
+        with app.db() as con:
+            con.execute("UPDATE user_location_stays SET first_seen_at = datetime('now', '-11 days') WHERE user_id = ? AND city = 'Denver, CO'", (user_id,))
+        promoted = app.record_member_location_observation(user_id, "Denver, CO")
+        self.assertEqual(promoted["status"], "CURRENT")
+        with app.db() as con:
+            self.assertEqual(con.execute("SELECT local_city FROM users WHERE id = ?", (user_id,)).fetchone()["local_city"], "Denver, CO")
+
+        app.record_member_location_observation(user_id, "Austin, TX")
+        with app.db() as con:
+            con.execute("UPDATE user_location_stays SET first_seen_at = datetime('now', '-11 days') WHERE user_id = ? AND city = 'Austin, TX'", (user_id,))
+        moved = app.record_member_location_observation(user_id, "Austin, TX")
+        self.assertEqual(moved["status"], "CURRENT")
+        with app.db() as con:
+            cities = con.execute("SELECT city, status FROM user_location_stays WHERE user_id = ? ORDER BY id", (user_id,)).fetchall()
+            self.assertEqual([(row["city"], row["status"]) for row in cities], [("Denver, CO", "HISTORY"), ("Austin, TX", "CURRENT")])
+
+    def test_people_suggestions_include_members_in_the_same_confirmed_city(self):
+        with app.db() as con:
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city) VALUES ('Viewer', 'viewer-local@example.com', 'unused', 1, 'Denver, CO')")
+            viewer_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city) VALUES ('Nearby', 'nearby-local@example.com', 'unused', 1, 'Denver, CO')")
+            nearby_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+            con.execute("INSERT INTO users (name, email, password_hash, is_verified, local_city) VALUES ('Elsewhere', 'elsewhere-local@example.com', 'unused', 1, 'Austin, TX')")
+
+        suggestions = app.people_suggestions_for_user(viewer_id)
+        nearby = next(item for item in suggestions if item["id"] == nearby_id)
+        self.assertIn("Near you in Denver, CO", nearby["reason"])
+        self.assertNotIn("Elsewhere", [item["name"] for item in suggestions])
+
+    def test_people_suggestions_rank_nearby_mutuals_before_every_other_signal(self):
+        with app.db() as con:
+            def member(name, email, city):
+                con.execute(
+                    """INSERT INTO users
+                       (name, email, password_hash, is_verified, local_city, people_discoverable,
+                        people_match_mutuals, people_match_groups, share_mutual_connection_count)
+                       VALUES (?, ?, 'unused', 1, ?, 1, 1, 1, 1)""",
+                    (name, email, city),
+                )
+                return int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+            def connect(left, right):
+                low_id, high_id = sorted((left, right))
+                con.execute(
+                    """INSERT INTO member_connections
+                       (user_low_id, user_high_id, requested_by_user_id, status)
+                       VALUES (?, ?, ?, 'ACCEPTED')""",
+                    (low_id, high_id, left),
+                )
+
+            viewer_id = member("Viewer", "ranking-viewer@example.com", "Denver, CO")
+            bridge_id = member("Bridge", "ranking-bridge@example.com", "Denver, CO")
+            nearby_mutual_id = member("Nearby mutual", "ranking-nearby-mutual@example.com", "Denver, CO")
+            remote_mutual_id = member("Remote mutual", "ranking-remote-mutual@example.com", "Austin, TX")
+            nearby_group_id = member("Nearby group", "ranking-nearby-group@example.com", "Denver, CO")
+            remote_group_id = member("Remote group", "ranking-remote-group@example.com", "Austin, TX")
+            nearby_plain_id = member("Nearby plain", "ranking-nearby-plain@example.com", "Denver, CO")
+            connect(viewer_id, bridge_id)
+            connect(bridge_id, nearby_mutual_id)
+            connect(bridge_id, remote_mutual_id)
+
+            for suffix, candidate_id in (("nearby", nearby_group_id), ("remote", remote_group_id)):
+                con.execute("INSERT INTO chat_communities (public_id, name) VALUES (?, ?)", (f"FFC-RANK-{suffix}", f"Ranking {suffix}"))
+                community_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute("INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)", (community_id, viewer_id))
+                con.execute("INSERT INTO chat_community_members (community_id, user_id) VALUES (?, ?)", (community_id, candidate_id))
+
+        ids = [item["id"] for item in app.people_suggestions_for_user(viewer_id)]
+        self.assertEqual(ids[:5], [nearby_mutual_id, remote_mutual_id, nearby_group_id, remote_group_id, nearby_plain_id])
 
     def test_contact_discovery_respects_member_preference(self):
         with app.db() as con:

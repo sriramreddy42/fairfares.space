@@ -4040,6 +4040,7 @@ API_WRITE_RATE_LIMITS: dict[str, tuple[str, int, int]] = {
     "/api/chat/e2ee/keys": ("chat-key-registration", 120, 60),
     "/api/chat/e2ee/backup": ("chat-key-backup", 30, 60),
     "/api/mobile/profile": ("account-write", 20, 60),
+    "/api/mobile/location-observation": ("location-observation", 12, 3600),
     "/api/mobile/profile/consent": ("account-write", 20, 60),
     "/api/mobile/student-verification": ("account-write", 20, 60),
     "/api/mobile/push-token": ("account-preference", 60, 60),
@@ -7030,6 +7031,7 @@ def init_db() -> None:
                 relocation_city TEXT NOT NULL DEFAULT '',
                 relocation_month TEXT NOT NULL DEFAULT '',
                 relocation_company TEXT NOT NULL DEFAULT '',
+                relocation_reason TEXT NOT NULL DEFAULT '',
                 relocation_discoverable INTEGER NOT NULL DEFAULT 0,
                 local_connection_discoverable INTEGER NOT NULL DEFAULT 0,
                 people_discoverable INTEGER NOT NULL DEFAULT 1,
@@ -7038,6 +7040,20 @@ def init_db() -> None:
                 people_match_groups INTEGER NOT NULL DEFAULT 1,
                 share_mutual_connection_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- A viewer's confirmed FairFares contacts. This deliberately
+            -- stores only two FairFares account IDs: raw address-book values
+            -- and their hashes never enter this table.
+            CREATE TABLE IF NOT EXISTS member_contact_pools (
+                viewer_user_id INTEGER NOT NULL,
+                member_user_id INTEGER NOT NULL,
+                first_matched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_confirmed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(viewer_user_id, member_user_id),
+                FOREIGN KEY(viewer_user_id) REFERENCES users(id),
+                FOREIGN KEY(member_user_id) REFERENCES users(id),
+                CHECK(viewer_user_id != member_user_id)
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -7410,6 +7426,23 @@ def init_db() -> None:
                 CHECK(feedback IN ('HIDDEN')),
                 FOREIGN KEY(viewer_user_id) REFERENCES users(id),
                 FOREIGN KEY(suggested_user_id) REFERENCES users(id)
+            );
+
+            -- City-level stays observed only while a member is using the app.
+            -- This is intentionally not a background location trail.
+            CREATE TABLE IF NOT EXISTS user_location_stays (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                city TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'CANDIDATE',
+                first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_observed_day TEXT NOT NULL DEFAULT CURRENT_DATE,
+                observation_days INTEGER NOT NULL DEFAULT 1,
+                activated_at TEXT,
+                ended_at TEXT,
+                CHECK(status IN ('CANDIDATE', 'CURRENT', 'HISTORY')),
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS chat_conversations (
@@ -8465,13 +8498,13 @@ def init_db() -> None:
         ensure_column(con, "users", "terms_version", "terms_version TEXT")
         ensure_column(con, "users", "privacy_version", "privacy_version TEXT")
         ensure_column(con, "users", "community_guidelines_version", "community_guidelines_version TEXT")
-        # A member's home and planned destination are deliberately separate
-        # from device location. They are edited by the member and are not
-        # shown to anybody until a later, explicit connection opt-in flow.
+        # A member's current city can be promoted from stable foreground
+        # location observations; a planned destination remains member-set.
         ensure_column(con, "users", "local_city", "local_city TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "relocation_city", "relocation_city TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "relocation_month", "relocation_month TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "relocation_company", "relocation_company TEXT NOT NULL DEFAULT ''")
+        ensure_column(con, "users", "relocation_reason", "relocation_reason TEXT NOT NULL DEFAULT ''")
         ensure_column(con, "users", "relocation_discoverable", "relocation_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "local_connection_discoverable", "local_connection_discoverable INTEGER NOT NULL DEFAULT 0")
         ensure_column(con, "users", "people_discoverable", "people_discoverable INTEGER NOT NULL DEFAULT 1")
@@ -8942,7 +8975,25 @@ def init_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(email COLLATE NOCASE)")
         con.execute(f"CREATE INDEX IF NOT EXISTS idx_users_phone_digits ON users({normalized_phone_sql('phone')}) WHERE phone IS NOT NULL AND phone != ''")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_phone_discovery ON users(chat_phone_discoverable, is_verified, guest_account, phone)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_member_contact_pools_viewer ON member_contact_pools(viewer_user_id, last_confirmed_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_relocation_matching ON users(relocation_discoverable, local_connection_discoverable, local_city, relocation_city)")
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS user_location_stays (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                city TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'CANDIDATE',
+                first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_observed_day TEXT NOT NULL DEFAULT CURRENT_DATE,
+                observation_days INTEGER NOT NULL DEFAULT 1,
+                activated_at TEXT,
+                ended_at TEXT,
+                CHECK(status IN ('CANDIDATE', 'CURRENT', 'HISTORY')),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )"""
+        )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_user_location_stays_active ON user_location_stays(user_id, status, last_seen_at DESC)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_low ON member_connections(status, user_low_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_member_connections_status_high ON member_connections(status, user_high_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_member_suggestion_feedback_expires ON member_suggestion_feedback(viewer_user_id, suggestion_kind, expires_at)")
@@ -13696,6 +13747,96 @@ def normalize_member_city(value: object) -> str:
         ):
             return f"{city}, {state}, IN"
     return ""
+
+
+def record_member_location_observation(user_id: int, city_value: object) -> dict[str, object]:
+    """Record an app-open city observation and promote a stable 10-day stay.
+
+    The client sends only a resolved city label after foreground location
+    permission has already been granted. We never accept coordinates here and
+    never treat a background interval as proof that a member stayed somewhere.
+    """
+    user_id = int(user_id or 0)
+    city = normalize_member_city(city_value)
+    if user_id <= 0 or not city:
+        return {"city": "", "status": "UNAVAILABLE", "currentCity": ""}
+    with db() as con:
+        current = con.execute(
+            """SELECT id, city FROM user_location_stays
+               WHERE user_id = ? AND status = 'CURRENT'
+               ORDER BY activated_at DESC, id DESC LIMIT 1""",
+            (user_id,),
+        ).fetchone()
+        stay = con.execute(
+            """SELECT * FROM user_location_stays
+               WHERE user_id = ? AND city = ? AND status IN ('CANDIDATE', 'CURRENT')
+               ORDER BY id DESC LIMIT 1""",
+            (user_id, city),
+        ).fetchone()
+        # A short trip must not wait indefinitely and later become a home
+        # city from one unrelated return visit. A candidate needs continued
+        # app-open observations at least once each seven days.
+        if stay and str(row_value(stay, "status") or "") == "CANDIDATE":
+            stale = con.execute(
+                "SELECT datetime(last_seen_at) < datetime('now', '-7 days') FROM user_location_stays WHERE id = ?",
+                (int(row_value(stay, "id") or 0),),
+            ).fetchone()
+            if stale and bool(stale[0]):
+                con.execute(
+                    "UPDATE user_location_stays SET status = 'HISTORY', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (int(row_value(stay, "id") or 0),),
+                )
+                stay = None
+        if not stay:
+            # A new city starts as a candidate. The existing current city is
+            # retained until the candidate has remained stable long enough.
+            con.execute(
+                "INSERT INTO user_location_stays (user_id, city) VALUES (?, ?)",
+                (user_id, city),
+            )
+            stay = con.execute("SELECT * FROM user_location_stays WHERE id = last_insert_rowid()").fetchone()
+        else:
+            same_day = str(row_value(stay, "last_observed_day") or "") == date.today().isoformat()
+            con.execute(
+                """UPDATE user_location_stays
+                   SET last_seen_at = CURRENT_TIMESTAMP,
+                       last_observed_day = CURRENT_DATE,
+                       observation_days = observation_days + ?
+                   WHERE id = ?""",
+                (0 if same_day else 1, int(row_value(stay, "id") or 0)),
+            )
+            stay = con.execute("SELECT * FROM user_location_stays WHERE id = ?", (int(row_value(stay, "id") or 0),)).fetchone()
+
+        stable = bool(
+            con.execute(
+                "SELECT julianday('now') - julianday(first_seen_at) >= 10 FROM user_location_stays WHERE id = ?",
+                (int(row_value(stay, "id") or 0),),
+            ).fetchone()[0]
+        )
+        status = str(row_value(stay, "status") or "CANDIDATE")
+        if stable and status == "CANDIDATE":
+            con.execute(
+                """UPDATE user_location_stays
+                   SET status = 'HISTORY', ended_at = CURRENT_TIMESTAMP
+                   WHERE user_id = ? AND status = 'CURRENT' AND id != ?""",
+                (user_id, int(row_value(stay, "id") or 0)),
+            )
+            con.execute(
+                """UPDATE user_location_stays
+                   SET status = 'CURRENT', activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)
+                   WHERE id = ?""",
+                (int(row_value(stay, "id") or 0),),
+            )
+            con.execute("UPDATE users SET local_city = ? WHERE id = ?", (city, user_id))
+            status = "CURRENT"
+        current_city = city if status == "CURRENT" else str(row_value(current, "city") or "")
+        return {
+            "city": city,
+            "status": status,
+            "currentCity": current_city,
+            "daysObserved": int(row_value(stay, "observation_days") or 1),
+            "daysUntilCurrent": max(0, 10 - int((con.execute("SELECT CAST(julianday('now') - julianday(first_seen_at) AS INTEGER) FROM user_location_stays WHERE id = ?", (int(row_value(stay, "id") or 0),)).fetchone()[0] or 0))),
+        }
 
 
 def infer_community_post_city(*values: object) -> str:
@@ -19032,7 +19173,7 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
     try:
         with db() as con:
             viewer = con.execute(
-                """SELECT id, local_city, relocation_city, relocation_company,
+                """SELECT id, local_city, relocation_city, relocation_company, relocation_reason,
                           relocation_discoverable, local_connection_discoverable
                    FROM users WHERE id = ? LIMIT 1""",
                 (user_id,),
@@ -19047,7 +19188,7 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
                 return []
             rows = con.execute(
                 """SELECT id, name, profile_photo_url, local_city, relocation_city,
-                          relocation_month, relocation_company, relocation_discoverable,
+                          relocation_month, relocation_company, relocation_reason, relocation_discoverable,
                           local_connection_discoverable,
                           (SELECT MAX(last_seen_at) FROM sessions WHERE user_id = users.id) AS last_seen_at
                    FROM users
@@ -19092,6 +19233,7 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
         return []
 
     viewer_company = str(row_value(viewer, "relocation_company") or "").strip().casefold()
+    viewer_reason = str(row_value(viewer, "relocation_reason") or "").strip().upper()
     suggestions: list[dict[str, object]] = []
     for row in rows:
         candidate_id = int(row_value(row, "id") or 0)
@@ -19111,6 +19253,8 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
             continue
         shared_groups = shared_group_counts.get(candidate_id, 0)
         candidate_company = str(row_value(row, "relocation_company") or "").strip().casefold()
+        candidate_reason = str(row_value(row, "relocation_reason") or "").strip().upper()
+        same_move_context = bool(viewer_company and candidate_company and viewer_company == candidate_company and viewer_reason and viewer_reason == candidate_reason)
         score = 0
         if relationship == "SAME_DESTINATION":
             score += 50
@@ -19118,7 +19262,7 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
             score += 35
         else:
             score += 25
-        if viewer_company and candidate_company and viewer_company == candidate_company:
+        if same_move_context:
             score += 20
         score += min(shared_groups, 3) * 5
         rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
@@ -19132,6 +19276,9 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
         )
         if shared_groups:
             relation_copy = f"{relation_copy} · {shared_groups} shared {('community' if shared_groups == 1 else 'communities')}"
+        if same_move_context and relationship == "SAME_DESTINATION":
+            context_label = "same employer" if viewer_reason == "NEW_JOB" else "same school or college" if viewer_reason == "SCHOOL_COLLEGE" else "same move reason"
+            relation_copy = f"{relation_copy} · {context_label}"
         suggestions.append({
             "id": candidate_id,
             "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
@@ -19202,6 +19349,158 @@ def member_city_map_location(city: object) -> dict[str, object]:
     }
 
 
+def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
+    """Suggest people through mutuals, shared communities, and a confirmed city.
+
+    A shared community can independently qualify a member when both members
+    allow community-based suggestions. Contacts stay in the explicit Chitthi
+    contact finder and are never persisted for this feed.
+    """
+    user_id = int(user_id or 0)
+    if user_id <= 0:
+        return []
+    try:
+        with db() as con:
+            viewer = con.execute(
+                """SELECT local_city, people_discoverable, people_discovery_configured, people_match_mutuals,
+                          people_match_groups, share_mutual_connection_count
+                   FROM users WHERE id = ?""",
+                (user_id,),
+            ).fetchone()
+            if not viewer or not people_discovery_enabled(viewer):
+                return []
+            direct_rows = con.execute(
+                """SELECT user_low_id, user_high_id FROM member_connections
+                   WHERE status = 'ACCEPTED' AND (user_low_id = ? OR user_high_id = ?)""",
+                (user_id, user_id),
+            ).fetchall()
+            direct_ids = {
+                int(row_value(row, "user_high_id") if int(row_value(row, "user_low_id") or 0) == user_id else row_value(row, "user_low_id") or 0)
+                for row in direct_rows
+            }
+            mutual_counts: dict[int, int] = {}
+            if direct_ids:
+                placeholders = ",".join("?" for _ in direct_ids)
+                rows = con.execute(
+                    f"""SELECT user_low_id, user_high_id FROM member_connections
+                        WHERE status = 'ACCEPTED' AND (user_low_id IN ({placeholders}) OR user_high_id IN ({placeholders}))""",
+                    (*direct_ids, *direct_ids),
+                ).fetchall()
+                for row in rows:
+                    low_id = int(row_value(row, "user_low_id") or 0)
+                    high_id = int(row_value(row, "user_high_id") or 0)
+                    mutual_id = high_id if low_id in direct_ids else low_id if high_id in direct_ids else 0
+                    if mutual_id and mutual_id != user_id and mutual_id not in direct_ids:
+                        mutual_counts[mutual_id] = mutual_counts.get(mutual_id, 0) + 1
+            shared_rows = con.execute(
+                """SELECT theirs.user_id, COUNT(*) AS shared_count
+                   FROM chat_community_members mine
+                   JOIN chat_community_members theirs ON theirs.community_id = mine.community_id
+                   WHERE mine.user_id = ? AND theirs.user_id != ?
+                   GROUP BY theirs.user_id""",
+                (user_id, user_id),
+            ).fetchall()
+            all_shared_counts = {
+                int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
+                for row in shared_rows
+            }
+            viewer_local_city = str(row_value(viewer, "local_city") or "").strip()
+            local_candidate_ids: set[int] = set()
+            if viewer_local_city:
+                local_rows = con.execute(
+                    """SELECT id FROM users
+                       WHERE id != ? AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
+                         AND lower(trim(local_city)) = lower(trim(?))
+                       ORDER BY id DESC LIMIT 40""",
+                    (user_id, viewer_local_city),
+                ).fetchall()
+                local_candidate_ids = {int(row_value(row, "id") or 0) for row in local_rows}
+            candidate_ids = (set(mutual_counts) | set(all_shared_counts) | local_candidate_ids) - direct_ids - {user_id}
+            if not candidate_ids:
+                return []
+            shared_counts: dict[int, int] = {}
+            if bool(int(row_value(viewer, "people_match_groups") or 0)):
+                shared_counts = all_shared_counts
+            hidden_rows = con.execute(
+                """SELECT suggested_user_id FROM member_suggestion_feedback
+                   WHERE viewer_user_id = ? AND suggestion_kind = 'PEOPLE'
+                     AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))""",
+                (user_id,),
+            ).fetchall()
+            hidden_ids = {int(row_value(row, "suggested_user_id") or 0) for row in hidden_rows}
+            placeholders = ",".join("?" for _ in candidate_ids)
+            rows = con.execute(
+                f"""SELECT id, name, profile_photo_url, local_city, people_discoverable,
+                           people_discovery_configured, people_match_mutuals,
+                           people_match_groups, share_mutual_connection_count FROM users
+                    WHERE id IN ({placeholders}) AND is_verified = 1 AND guest_account = 0
+                      AND suspended_at IS NULL""",
+                tuple(candidate_ids),
+            ).fetchall()
+            ratings = user_rating_summaries(con, candidate_ids)
+            suggestions: list[dict[str, object]] = []
+            for row in rows:
+                candidate_id = int(row_value(row, "id") or 0)
+                if candidate_id in hidden_ids or not people_discovery_enabled(row):
+                    continue
+                state = member_connection_state(con, user_id, candidate_id)
+                if state != "NONE":
+                    continue
+                mutual = mutual_counts.get(candidate_id, 0)
+                can_use_mutuals = mutual and bool(int(row_value(viewer, "people_match_mutuals") or 0)) and bool(int(row_value(row, "people_match_mutuals") or 0))
+                can_show_shared_groups = bool(int(row_value(viewer, "people_match_groups") or 0)) and bool(int(row_value(row, "people_match_groups") or 0))
+                same_current_city = bool(viewer_local_city and str(row_value(row, "local_city") or "").strip().casefold() == viewer_local_city.casefold())
+                if not can_use_mutuals and not (can_show_shared_groups and all_shared_counts.get(candidate_id, 0)) and not same_current_city:
+                    continue
+                shared = shared_counts.get(candidate_id, 0) if can_show_shared_groups else 0
+                reasons: list[str] = []
+                if can_use_mutuals and bool(int(row_value(viewer, "share_mutual_connection_count") or 0)) and bool(int(row_value(row, "share_mutual_connection_count") or 0)):
+                    reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
+                elif can_use_mutuals:
+                    reasons.append("Mutual connection")
+                if shared:
+                    reasons.append(f"{shared} shared {('community' if shared == 1 else 'communities')}")
+                if same_current_city:
+                    reasons.append(f"Near you in {viewer_local_city}")
+                rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
+                # Rank by relationship class before any strength bonus. A nearby
+                # mutual is a stronger introduction than a remote mutual with
+                # many shared groups, and every mutual comes before a group-only
+                # suggestion. Scores within a class keep the rail useful without
+                # breaking that product promise.
+                rank_tier = (
+                    0 if can_use_mutuals and same_current_city
+                    else 1 if can_use_mutuals
+                    else 2 if shared and same_current_city
+                    else 3 if shared
+                    else 4
+                )
+                suggestions.append({
+                    "id": candidate_id,
+                    "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+                    "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
+                    "reason": " · ".join(reasons),
+                    "ratingSummary": rating,
+                    **member_city_map_location(row_value(row, "local_city")),
+                    "rankTier": rank_tier,
+                    "mutualCount": mutual if can_use_mutuals else 0,
+                    "sharedCount": shared,
+                    "ratingCount": int(rating.get("count") or 0),
+                })
+    except sqlite3.Error:
+        return []
+    suggestions.sort(key=lambda item: (
+        int(item["rankTier"]),
+        -int(item["mutualCount"]),
+        -int(item["sharedCount"]),
+        -int(item["ratingCount"]),
+        str(item["name"]).casefold(),
+        int(item["id"]),
+    ))
+    hidden_keys = {"rankTier", "mutualCount", "sharedCount", "ratingCount"}
+    return [{key: value for key, value in item.items() if key not in hidden_keys} for item in suggestions[:max(1, min(int(limit or 8), 12))]]
+
+
 def backfill_existing_housing_member_cities(con: sqlite3.Connection) -> int:
     """One-time city-only backfill; preserve saved locations and visibility."""
     key = "existing_housing_member_cities_v1"
@@ -19254,7 +19553,14 @@ def backfill_existing_housing_member_cities(con: sqlite3.Connection) -> int:
 
 
 def activate_existing_housing_map_members(con: sqlite3.Connection) -> int:
-    """Show legacy housing authors at their listing city on the city-level map."""
+    """Show legacy housing authors at their listing city on the city-level map.
+
+    Existing housing posts predate the location consent form. Product direction
+    is to treat their latest listing city as both current and moving city, so
+    they appear as local city members rather than as a move with invented
+    origin information. This is a one-time migration; new posts always use
+    their explicit form choices instead.
+    """
     key = "existing_housing_member_map_activation_v1"
     if con.execute("SELECT 1 FROM app_data_migrations WHERE migration_key = ?", (key,)).fetchone():
         return 0
@@ -19326,7 +19632,6 @@ def housing_post_location_intent(payload: dict, category: str, destination: str)
             "showCurrentOnMap": raw.get("showCurrentOnMap") is True}
 
 
-
 def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: dict | None) -> None:
     if intent is None:
         return
@@ -19340,7 +19645,6 @@ def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: d
             "UPDATE users SET relocation_city = ?, relocation_month = ?, relocation_discoverable = ? WHERE id = ?",
             (intent["destination"], intent["moveMonth"], int(intent["showOnMap"]), user_id),
         )
-
 
 
 def people_map_city_key(value: object) -> str:
@@ -19388,13 +19692,21 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
                 f"""SELECT id, name, profile_photo_url, relocation_company, local_city,
                     relocation_city, relocation_month, relocation_discoverable,
                     people_discoverable, people_discovery_configured,
-                    (SELECT post_mode FROM accommodation_posts WHERE user_id = users.id
-                       AND visibility_status = 'ACTIVE' AND map_city(city) = map_city(?)
-                       ORDER BY datetime(created_at) DESC, id DESC LIMIT 1) AS housing_intent
+                    COALESCE(
+                      (SELECT post_mode FROM accommodation_posts
+                       WHERE user_id = users.id AND visibility_status = 'ACTIVE'
+                         AND map_city(city) = map_city(?)
+                       ORDER BY datetime(created_at) DESC, id DESC LIMIT 1),
+                      (SELECT category FROM ask_community_posts
+                       WHERE author_id = users.id AND status IN ('PUBLISHED', 'LOCKED')
+                         AND upload_state = 'READY' AND category IN ('HAVE_PLACE', 'NEED_PLACE', 'NEED_ROOMMATE')
+                         AND map_city(city) = map_city(?)
+                       ORDER BY datetime(created_at) DESC, id DESC LIMIT 1)
+                    ) AS housing_intent
                     FROM users WHERE {eligibility_where}
                     ORDER BY CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 0 ELSE 1 END,
                     name COLLATE NOCASE, id LIMIT 24 OFFSET ?""",
-                (target_city, *args, affiliation, affiliation, offset),
+                (target_city, target_city, *args, affiliation, affiliation, offset),
             ).fetchall()
     except sqlite3.Error:
         raise
@@ -19414,120 +19726,6 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
     } for row in eligible[:24]]
     return {**target, "total": total, "companyMatches": company_matches, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
-
-
-def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, object]]:
-    """Suggest people through reciprocal, opt-in mutual connections.
-
-    Shared groups can strengthen a mutual connection but cannot independently
-    turn a stranger into a People-you-may-know suggestion. Contacts stay in
-    the explicit Chitthi contact finder and are never persisted for this feed.
-    """
-    user_id = int(user_id or 0)
-    if user_id <= 0:
-        return []
-    try:
-        with db() as con:
-            viewer = con.execute(
-                """SELECT people_discoverable, people_discovery_configured, people_match_mutuals,
-                          people_match_groups, share_mutual_connection_count
-                   FROM users WHERE id = ?""",
-                (user_id,),
-            ).fetchone()
-            if not viewer or not people_discovery_enabled(viewer):
-                return []
-            direct_rows = con.execute(
-                """SELECT user_low_id, user_high_id FROM member_connections
-                   WHERE status = 'ACCEPTED' AND (user_low_id = ? OR user_high_id = ?)""",
-                (user_id, user_id),
-            ).fetchall()
-            direct_ids = {
-                int(row_value(row, "user_high_id") if int(row_value(row, "user_low_id") or 0) == user_id else row_value(row, "user_low_id") or 0)
-                for row in direct_rows
-            }
-            mutual_counts: dict[int, int] = {}
-            if direct_ids:
-                placeholders = ",".join("?" for _ in direct_ids)
-                rows = con.execute(
-                    f"""SELECT user_low_id, user_high_id FROM member_connections
-                        WHERE status = 'ACCEPTED' AND (user_low_id IN ({placeholders}) OR user_high_id IN ({placeholders}))""",
-                    (*direct_ids, *direct_ids),
-                ).fetchall()
-                for row in rows:
-                    low_id = int(row_value(row, "user_low_id") or 0)
-                    high_id = int(row_value(row, "user_high_id") or 0)
-                    mutual_id = high_id if low_id in direct_ids else low_id if high_id in direct_ids else 0
-                    if mutual_id and mutual_id != user_id and mutual_id not in direct_ids:
-                        mutual_counts[mutual_id] = mutual_counts.get(mutual_id, 0) + 1
-            shared_rows = con.execute(
-                """SELECT theirs.user_id, COUNT(*) AS shared_count
-                   FROM chat_community_members mine
-                   JOIN chat_community_members theirs ON theirs.community_id = mine.community_id
-                   WHERE mine.user_id = ? AND theirs.user_id != ?
-                   GROUP BY theirs.user_id""",
-                (user_id, user_id),
-            ).fetchall()
-            all_shared_counts = {
-                int(row_value(row, "user_id") or 0): int(row_value(row, "shared_count") or 0)
-                for row in shared_rows
-            }
-            candidate_ids = (set(mutual_counts) | set(all_shared_counts)) - direct_ids - {user_id}
-            if not candidate_ids:
-                return []
-            shared_counts: dict[int, int] = {}
-            if bool(int(row_value(viewer, "people_match_groups") or 0)):
-                shared_counts = all_shared_counts
-            hidden_rows = con.execute(
-                """SELECT suggested_user_id FROM member_suggestion_feedback
-                   WHERE viewer_user_id = ? AND suggestion_kind = 'PEOPLE'
-                     AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))""",
-                (user_id,),
-            ).fetchall()
-            hidden_ids = {int(row_value(row, "suggested_user_id") or 0) for row in hidden_rows}
-            placeholders = ",".join("?" for _ in candidate_ids)
-            rows = con.execute(
-                f"""SELECT id, name, profile_photo_url, people_discoverable,
-                           people_discovery_configured, people_match_mutuals,
-                           people_match_groups, share_mutual_connection_count FROM users
-                    WHERE id IN ({placeholders}) AND is_verified = 1 AND guest_account = 0
-                      AND suspended_at IS NULL""",
-                tuple(candidate_ids),
-            ).fetchall()
-            ratings = user_rating_summaries(con, candidate_ids)
-            suggestions: list[dict[str, object]] = []
-            for row in rows:
-                candidate_id = int(row_value(row, "id") or 0)
-                if candidate_id in hidden_ids or not people_discovery_enabled(row):
-                    continue
-                state = member_connection_state(con, user_id, candidate_id)
-                if state != "NONE":
-                    continue
-                mutual = mutual_counts.get(candidate_id, 0)
-                can_use_mutuals = mutual and bool(int(row_value(viewer, "people_match_mutuals") or 0)) and bool(int(row_value(row, "people_match_mutuals") or 0))
-                can_show_shared_groups = bool(int(row_value(viewer, "people_match_groups") or 0)) and bool(int(row_value(row, "people_match_groups") or 0))
-                if not can_use_mutuals and not (can_show_shared_groups and all_shared_counts.get(candidate_id, 0)):
-                    continue
-                shared = shared_counts.get(candidate_id, 0) if can_show_shared_groups else 0
-                reasons: list[str] = []
-                if can_use_mutuals and bool(int(row_value(viewer, "share_mutual_connection_count") or 0)) and bool(int(row_value(row, "share_mutual_connection_count") or 0)):
-                    reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
-                elif can_use_mutuals:
-                    reasons.append("Mutual connection")
-                if shared:
-                    reasons.append(f"{shared} shared {('community' if shared == 1 else 'communities')}")
-                rating = ratings.get(candidate_id, {"average": 0, "count": 0, "label": "New member"})
-                suggestions.append({
-                    "id": candidate_id,
-                    "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
-                    "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
-                    "reason": " · ".join(reasons),
-                    "ratingSummary": rating,
-                    "score": (mutual * 100 if can_use_mutuals else 0) + min(shared, 4) * 15 + min(int(rating.get("count") or 0), 5),
-                })
-    except sqlite3.Error:
-        return []
-    suggestions.sort(key=lambda item: (-int(item["score"]), str(item["name"]).casefold(), int(item["id"])))
-    return [{key: value for key, value in item.items() if key != "score"} for item in suggestions[:max(1, min(int(limit or 8), 12))]]
 
 
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
@@ -19563,6 +19761,7 @@ def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[st
         "relocationCity": row_value(user, "relocation_city") or "",
         "relocationMonth": row_value(user, "relocation_month") or "",
         "relocationCompany": row_value(user, "relocation_company") or "",
+        "relocationReason": row_value(user, "relocation_reason") or "",
         "relocationDiscoverable": bool(int(row_value(user, "relocation_discoverable") or 0)),
         "localConnectionDiscoverable": bool(int(row_value(user, "local_connection_discoverable") or 0)),
         "peopleDiscoverable": people_discovery_enabled(user),
@@ -29218,11 +29417,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/relocation/suggestions":
             self.api_mobile_relocation_suggestions()
             return
+        if parsed.path == "/api/mobile/people/suggestions":
+            self.api_mobile_people_suggestions()
+            return
+        if parsed.path == "/api/mobile/people/connections":
+            self.api_mobile_people_connections()
+            return
         if parsed.path == "/api/mobile/people/map":
             self.api_mobile_people_map(parsed)
             return
-        if parsed.path == "/api/mobile/people/suggestions":
-            self.api_mobile_people_suggestions()
+        if parsed.path == "/api/mobile/people/contact-pool":
+            self.api_mobile_people_contact_pool()
             return
         if parsed.path == "/api/mobile/member-ratings":
             self.api_mobile_member_ratings(parsed)
@@ -29639,6 +29844,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "/api/mobile/logout": self.api_mobile_logout,
             "/api/mobile/account-deletion": self.api_mobile_request_account_deletion,
             "/api/mobile/profile": self.api_mobile_update_profile,
+            "/api/mobile/location-observation": self.api_mobile_location_observation,
             "/api/mobile/connections": self.api_mobile_update_connection,
             "/api/mobile/people/suggestions/hide": self.api_mobile_hide_people_suggestion,
             "/api/mobile/profile/avatar": self.api_mobile_update_avatar,
@@ -31401,28 +31607,43 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if not hashes or len(hashes) > 5000:
             self.send_json({"ok": False, "message": "Choose between 1 and 5,000 contact phone numbers."}, 400)
             return
+        viewer_id = int(user["id"])
         with db() as con:
             candidates = con.execute(
-                """SELECT id, name, phone, profile_photo_url FROM users
+                """SELECT id, name, phone, profile_photo_url, local_city, local_connection_discoverable FROM users
                    WHERE is_verified = 1
                      AND guest_account = 0 AND chat_phone_discoverable = 1 AND id != ?""",
-                (int(user["id"]),),
+                (viewer_id,),
             ).fetchall()
-        matches = []
-        for candidate in candidates:
-            variants = phone_discovery_variants(row_value(candidate, "phone"))
-            matching_hash = next(
-                (hashlib.sha256(value.encode("utf-8")).hexdigest() for value in variants
-                 if hashlib.sha256(value.encode("utf-8")).hexdigest() in hashes),
-                "",
-            )
-            if matching_hash:
-                matches.append({
-                    "id": int(candidate["id"]),
-                    "name": row_value(candidate, "name") or "FairFares member",
-                    "photoUrl": avatar_delivery_path(row_value(candidate, "profile_photo_url"), int(candidate["id"])),
-                    "phoneHash": matching_hash,
-                })
+            matches = []
+            for candidate in candidates:
+                variants = phone_discovery_variants(row_value(candidate, "phone"))
+                matching_hash = next(
+                    (hashlib.sha256(value.encode("utf-8")).hexdigest() for value in variants
+                     if hashlib.sha256(value.encode("utf-8")).hexdigest() in hashes),
+                    "",
+                )
+                if matching_hash:
+                    candidate_id = int(candidate["id"])
+                    # Persist only the member-to-member match. The submitted
+                    # phone hash is returned for this request but is never
+                    # retained, so a later People screen can reuse the pool
+                    # without retaining an address book.
+                    con.execute(
+                        """INSERT INTO member_contact_pools (viewer_user_id, member_user_id)
+                           VALUES (?, ?)
+                           ON CONFLICT(viewer_user_id, member_user_id) DO UPDATE SET
+                             last_confirmed_at = CURRENT_TIMESTAMP""",
+                        (viewer_id, candidate_id),
+                    )
+                    map_location = member_city_map_location(row_value(candidate, "local_city")) if bool(int(row_value(candidate, "local_connection_discoverable") or 0)) else {"city": "", "latitude": 0.0, "longitude": 0.0}
+                    matches.append({
+                        "id": candidate_id,
+                        "name": row_value(candidate, "name") or "FairFares member",
+                        "photoUrl": avatar_delivery_path(row_value(candidate, "profile_photo_url"), candidate_id),
+                        "phoneHash": matching_hash,
+                        **map_location,
+                    })
         self.send_json({"ok": True, "people": matches[:250]})
 
     def api_chat_message_info(self, parsed: urllib.parse.ParseResult) -> None:
@@ -42086,6 +42307,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                         (name, email, stored_phone, hash_password(password), 1, consented_at, TERMS_VERSION, PRIVACY_VERSION, COMMUNITY_GUIDELINES_VERSION),
                     )
                     user_id = int(con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                if "relocationCompany" in payload:
+                    con.execute("UPDATE users SET relocation_company = ? WHERE id = ?", (clean_text_value(payload.get("relocationCompany"), 120), user_id))
                 user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
                 cleanup_expired_sessions_periodically(con)
         except sqlite3.IntegrityError:
@@ -42537,6 +42760,21 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 pass
         self.send_json({"ok": True, "user": mobile_user_payload(updated)})
 
+    def api_mobile_location_observation(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to update your current city."}, 401)
+            return
+        payload = self.read_json_body()
+        observation = record_member_location_observation(
+            int(row_value(user, "id") or 0),
+            payload.get("city") if isinstance(payload, dict) else "",
+        )
+        if not observation.get("city"):
+            self.send_json({"ok": False, "error": "Choose a valid city and state."}, 400)
+            return
+        self.send_json({"ok": True, "location": observation})
+
     def api_mobile_update_profile(self) -> None:
         user = self.current_user()
         if not user:
@@ -42547,6 +42785,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         email = normalize_email(payload.get("email") if "email" in payload else row_value(user, "email"))
         phone = clean_text_value(payload.get("phone") if "phone" in payload else row_value(user, "phone"), 40)
         date_of_birth = clean_text_value(payload.get("dateOfBirth") if "dateOfBirth" in payload else row_value(user, "date_of_birth"), 10)
+        # Current city is derived only from stable foreground location
+        # observations.  Older app versions may still send ``localCity`` in a
+        # profile save; deliberately ignore it so a stale draft cannot undo a
+        # newly confirmed city.
         local_city = normalize_member_city(payload.get("localCity")) if payload.get("confirmCurrentCity") is True else normalize_member_city(row_value(user, "local_city"))
         if payload.get("confirmCurrentCity") is True and payload.get("localCity") and not local_city:
             self.send_json({"ok": False, "error": "Choose your current city and state."}, 400)
@@ -42554,6 +42796,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         relocation_city = normalize_member_city(payload.get("relocationCity") if "relocationCity" in payload else row_value(user, "relocation_city"))
         relocation_month = clean_text_value(payload.get("relocationMonth") if "relocationMonth" in payload else row_value(user, "relocation_month"), 7)
         relocation_company = clean_text_value(payload.get("relocationCompany") if "relocationCompany" in payload else row_value(user, "relocation_company"), 120)
+        relocation_reason = clean_text_value(payload.get("relocationReason") if "relocationReason" in payload else row_value(user, "relocation_reason"), 32).upper()
+        if relocation_reason not in {"", "NEW_JOB", "SCHOOL_COLLEGE", "FAMILY", "OTHER"}:
+            relocation_reason = ""
         relocation_discoverable = bool(payload.get("relocationDiscoverable")) if "relocationDiscoverable" in payload else bool(int(row_value(user, "relocation_discoverable") or 0))
         local_connection_discoverable = bool(payload.get("localConnectionDiscoverable")) if "localConnectionDiscoverable" in payload else bool(int(row_value(user, "local_connection_discoverable") or 0))
         chat_phone_discoverable = bool(payload.get("chatPhoneDiscoverable")) if "chatPhoneDiscoverable" in payload else bool(int(row_value(user, "chat_phone_discoverable") or 0))
@@ -42588,9 +42833,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             if birthday > today or birthday.year < today.year - 120:
                 self.send_json({"ok": False, "error": "Use a valid birthday."}, 400)
                 return
-        if "localCity" in payload and payload.get("localCity") and not local_city:
-            self.send_json({"ok": False, "error": "Choose a city and state, for example Denver, CO."}, 400)
-            return
         if "relocationCity" in payload and payload.get("relocationCity") and not relocation_city:
             self.send_json({"ok": False, "error": "Choose a destination city and state, for example Austin, TX."}, 400)
             return
@@ -42601,7 +42843,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "Add a relocation destination before turning on relocation suggestions."}, 400)
             return
         if local_connection_discoverable and not local_city:
-            self.send_json({"ok": False, "error": "Add your local city before helping people who are relocating."}, 400)
+            self.send_json({"ok": False, "error": "Let FairFares confirm your current city before helping people who are relocating."}, 400)
             return
         if email_changed or phone_changed:
             with db() as con:
@@ -42682,17 +42924,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 if photo is None:
                     con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_discovery_configured = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_reason = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_discovery_configured = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?
                            WHERE id = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, people_discovery_configured, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, user["id"]),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, relocation_reason, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, people_discovery_configured, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, user["id"]),
                     )
                 else:
                     cursor = con.execute(
                         """UPDATE users SET name = ?, email = ?, phone = ?, date_of_birth = ?,
-                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_discovery_configured = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?, profile_photo_url = ?,
+                                  local_city = ?, relocation_city = ?, relocation_month = ?, relocation_company = ?, relocation_reason = ?, relocation_discoverable = ?, local_connection_discoverable = ?, chat_phone_discoverable = ?, people_discoverable = ?, people_discovery_configured = ?, people_match_mutuals = ?, people_match_groups = ?, share_mutual_connection_count = ?, is_verified = ?, profile_photo_url = ?,
                                   avatar_mode = 'PHOTO', avatar_seed = '', avatar_style = '', avatar_options_json = '{}'
                            WHERE id = ? AND COALESCE(profile_photo_url, '') = ?""",
-                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, people_discovery_configured, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, photo, user["id"], old_photo),
+                        (name, email, phone, date_of_birth or None, local_city, relocation_city, relocation_month, relocation_company, relocation_reason, 1 if relocation_discoverable else 0, 1 if local_connection_discoverable else 0, 1 if chat_phone_discoverable else 0, 1 if people_discoverable else 0, people_discovery_configured, 1 if people_match_mutuals else 0, 1 if people_match_groups else 0, 1 if share_mutual_connection_count else 0, verified_value, photo, user["id"], old_photo),
                     )
                     photo_conflict = cursor.rowcount != 1
                 if email_changed and not photo_conflict:
@@ -43840,6 +44082,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         user_id = int(row_value(user, "id") or 0)
         self.send_json({"ok": True, "suggestions": relocation_suggestions_for_user(user_id)})
 
+    def api_mobile_people_suggestions(self) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view people suggestions."}, 401)
+            return
+        self.send_json({"ok": True, "suggestions": people_suggestions_for_user(int(row_value(user, "id") or 0))})
+
+    def api_mobile_people_connections(self) -> None:
+        """Explicit, accepted connections only. Contact matches never become friends implicitly."""
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view your connections."}, 401)
+            return
+        viewer_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            rows = con.execute(
+                """SELECT users.id, users.name, users.profile_photo_url, users.local_city
+                   FROM member_connections connections
+                   JOIN users ON users.id = CASE WHEN connections.user_low_id = ? THEN connections.user_high_id ELSE connections.user_low_id END
+                   WHERE connections.status = 'ACCEPTED' AND (connections.user_low_id = ? OR connections.user_high_id = ?)
+                     AND users.guest_account = 0 AND users.is_verified = 1 AND users.suspended_at IS NULL
+                   ORDER BY users.name COLLATE NOCASE, users.id LIMIT 250""",
+                (viewer_id, viewer_id, viewer_id),
+            ).fetchall()
+        self.send_json({"ok": True, "people": [{
+            "id": int(row_value(row, "id") or 0), "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+            "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "id") or 0)),
+            **member_city_map_location(row_value(row, "local_city")),
+        } for row in rows]})
+
     def api_mobile_people_map(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
         if not user:
@@ -43862,12 +44134,46 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         self.send_json({"ok": True, "area": area})
 
-    def api_mobile_people_suggestions(self) -> None:
+    def api_mobile_people_contact_pool(self) -> None:
+        """Return prior exact address-book matches without retaining contacts.
+
+        A match is useful across app launches, but each row is only a pair of
+        FairFares account IDs. We retain it for 90 days after the last explicit
+        contact scan, then require a fresh scan to place it back in the pool.
+        """
         user = self.current_user()
         if not user:
-            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view people suggestions."}, 401)
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to view your FairFares contacts."}, 401)
             return
-        self.send_json({"ok": True, "suggestions": people_suggestions_for_user(int(row_value(user, "id") or 0))})
+        viewer_id = int(row_value(user, "id") or 0)
+        with db() as con:
+            con.execute(
+                "DELETE FROM member_contact_pools WHERE viewer_user_id = ? AND datetime(last_confirmed_at) < datetime('now', '-90 days')",
+                (viewer_id,),
+            )
+            rows = con.execute(
+                """SELECT users.id, users.name, users.profile_photo_url, users.local_city,
+                          users.local_connection_discoverable
+                   FROM member_contact_pools pool
+                   JOIN users ON users.id = pool.member_user_id
+                   WHERE pool.viewer_user_id = ?
+                     AND users.is_verified = 1 AND users.guest_account = 0
+                     AND users.suspended_at IS NULL AND users.chat_phone_discoverable = 1
+                   ORDER BY pool.last_confirmed_at DESC, users.name COLLATE NOCASE, users.id
+                   LIMIT 250""",
+                (viewer_id,),
+            ).fetchall()
+        people = []
+        for row in rows:
+            member_id = int(row_value(row, "id") or 0)
+            map_location = member_city_map_location(row_value(row, "local_city")) if bool(int(row_value(row, "local_connection_discoverable") or 0)) else {"city": "", "latitude": 0.0, "longitude": 0.0}
+            people.append({
+                "id": member_id,
+                "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+                "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
+                **map_location,
+            })
+        self.send_json({"ok": True, "people": people})
 
     def api_mobile_hide_people_suggestion(self) -> None:
         user = self.current_user()

@@ -3766,6 +3766,11 @@ export async function getPeopleSuggestions() {
   return payload.suggestions || [];
 }
 
+export async function getPeopleConnections() {
+  const payload = await request<{ ok: boolean; people: FairFaresContact[] }>("/api/mobile/people/connections");
+  return payload.people || [];
+}
+
 export async function getPeopleMapCityPool(city: string, company = "", offset = 0) {
   const params = new URLSearchParams({ city, offset: String(offset) });
   if (company.trim()) params.set("company", company.trim());
