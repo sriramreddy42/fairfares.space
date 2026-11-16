@@ -3733,6 +3733,7 @@ export type PeopleSuggestion = {
   city: string;
   latitude: number;
   longitude: number;
+  housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
 };
 
 export type PeopleMapCityPool = {
@@ -3750,9 +3751,11 @@ export type PeopleMapCityPool = {
     latitude: number;
     longitude: number;
     companyMatch: boolean;
+    companyName?: string;
     moving?: boolean;
     fromCity?: string;
     housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
+    housingBudget?: number;
   }>;
 };
 
@@ -3776,7 +3779,7 @@ export async function getPeopleMapCityPool(city: string, company = "", offset = 
   if (company.trim()) params.set("company", company.trim());
   const payload = await request<{ ok: boolean; area: PeopleMapCityPool }>(`/api/mobile/people/map?${params.toString()}`);
   const area = payload.area;
-  if (!payload.ok || !area || !area.city || !Array.isArray(area.people)) {
+  if (!payload.ok || !area || !Array.isArray(area.people)) {
     throw new Error("City results are unavailable. Please try again.");
   }
   if (!Number.isFinite(area.latitude) || !Number.isFinite(area.longitude)

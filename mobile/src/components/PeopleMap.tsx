@@ -8,14 +8,18 @@ export type PeopleMapMember = {
   city: string;
   latitude: number;
   longitude: number;
-  source: "CONTACT" | "MUTUAL" | "SAVED_CONTACT";
+  source: "CONTACT" | "MUTUAL" | "SAVED_CONTACT" | "EXTERNAL_CONTACT";
   areaTotal?: number;
   companyMatchCount?: number;
+  companyName?: string;
   boosted?: boolean;
   moving?: boolean;
   fromCity?: string;
   housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
+  housingBudget?: number;
   savedContactAddress?: boolean;
+  // A device contact who has not joined FairFares. This remains city-level.
+  isExternalContact?: boolean;
 };
 
 export type PeopleMapFocus = {

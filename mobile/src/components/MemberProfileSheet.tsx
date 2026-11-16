@@ -73,16 +73,20 @@ export const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, Pro
     }
   }, [connectionBusy, isSignedIn, onRequireLogin, profile]);
 
-  return <Modal visible={Boolean(profile)} transparent animationType="fade" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={close}>
+  return <Modal visible={Boolean(profile)} transparent animationType="slide" presentationStyle="overFullScreen" statusBarTranslucent onRequestClose={close}>
     <View style={styles.backdrop}><View style={[styles.card, isLight && styles.cardLight]}>
+      <View style={styles.grabber} />
+      <View style={styles.cover}><Text style={styles.coverMark}>FAIRFARES MEMBER</Text><Text style={styles.coverPattern}>✦</Text></View>
       <TouchableOpacity style={[styles.close, isLight && styles.closeLight]} onPress={close} accessibilityLabel="Close member details"><Text style={[styles.closeText, isLight && styles.closeTextLight]}>×</Text></TouchableOpacity>
       {profile ? <>
         <UserAvatar photoUrl={profile.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{avatarInitials(profile.name)}</Text>} />
-        <Text style={[styles.name, isLight && styles.textPrimaryLight]}>{profile.name}</Text>
-        <Text style={[styles.summary, isLight && styles.textSecondaryLight]}>{profile.isGuest ? "Guest account" : loading ? "Loading profile…" : loadFailed ? "FairFares member" : `${profile.listings.length} active ${profile.listings.length === 1 ? "listing" : "listings"}`}</Text>
+        <View style={styles.identity}><Text style={[styles.name, isLight && styles.textPrimaryLight]}>{profile.name}</Text>
+          <Text style={[styles.memberLine, isLight && styles.textSecondaryLight]}>{profile.isGuest ? "Guest account" : "FairFares community member"}</Text>
+          <Text style={[styles.summary, isLight && styles.textSecondaryLight]}>{loading ? "Loading profile…" : loadFailed ? "Listings temporarily unavailable" : `${profile.listings.length} active ${profile.listings.length === 1 ? "listing" : "listings"}`}</Text>
+        </View>
         {!profile.isGuest && profile.ratingSummary?.count ? <TouchableOpacity style={styles.ratingsButton} onPress={() => setRatingsOpen(true)} accessibilityRole="button" accessibilityLabel={`View ${profile.name}'s ratings`}><Text style={styles.ratingsButtonText}>⭐ {profile.ratingSummary.label} · View ratings</Text></TouchableOpacity> : null}
         {profile.isGuest ? <Text style={[styles.guestNotice, isLight && styles.textSecondaryLight]}>Reply on this Ask Community post. This guest will see replies there and can receive a reply alert.</Text> : viewerId !== profile.id ? <>
-          <TouchableOpacity style={styles.message} onPress={() => { const id = profile.id; const name = profile.name; close(); if (!isSignedIn) onRequireLogin(); else onOpenUserChat(id, name); }} accessibilityRole="button" accessibilityLabel={`Message ${profile.name}`}><Text style={styles.messageText}>Message</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.message} onPress={() => { const id = profile.id; const name = profile.name; close(); if (!isSignedIn) onRequireLogin(); else onOpenUserChat(id, name); }} accessibilityRole="button" accessibilityLabel={`Message ${profile.name}`}><Text style={styles.messageText}>↗  Message</Text></TouchableOpacity>
           {profile.connectionState === "NONE" ? <TouchableOpacity style={[styles.connection, isLight && styles.connectionLight]} disabled={connectionBusy} onPress={() => void manageConnection("request")} accessibilityRole="button" accessibilityLabel={`Send ${profile.name} a connection request`}><Text style={styles.connectionText}>{connectionBusy ? "Sending…" : "Connect"}</Text></TouchableOpacity> : null}
           {profile.connectionState === "INCOMING_PENDING" ? <TouchableOpacity style={[styles.connection, isLight && styles.connectionLight]} disabled={connectionBusy} onPress={() => void manageConnection("accept")} accessibilityRole="button" accessibilityLabel={`Accept ${profile.name}'s connection request`}><Text style={styles.connectionText}>{connectionBusy ? "Accepting…" : "Accept connection"}</Text></TouchableOpacity> : null}
           {profile.connectionState === "OUTGOING_PENDING" ? <Text style={styles.connectionStatus}>Connection request sent</Text> : null}
@@ -96,13 +100,15 @@ export const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, Pro
 });
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: "center", paddingHorizontal: 20, backgroundColor: "rgba(0,0,0,.72)" },
-  card: { maxHeight: "78%", borderRadius: 26, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, padding: 20, alignItems: "center", gap: 9 },
+  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(8,19,15,.42)" },
+  card: { maxHeight: "84%", borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: theme.colors.line, backgroundColor: theme.colors.panel, paddingHorizontal: 20, paddingBottom: 26, alignItems: "center", gap: 8, overflow: "hidden" },
   cardLight: { backgroundColor: "#fff", borderColor: "#e1e5e9" },
-  close: { position: "absolute", right: 13, top: 13, zIndex: 2, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.panel2 },
+  grabber: { width: 46, height: 5, borderRadius: 99, marginTop: 10, marginBottom: 10, backgroundColor: "rgba(255,255,255,.55)" },
+  cover: { alignSelf: "stretch", height: 92, marginHorizontal: -20, marginTop: -2, paddingHorizontal: 21, paddingTop: 18, backgroundColor: "#0d7158", overflow: "hidden" }, coverMark: { color: "#d8fff0", fontSize: 10, letterSpacing: 1.5, fontWeight: "900" }, coverPattern: { position: "absolute", right: 30, top: 5, color: "rgba(218,255,241,.42)", fontSize: 66, fontWeight: "900" },
+  close: { position: "absolute", right: 14, top: 32, zIndex: 2, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,.78)" },
   closeLight: { backgroundColor: "#eef1f3" }, closeText: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 }, closeTextLight: { color: "#24282d" },
-  avatar: { width: 86, height: 86, borderRadius: 43, backgroundColor: "#173b2d", marginTop: 5 }, avatarImage: { borderRadius: 43 }, avatarText: { color: "#a8ecd1", fontSize: 25, fontWeight: "900" },
-  name: { color: theme.colors.text, fontSize: 23, lineHeight: 29, fontWeight: "900", textAlign: "center" }, summary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
+  avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: "#173b2d", marginTop: -47, borderWidth: 4, borderColor: "#fff" }, avatarImage: { borderRadius: 40 }, avatarText: { color: "#a8ecd1", fontSize: 25, fontWeight: "900" },
+  identity: { alignItems: "center", gap: 2 }, name: { color: theme.colors.text, fontSize: 24, lineHeight: 29, fontWeight: "900", textAlign: "center" }, memberLine: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, summary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
   message: { width: "100%", minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, marginTop: 5 }, messageText: { color: "#06291e", fontSize: 14, fontWeight: "900" }, ownProfile: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 5 },
   connection: { width: "100%", minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: "rgba(111, 232, 184, .55)", marginTop: 1 }, connectionLight: { borderColor: "#83dcb7" }, connectionText: { color: theme.colors.brand, fontSize: 13, fontWeight: "900" }, connectionStatus: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 3 },
   ratingsButton: { minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: "center", backgroundColor: "rgba(245,172,27,.13)", marginTop: 1 }, ratingsButtonText: { color: "#9a6500", fontSize: 12, fontWeight: "900" },

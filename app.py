@@ -19362,7 +19362,8 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
     try:
         with db() as con:
             viewer = con.execute(
-                """SELECT local_city, people_discoverable, people_discovery_configured, people_match_mutuals,
+                """SELECT local_city, relocation_company, relocation_reason,
+                          people_discoverable, people_discovery_configured, people_match_mutuals,
                           people_match_groups, share_mutual_connection_count
                    FROM users WHERE id = ?""",
                 (user_id,),
@@ -19430,7 +19431,19 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
             hidden_ids = {int(row_value(row, "suggested_user_id") or 0) for row in hidden_rows}
             placeholders = ",".join("?" for _ in candidate_ids)
             rows = con.execute(
-                f"""SELECT id, name, profile_photo_url, local_city, people_discoverable,
+                f"""SELECT id, name, profile_photo_url, local_city, relocation_company, relocation_reason,
+                           COALESCE(
+                             (SELECT post_mode FROM accommodation_posts
+                              WHERE user_id = users.id AND visibility_status = 'ACTIVE'
+                                AND lower(trim(city)) = lower(trim(users.local_city))
+                              ORDER BY datetime(created_at) DESC, id DESC LIMIT 1),
+                             (SELECT category FROM ask_community_posts
+                              WHERE author_id = users.id AND status IN ('PUBLISHED', 'LOCKED')
+                                AND upload_state = 'READY'
+                                AND category IN ('HAVE_PLACE', 'NEED_PLACE', 'NEED_ROOMMATE')
+                                AND lower(trim(city)) = lower(trim(users.local_city))
+                              ORDER BY datetime(created_at) DESC, id DESC LIMIT 1)
+                           ) AS housing_intent, people_discoverable,
                            people_discovery_configured, people_match_mutuals,
                            people_match_groups, share_mutual_connection_count FROM users
                     WHERE id IN ({placeholders}) AND is_verified = 1 AND guest_account = 0
@@ -19454,6 +19467,13 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                     continue
                 shared = shared_counts.get(candidate_id, 0) if can_show_shared_groups else 0
                 reasons: list[str] = []
+                viewer_affiliation = people_map_company_key(row_value(viewer, "relocation_company"))
+                candidate_affiliation = people_map_company_key(row_value(row, "relocation_company"))
+                same_affiliation = bool(viewer_affiliation and viewer_affiliation == candidate_affiliation)
+                if same_affiliation:
+                    affiliation_label = clean_text_value(row_value(row, "relocation_company"), 120)
+                    school_match = row_value(viewer, "relocation_reason") == "SCHOOL_COLLEGE" or row_value(row, "relocation_reason") == "SCHOOL_COLLEGE"
+                    reasons.append(f"Same {'school' if school_match else 'company'}: {affiliation_label}")
                 if can_use_mutuals and bool(int(row_value(viewer, "share_mutual_connection_count") or 0)) and bool(int(row_value(row, "share_mutual_connection_count") or 0)):
                     reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
                 elif can_use_mutuals:
@@ -19481,6 +19501,7 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                     "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
                     "reason": " · ".join(reasons),
                     "ratingSummary": rating,
+                    "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
                     **member_city_map_location(row_value(row, "local_city")),
                     "rankTier": rank_tier,
                     "mutualCount": mutual if can_use_mutuals else 0,
@@ -19703,10 +19724,18 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
                          AND map_city(city) = map_city(?)
                        ORDER BY datetime(created_at) DESC, id DESC LIMIT 1)
                     ) AS housing_intent
+                    , COALESCE(
+                      (SELECT CASE WHEN rent_max > 0 THEN rent_max WHEN rent_min > 0 THEN rent_min ELSE 0 END
+                       FROM accommodation_posts
+                       WHERE user_id = users.id AND visibility_status = 'ACTIVE'
+                         AND map_city(city) = map_city(?)
+                       ORDER BY datetime(created_at) DESC, id DESC LIMIT 1),
+                      0
+                    ) AS housing_budget
                     FROM users WHERE {eligibility_where}
                     ORDER BY CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 0 ELSE 1 END,
                     name COLLATE NOCASE, id LIMIT 24 OFFSET ?""",
-                (target_city, target_city, *args, affiliation, affiliation, offset),
+                (target_city, target_city, target_city, *args, affiliation, affiliation, offset),
             ).fetchall()
     except sqlite3.Error:
         raise
@@ -19723,9 +19752,63 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "moving": bool(row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) and people_map_city_key(row_value(row, "local_city")) != people_map_city_key(target_city)),
         "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) else "",
         "companyMatch": bool(affiliation and people_map_company_key(row_value(row, "relocation_company")) == affiliation),
+        "companyName": clean_text_value(row_value(row, "relocation_company"), 80),
         "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
+        "housingBudget": float(row_value(row, "housing_budget") or 0),
     } for row in eligible[:24]]
     return {**target, "total": total, "companyMatches": company_matches, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
+
+
+def people_map_company_pool(viewer_id: int, company_or_school: object, offset: int = 0) -> dict[str, object]:
+    """Return city-level pins for an explicit company or school search.
+
+    This is intentionally an affiliation-only search: no address or device
+    location is returned. Each eligible person is placed at their selected
+    current/moving city centre.
+    """
+    affiliation = people_map_company_key(company_or_school)
+    if not affiliation:
+        return {"city": "", "latitude": 0.0, "longitude": 0.0, "total": 0, "companyMatches": 0, "people": []}
+    offset = max(0, int(offset))
+    with db() as con:
+        con.create_function("map_company", 1, people_map_company_key, deterministic=True)
+        eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
+            AND suspended_at IS NULL AND map_company(relocation_company) = ?
+            AND (people_discovery_configured = 0 OR people_discoverable = 1)
+            AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)"""
+        total = int(row_value(con.execute(f"SELECT COUNT(*) AS total FROM users WHERE {eligibility_where}", (int(viewer_id or 0), affiliation)).fetchone(), "total") or 0)
+        rows = con.execute(
+            f"""SELECT id, name, profile_photo_url, relocation_company, local_city,
+                       relocation_city, relocation_discoverable, people_discoverable,
+                       people_discovery_configured
+                FROM users WHERE {eligibility_where}
+                ORDER BY name COLLATE NOCASE, id LIMIT 48 OFFSET ?""",
+            (int(viewer_id or 0), affiliation, offset),
+        ).fetchall()
+    people = []
+    for row in rows:
+        if not people_discovery_enabled(row):
+            continue
+        moving = bool(row_value(row, "relocation_discoverable") and clean_text_value(row_value(row, "relocation_city"), 120))
+        member_city = clean_text_value(row_value(row, "relocation_city" if moving else "local_city"), 120)
+        location = member_city_map_location(member_city)
+        if not location.get("latitude") and not location.get("longitude"):
+            continue
+        member_id = int(row_value(row, "id") or 0)
+        people.append({
+            "id": member_id,
+            "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+            "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
+            **location,
+            "moving": moving,
+            "fromCity": clean_text_value(row_value(row, "local_city"), 120) if moving else "",
+            "companyMatch": True,
+            "companyName": clean_text_value(row_value(row, "relocation_company"), 80),
+            "housingIntent": "",
+            "housingBudget": 0.0,
+        })
+    focus = people[0] if people else {"latitude": 0.0, "longitude": 0.0}
+    return {"city": "", "latitude": focus["latitude"], "longitude": focus["longitude"], "total": total, "companyMatches": total, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
 
 
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
@@ -44122,10 +44205,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         company_or_school = params.get("company", [""])[0]
         try:
             offset = max(0, int(params.get("offset", ["0"])[0]))
-            if not people_map_city_key(city):
-                self.send_json({"ok": False, "error": "Choose a city and state from the suggestions."}, 400)
+            if not people_map_city_key(city) and not people_map_company_key(company_or_school):
+                self.send_json({"ok": False, "error": "Choose an area, company, or school."}, 400)
                 return
-            area = people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school, offset)
+            area = people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school, offset) if people_map_city_key(city) else people_map_company_pool(int(row_value(user, "id") or 0), company_or_school, offset)
         except ValueError:
             self.send_json({"ok": False, "error": "Invalid city search."}, 400)
             return
