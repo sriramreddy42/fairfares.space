@@ -29509,6 +29509,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/mobile/people/map":
             self.api_mobile_people_map(parsed)
             return
+        if parsed.path == "/api/mobile/people/map-affiliations":
+            self.api_mobile_people_map_affiliations(parsed)
+            return
         if parsed.path == "/api/mobile/people/contact-pool":
             self.api_mobile_people_contact_pool()
             return
@@ -44216,6 +44219,36 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": False, "error": "People search is temporarily unavailable. Please try again."}, 503)
             return
         self.send_json({"ok": True, "area": area})
+
+    def api_mobile_people_map_affiliations(self, parsed: urllib.parse.ParseResult) -> None:
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to search companies and schools."}, 401)
+            return
+        params = urllib.parse.parse_qs(parsed.query)
+        query = clean_text_value(params.get("q", [""])[0], 120)
+        city = clean_text_value(params.get("city", [""])[0], 160)
+        if len(query) < 2:
+            self.send_json({"ok": True, "options": []})
+            return
+        try:
+            with db() as con:
+                con.create_function("map_company", 1, people_map_company_key, deterministic=True)
+                con.create_function("map_city", 1, people_map_city_key, deterministic=True)
+                city_clause = "" if not people_map_city_key(city) else " AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?)) OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?)))"
+                rows = con.execute(
+                    f"""SELECT relocation_company, COUNT(*) AS member_count FROM users
+                        WHERE id != ? AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
+                          AND relocation_company != '' AND lower(relocation_company) LIKE ?
+                          AND (people_discovery_configured = 0 OR people_discoverable = 1){city_clause}
+                        GROUP BY map_company(relocation_company)
+                        ORDER BY member_count DESC, relocation_company COLLATE NOCASE LIMIT 6""",
+                    (int(row_value(user, "id") or 0), f"%{query.casefold()}%", *(([city, city]) if city_clause else [])),
+                ).fetchall()
+        except sqlite3.Error:
+            self.send_json({"ok": True, "options": []})
+            return
+        self.send_json({"ok": True, "options": [clean_text_value(row_value(row, "relocation_company"), 120) for row in rows if clean_text_value(row_value(row, "relocation_company"), 120)]})
 
     def api_mobile_people_contact_pool(self) -> None:
         """Return prior exact address-book matches without retaining contacts.

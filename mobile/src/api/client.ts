@@ -3791,6 +3791,13 @@ export async function getPeopleMapCityPool(city: string, company = "", offset = 
   return area;
 }
 
+export async function getPeopleMapAffiliationOptions(query: string, city = "") {
+  const params = new URLSearchParams({ q: query.trim() });
+  if (city.trim()) params.set("city", city.trim());
+  const payload = await request<{ ok: boolean; options: string[] }>(`/api/mobile/people/map-affiliations?${params.toString()}`);
+  return payload.options || [];
+}
+
 export async function hidePeopleSuggestion(suggestedUserId: number) {
   return request<{ ok: boolean }>("/api/mobile/people/suggestions/hide", {
     method: "POST",

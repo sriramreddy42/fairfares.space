@@ -11,7 +11,7 @@ import {
   absoluteAssetUrl, acceptCommunityAnswer, answerCommunityPost, createCommunityPost, deleteCommunityPost,
   ensureCommunityGuestSession,
   getAccommodationLocationOptions, getChatCommunities, getChatLinkPreview, getCommunityFeed, getCommunityPost, joinChatCommunity,
-  findChatPeopleByContactHashes, getPeopleContactPool, getPeopleConnections, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
+  findChatPeopleByContactHashes, getPeopleContactPool, getPeopleConnections, getPeopleMapAffiliationOptions, getPeopleMapCityPool, getPeopleSuggestions, hidePeopleSuggestion, PeopleMapCityPool, PeopleSuggestion, getRelocationSuggestions, recordCurrentCityObservation, RelocationSuggestion,
   getHousingActivity, getRentalBookings, getRideActivity, getCommunityUserProfile,
   createCommunityVideoPost, reactToCommunityContent, reportCommunityContent, resumePendingCommunityVideoUploads, saveCommunityPost,
   updateCommunityAnswer, updateCommunityPost, updateCommunityPostStatus, updateMobileProfile, uploadCommunityVideo,
@@ -806,6 +806,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   const [relocationCompanyDraft, setRelocationCompanyDraft] = useState(user?.relocationCity ? user.relocationCompany || "" : "");
   const [relocationReasonDraft, setRelocationReasonDraft] = useState<RelocationReason>(user?.relocationCity ? user.relocationReason || "" : "");
   const [relocationCityOptions, setRelocationCityOptions] = useState<string[]>([]);
+  const [peopleMapCompanyOptions, setPeopleMapCompanyOptions] = useState<string[]>([]);
   const [relocationCityOptionsLoading, setRelocationCityOptionsLoading] = useState(false);
   const [relocationSaving, setRelocationSaving] = useState(false);
   const [groupSuggestionCity, setGroupSuggestionCity] = useState(city);
@@ -1646,7 +1647,7 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
   }, [cityDraft, cityPickerOpen]);
 
   useEffect(() => {
-    if ((!relocationPlannerOpen && !peopleMapPlannerOpen) || relocationCityDraft.trim().length < 2) {
+    if ((!relocationPlannerOpen && !peopleMapPlannerOpen && !peopleMapOpen) || relocationCityDraft.trim().length < 2) {
       setRelocationCityOptions([]);
       return;
     }
@@ -1666,7 +1667,21 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
       }).finally(() => { if (!cancelled) setRelocationCityOptionsLoading(false); });
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [peopleMapPlannerOpen, relocationCityDraft, relocationPlannerOpen]);
+  }, [peopleMapOpen, peopleMapPlannerOpen, relocationCityDraft, relocationPlannerOpen]);
+
+  useEffect(() => {
+    if (!peopleMapOpen || !peopleMapFiltersExpanded || relocationCompanyDraft.trim().length < 2) {
+      setPeopleMapCompanyOptions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void getPeopleMapAffiliationOptions(relocationCompanyDraft.trim(), relocationCityDraft.trim())
+        .then((options) => { if (!cancelled) setPeopleMapCompanyOptions(options.slice(0, 5)); })
+        .catch(() => { if (!cancelled) setPeopleMapCompanyOptions([]); });
+    }, 180);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [peopleMapFiltersExpanded, peopleMapOpen, relocationCityDraft, relocationCompanyDraft]);
 
   useEffect(() => {
     if (relocationPlannerOpen || peopleMapPlannerOpen) return;
@@ -3028,6 +3043,10 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
               />
             </View>
             </View>
+            {(relocationCityOptions.length || peopleMapCompanyOptions.length) ? <View style={styles.peopleMapInlineSuggestions}>
+              {relocationCityOptions.slice(0, 3).map((option) => <TouchableOpacity key={`city-${option}`} style={styles.peopleMapInlineSuggestion} onPress={() => { setRelocationCityDraft(option); setRelocationCityOptions([]); }} accessibilityRole="button" accessibilityLabel={`Choose area ${option}`}><Text style={styles.peopleMapInlineSuggestionIcon}>⌖</Text><Text style={styles.peopleMapInlineSuggestionText} numberOfLines={1}>{option}</Text></TouchableOpacity>)}
+              {peopleMapCompanyOptions.map((option) => <TouchableOpacity key={`company-${option}`} style={styles.peopleMapInlineSuggestion} onPress={() => { setRelocationCompanyDraft(option); setPeopleMapCompanyOptions([]); }} accessibilityRole="button" accessibilityLabel={`Choose company or school ${option}`}><Text style={styles.peopleMapInlineSuggestionIcon}>▣</Text><Text style={styles.peopleMapInlineSuggestionText} numberOfLines={1}>{option}</Text></TouchableOpacity>)}
+            </View> : null}
             <View style={styles.peopleMapInlineActionRow}>
               <View style={styles.peopleMapInlineChips}>
               {([['NEED_PLACE', 'Need place'], ['NEED_ROOMMATE', 'Roommate'], ['HAVE_PLACE', 'Have place']] as const).map(([value, label]) => <TouchableOpacity key={value} style={[styles.peopleMapInlineChip, peopleMapHousingFilter === value && styles.peopleMapInlineChipSelected]} onPress={() => setPeopleMapHousingFilter((current) => current === value ? "" : value)} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: peopleMapHousingFilter === value }}><Text style={[styles.peopleMapInlineChipText, peopleMapHousingFilter === value && styles.peopleMapInlineChipTextSelected]}>{label}</Text></TouchableOpacity>)}
@@ -3358,6 +3377,10 @@ const styles = StyleSheet.create({
   peopleMapInlineField: { flex: 1 },
   peopleMapInlinePrompt: { display: "none" },
   peopleMapInlineInput: { width: "100%", minHeight: 40, borderWidth: 1, borderColor: "#d2e4dc", borderRadius: 11, backgroundColor: "#f8fbf9", color: "#102b25", paddingHorizontal: 10, paddingVertical: 4, fontSize: 11, fontWeight: "900" },
+  peopleMapInlineSuggestions: { marginTop: 5, overflow: "hidden", borderRadius: 10, borderWidth: 1, borderColor: "#dbe9e3", backgroundColor: "#ffffff" },
+  peopleMapInlineSuggestion: { minHeight: 30, flexDirection: "row", alignItems: "center", gap: 6, borderBottomWidth: 1, borderBottomColor: "#edf3ef", paddingHorizontal: 9 },
+  peopleMapInlineSuggestionIcon: { color: "#0d9870", fontSize: 12, fontWeight: "900" },
+  peopleMapInlineSuggestionText: { flex: 1, color: "#173b31", fontSize: 10, fontWeight: "800" },
   peopleMapInlineJobInput: { marginTop: 0 },
   peopleMapInlineActionRow: { flexDirection: "row", gap: 6, marginTop: 6 },
   peopleMapInlineSearch: { minWidth: 83, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: "#08b87c", paddingHorizontal: 7, shadowColor: "#089b6a", shadowOpacity: .16, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
