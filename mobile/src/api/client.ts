@@ -3782,9 +3782,10 @@ export async function getPeopleMapCityPool(city: string, company = "", offset = 
   if (!payload.ok || !area || !Array.isArray(area.people)) {
     throw new Error("City results are unavailable. Please try again.");
   }
-  if (!Number.isFinite(area.latitude) || !Number.isFinite(area.longitude)
+  const isCompanyOnlySearch = !city.trim() && Boolean(company.trim());
+  if (!isCompanyOnlySearch && (!Number.isFinite(area.latitude) || !Number.isFinite(area.longitude)
       || Math.abs(area.latitude) > 90 || Math.abs(area.longitude) > 180
-      || (area.latitude === 0 && area.longitude === 0)) {
+      || (area.latitude === 0 && area.longitude === 0))) {
     throw new Error("City not found. Choose a city and state from the suggestions.");
   }
   return area;
