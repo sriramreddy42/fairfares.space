@@ -1707,7 +1707,14 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
           && (!query.includes(",") || value.toLocaleLowerCase() === normalizedLocationLabel(query).toLocaleLowerCase())
       ) || normalizedLocationLabel(query) : "";
       const pool = await getPeopleMapCityPool(destination, companyQuery);
-      if (!pool.latitude && !pool.longitude) throw new Error("City not found. Choose a city and state from the suggestions.");
+      // A company/school-only result deliberately has no single city centre.
+      // It fits the returned city-level pins instead. Only validate a centre
+      // when the person actually entered an area.
+      if (destination && !pool.latitude && !pool.longitude) throw new Error("City not found. Choose a city and state from the suggestions.");
+      if (!destination && companyQuery && !pool.people.length) {
+        Alert.alert("No people found", `No visible FairFares members match “${companyQuery}” yet.`);
+        return;
+      }
       setPeopleMapCityPool(pool);
       setPeopleMapCompany(companyQuery);
       setPeopleMapListOpen(false);
