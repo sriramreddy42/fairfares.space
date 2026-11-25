@@ -19697,12 +19697,20 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         with db() as con:
             con.create_function("map_city", 1, people_map_city_key, deterministic=True)
             con.create_function("map_company", 1, people_map_company_key, deterministic=True)
-            eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
-                AND suspended_at IS NULL
-                AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?))
-                  OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?)))
-                AND (people_discovery_configured = 0 OR people_discoverable = 1)"""
-            args = (int(viewer_id or 0), target_city, target_city)
+            # Normally a people map contains other opted-in members. For an
+            # explicit company/school search, include the viewer's own
+            # city-level pin as well. Otherwise a valid first affiliation
+            # (for example the only Meta member) looks like a broken search.
+            eligibility_where = """guest_account = 0 AND is_verified = 1
+                AND suspended_at IS NULL AND (
+                  (id = ? AND ? != '' AND map_company(relocation_company) = ?
+                    AND (map_city(local_city) = map_city(?) OR map_city(relocation_city) = map_city(?)))
+                  OR
+                  (id != ? AND (people_discovery_configured = 0 OR people_discoverable = 1)
+                    AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?))
+                      OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?))))
+                )"""
+            args = (int(viewer_id or 0), affiliation, affiliation, target_city, target_city, int(viewer_id or 0), target_city, target_city)
             count_row = con.execute(
                 f"""SELECT COUNT(*) AS total,
                     SUM(CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
@@ -19744,6 +19752,7 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
     company_matches = int(row_value(count_row, "company_matches") or 0) if count_row else 0
     people = [{
         "id": int(row_value(row, "id") or 0),
+        "isViewer": int(row_value(row, "id") or 0) == int(viewer_id or 0),
         "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
         "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "id") or 0)),
         "city": target["city"],
@@ -19772,18 +19781,24 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
     offset = max(0, int(offset))
     with db() as con:
         con.create_function("map_company", 1, people_map_company_key, deterministic=True)
-        eligibility_where = """id != ? AND guest_account = 0 AND is_verified = 1
+        # A company-only search includes the viewer as a city-level "You" pin.
+        # Their own city is already known to them, while every other member
+        # still needs to have opted in to people discovery.
+        eligibility_where = """guest_account = 0 AND is_verified = 1
             AND suspended_at IS NULL AND map_company(relocation_company) = ?
-            AND (people_discovery_configured = 0 OR people_discoverable = 1)
-            AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)"""
-        total = int(row_value(con.execute(f"SELECT COUNT(*) AS total FROM users WHERE {eligibility_where}", (int(viewer_id or 0), affiliation)).fetchone(), "total") or 0)
+            AND (id = ? OR (
+              id != ? AND (people_discovery_configured = 0 OR people_discoverable = 1)
+              AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)
+            ))"""
+        query_args = (affiliation, int(viewer_id or 0), int(viewer_id or 0))
+        total = int(row_value(con.execute(f"SELECT COUNT(*) AS total FROM users WHERE {eligibility_where}", query_args).fetchone(), "total") or 0)
         rows = con.execute(
             f"""SELECT id, name, profile_photo_url, relocation_company, local_city,
                        relocation_city, relocation_discoverable, people_discoverable,
                        people_discovery_configured
                 FROM users WHERE {eligibility_where}
                 ORDER BY name COLLATE NOCASE, id LIMIT 48 OFFSET ?""",
-            (int(viewer_id or 0), affiliation, offset),
+            (*query_args, offset),
         ).fetchall()
     people = []
     for row in rows:
@@ -19797,6 +19812,7 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
         member_id = int(row_value(row, "id") or 0)
         people.append({
             "id": member_id,
+            "isViewer": member_id == int(viewer_id or 0),
             "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
             "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
             **location,
@@ -29505,6 +29521,9 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/mobile/people/connections":
             self.api_mobile_people_connections()
+            return
+        if parsed.path == "/api/mobile/people/search":
+            self.api_mobile_people_search(parsed)
             return
         if parsed.path == "/api/mobile/people/map":
             self.api_mobile_people_map(parsed)
@@ -44126,7 +44145,7 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         viewer_id = int(row_value(viewer, "id") or 0) if viewer else 0
         with db() as con:
             user = con.execute(
-                "SELECT id, name, profile_photo_url FROM users WHERE id = ? AND guest_account = 0 LIMIT 1",
+                "SELECT id, name, profile_photo_url, relocation_company, relocation_reason FROM users WHERE id = ? AND guest_account = 0 LIMIT 1",
                 (user_id,),
             ).fetchone()
             if not user:
@@ -44154,6 +44173,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "id": user_id,
                 "name": clean_text_value(row_value(user, "name"), 120) or "FairFares member",
                 "photoUrl": avatar_delivery_path(row_value(user, "profile_photo_url"), user_id),
+                "companyOrSchool": clean_text_value(row_value(user, "relocation_company"), 120),
+                "affiliationType": "SCHOOL" if row_value(user, "relocation_reason") == "SCHOOL_COLLEGE" else "WORK",
                 "ratingSummary": user_rating_summary(user_id),
                 "connectionState": connection_state,
                 "listings": listings,
@@ -44197,6 +44218,61 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), int(row_value(row, "id") or 0)),
             **member_city_map_location(row_value(row, "local_city")),
         } for row in rows]})
+
+    def api_mobile_people_search(self, parsed: urllib.parse.ParseResult) -> None:
+        """Search opted-in members by name, city, company, or school.
+
+        This intentionally excludes phone and email searches so those private
+        identifiers remain available only through the explicit contact matcher.
+        """
+        user = self.current_user()
+        if not user:
+            self.send_json({"ok": False, "login_required": True, "error": "Sign in to search people."}, 401)
+            return
+        query = clean_text_value(urllib.parse.parse_qs(parsed.query).get("q", [""])[0], 120)
+        if len(query) < 2:
+            self.send_json({"ok": True, "people": []})
+            return
+        viewer_id = int(row_value(user, "id") or 0)
+        needle = f"%{query.casefold()}%"
+        try:
+            with db() as con:
+                rows = con.execute(
+                    """SELECT id, name, profile_photo_url, local_city, relocation_company, relocation_reason,
+                              people_discoverable, people_discovery_configured
+                       FROM users
+                       WHERE id != ? AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
+                         AND (lower(name) LIKE ? OR lower(local_city) LIKE ? OR lower(relocation_company) LIKE ?)
+                       ORDER BY CASE WHEN lower(name) = ? THEN 0 WHEN lower(name) LIKE ? THEN 1 ELSE 2 END,
+                                name COLLATE NOCASE, id
+                       LIMIT 50""",
+                    (viewer_id, needle, needle, needle, query.casefold(), needle),
+                ).fetchall()
+                people: list[dict[str, object]] = []
+                for row in rows:
+                    if not people_discovery_enabled(row):
+                        continue
+                    member_id = int(row_value(row, "id") or 0)
+                    state = member_connection_state(con, viewer_id, member_id)
+                    if state == "BLOCKED":
+                        continue
+                    affiliation = clean_text_value(row_value(row, "relocation_company"), 120)
+                    is_school = row_value(row, "relocation_reason") == "SCHOOL_COLLEGE"
+                    context = f"{'Studies at' if is_school else 'Works at'} {affiliation}" if affiliation else "FairFares member"
+                    city = clean_text_value(row_value(row, "local_city"), 160)
+                    if city:
+                        context = f"{context} · {city}"
+                    people.append({
+                        "id": member_id,
+                        "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+                        "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
+                        "context": context,
+                        "connectionState": state,
+                    })
+        except sqlite3.Error:
+            self.send_json({"ok": False, "error": "People search is temporarily unavailable. Please try again."}, 503)
+            return
+        self.send_json({"ok": True, "people": people})
 
     def api_mobile_people_map(self, parsed: urllib.parse.ParseResult) -> None:
         user = self.current_user()
