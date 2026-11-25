@@ -19706,11 +19706,12 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
                   (id = ? AND ? != '' AND map_company(relocation_company) = ?
                     AND (map_city(local_city) = map_city(?) OR map_city(relocation_city) = map_city(?)))
                   OR
-                  (id != ? AND (people_discovery_configured = 0 OR people_discoverable = 1)
+                  (id != ? AND (? = '' OR map_company(relocation_company) = ?)
+                    AND (people_discovery_configured = 0 OR people_discoverable = 1)
                     AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?))
                       OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?))))
                 )"""
-            args = (int(viewer_id or 0), affiliation, affiliation, target_city, target_city, int(viewer_id or 0), target_city, target_city)
+            args = (int(viewer_id or 0), affiliation, affiliation, target_city, target_city, int(viewer_id or 0), affiliation, affiliation, target_city, target_city)
             count_row = con.execute(
                 f"""SELECT COUNT(*) AS total,
                     SUM(CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
