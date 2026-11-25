@@ -7760,6 +7760,17 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS housing_match_pushes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_post_id INTEGER NOT NULL,
+                listing_public_id TEXT NOT NULL,
+                requester_user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(request_post_id, listing_public_id),
+                FOREIGN KEY(request_post_id) REFERENCES ask_community_posts(id),
+                FOREIGN KEY(requester_user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS accommodation_metros (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 metro_key TEXT NOT NULL UNIQUE,
@@ -26371,6 +26382,67 @@ def send_mobile_push_for_users(
             title,
             body,
             token_data,
+        )
+
+
+def notify_housing_request_matches(listing: sqlite3.Row | dict[str, object]) -> None:
+    """Notify active Ask seekers when a newly published place fits their request.
+
+    The durable join table prevents editing/retrying a listing from sending the
+    same requester the same alert twice. This is deliberately a new-listing
+    notification; the requester's immediate in-app match count is handled by
+    Ask itself.
+    """
+    if str(row_value(listing, "post_mode") or "").upper() != "HAVE_PLACE":
+        return
+    listing_id = clean_text_value(row_value(listing, "public_id"), 80)
+    listing_city = community_post_city_label(row_value(listing, "city"))
+    listing_owner_id = int(row_value(listing, "user_id") or 0)
+    listing_rent = float(row_value(listing, "rent_min") or row_value(listing, "rent_max") or 0)
+    if not listing_id or not listing_city:
+        return
+    recipients: list[tuple[int, str]] = []
+    try:
+        with db() as con:
+            requests = con.execute(
+                """
+                SELECT id, author_id, public_id, title, details_json
+                FROM ask_community_posts
+                WHERE category IN ('NEED_PLACE', 'NEED_ROOMMATE')
+                  AND status IN ('PUBLISHED', 'LOCKED')
+                  AND fulfillment_status = 'OPEN'
+                  AND LOWER(TRIM(city)) = LOWER(TRIM(?))
+                  AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+                """,
+                (listing_city,),
+            ).fetchall()
+            for request in requests:
+                requester_id = int(row_value(request, "author_id") or 0)
+                if not requester_id or requester_id == listing_owner_id:
+                    continue
+                try:
+                    details = json.loads(str(row_value(request, "details_json") or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    details = {}
+                budget = float_from_value(details.get("budget") if isinstance(details, dict) else "")
+                if budget and listing_rent and listing_rent > budget:
+                    continue
+                cursor = con.execute(
+                    """INSERT OR IGNORE INTO housing_match_pushes
+                       (request_post_id, listing_public_id, requester_user_id)
+                       VALUES (?, ?, ?)""",
+                    (int(row_value(request, "id") or 0), listing_id, requester_id),
+                )
+                if cursor.rowcount:
+                    recipients.append((requester_id, str(row_value(request, "public_id") or "")))
+    except sqlite3.Error:
+        return
+    for requester_id, request_id in recipients:
+        send_mobile_push_for_users(
+            [requester_id],
+            "A new place matches your request",
+            f"{clean_text_value(row_value(listing, 'title'), 90) or 'A place'} is available in {listing_city}.",
+            {"type": "HOUSING_MATCH", "listingId": listing_id, "requestId": request_id, "target": "housing"},
         )
 
 
@@ -47799,6 +47871,10 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (post_id,),
             ).fetchone()
         invalidate_mobile_search_cache("housing")
+        if not existing_listing and mode == "HAVE_PLACE":
+            # Tell existing seekers only about genuinely new matching places.
+            # Their own just-posted request remains an in-app match notice.
+            notify_housing_request_matches(row)
         # Start the derived Ask card update as soon as the listing transaction
         # is committed, rather than making the next Ask feed request perform it.
         schedule_housing_community_projection_sync(force=True)
