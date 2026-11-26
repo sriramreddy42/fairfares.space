@@ -87,7 +87,7 @@ import {
 import type { ChatLinkPreview, ChatMessageInfoPerson, ChatReportReason } from "../api/client";
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { shareChitthiGroup } from "../utils/listingShare";
 import { suggestedHousingMessage } from "../utils/housingMessage";
 import { BootstrapPayload, ChatConversation, ChatGroupMember, ChatMessage, Community, CommunityAnswer, CommunityPost, HousingPost, RidePost } from "../types";
@@ -120,6 +120,7 @@ type Props = {
   onClearPendingGroupInvite?: () => void;
   onClearNotificationConversation?: () => void;
   onThreadModeChange?: (active: boolean) => void;
+  onThreadBackGestureChange?: (active: boolean) => void;
   onMediaTransferActiveChange?: (active: boolean) => void;
   onUnreadCountChange?: (count: number) => void;
   onCardMessageSent?: (context: { postId?: string; rideId?: string; name?: string; photoUrl?: string; listingTitle?: string }) => void;
@@ -221,7 +222,9 @@ const CHAT_PREVIEW_SCREEN_WIDTH = Dimensions.get("window").width;
 // Keep thread navigation in the actual screen-edge gutter. Incoming bubbles
 // begin around 24pt from the edge, so the old 64pt reservation swallowed their
 // swipe-to-reply gesture before the message responder could claim it.
-const CHAT_THREAD_EDGE_BACK_ZONE = 20;
+// A native back gesture is forgiving at the screen edge. Keeping a modest
+// 44pt edge zone makes it reliable without taking over normal reply swipes.
+const CHAT_THREAD_EDGE_BACK_ZONE = 44;
 const CHAT_OVERLAY_EDGE_BACK_ZONE = 64;
 const CHAT_EDGE_BACK_DISTANCE = 36;
 const CHAT_PREVIEW_MEDIA_HEIGHT = Math.max(300, Math.min(560, Dimensions.get("window").height - (Platform.OS === "ios" ? 220 : 190)));
@@ -941,7 +944,7 @@ const ConversationListRow = React.memo(function ConversationListRow({ chat, curr
   onOpen: (conversation: ChatConversation) => void;
   onOpenAvatar: (photoUrl: string, label: string) => void;
 }) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const preview = safeConversationPreview(chat);
   const unread = chat.unread > 0;
   const conversationKind = chat.communityId || chat.kind === "GROUP" ? "Group letters" : "Direct letters";
@@ -2048,7 +2051,7 @@ function StaticKeyboardBody({ children }: { bottomSafeArea: number; children: Re
 }
 
 function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onRequireSignup: () => void; onOpenCommunityPost?: (postId: string) => void }) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const safeAreaInsets = useSafeAreaInsets();
   const [threads, setThreads] = useState<CommunityPost[]>([]);
   const [guestId, setGuestId] = useState("Guest");
@@ -2151,7 +2154,7 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
     <Modal visible={Boolean(selected)} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setSelectedId("")}>
       {selected ? <View style={[styles.threadScreen, styles.guestPrivateSafeScreen, { paddingTop: Math.max(safeAreaInsets.top, Platform.OS === "ios" ? 48 : 10) }]}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: activeWallpaper.color }]}><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: activeWallpaper.accent }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: activeWallpaper.accent }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text><View style={styles.wallpaperShade} /></View>
-        <View style={styles.threadHeader}>
+        <View style={[styles.threadHeader, { minHeight: 66 + safeAreaInsets.top, paddingTop: safeAreaInsets.top + 7 }]}>
           <TouchableOpacity style={styles.backButton} onPress={() => { setBenefitsOpen(false); setSelectedId(""); }} accessibilityRole="button" accessibilityLabel="Back to conversations"><BackIcon /></TouchableOpacity>
           <TouchableOpacity style={styles.threadAvatar} disabled={!selected.author.photoUrl} onPress={() => setProfilePhotoPreview({ uri: selected.author.photoUrl || "", label: selected.author.name })} accessibilityRole={selected.author.photoUrl ? "button" : undefined} accessibilityLabel={selected.author.photoUrl ? `Open ${selected.author.name} profile photo` : undefined}><InitialsAvatar photoUrl={selected.author.photoUrl} label={selected.author.name} imageStyle={styles.threadAvatarImage} textStyle={styles.threadAvatarText} /></TouchableOpacity>
           <View style={styles.threadHeaderCopy}><Text style={styles.threadHeaderTitle} numberOfLines={1}>{selected.author.name}</Text><Text style={styles.threadHeaderMeta} numberOfLines={1}>Private chat · Ask Community</Text></View>
@@ -2216,10 +2219,14 @@ function GuestCommunityLetters({ onRequireSignup, onOpenCommunityPost }: { onReq
   </View>;
 }
 
-export function MessengerScreen({ data, isVisible = true, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
-  const isLight = useColorScheme() === "light";
+export function MessengerScreen({ data, isVisible = true, preferredSuggestionCity, pendingPost, pendingRide, pendingGroupInvite, notificationConversationId, notificationMessageId, androidBackRequestToken = 0, onRequireLogin, onRequireSignup, onClearPendingPost, onClearPendingRide, onClearPendingGroupInvite, onClearNotificationConversation, onThreadModeChange, onThreadBackGestureChange, onMediaTransferActiveChange, onUnreadCountChange, onCardMessageSent, onOpenCommunityPost }: Props) {
+  const isLight = isLightAppearance(useColorScheme());
   const safeAreaInsets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
+  // Parent state changes while an interactive back swipe is active. A ref
+  // prevents those renders from recreating the gesture handler mid-motion.
+  const threadBackGestureChangeRef = useRef(onThreadBackGestureChange);
+  threadBackGestureChangeRef.current = onThreadBackGestureChange;
   const sentSoundPlayer = useAudioPlayer(null, { updateInterval: 1000 });
   const sentSoundUriRef = useRef("");
   const sentSoundLastPlayedAtRef = useRef(0);
@@ -2329,6 +2336,8 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
   const [searchHistoryLoadFailed, setSearchHistoryLoadFailed] = useState(false);
   const [communities, setCommunities] = useState<Community[]>(data?.communities || []);
   const [activeConversationId, setActiveConversationId] = useState(notificationConversationId || "");
+  const [threadClosing, setThreadClosing] = useState(false);
+  const threadClosingRef = useRef(false);
   const [hydratedConversationId, setHydratedConversationId] = useState("");
   const [isAppActive, setIsAppActive] = useState(() => AppState.currentState === "active");
   const [activeSubject, setActiveSubject] = useState(initialDirectConversation?.subject || initialDirectConversation?.otherName || pendingPost?.title || rideContextLabel(pendingRide) || "");
@@ -2500,7 +2509,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
   const [groupSuggestionsDismissed, setGroupSuggestionsDismissed] = useState(false);
   const [suggestionCity, setSuggestionCity] = useState(data?.location.city || "");
   const suggestionRequestId = useRef(0);
-  const inThread = signedIn && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
+  const inThread = signedIn && !threadClosing && (Boolean(activeConversationId) || Boolean(pendingPost) || Boolean(pendingRide));
   const pendingChatContext = Boolean(pendingPost || pendingRide);
   const visibleMessages = useMemo(() => collapseLocationUpdates(messages), [messages]);
   const threadMessageItems = useMemo<ThreadMessageItem[]>(() => {
@@ -2786,7 +2795,15 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     return true;
   }
 
-  function activateThreadConversation(conversationId: string) {
+  function activateThreadConversation(conversationId: string, userInitiated = false) {
+    // A late result from a notification, listing, or contact lookup must not
+    // reopen a conversation the member has just swiped away. Explicit taps
+    // are allowed to start a fresh thread immediately.
+    if (conversationId && threadClosingRef.current && !userInitiated) return false;
+    if (conversationId) {
+      threadClosingRef.current = false;
+      setThreadClosing(false);
+    }
     if (activeConversationIdRef.current !== conversationId) {
       setHydratedConversationId("");
       setReplyingTo(null);
@@ -2802,6 +2819,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     }
     activeConversationIdRef.current = conversationId;
     setActiveConversationId(conversationId);
+    return true;
   }
 
   function replaceThreadMessages(conversationId: string, nextMessages: ChatMessage[]) {
@@ -3795,6 +3813,8 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
 
   useEffect(() => {
     if (!notificationConversationId || !signedIn) return;
+    threadClosingRef.current = false;
+    setThreadClosing(false);
     let cancelled = false;
     const notificationTargetKey = `${notificationConversationId}:${Number(notificationMessageId || 0)}`;
     notificationLoadCompletedRef.current = "";
@@ -3876,6 +3896,8 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
 
   useEffect(() => {
     if (pendingPost) {
+      threadClosingRef.current = false;
+      setThreadClosing(false);
       activateThreadConversation("");
       setActiveConversation(null);
       setActiveSubject(pendingPost.title);
@@ -3922,6 +3944,8 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
 
   useEffect(() => {
     if (pendingRide) {
+      threadClosingRef.current = false;
+      setThreadClosing(false);
       activateThreadConversation("");
       setActiveConversation(null);
       setActiveSubject(rideContextLabel(pendingRide));
@@ -4558,7 +4582,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     onThreadModeChange?.(true);
     userTouchedThreadRef.current = false;
     shouldAutoScrollToEndRef.current = true;
-    activateThreadConversation(conversation.id);
+    activateThreadConversation(conversation.id, true);
     setActiveSubject(conversation.subject);
     setActiveConversation(conversation);
     // Clear the previous thread synchronously. AsyncStorage can otherwise
@@ -5694,7 +5718,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
       const found = await findChatPersonByPhone(value);
       const response = await openChatWithPerson(found.person.id);
       openingConversationId = response.conversation.id;
-      activateThreadConversation(response.conversation.id);
+      activateThreadConversation(response.conversation.id, true);
       clearThreadMessages();
       setThreadLoading(true);
       setActiveConversation(response.conversation);
@@ -5742,7 +5766,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     try {
       const response = await openChatWithPerson(person.id);
       openingConversationId = response.conversation.id;
-      activateThreadConversation(response.conversation.id);
+      activateThreadConversation(response.conversation.id, true);
       clearThreadMessages();
       setThreadLoading(true);
       setActiveConversation(response.conversation);
@@ -5954,7 +5978,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
       setCommunities((current) => [joinedCommunity, ...current.filter((item) => item.id !== joinedCommunity.id)]);
       const response = await openCommunityChat(joinedCommunity.id);
       openingConversationId = response.conversation.id;
-      activateThreadConversation(response.conversation.id);
+      activateThreadConversation(response.conversation.id, true);
       clearThreadMessages();
       setActiveSubject(response.conversation.subject || joinedCommunity.name);
       setActiveConversation({
@@ -7397,6 +7421,11 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
   }
 
   function closeThread() {
+    // Remove the interactive overlay before clearing its data. This prevents
+    // a stale render or a parent update from briefly placing the conversation
+    // back over the live inbox after a successful edge swipe.
+    threadClosingRef.current = true;
+    setThreadClosing(true);
     if (activeConversationId) void updateChatTyping(activeConversationId, false).catch(() => undefined);
     stopLiveLocation(false);
     activateThreadConversation("");
@@ -7545,27 +7574,41 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
 
   const threadEdgeBackResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      // Claim only the very first pixels of the leading edge. This lets the
+      // interactive back transition win over the message list's scroll view,
+      // while keeping every message's regular swipe-to-reply gesture intact.
+      const horizontalSwipe = Math.abs(gesture.dx) > 5 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
+      return horizontalSwipe && gesture.x0 <= CHAT_THREAD_EDGE_BACK_ZONE && gesture.dx > 0;
+    },
     onMoveShouldSetPanResponder: (_event, gesture) => {
       // Preserve message-level right swipes for reply. The screen-level back
       // gesture starts only at the leading edge, like native chat navigation.
       const horizontalSwipe = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2;
       return horizontalSwipe && gesture.x0 <= CHAT_THREAD_EDGE_BACK_ZONE && gesture.dx > 0;
     },
-    onPanResponderGrant: () => threadEdgeTranslateX.stopAnimation(),
-    onPanResponderMove: (_event, gesture) => {
-      const screenWidth = Dimensions.get("window").width;
-      // Keep the page directly under the finger, with a small amount of
-      // resistance beyond the usual completion distance.
-      const directDistance = screenWidth * 0.78;
-      const distance = Math.max(0, gesture.dx);
-      const translated = distance <= directDistance ? distance : directDistance + (distance - directDistance) * 0.28;
-      threadEdgeTranslateX.setValue(Math.min(screenWidth, translated));
+    onPanResponderGrant: () => {
+      threadEdgeTranslateX.stopAnimation();
+      threadBackGestureChangeRef.current?.(true);
     },
+    // Do not translate the screen under the finger here. This thread is an
+    // overlay over a live inbox, rather than a native navigation stack. An
+    // interactive transform can be reset by a concurrent inbox render, which
+    // produces the visible right → back → right bounce. The gesture only
+    // decides whether to close on release.
+    onPanResponderMove: () => undefined,
     onPanResponderRelease: (_event, gesture) => {
       const screenWidth = Dimensions.get("window").width;
       const edgeSwipe = gesture.x0 <= CHAT_THREAD_EDGE_BACK_ZONE && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1;
-      const horizontalSwipe = edgeSwipe && (gesture.dx > Math.max(CHAT_EDGE_BACK_DISTANCE * 2, screenWidth * 0.22) || (gesture.dx > 18 && gesture.vx > 0.72));
-      const returnToThread = () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 360, mass: 0.62, velocity: gesture.vx }).start();
+      // A deliberate quarter-width edge swipe is enough to return to the
+      // inbox. Do not combine this with the older fixed-distance threshold:
+      // on narrow phones that made the gesture feel like it needed a full
+      // screen drag.
+      const horizontalSwipe = edgeSwipe && (gesture.dx >= screenWidth * 0.25 || (gesture.dx > 18 && gesture.vx > 0.72));
+      const returnToThread = () => {
+        threadEdgeTranslateX.setValue(0);
+        threadBackGestureChangeRef.current?.(false);
+      };
       if (!horizontalSwipe) {
         returnToThread();
         return;
@@ -7649,13 +7692,17 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
         returnToThread();
         return;
       }
-      Animated.timing(threadEdgeTranslateX, { toValue: screenWidth, duration: 165, useNativeDriver: true }).start(({ finished }) => {
-        threadEdgeTranslateX.setValue(0);
-        if (finished) closeThread();
-      });
+      // Close state immediately once the gesture passes the completion point.
+      // Waiting for an exit spring leaves the thread mounted long enough for
+      // a data or layout render to reset translateX, which looks like the
+      // conversation bounces forward before returning to the inbox.
+      closeThread();
     },
-    onPanResponderTerminate: () => Animated.spring(threadEdgeTranslateX, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 360, mass: 0.62 }).start(),
-    onPanResponderTerminationRequest: () => true
+    onPanResponderTerminate: () => {
+      threadEdgeTranslateX.setValue(0);
+      threadBackGestureChangeRef.current?.(false);
+    },
+    onPanResponderTerminationRequest: () => false
   }), [actionMessage, attachmentMenuOpen, attachmentPreview, attachmentPreviewGroup.length, selectedGroupPhotoIndex, chatOptionsOpen, contactPickerMode, contactPickerOpen, emojiPickerOpen, forwardPickerOpen, forwardingMessages, groupMembersOpen, pendingPhotoPreviewOpen, profilePhotoPreview, richComposer, selectedMessageIds.length, shareContactPickerOpen, threadEdgeTranslateX, wallpaperPanelOpen]);
 
   useEffect(() => {
@@ -7664,6 +7711,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     // responder's release/terminate paths below.
     threadEdgeTranslateX.stopAnimation();
     threadEdgeTranslateX.setValue(0);
+    threadBackGestureChangeRef.current?.(false);
   }, [activeConversationId, inThread, threadEdgeTranslateX]);
 
   const messageInfoEdgeBackResponder = useMemo(() => PanResponder.create({
@@ -7682,36 +7730,21 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
     onPanResponderTerminationRequest: () => true
   }), []);
 
-  if (inThread) {
-    return (
+  // Keep the real inbox mounted behind an open thread. An interactive iOS
+  // back gesture should reveal the live inbox (including its true search,
+  // selected tab, and scroll state), never a decorative stand-in.
+  const threadOverlay = inThread ? (
       <ChatPhotoViewerContext.Provider value={currentUserId}>
-      <View style={styles.threadTransitionRoot}>
-      <View pointerEvents="none" style={styles.threadBackPreview} accessibilityElementsHidden>
-        <View style={styles.threadBackPreviewHeader}>
-          <Image source={appAssets.chittiMascot} style={styles.threadBackPreviewMascot} resizeMode="contain" />
-          <Image source={appAssets.chittiLettersGold} style={styles.threadBackPreviewBrand} resizeMode="contain" />
-          <View style={styles.threadBackPreviewHeaderActions}><Text style={styles.threadBackPreviewDots}>•••</Text><Text style={styles.threadBackPreviewCompose}>✐</Text></View>
-        </View>
-        <View style={styles.threadBackPreviewSearch}><Text style={styles.threadBackPreviewSearchText}>Search people, groups, or messages</Text></View>
-        <View style={styles.threadBackPreviewTabs}>{(["All", "Unread", "Groups", "Communities", "Contacts"] as MessengerTab[]).map((item) => <View key={item} style={[styles.threadBackPreviewTab, item === tab && styles.threadBackPreviewTabActive]}><Text style={[styles.threadBackPreviewTabText, item === tab && styles.threadBackPreviewTabTextActive]}>{item}</Text></View>)}</View>
-        <View style={styles.threadBackPreviewList}>
-          {personConversations.slice(0, 9).map((conversation) => <View key={conversation.id} style={styles.threadBackPreviewRow}>
-            <InitialsAvatar photoUrl={conversationAvatarUrl(conversation, currentUserId, data?.user?.profilePhotoUrl, data?.user?.name)} label={conversation.otherName || conversation.subject || "F"} imageStyle={styles.threadBackPreviewAvatar} textStyle={styles.threadBackPreviewAvatarText} />
-            <View style={styles.threadBackPreviewCopy}>
-              <View style={styles.threadBackPreviewNameLine}><Text style={styles.threadBackPreviewName} numberOfLines={1}>{conversation.otherName || conversation.subject || "Chitthi"}</Text>{conversation.otherRatingSummary?.count ? <Text style={styles.threadBackPreviewRating}>⭐ {conversation.otherRatingSummary.label}</Text> : null}</View>
-              <Text style={styles.threadBackPreviewMessage} numberOfLines={1}>{safeConversationPreview(conversation) || "Start a conversation"}</Text>
-              <Text style={styles.threadBackPreviewKind} numberOfLines={1}>{conversation.rideRoute ? `Direct letters · ${conversation.rideRoute}` : "Direct letters"}</Text>
-            </View>
-            <Text style={styles.threadBackPreviewTime}>{relativeTime(conversation.lastMessageAt || "") || "Now"}</Text>
-          </View>)}
-        </View>
-      </View>
-      <Animated.View style={[styles.threadScreen, Platform.OS === "android" && styles.threadScreenAndroid, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }, { transform: [{ translateX: threadEdgeTranslateX }] }]} {...threadEdgeBackResponder.panHandlers}>
+      <View style={[styles.threadTransitionRoot, styles.threadTransitionOverlay]}>
+      <Animated.View style={[styles.threadScreen, styles.threadScreenInteractive, Platform.OS === "android" && styles.threadScreenAndroid, { paddingTop: safeAreaInsets.top }, Platform.OS === "android" && { paddingBottom: safeAreaInsets.bottom }, { transform: [{ translateX: threadEdgeTranslateX }, { scale: threadEdgeTranslateX.interpolate({ inputRange: [0, Dimensions.get("window").width], outputRange: [1, .985], extrapolate: "clamp" }) }] }]} {...threadEdgeBackResponder.panHandlers}>
         <View pointerEvents="none" style={[styles.wallpaperBase, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.color || "#080d18" }]}>
           {customWallpaper ? <Image source={{ uri: customWallpaper }} style={styles.wallpaperImage} resizeMode="cover" /> : null}
           {!customWallpaper ? <><View style={[styles.wallpaperGlow, styles.wallpaperGlowOne, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><View style={[styles.wallpaperGlow, styles.wallpaperGlowTwo, { backgroundColor: wallpaperChoices.find((choice) => choice.id === wallpaper)?.accent || "#164d30" }]} /><Text style={styles.wallpaperPattern}>⌖  ·  చి  ·  ◇  ·  ♥  ·  చి  ·  ◇</Text></> : null}
           <View style={[styles.wallpaperShade, Boolean(customWallpaper) && styles.customWallpaperShade]} />
         </View>
+        {/* The wallpaper intentionally begins below the system chrome. Keep the
+            status-safe strip identical to the header, not to the chat paper. */}
+        <View pointerEvents="none" style={[styles.threadStatusFill, { height: safeAreaInsets.top }]} />
         <View style={styles.threadHeader}>
           <TouchableOpacity style={styles.backButton} onPress={closeThread} accessibilityRole="button" accessibilityLabel="Back to conversations">
             <BackIcon />
@@ -8710,14 +8743,14 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
       />
       {ratingDetailsTarget ? <MemberRatingsSheet userId={ratingDetailsTarget.id} memberName={ratingDetailsTarget.name} visible onClose={() => setRatingDetailsTarget(null)} /> : null}
       </ChatPhotoViewerContext.Provider>
-    );
-  }
+  ) : null;
 
   return (
     <View style={[
       styles.screen,
       isLight && styles.screenLight,
       Platform.OS === "android" && styles.screenAndroid,
+      inThread && { paddingTop: safeAreaInsets.top },
       layout.isTablet && { maxWidth: layout.contentMaxWidth, width: "100%", alignSelf: "center" }
     ]}>
       <View pointerEvents="none" style={[styles.chittiBackdrop, isLight && styles.chittiBackdropLight]}>
@@ -9053,6 +9086,7 @@ export function MessengerScreen({ data, isVisible = true, preferredSuggestionCit
           </Pressable>
         </View>
       </Modal>
+      {threadOverlay}
     </View>
   );
 }
@@ -9102,7 +9136,11 @@ const styles = StyleSheet.create({
   chittiBackdropLight: { opacity: 0.06 },
   chittiGlowTop: { position: "absolute", width: 270, height: 270, borderRadius: 135, top: -120, right: -100, backgroundColor: "rgba(19,102,70,0.20)" },
   chittiGlowBottom: { position: "absolute", width: 240, height: 240, borderRadius: 120, bottom: 20, left: -140, backgroundColor: "rgba(3,76,55,0.13)" },
-  threadTransitionRoot: { flex: 1, backgroundColor: "#f3f4f6", position: "relative", overflow: "hidden" },
+  // This remains visible around the native thread overlay and under the iOS
+  // status area. It must match the header exactly—otherwise it reads as a
+  // separate pale band above the conversation.
+  threadTransitionRoot: { flex: 1, backgroundColor: "#C4D9CE", position: "relative", overflow: "hidden" },
+  threadTransitionOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: "transparent" },
   threadBackPreview: { ...StyleSheet.absoluteFillObject, backgroundColor: "#f3f4f6", paddingTop: Platform.OS === "ios" ? 48 : 18 },
   threadBackPreviewHeader: { minHeight: 72, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.07)" },
   threadBackPreviewMascot: { width: 36, height: 46 },
@@ -9128,7 +9166,11 @@ const styles = StyleSheet.create({
   threadBackPreviewMessage: { color: "#707975", fontSize: 13, fontWeight: "500" },
   threadBackPreviewKind: { color: "#92a09a", fontSize: 10, fontWeight: "700" },
   threadBackPreviewTime: { alignSelf: "flex-start", marginTop: 14, color: "#86908b", fontSize: 11, fontWeight: "700" },
-  threadScreen: { flex: 1, backgroundColor: "#D9E5DD", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
+  // This also fills the iOS safe area above the header. Keep it identical to
+  // the header so the Dynamic Island area reads as one continuous surface.
+  threadScreen: { flex: 1, backgroundColor: "#C4D9CE", paddingTop: 0, paddingBottom: 0, position: "relative", overflow: "hidden" },
+  threadStatusFill: { position: "absolute", top: 0, left: 0, right: 0, backgroundColor: "#C4D9CE", zIndex: 1 },
+  threadScreenInteractive: { shadowColor: "#07130f", shadowOpacity: .24, shadowRadius: 18, shadowOffset: { width: -5, height: 0 }, elevation: 12 },
   threadScreenAndroid: { paddingBottom: 0 },
   threadKeyboardViewport: { flex: 1, position: "relative", overflow: "hidden" },
   threadKeyboardBody: { flex: 1, position: "relative", overflow: "visible" },
@@ -9885,7 +9927,7 @@ const styles = StyleSheet.create({
   listContentLight: { backgroundColor: "#f3f4f6" },
   loadMoreLetters: { alignSelf: "center", borderWidth: 1, borderColor: theme.colors.warning, borderRadius: theme.radius.pill, paddingHorizontal: 22, paddingVertical: 11, marginTop: 8, marginBottom: 12 },
   loadMoreLettersText: { color: theme.colors.warning, fontWeight: "800", fontSize: 14 },
-  chatRow: { minHeight: 76, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, marginBottom: 6, gap: 11, borderWidth: 1, borderColor: "rgba(219,180,107,0.14)", borderRadius: 18, backgroundColor: "rgba(7,24,22,0.76)", shadowColor: "#000", shadowOpacity: 0.14, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2, overflow: "hidden" },
+  chatRow: { minHeight: 76, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, gap: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(219,180,107,0.16)" },
   chatRowLight: { minHeight: 74, marginBottom: 0, paddingHorizontal: 18, paddingVertical: 10, backgroundColor: "#ffffff", borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(15,23,42,0.09)", borderRadius: 0, shadowOpacity: 0, elevation: 0 },
   searchResultsSection: { marginTop: 14, marginBottom: 2 },
   searchSectionTitle: { color: "#F5F3EB", fontSize: 22, lineHeight: 28, fontWeight: "800", paddingHorizontal: 4, marginBottom: 8 },
@@ -9912,7 +9954,7 @@ const styles = StyleSheet.create({
   searchLinkIconText: { color: "#1FAA63", fontSize: 24, fontWeight: "800", marginTop: -2 },
   chatRowUnreadLight: { backgroundColor: "#f1faf6" },
   unreadAccent: { position: "absolute", left: 0, top: 15, bottom: 15, width: 3, borderTopRightRadius: 3, borderBottomRightRadius: 3, backgroundColor: "#45C56A" },
-  communityRow: { backgroundColor: "rgba(8,25,24,0.82)" },
+  communityRow: {},
   avatarWrap: { position: "relative" },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#123c27", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1.5, borderColor: "rgba(210,167,89,0.54)" },
   avatarImage: { width: "100%", height: "100%" },

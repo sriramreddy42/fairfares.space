@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Platform, StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import type { PeopleMapMember, PeopleMapProps } from "./PeopleMap";
 import { UserAvatar } from "./UserAvatar";
 
-export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegionChangeComplete }: PeopleMapProps) {
+export function PeopleMap({ members, focus, focusSelected, onMemberPress, onAreaPress, onRegionChangeComplete }: PeopleMapProps) {
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
   const points = useMemo(() => members.filter((member) => Number.isFinite(member.latitude) && Number.isFinite(member.longitude) && !(member.latitude === 0 && member.longitude === 0)), [members]);
@@ -29,7 +29,7 @@ export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegi
         const angle = ((stableHash(cityKey) % 360) + (slot * 360) / slots) * Math.PI / 180;
         // Give every person breathing room at the default city zoom. These
         // are deterministic city-level offsets, not homes or live locations.
-        const radius = .092 + ringIndex * .065;
+        const radius = .125 + ringIndex * .085;
         return {
           ...member,
           key: `${member.id}-${cityKey}`,
@@ -38,6 +38,22 @@ export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegi
         };
       }));
   }, [points]);
+  // An affiliation-only search has no chosen city. At that level, show one
+  // marker per city with a member count; individual pins appear after a city
+  // is selected. This keeps a nationwide/company result legible.
+  const areaMarkers = useMemo(() => [...new Map(points.map((member) => [member.city.trim().toLocaleLowerCase(), member])).entries()].map(([key, representative]) => ({
+    key,
+    city: representative.city,
+    latitude: representative.latitude,
+    longitude: representative.longitude,
+    count: points.filter((member) => member.city.trim().toLocaleLowerCase() === key).length,
+  })), [points]);
+  const isAreaOverview = !focusSelected;
+  // react-native-maps on iOS can abort inside AIRMap when Fabric reconciles a
+  // changing marker child list in place. Remount the native map when the pin
+  // dataset/mode actually changes instead of asking AIRMap to insert and move
+  // custom marker views in an existing hierarchy.
+  const mapContentKey = useMemo(() => `${isAreaOverview ? "areas" : "people"}:${(isAreaOverview ? areaMarkers : markers).map((marker) => marker.key).join("|")}`, [areaMarkers, isAreaOverview, markers]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -47,8 +63,8 @@ export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegi
         return;
       }
       if (points.length) {
-        if (markers.length === 1) {
-          const marker = markers[0];
+        if ((isAreaOverview ? areaMarkers : markers).length === 1) {
+          const marker = (isAreaOverview ? areaMarkers : markers)[0];
           mapRef.current?.animateToRegion({ latitude: marker.latitude, longitude: marker.longitude, latitudeDelta: .36, longitudeDelta: .36 }, 300);
           return;
         }
@@ -63,14 +79,18 @@ export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegi
       }
     }, 180);
     return () => clearTimeout(timer);
-  }, [focus, focusSelected, markers, points, mapReady]);
+  }, [areaMarkers, focus, focusSelected, isAreaOverview, markers, points, mapReady]);
 
   const center = (focusSelected ? focus : null) || points[0] || focus || { latitude: 20, longitude: 0 };
   return <MapView
+    key={mapContentKey}
     ref={mapRef}
     onMapReady={() => setMapReady(true)}
     provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
+    // Muted Standard keeps roads and parkland legible on iOS without competing
+    // with member pins, housing labels, and the map controls.
     mapType={Platform.OS === "ios" ? "mutedStandard" : "standard"}
+    userInterfaceStyle="light"
     style={StyleSheet.absoluteFillObject}
     initialRegion={{ latitude: center.latitude, longitude: center.longitude, latitudeDelta: focus || points.length ? .36 : 100, longitudeDelta: focus || points.length ? .36 : 100 }}
     toolbarEnabled={false}
@@ -83,8 +103,16 @@ export function PeopleMap({ members, focus, focusSelected, onMemberPress, onRegi
     moveOnMarkerPress={false}
     onRegionChangeComplete={onRegionChangeComplete}
   >
-    {markers.map((member, index) => <PeopleMapPersonPin key={member.key} member={member} index={index} onPress={onMemberPress} />)}
+    {isAreaOverview
+      ? areaMarkers.map((area) => <PeopleMapAreaPin key={area.key} city={area.city} latitude={area.latitude} longitude={area.longitude} count={area.count} onPress={onAreaPress} />)
+      : markers.map((member) => <PeopleMapPersonPin key={member.key} member={member} onPress={onMemberPress} />)}
   </MapView>;
+}
+
+function PeopleMapAreaPin({ city, latitude, longitude, count, onPress }: { city: string; latitude: number; longitude: number; count: number; onPress?: (city: string) => void }) {
+  return <Marker coordinate={{ latitude, longitude }} onPress={() => onPress?.(city)} tracksViewChanges={false}>
+    <View style={styles.areaPin}><Text style={styles.areaPinCount}>{count}</Text><Text style={styles.areaPinCity} numberOfLines={1}>{city.split(",")[0]}</Text></View>
+  </Marker>;
 }
 
 function stableHash(value: string) {
@@ -93,8 +121,7 @@ function stableHash(value: string) {
   return hash >>> 0;
 }
 
-function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMember & { latitude: number; longitude: number }; index: number; onPress?: (member: PeopleMapMember) => void }) {
-  const float = useRef(new Animated.Value(0)).current;
+function PeopleMapPersonPin({ member, onPress }: { member: PeopleMapMember & { latitude: number; longitude: number }; onPress?: (member: PeopleMapMember) => void }) {
   const isExternalContact = member.source === "EXTERNAL_CONTACT" || member.isExternalContact;
   const isContact = member.source === "CONTACT" || member.source === "SAVED_CONTACT" || isExternalContact;
   const hasCompanyMatch = Boolean(member.boosted);
@@ -109,47 +136,50 @@ function PeopleMapPersonPin({ member, index, onPress }: { member: PeopleMapMembe
     : member.housingIntent === "NEED_ROOMMATE"
       ? "Need roommate"
       : member.housingIntent === "NEED_PLACE" ? "Need place" : "";
-  const budget = Number(member.housingBudget || 0);
-  const housingCallout = housingLabel ? `${housingLabel}${budget > 0 ? ` · up to $${Math.round(budget)}/mo` : ""}` : "";
-  const companyName = String(member.companyName || "").trim();
-
-  useEffect(() => {
-    // Keep the map alive without a storm of animated markers on a dense map.
-    // The first few visible people get a gentle offset; all others stay still.
-    if (index > 5) return undefined;
-    const animation = Animated.loop(Animated.sequence([
-      Animated.delay(index * 180),
-      Animated.timing(float, { toValue: 1, duration: 1500 + index * 90, useNativeDriver: true }),
-      Animated.timing(float, { toValue: 0, duration: 1500 + index * 90, useNativeDriver: true }),
-    ]));
-    animation.start();
-    return () => animation.stop();
-  }, [float, index]);
+  // The map is a spatial overview. Rent stays in the member/listing card
+  // after a tap; repeating it beside every pin makes dense cities unreadable.
+  const housingCallout = housingLabel;
+  const rawCompanyName = String(member.companyName || "").trim();
+  const companyName = rawCompanyName ? (member.isViewer ? `You · ${rawCompanyName}` : rawCompanyName) : "";
+  const companyOnLeft = stableHash(`${member.id}:${companyName}`) % 2 === 0;
 
   return <Marker
     onPress={() => onPress?.(member)}
     coordinate={{ latitude: member.latitude, longitude: member.longitude }}
     anchor={{ x: .5, y: housingCallout ? .34 : .52 }}
-    tracksViewChanges={index < 6}
+    // Custom marker subviews are static. Tracking their React updates is the
+    // iOS AIRMap crash path; imagery loads correctly on the next map remount.
+    tracksViewChanges={false}
   >
-    <Animated.View style={[styles.pinWrap, { transform: [{ scale: (hasCompanyMatch ? 1.16 : 1) * demandScale }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }]}>
-      <View style={[styles.pinHalo, intentStyle.halo, isContact && styles.pinHaloContact, isExternalContact && styles.pinHaloExternalContact, hasCompanyMatch && styles.pinHaloBoosted]} />
-      <View style={[styles.marker, intentStyle.marker, isContact && styles.markerContact, isExternalContact && styles.markerExternalContact, hasCompanyMatch && styles.markerBoosted]}>
-        <UserAvatar
-          photoUrl={member.photoUrl}
-          style={styles.markerImage}
-          imageStyle={styles.markerImage}
-          fallback={<Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
-        />
-        <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, isExternalContact && styles.pinStatusExternalContact, hasCompanyMatch && styles.pinStatusBoosted]}><Text style={styles.pinStatusText}>{isExternalContact ? "+" : isContact ? "✓" : "✦"}</Text></View>
+    <View style={[styles.pinWrap, { transform: [{ scale: (hasCompanyMatch ? 1.16 : 1) * demandScale }] }]}>
+      <View style={styles.pinMarkerStage}>
+        <View style={[styles.pinHalo, intentStyle.halo, isContact && styles.pinHaloContact, isExternalContact && styles.pinHaloExternalContact, hasCompanyMatch && styles.pinHaloBoosted, member.isViewer && styles.pinHaloViewer]} />
+        <View style={styles.pinMarkerRow}>
+          <View style={[styles.pinCompanySlot, styles.pinCompanySlotLeft]}>{companyName && companyOnLeft ? <View style={[styles.pinCompanySide, member.isViewer && styles.pinCompanySideViewer]}><Text style={[styles.pinCompanySideText, member.isViewer && styles.pinCompanySideTextViewer]} numberOfLines={1}>{companyName}</Text></View> : null}</View>
+          <View style={[styles.marker, intentStyle.marker, isContact && styles.markerContact, isExternalContact && styles.markerExternalContact, hasCompanyMatch && styles.markerBoosted, member.isViewer && styles.markerViewer]}>
+            <UserAvatar
+              photoUrl={member.photoUrl}
+              style={styles.markerImage}
+              imageStyle={styles.markerImage}
+              fallback={<Text style={styles.markerInitial}>{member.name.slice(0, 1).toUpperCase()}</Text>}
+            />
+            <View style={[styles.pinStatus, intentStyle.status, isContact && styles.pinStatusContact, isExternalContact && styles.pinStatusExternalContact, hasCompanyMatch && styles.pinStatusBoosted, member.isViewer && styles.pinStatusViewer]}><Text style={styles.pinStatusText}>{member.isViewer ? "•" : isExternalContact ? "+" : isContact ? "✓" : "✦"}</Text></View>
+          </View>
+          <View style={[styles.pinCompanySlot, styles.pinCompanySlotRight]}>{companyName && !companyOnLeft ? <View style={[styles.pinCompanySide, member.isViewer && styles.pinCompanySideViewer]}><Text style={[styles.pinCompanySideText, member.isViewer && styles.pinCompanySideTextViewer]} numberOfLines={1}>{companyName}</Text></View> : null}</View>
+        </View>
       </View>
-      {housingCallout ? <View style={[styles.pinHousingCallout, companyName && styles.pinHousingCalloutWithCompany, member.housingIntent === "HAVE_PLACE" ? styles.pinHousingCalloutHavePlace : member.housingIntent === "NEED_ROOMMATE" ? styles.pinHousingCalloutNeedRoommate : styles.pinHousingCalloutNeedPlace]}>{companyName ? <Text style={styles.pinHousingCompanyText} numberOfLines={1}>{companyName}</Text> : null}<Text style={styles.pinHousingCalloutText} numberOfLines={1}>{housingCallout}</Text></View> : null}
-    </Animated.View>
+      {housingCallout ? <View style={[styles.pinHousingCallout, member.housingIntent === "HAVE_PLACE" ? styles.pinHousingCalloutHavePlace : member.housingIntent === "NEED_ROOMMATE" ? styles.pinHousingCalloutNeedRoommate : styles.pinHousingCalloutNeedPlace]}><Text style={styles.pinHousingCalloutText} numberOfLines={1}>{housingCallout}</Text></View> : null}
+    </View>
   </Marker>;
 }
 
 const styles = StyleSheet.create({
-  pinWrap: { width: 88, alignItems: "center", paddingVertical: 4 },
+  areaPin: { minWidth: 58, paddingHorizontal: 9, paddingVertical: 7, alignItems: "center", borderRadius: 18, borderWidth: 2, borderColor: "#c78300", backgroundColor: "#fff8df", shadowColor: "#573a00", shadowOpacity: .25, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 5 },
+  areaPinCount: { color: "#9b6200", fontSize: 20, fontWeight: "900", lineHeight: 22 },
+  areaPinCity: { maxWidth: 94, color: "#263e35", fontSize: 9, fontWeight: "900", marginTop: 1 },
+  pinWrap: { width: 198, alignItems: "center", paddingVertical: 4 },
+  pinMarkerStage: { position: "relative", width: "100%", height: 54, alignItems: "center" },
+  pinMarkerRow: { width: "100%", height: 54, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   pinHalo: { position: "absolute", top: 0, width: 54, height: 54, borderRadius: 27, backgroundColor: "rgba(114, 137, 255, .18)", borderWidth: 1, borderColor: "rgba(94, 117, 231, .38)" },
   pinHaloContact: { backgroundColor: "rgba(32, 201, 149, .18)", borderColor: "rgba(13, 148, 105, .38)" },
   pinHaloExternalContact: { backgroundColor: "rgba(111, 136, 255, .12)", borderColor: "rgba(96, 121, 239, .36)" },
@@ -157,6 +187,7 @@ const styles = StyleSheet.create({
   pinHaloNeedPlace: { backgroundColor: "rgba(114, 137, 255, .18)", borderColor: "rgba(94, 117, 231, .42)" },
   pinHaloNeedRoommate: { backgroundColor: "rgba(255, 168, 51, .20)", borderColor: "rgba(218, 126, 17, .44)" },
   pinHaloBoosted: { backgroundColor: "rgba(255, 190, 43, .24)", borderColor: "#e9a810" },
+  pinHaloViewer: { backgroundColor: "rgba(19, 192, 135, .22)", borderColor: "#0da875", borderWidth: 2 },
   marker: { width: 45, height: 45, borderRadius: 23, padding: 3, borderWidth: 2.5, borderColor: "#7189ff", backgroundColor: "#ffffff", shadowColor: "#0a1f19", shadowOpacity: .28, shadowRadius: 7, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   markerContact: { borderColor: "#20c995" },
   markerExternalContact: { borderColor: "#7189ff", borderStyle: "dashed" },
@@ -164,6 +195,7 @@ const styles = StyleSheet.create({
   markerNeedPlace: { borderColor: "#7189ff" },
   markerNeedRoommate: { borderColor: "#e18a13" },
   markerBoosted: { borderColor: "#e9a810", borderWidth: 3 },
+  markerViewer: { borderColor: "#0da875", borderWidth: 3 },
   markerImage: { width: 33, height: 33, borderRadius: 17, backgroundColor: "#d8f7e8" },
   markerInitial: { flex: 1, color: "#087254", fontSize: 15, fontWeight: "900", textAlign: "center", textAlignVertical: "center" },
   pinStatus: { position: "absolute", right: -4, bottom: -3, minWidth: 18, paddingHorizontal: 4, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: "#ffffff", backgroundColor: "#6f88ff" },
@@ -173,12 +205,25 @@ const styles = StyleSheet.create({
   pinStatusNeedPlace: { backgroundColor: "#6079ef" },
   pinStatusNeedRoommate: { backgroundColor: "#d87e0c" },
   pinStatusBoosted: { backgroundColor: "#dc9700" },
+  pinStatusViewer: { backgroundColor: "#087d59" },
   pinStatusText: { color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
-  pinHousingCallout: { maxWidth: 126, minHeight: 19, marginTop: 4, justifyContent: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 7, shadowColor: "#102a21", shadowOpacity: .18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
-  pinHousingCalloutWithCompany: { minHeight: 31, paddingVertical: 3 },
+  pinCompanySlot: { width: 72, height: 54, justifyContent: "center" },
+  pinCompanySlotLeft: { alignItems: "flex-end", paddingRight: 4 },
+  pinCompanySlotRight: { alignItems: "flex-start", paddingLeft: 4 },
+  // Every FairFares member with a saved company or school gets the same
+  // readable affiliation pill. Only the viewer adds the “You ·” prefix.
+  pinCompanySide: { maxWidth: 76, minHeight: 22, justifyContent: "center", borderRadius: 11, borderWidth: 1, borderColor: "rgba(255,255,255,.92)", paddingHorizontal: 8, backgroundColor: "#075e47", shadowColor: "#102a21", shadowOpacity: .24, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
+  pinCompanySideText: { color: "#ffffff", fontSize: 9, lineHeight: 11, fontWeight: "900", textAlign: "center" },
+  // The member's own affiliation is a useful orientation cue. Give it a
+  // stronger treatment than other company labels without changing their map
+  // density or prominence.
+  // Reserve enough content width for the full “You · Company” string instead
+  // of letting the normal compact company slot truncate the member's own tag.
+  pinCompanySideViewer: { minWidth: 96, maxWidth: 112, minHeight: 25, paddingHorizontal: 9, borderRadius: 13, borderWidth: 1.5, borderColor: "#ffffff", shadowOpacity: .26, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  pinCompanySideTextViewer: { color: "#ffffff", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+  pinHousingCallout: { maxWidth: 96, minHeight: 19, marginTop: 4, justifyContent: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 7, shadowColor: "#102a21", shadowOpacity: .18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
   pinHousingCalloutHavePlace: { borderColor: "#18ad7a", backgroundColor: "rgba(239,255,247,.97)" },
   pinHousingCalloutNeedPlace: { borderColor: "#7189ff", backgroundColor: "rgba(246,248,255,.97)" },
   pinHousingCalloutNeedRoommate: { borderColor: "#e18a13", backgroundColor: "rgba(255,249,238,.97)" },
   pinHousingCalloutText: { color: "#173b31", fontSize: 8, lineHeight: 10, fontWeight: "900", textAlign: "center" },
-  pinHousingCompanyText: { color: "#087254", fontSize: 8, lineHeight: 10, fontWeight: "900", textAlign: "center" },
 });

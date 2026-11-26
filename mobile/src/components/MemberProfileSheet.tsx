@@ -3,7 +3,7 @@ import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacit
 import { getCommunityUserProfile, updateMemberConnection } from "../api/client";
 import { UserAvatar } from "./UserAvatar";
 import { MemberRatingsSheet } from "./MemberRatingsSheet";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { avatarInitials } from "../utils/text";
 
 export type MemberProfileTarget = { id: number; name: string; photoUrl: string; isGuest?: boolean };
@@ -20,7 +20,7 @@ type Props = {
 // A single member sheet keeps a person's avatar and name consistent wherever
 // they appear: Ask Community, comments, and group messages in Chitthi.
 export const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, Props>(function MemberProfileSheet({ viewerId, isSignedIn, onRequireLogin, onOpenHousing, onOpenUserChat }, ref) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof getCommunityUserProfile>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -82,6 +82,7 @@ export const MemberProfileSheet = React.forwardRef<MemberProfileSheetHandle, Pro
         <UserAvatar photoUrl={profile.photoUrl} style={styles.avatar} imageStyle={styles.avatarImage} fallback={<Text style={styles.avatarText}>{avatarInitials(profile.name)}</Text>} />
         <View style={styles.identity}><Text style={[styles.name, isLight && styles.textPrimaryLight]}>{profile.name}</Text>
           <Text style={[styles.memberLine, isLight && styles.textSecondaryLight]}>{profile.isGuest ? "Guest account" : "FairFares community member"}</Text>
+          {profile.companyOrSchool ? <Text style={[styles.affiliation, isLight && styles.textSecondaryLight]} numberOfLines={1}>{profile.affiliationType === "SCHOOL" ? `Studies at ${profile.companyOrSchool}` : `Works at ${profile.companyOrSchool}`}</Text> : null}
           <Text style={[styles.summary, isLight && styles.textSecondaryLight]}>{loading ? "Loading profile…" : loadFailed ? "Listings temporarily unavailable" : `${profile.listings.length} active ${profile.listings.length === 1 ? "listing" : "listings"}`}</Text>
         </View>
         {!profile.isGuest && profile.ratingSummary?.count ? <TouchableOpacity style={styles.ratingsButton} onPress={() => setRatingsOpen(true)} accessibilityRole="button" accessibilityLabel={`View ${profile.name}'s ratings`}><Text style={styles.ratingsButtonText}>⭐ {profile.ratingSummary.label} · View ratings</Text></TouchableOpacity> : null}
@@ -106,9 +107,9 @@ const styles = StyleSheet.create({
   grabber: { width: 46, height: 5, borderRadius: 99, marginTop: 10, marginBottom: 10, backgroundColor: "rgba(255,255,255,.55)" },
   cover: { alignSelf: "stretch", height: 92, marginHorizontal: -20, marginTop: -2, paddingHorizontal: 21, paddingTop: 18, backgroundColor: "#0d7158", overflow: "hidden" }, coverMark: { color: "#d8fff0", fontSize: 10, letterSpacing: 1.5, fontWeight: "900" }, coverPattern: { position: "absolute", right: 30, top: 5, color: "rgba(218,255,241,.42)", fontSize: 66, fontWeight: "900" },
   close: { position: "absolute", right: 14, top: 32, zIndex: 2, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,.78)" },
-  closeLight: { backgroundColor: "#eef1f3" }, closeText: { color: theme.colors.soft, fontSize: 24, lineHeight: 26 }, closeTextLight: { color: "#24282d" },
+  closeLight: { backgroundColor: "#eef1f3" }, closeText: { color: "#071a14", fontSize: 24, lineHeight: 26 }, closeTextLight: { color: "#071a14" },
   avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: "#173b2d", marginTop: -47, borderWidth: 4, borderColor: "#fff" }, avatarImage: { borderRadius: 40 }, avatarText: { color: "#a8ecd1", fontSize: 25, fontWeight: "900" },
-  identity: { alignItems: "center", gap: 2 }, name: { color: theme.colors.text, fontSize: 24, lineHeight: 29, fontWeight: "900", textAlign: "center" }, memberLine: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, summary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
+  identity: { alignItems: "center", gap: 2 }, name: { color: theme.colors.text, fontSize: 24, lineHeight: 29, fontWeight: "900", textAlign: "center" }, memberLine: { color: theme.colors.soft, fontSize: 13, fontWeight: "800" }, affiliation: { color: theme.colors.brand, fontSize: 13, fontWeight: "900", maxWidth: "92%" }, summary: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
   message: { width: "100%", minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: 999, backgroundColor: theme.colors.brand, marginTop: 5 }, messageText: { color: "#06291e", fontSize: 14, fontWeight: "900" }, ownProfile: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 5 },
   connection: { width: "100%", minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: "rgba(111, 232, 184, .55)", marginTop: 1 }, connectionLight: { borderColor: "#83dcb7" }, connectionText: { color: theme.colors.brand, fontSize: 13, fontWeight: "900" }, connectionStatus: { color: theme.colors.brand, fontSize: 12, fontWeight: "800", marginTop: 3 },
   ratingsButton: { minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: "center", backgroundColor: "rgba(245,172,27,.13)", marginTop: 1 }, ratingsButtonText: { color: "#9a6500", fontSize: 12, fontWeight: "900" },

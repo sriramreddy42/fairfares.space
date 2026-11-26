@@ -3523,6 +3523,14 @@ export type FairFaresContact = {
   longitude: number;
 };
 
+export type PeopleSearchResult = {
+  id: number;
+  name: string;
+  photoUrl: string;
+  context: string;
+  connectionState: "NONE" | "OUTGOING_PENDING" | "INCOMING_PENDING" | "CONNECTED";
+};
+
 export async function findChatPeopleByContactHashes(phoneHashes: string[]) {
   return request<{ ok: boolean; people: Array<FairFaresContact & { phoneHash: string }> }>("/api/chat/people/by-contacts", {
     method: "POST",
@@ -3734,6 +3742,8 @@ export type PeopleSuggestion = {
   latitude: number;
   longitude: number;
   housingIntent?: "HAVE_PLACE" | "NEED_PLACE" | "NEED_ROOMMATE" | "";
+  mutualCount?: number;
+  sharedCount?: number;
 };
 
 export type PeopleMapCityPool = {
@@ -3745,6 +3755,7 @@ export type PeopleMapCityPool = {
   companyMatches: number;
   people: Array<{
     id: number;
+    isViewer?: boolean;
     name: string;
     photoUrl: string;
     city: string;
@@ -3774,6 +3785,11 @@ export async function getPeopleConnections() {
   return payload.people || [];
 }
 
+export async function searchPeople(query: string) {
+  const payload = await request<{ ok: boolean; people: PeopleSearchResult[] }>(`/api/mobile/people/search?q=${encodeURIComponent(query.trim())}`);
+  return payload.people || [];
+}
+
 export async function getPeopleMapCityPool(city: string, company = "", offset = 0) {
   const params = new URLSearchParams({ city, offset: String(offset) });
   if (company.trim()) params.set("company", company.trim());
@@ -3787,6 +3803,15 @@ export async function getPeopleMapCityPool(city: string, company = "", offset = 
       || Math.abs(area.latitude) > 90 || Math.abs(area.longitude) > 180
       || (area.latitude === 0 && area.longitude === 0))) {
     throw new Error("City not found. Choose a city and state from the suggestions.");
+  }
+  return area;
+}
+
+export async function getPeopleMapOverview() {
+  const payload = await request<{ ok: boolean; area: PeopleMapCityPool }>("/api/mobile/people/map?overview=1");
+  const area = payload.area;
+  if (!payload.ok || !area || !Array.isArray(area.people)) {
+    throw new Error("People map results are unavailable. Please try again.");
   }
   return area;
 }

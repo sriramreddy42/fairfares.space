@@ -3,7 +3,7 @@ import { BlurView } from "expo-blur";
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native";
 import { absoluteAssetUrl } from "../api/client";
 import { appAssets } from "../assets";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { HousingPost } from "../types";
 import { shareHousingListing } from "../utils/listingShare";
 import { housingMessageRecipientLabel, suggestedHousingMessage } from "../utils/housingMessage";
@@ -23,7 +23,7 @@ type Props = {
 };
 
 export function HousingCard({ post, onMessage, onOpen, distanceLabel, width, height, compact = false, messageSent = false, onSendMessage, onSeeConversation, ownListing = false }: Props) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const isAskCommunityOffer = post.sourceKind === "ASK_COMMUNITY";
   const [draft, setDraft] = useState(() => suggestedHousingMessage(post));
   const [sending, setSending] = useState(false);

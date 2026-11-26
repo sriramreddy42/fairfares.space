@@ -85,10 +85,14 @@ const CRITICAL_BRAND_IMAGE_SOURCES = [
 const REVIEW_PROMPT_DELAY_MS = 180_000;
 const REVIEW_PROMPT_READY_GRACE_MS = 5 * 60_000;
 const reviewPromptStorageKey = (userId: number | string) => `fairfares.mobile.review-prompt.v1.${userId}`;
-const APPEARANCE_STORAGE_KEY = "fairfares.mobile.appearance.v1";
 const UPDATE_DISMISS_STORAGE_KEY = "fairfares.mobile.update-dismissed.v1";
 const UPDATE_RECHECK_MS = 15 * 60_000;
-type AppearancePreference = "system" | "dark" | "light";
+
+function appDefaultAppearance(): "dark" | "light" {
+  // Keep the return type broad so existing screen props retain their stable
+  // light/dark contract, while the product policy remains dark-only.
+  return "dark";
+}
 
 const US_STATE_OPTIONS = [
   ["AL", "Alabama"], ["AK", "Alaska"], ["AZ", "Arizona"], ["AR", "Arkansas"], ["CA", "California"], ["CO", "Colorado"], ["CT", "Connecticut"], ["DE", "Delaware"], ["DC", "District of Columbia"], ["FL", "Florida"], ["GA", "Georgia"], ["HI", "Hawaii"], ["ID", "Idaho"], ["IL", "Illinois"], ["IN", "Indiana"], ["IA", "Iowa"], ["KS", "Kansas"], ["KY", "Kentucky"], ["LA", "Louisiana"], ["ME", "Maine"], ["MD", "Maryland"], ["MA", "Massachusetts"], ["MI", "Michigan"], ["MN", "Minnesota"], ["MS", "Mississippi"], ["MO", "Missouri"], ["MT", "Montana"], ["NE", "Nebraska"], ["NV", "Nevada"], ["NH", "New Hampshire"], ["NJ", "New Jersey"], ["NM", "New Mexico"], ["NY", "New York"], ["NC", "North Carolina"], ["ND", "North Dakota"], ["OH", "Ohio"], ["OK", "Oklahoma"], ["OR", "Oregon"], ["PA", "Pennsylvania"], ["RI", "Rhode Island"], ["SC", "South Carolina"], ["SD", "South Dakota"], ["TN", "Tennessee"], ["TX", "Texas"], ["UT", "Utah"], ["VT", "Vermont"], ["VA", "Virginia"], ["WA", "Washington"], ["WV", "West Virginia"], ["WI", "Wisconsin"], ["WY", "Wyoming"]
@@ -308,8 +312,11 @@ function FairFaresApp() {
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const systemColorScheme = useColorScheme();
-  const [appearancePreference, setAppearancePreference] = useState<AppearancePreference>("light");
-  const effectiveColorScheme = appearancePreference === "system" ? (systemColorScheme || "dark") : appearancePreference;
+  // FairFares uses the calmer charcoal palette by default. A user can still
+  // explicitly choose light or follow the system from Account.
+  // FairFares uses one deliberate visual system. Keeping the appearance
+  // fixed avoids a half-light / half-dark experience across native surfaces.
+  const effectiveColorScheme = appDefaultAppearance();
   const wideLaunchLayout = viewportWidth / Math.max(viewportHeight, 1) > 1.05;
   const [activeTab, setActiveTab] = useState<TabKey>("community");
   const [gasPriceRefreshKey, setGasPriceRefreshKey] = useState(0);
@@ -394,22 +401,7 @@ function FairFaresApp() {
     setUpdatePolicy(null);
   }
 
-  useEffect(() => {
-    let active = true;
-    AsyncStorage.getItem(APPEARANCE_STORAGE_KEY).then((saved) => {
-      if (!active) return;
-      const preference: AppearancePreference = saved === "system" || saved === "light" || saved === "dark" ? saved : "light";
-      setPlatformAppearance(preference);
-      setAppearancePreference(preference);
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, []);
-
-  function changeAppearance(preference: AppearancePreference) {
-    setPlatformAppearance(preference);
-    setAppearancePreference(preference);
-    void AsyncStorage.setItem(APPEARANCE_STORAGE_KEY, preference);
-  }
+  useEffect(() => { setPlatformAppearance("dark"); }, []);
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const authenticatedUserIdRef = useRef(0);
   authenticatedUserIdRef.current = Number(data?.user?.id || 0);
@@ -419,7 +411,6 @@ function FairFaresApp() {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [identifier, setIdentifier] = useState("");
   const [signupCompany, setSignupCompany] = useState("");
-  const [profileCompletionCompany, setProfileCompletionCompany] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupPhone, setSignupPhone] = useState("");
   const [signupCallingCode, setSignupCallingCode] = useState("+1");
@@ -511,6 +502,14 @@ function FairFaresApp() {
   const [selectedService, setSelectedService] = useState<ServiceKey>("cars");
   const [listingOpen, setListingOpen] = useState(false);
   const [housingListingSuccess, setHousingListingSuccess] = useState<HousingPost | null>(null);
+  const [communityHousingMatchRequest, setCommunityHousingMatchRequest] = useState<{
+    key: number;
+    city: string;
+    area: string;
+    budget: string;
+    kind: "places" | "renters" | "roommates";
+    matches?: HousingPost[];
+  } | null>(null);
   const [listingForm, setListingForm] = useState<MobileHousingPostInput>(emptyListingForm);
   const [moveCurrentCity, setMoveCurrentCity] = useState("");
   const [listingMoveAnswer, setListingMoveAnswer] = useState<"" | "YES" | "NO">("");
@@ -545,6 +544,7 @@ function FairFaresApp() {
   // ask before it discards a partially completed listing.
   const listingFormBaselineRef = useRef("");
   const [bottomTabsHidden, setBottomTabsHidden] = useState(false);
+  const [bottomTabsCompact, setBottomTabsCompact] = useState(false);
   const [messengerMediaTransferActive, setMessengerMediaTransferActive] = useState(false);
 
   useEffect(() => startJavaScriptResponsivenessMonitor(), []);
@@ -552,6 +552,7 @@ function FairFaresApp() {
   useEffect(() => {
     setPerformanceContext(`${activeTab}${bottomTabsHidden ? ":thread" : ""}${loading ? ":loading" : ""}`);
   }, [activeTab, bottomTabsHidden, loading]);
+  useEffect(() => { setBottomTabsCompact(false); }, [activeTab]);
   const [staffPickupOpen, setStaffPickupOpen] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
@@ -756,10 +757,10 @@ function FairFaresApp() {
       ? "need_place"
       : "have_place";
   const housingSuccessSearchLabel = housingListingSuccess?.roommateIntent
-    ? "Search matching roommates"
+    ? "View matching roommates"
     : housingListingSuccess?.mode === "HAVE_PLACE"
-      ? "Search matching renters"
-      : "Search matching places";
+      ? "View matching renters"
+      : "View matching places";
   const housingSuccessShareLabel = housingListingSuccess?.mode === "HAVE_PLACE" ? "↗ Share listing" : "↗ Share request";
   const housingSuccessCopy = housingListingSuccess?.roommateIntent
     ? "Your request is live. Search matching roommates nearby, and replies will arrive in Chitthi."
@@ -1171,7 +1172,9 @@ function FairFaresApp() {
     const user = data?.user;
     const userId = Number(user?.id || 0);
     const profileIncomplete = Boolean(userId && (
-      !user?.profilePhotoUrl?.trim()
+      // Character avatars are represented by their seed and do not require a
+      // separately stored photo URL.
+      (!user?.profilePhotoUrl?.trim() && !user?.avatarSeed?.trim())
       || !user?.name?.trim()
       || !user?.email?.trim()
       || !user?.phone?.trim()
@@ -1202,10 +1205,9 @@ function FairFaresApp() {
 
   useEffect(() => {
     setProfileCompletionName(data?.user?.name || "");
-    setProfileCompletionCompany(data?.user?.relocationCompany || "");
     setProfileCompletionEmail(data?.user?.email || "");
     setProfileCompletionPhone(data?.user?.phone || "");
-  }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone, data?.user?.relocationCompany]);
+  }, [data?.user?.id, data?.user?.name, data?.user?.email, data?.user?.phone]);
 
   useEffect(() => {
     setCharacterAvatarChoice(null);
@@ -2723,6 +2725,11 @@ function FairFaresApp() {
         void trackProductEvent(eventName, { source: "housing_post" });
       }
       setListingOpen(false);
+      // Carry this request's maximum budget into the success-card match
+      // search. A previous browser filter must not decide its results.
+      if (!listingPayload.listingId && !listingHasPropertyDetails) {
+        setSelectedBudget(listingPayload.rentMax.trim() || listingPayload.rentMin.trim());
+      }
       setHousingListingSuccess(payload.post);
       setVisiblePosts((current) => current.map((post) => post.id === payload.post.id ? payload.post : post));
       setData((current) =>
@@ -3248,8 +3255,8 @@ function FairFaresApp() {
     setProfileConsentBusy(true);
     let nextUser = user;
     try {
-      if (name !== user.name || email !== user.email || phone !== user.phone || profileCompletionCompany.trim() !== (user.relocationCompany || "")) {
-        const profile = await updateMobileProfile({ name, email, phone, relocationCompany: profileCompletionCompany.trim() });
+      if (name !== user.name || email !== user.email || phone !== user.phone) {
+        const profile = await updateMobileProfile({ name, email, phone });
         if (profile.user) {
           nextUser = profile.user;
           updateLocalUser(profile.user);
@@ -3335,6 +3342,7 @@ function FairFaresApp() {
   }
 
   function changeTab(tab: TabKey) {
+    setBottomTabsCompact(false);
     if (tab === "home" || tab === "housing") {
       setRideOwnerOpenToken(0);
       setRideOwnerReturnTab(null);
@@ -3396,6 +3404,7 @@ function FairFaresApp() {
       />
     ) : activeTab === "community" ? (
       <CommunityScreen
+        appearance={effectiveColorScheme === "light" ? "light" : "dark"}
         user={data?.user || null}
         city={hasSearchedHousingLocation ? city : (discoveryLocation || data?.location.city || city)}
         cars={cars}
@@ -3484,8 +3493,11 @@ function FairFaresApp() {
           })();
         }}
         onBottomTabsHiddenChange={setBottomTabsHidden}
+        onBottomTabsCompactChange={setBottomTabsCompact}
         initialPostId={linkedCommunityPostId}
         onInitialPostOpened={() => { setLinkedCommunityPostId(""); setContentLinkOpening(false); }}
+        initialHousingMatchRequest={communityHousingMatchRequest}
+        onInitialHousingMatchOpened={() => setCommunityHousingMatchRequest(null)}
       />
     ) : activeTab === "activity" ? (
       <DashboardScreen
@@ -3568,8 +3580,6 @@ function FairFaresApp() {
         }}
         onOpenMessenger={() => setActiveTab("messenger")}
         onOpenStaffPickup={() => setStaffPickupOpen(true)}
-        appearancePreference={appearancePreference}
-        onAppearanceChange={changeAppearance}
       />
     ) : activeTab === "services" ? (
       <ServicesScreen
@@ -3641,6 +3651,7 @@ function FairFaresApp() {
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
+        onBottomTabsCompactChange={setBottomTabsCompact}
         focusWelcomeKey={housingWelcomeFocusKey}
         focusListingResultsKey={housingResultsFocusKey}
         carpoolFocusKey={carpoolFocusKey}
@@ -3707,6 +3718,7 @@ function FairFaresApp() {
         onRequireLogin={() => setLoginOpen(true)}
         onBookCar={bookCar}
         onBottomTabsHiddenChange={setBottomTabsHidden}
+        onBottomTabsCompactChange={setBottomTabsCompact}
         focusWelcomeKey={housingWelcomeFocusKey}
         focusListingResultsKey={housingResultsFocusKey}
         carpoolFocusKey={carpoolFocusKey}
@@ -3796,12 +3808,12 @@ function FairFaresApp() {
   return (
     <NearbyRelayProvider user={data?.user || null}>
     <SafeAreaView
-      style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
-      edges={marketplaceFullBleedTop ? ["right", "left"] : ["top", "right", "left"]}
+      style={[styles.safe, { backgroundColor: effectiveColorScheme === "light" ? "#f3f4f6" : "#1c1c1e" }, activeTab === "messenger" && (effectiveColorScheme === "light" ? styles.chittiSafeLight : styles.chittiSafe), activeTab === "messenger" && bottomTabsHidden && styles.chittiThreadSafe, launchVisible && { backgroundColor: "#020817" }]}
+      edges={marketplaceFullBleedTop || (activeTab === "messenger" && bottomTabsHidden) ? ["right", "left"] : ["top", "right", "left"]}
     >
       <StatusBar
         style={launchVisible ? "light" : activeTab === "messenger" && bottomTabsHidden ? "dark" : effectiveColorScheme === "light" ? "dark" : "light"}
-        backgroundColor={launchVisible ? "#020817" : marketplaceFullBleedTop ? "#dff3ff" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#0f0f10"}
+        backgroundColor={launchVisible ? "#020817" : marketplaceFullBleedTop ? "#dff3ff" : activeTab === "messenger" ? (bottomTabsHidden ? "#C4D9CE" : effectiveColorScheme === "light" ? "#f3f4f6" : "#052017") : effectiveColorScheme === "light" ? "#f3f4f6" : "#1c1c1e"}
         translucent
       />
       <CriticalBrandAssetPreloader />
@@ -3828,6 +3840,7 @@ function FairFaresApp() {
           appearance={effectiveColorScheme === "light" ? "light" : "dark"}
           onChange={changeTab}
           hidden={staffPickupOpen || bottomTabsHidden || (activeTab === "messenger" && Boolean(pendingPost || pendingRide))}
+          compact={bottomTabsCompact}
         />
       </Animated.View>
       {launchVisible ? (
@@ -4324,7 +4337,6 @@ function FairFaresApp() {
               {!data?.user?.email?.trim() ? <TextInput value={profileCompletionEmail} onChangeText={setProfileCompletionEmail} placeholder="Email" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} autoCapitalize="none" keyboardType="email-address" /> : null}
               {!data?.user?.phone?.trim() ? <TextInput value={profileCompletionPhone} onChangeText={setProfileCompletionPhone} placeholder="Phone number, including country code" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} keyboardType="phone-pad" autoComplete="tel" /> : null}
             </View> : null}
-            <TextInput accessibilityLabel="Company or school" value={profileCompletionCompany} onChangeText={setProfileCompletionCompany} placeholder="Company or school (optional)" placeholderTextColor="#9fb0c7" style={styles.profileCompletionInput} />
             {data?.user?.consentPending ? (
               <View style={styles.signupConsentRow}>
                 <TouchableOpacity
@@ -4425,13 +4437,47 @@ function FairFaresApp() {
               style={styles.listingSuccessPrimary}
               onPress={() => {
                 const successPost = housingListingSuccess;
+                const matchRequest = {
+                  key: Date.now(),
+                  city: successPost?.city || city,
+                  area: successPost?.area || "",
+                  budget: selectedBudget,
+                  kind: successPost?.roommateIntent
+                    ? "roommates" as const
+                    : successPost?.mode === "HAVE_PLACE"
+                      ? "renters" as const
+                      : "places" as const,
+                };
                 setHousingListingSuccess(null);
-                setActiveTab("housing");
-                setSearchCity(successPost?.city || city);
-                setSearchArea(successPost?.area || area);
-                setSearchRadius(searchRadius);
-                setSearchNeed(housingSuccessSearchNeed);
-                setSearchOpen(true);
+                setActiveTab("community");
+                // Resolve before giving Ask the handoff.  Previously Ask had
+                // to start this request during its mount, which could be lost
+                // when the success modal and tab changed in the same render.
+                void (async () => {
+                  try {
+                    const searchNeed = matchRequest.kind === "roommates"
+                      ? "need_roommates"
+                      : matchRequest.kind === "renters"
+                        ? "have_place"
+                        : "need_place";
+                    let listings = await getHousing(matchRequest.city, matchRequest.area, searchNeed, "", "", matchRequest.budget);
+                    const usedArea = matchRequest.area.trim() && listings.length ? matchRequest.area : "";
+                    if (matchRequest.area.trim() && !listings.length) {
+                      listings = await getHousing(matchRequest.city, "", searchNeed, "", "", matchRequest.budget);
+                    }
+                    const matches = listings
+                      .filter((listing) => matchRequest.kind === "roommates"
+                        ? listing.roommateIntent
+                        : matchRequest.kind === "renters"
+                          ? listing.mode === "NEED_PLACE" || listing.category === "NEED_PLACE"
+                          : listing.mode === "HAVE_PLACE" || listing.category === "HAVE_PLACE")
+                      .slice(0, 12);
+                    setCommunityHousingMatchRequest({ ...matchRequest, area: usedArea, matches });
+                  } catch (error) {
+                    console.warn("Could not load housing matches", error);
+                    setCommunityHousingMatchRequest({ ...matchRequest, matches: [] });
+                  }
+                })();
               }}
             >
               <Text style={styles.listingSuccessPrimaryText}>{housingSuccessSearchLabel}</Text>

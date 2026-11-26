@@ -8,7 +8,7 @@ import { AvatarMotion } from "../components/AvatarMotion";
 import { appAssets } from "../assets";
 import { SectionHeader } from "../components/SectionHeader";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { BootstrapPayload, HousingActivityPost, RentalServiceBooking, RidePost } from "../types";
 import { pickCompressedImages } from "../utils/imageUpload";
@@ -28,8 +28,6 @@ type Props = {
   onOpenStaffPickup?: () => void;
   openProfileDetails?: boolean;
   onProfileDetailsOpened?: () => void;
-  appearancePreference: "system" | "dark" | "light";
-  onAppearanceChange: (preference: "system" | "dark" | "light") => void;
 };
 
 const SUPPORT_TOPICS = ["App problem", "Account", "Payment", "Housing", "Carpool", "Rental", "Safety"];
@@ -66,11 +64,9 @@ export function ProfileScreen({
   onOpenMessenger,
   onOpenStaffPickup,
   openProfileDetails = false,
-  onProfileDetailsOpened,
-  appearancePreference,
-  onAppearanceChange
+  onProfileDetailsOpened
 }: Props) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const user = data?.user;
   const layout = useResponsiveLayout();
   const [name, setName] = useState(user?.name || "");
@@ -80,13 +76,7 @@ export function ProfileScreen({
   const [mapProfile, setMapProfile] = useState({
     localCity: user?.localCity || "", relocationCity: user?.relocationCity || "",
     relocationCompany: user?.relocationCompany || "",
-    localConnectionDiscoverable: Boolean(user?.localConnectionDiscoverable),
-    relocationDiscoverable: Boolean(user?.relocationDiscoverable),
   });
-  const [peopleDiscoverable, setPeopleDiscoverable] = useState(Boolean(user?.peopleDiscoverable));
-  const [peopleMatchMutuals, setPeopleMatchMutuals] = useState(user?.peopleMatchMutuals !== false);
-  const [peopleMatchGroups, setPeopleMatchGroups] = useState(user?.peopleMatchGroups !== false);
-  const [shareMutualConnectionCount, setShareMutualConnectionCount] = useState(Boolean(user?.shareMutualConnectionCount));
   const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "");
   const [profilePhoto, setProfilePhoto] = useState(user?.profilePhotoUrl || "");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -136,18 +126,13 @@ export function ProfileScreen({
     setEmail(user?.email || "");
     setPhone(user?.phone || "");
     setChatPhoneDiscoverable(Boolean(user?.chatPhoneDiscoverable));
-    setPeopleDiscoverable(Boolean(user?.peopleDiscoverable));
     setMapProfile({ localCity: user?.localCity || "", relocationCity: user?.relocationCity || "",
-      relocationCompany: user?.relocationCompany || "", localConnectionDiscoverable: Boolean(user?.localConnectionDiscoverable),
-      relocationDiscoverable: Boolean(user?.relocationDiscoverable) });
-    setPeopleMatchMutuals(user?.peopleMatchMutuals !== false);
-    setPeopleMatchGroups(user?.peopleMatchGroups !== false);
-    setShareMutualConnectionCount(Boolean(user?.shareMutualConnectionCount));
+      relocationCompany: user?.relocationCompany || "" });
     setDateOfBirth(user?.dateOfBirth || "");
     setProfilePhoto(user?.profilePhotoUrl || "");
     setCurrentPassword("");
     setProfileDirty(false);
-  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.peopleDiscoverable, user?.peopleMatchMutuals, user?.peopleMatchGroups, user?.shareMutualConnectionCount, user?.dateOfBirth, user?.profilePhotoUrl, user?.localCity, user?.relocationCity, user?.relocationCompany, user?.localConnectionDiscoverable, user?.relocationDiscoverable]);
+  }, [profileDirty, user?.id, user?.name, user?.email, user?.phone, user?.chatPhoneDiscoverable, user?.dateOfBirth, user?.profilePhotoUrl, user?.localCity, user?.relocationCity, user?.relocationCompany]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -155,16 +140,12 @@ export function ProfileScreen({
     AsyncStorage.getItem(profileDraftKey(user.id)).then((saved) => {
       if (cancelled || !saved) return;
       try {
-        const draft = JSON.parse(saved) as { mapProfile?: typeof mapProfile; name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; peopleDiscoverable?: boolean; peopleMatchMutuals?: boolean; peopleMatchGroups?: boolean; shareMutualConnectionCount?: boolean; dateOfBirth?: string };
+        const draft = JSON.parse(saved) as { mapProfile?: typeof mapProfile; name?: string; email?: string; phone?: string; chatPhoneDiscoverable?: boolean; dateOfBirth?: string };
         setName(draft.name ?? user.name ?? "");
         setEmail(draft.email ?? user.email ?? "");
         setPhone(draft.phone ?? user.phone ?? "");
         setChatPhoneDiscoverable(draft.chatPhoneDiscoverable ?? Boolean(user.chatPhoneDiscoverable));
         if (draft.mapProfile) setMapProfile(draft.mapProfile);
-        setPeopleDiscoverable(draft.peopleDiscoverable ?? Boolean(user.peopleDiscoverable));
-        setPeopleMatchMutuals(draft.peopleMatchMutuals ?? user.peopleMatchMutuals !== false);
-        setPeopleMatchGroups(draft.peopleMatchGroups ?? user.peopleMatchGroups !== false);
-        setShareMutualConnectionCount(draft.shareMutualConnectionCount ?? Boolean(user.shareMutualConnectionCount));
         setDateOfBirth(draft.dateOfBirth ?? user.dateOfBirth ?? "");
         // The server photo is authoritative. Persisting a photo data URL or an
         // old versioned URL here could overwrite the current avatar after a
@@ -220,10 +201,10 @@ export function ProfileScreen({
   useEffect(() => {
     if (!user?.id || !profileDirty) return;
     const timer = setTimeout(() => {
-      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ mapProfile, name, email, phone, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth }));
+      void AsyncStorage.setItem(profileDraftKey(user.id), JSON.stringify({ mapProfile, name, email, phone, chatPhoneDiscoverable, dateOfBirth }));
     }, 250);
     return () => clearTimeout(timer);
-  }, [mapProfile, chatPhoneDiscoverable, peopleDiscoverable, peopleMatchMutuals, peopleMatchGroups, shareMutualConnectionCount, dateOfBirth, email, name, phone, profileDirty, user?.id]);
+  }, [mapProfile, chatPhoneDiscoverable, dateOfBirth, email, name, phone, profileDirty, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -433,10 +414,6 @@ export function ProfileScreen({
         chatPhoneDiscoverable,
         ...mapProfile,
         confirmCurrentCity: true,
-        peopleDiscoverable,
-        peopleMatchMutuals,
-        peopleMatchGroups,
-        shareMutualConnectionCount,
         dateOfBirth,
         currentPassword,
       });
@@ -446,10 +423,6 @@ export function ProfileScreen({
       setEmail(payload.user?.email || "");
       setPhone(payload.user?.phone || "");
       setChatPhoneDiscoverable(Boolean(payload.user?.chatPhoneDiscoverable));
-      setPeopleDiscoverable(Boolean(payload.user?.peopleDiscoverable));
-      setPeopleMatchMutuals(payload.user?.peopleMatchMutuals !== false);
-      setPeopleMatchGroups(payload.user?.peopleMatchGroups !== false);
-      setShareMutualConnectionCount(Boolean(payload.user?.shareMutualConnectionCount));
       setDateOfBirth(payload.user?.dateOfBirth || "");
       setProfilePhoto(payload.user?.profilePhotoUrl || "");
       onProfileUpdated(payload.user);
@@ -678,38 +651,6 @@ export function ProfileScreen({
               </View>
               <Switch value={chatPhoneDiscoverable} onValueChange={(value) => { setChatPhoneDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Let people with my phone number find me in Chitthi" />
             </View>
-            <View style={styles.peopleMatchingSection}>
-              <Text style={styles.relocationTitle}>People you may know</Text>
-              <Text style={styles.relocationCopy}>FairFares uses mutual connections and shared communities you control. It never uses your private messages, profile views, or live location.</Text>
-              <View style={styles.relocationPrivacyRow}>
-                <View style={styles.relocationPrivacyCopy}>
-                  <Text style={styles.relocationPrivacyTitle}>Appear in people suggestions</Text>
-                  <Text style={styles.relocationPrivacyHint}>Turn this off anytime to stop appearing in People you may know.</Text>
-                </View>
-                <Switch value={peopleDiscoverable} onValueChange={(value) => { setPeopleDiscoverable(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Appear in people you may know suggestions" />
-              </View>
-              <Text style={styles.relocationPrivacyTitle}>Your cities on the people map</Text>
-              <Text style={styles.relocationPrivacyHint}>City areas only. Save your profile to apply changes. People suggestions must also be enabled to appear.</Text>
-              <TextInput accessibilityLabel="Current city" style={styles.input} placeholder="Current city, e.g. Houston, TX" placeholderTextColor={theme.colors.muted} value={mapProfile.localCity} onChangeText={(value) => { setMapProfile((p) => ({ ...p, localCity: value })); setProfileDirty(true); }} />
-              <View style={styles.relocationPrivacyRow}><View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show me in my current city</Text></View><Switch accessibilityLabel="Show me in my current city" value={mapProfile.localConnectionDiscoverable} onValueChange={(value) => { setMapProfile((p) => ({ ...p, localConnectionDiscoverable: value })); setProfileDirty(true); }} /></View>
-              <TextInput accessibilityLabel="Moving city" style={styles.input} placeholder="Moving city (optional)" placeholderTextColor={theme.colors.muted} value={mapProfile.relocationCity} onChangeText={(value) => { setMapProfile((p) => ({ ...p, relocationCity: value })); setProfileDirty(true); }} />
-              <View style={styles.relocationPrivacyRow}><View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show my move on the map</Text></View><Switch accessibilityLabel="Show my move on the map" value={mapProfile.relocationDiscoverable} onValueChange={(value) => { setMapProfile((p) => ({ ...p, relocationDiscoverable: value })); setProfileDirty(true); }} /></View>
-              <TextInput accessibilityLabel="Company or school" style={styles.input} placeholder="Company or school (optional)" placeholderTextColor={theme.colors.muted} value={mapProfile.relocationCompany} onChangeText={(value) => { setMapProfile((p) => ({ ...p, relocationCompany: value })); setProfileDirty(true); }} />
-              {peopleDiscoverable ? <>
-                <View style={styles.peopleMatchRow}>
-                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use mutual connections</Text><Text style={styles.relocationPrivacyHint}>Prioritize people connected through members you both know.</Text></View>
-                  <Switch value={peopleMatchMutuals} onValueChange={(value) => { setPeopleMatchMutuals(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use mutual connections for people suggestions" />
-                </View>
-                <View style={styles.peopleMatchRow}>
-                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Use shared communities</Text><Text style={styles.relocationPrivacyHint}>Shared groups can also qualify someone for a suggestion when both members allow it.</Text></View>
-                  <Switch value={peopleMatchGroups} onValueChange={(value) => { setPeopleMatchGroups(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Use shared communities for people suggestions" />
-                </View>
-                <View style={styles.peopleMatchRow}>
-                  <View style={styles.relocationPrivacyCopy}><Text style={styles.relocationPrivacyTitle}>Show mutual-connection counts</Text><Text style={styles.relocationPrivacyHint}>Counts are visible only when both members choose to share them.</Text></View>
-                  <Switch value={shareMutualConnectionCount} onValueChange={(value) => { setShareMutualConnectionCount(value); setProfileDirty(true); }} trackColor={{ false: theme.colors.line, true: theme.colors.brand }} thumbColor="#ffffff" accessibilityLabel="Show mutual connection counts" />
-                </View>
-              </> : null}
-            </View>
             <DateTimeField label="Birthday (optional)" value={dateOfBirth} mode="date" minimumDate="1906-01-01" maximumDate={todayLocalIso()} placeholder="Add birthday" onChange={(value) => { setDateOfBirth(value); setProfileDirty(true); }} />
             <Text style={styles.cardCopy}>Used only for birthday greetings and optional offers. You can remove it anytime.</Text>
             {dateOfBirth ? <TouchableOpacity style={styles.secondaryButton} onPress={() => { setDateOfBirth(""); setProfileDirty(true); }}><Text style={styles.secondaryButtonText}>Remove birthday</Text></TouchableOpacity> : null}
@@ -728,31 +669,6 @@ export function ProfileScreen({
           </> : null}
         </View>
       </>) }
-
-      <View style={[styles.appearanceCard, isLight && styles.flatLightCard]}>
-        <View>
-          <Text style={styles.cardTitle}>Appearance</Text>
-          <Text style={styles.cardCopy}>{appearancePreference === "system" ? "System follows your phone’s current Light or Dark appearance." : "Choose how FairFares looks on this device."}</Text>
-        </View>
-        <View style={styles.appearanceOptions} accessibilityRole="radiogroup">
-          {(["system", "dark", "light"] as const).map((preference) => {
-            const selected = appearancePreference === preference;
-            return (
-              <TouchableOpacity
-                key={preference}
-                style={[styles.appearanceOption, selected && styles.appearanceOptionSelected]}
-                onPress={() => onAppearanceChange(preference)}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selected }}
-                accessibilityLabel={`${preference === "system" ? "System default" : preference} appearance`}
-              >
-                <Text style={styles.appearanceGlyph}>{preference === "system" ? "◐" : preference === "dark" ? "☾" : "☀"}</Text>
-                <Text style={[styles.appearanceLabel, selected && styles.appearanceLabelSelected]}>{preference === "system" ? "System" : preference === "dark" ? "Dark" : "Light"}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
 
       {profileLinks.filter(({ requiresUser }) => !requiresUser || user).map(({ title, copy, icon, glyph, fullColor, onPress, danger }) => (
         <TouchableOpacity key={title} style={[styles.menuRow, isLight && styles.flatLightCard]} onPress={onPress}>

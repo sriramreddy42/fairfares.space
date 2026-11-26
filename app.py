@@ -19171,13 +19171,7 @@ def create_account_deletion_request(user_id: int, email: str, source: str) -> di
 
 
 def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[str, object]]:
-    """Return only reciprocal, city-level relocation introductions.
-
-    A member moving to a city must turn on relocation connections. A local
-    member must separately choose to help people moving there. Two members
-    moving to the same place must both opt in. No device position, address,
-    telephone number, or unconsented profile city is used here.
-    """
+    """Return city-level relocation introductions for members with saved cities."""
     user_id = int(user_id or 0)
     if user_id <= 0:
         return []
@@ -19193,8 +19187,8 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
                 return []
             local_city = str(row_value(viewer, "local_city") or "").strip()
             destination_city = str(row_value(viewer, "relocation_city") or "").strip()
-            moving_opted_in = bool(int(row_value(viewer, "relocation_discoverable") or 0))
-            local_opted_in = bool(int(row_value(viewer, "local_connection_discoverable") or 0))
+            moving_opted_in = bool(destination_city)
+            local_opted_in = bool(local_city)
             if not ((moving_opted_in and destination_city) or (local_opted_in and local_city)):
                 return []
             rows = con.execute(
@@ -19206,11 +19200,11 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
                    WHERE id != ?
                      AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
                      AND (
-                       (? = 1 AND ? != '' AND local_connection_discoverable = 1
+                       (? = 1 AND ? != ''
                         AND lower(trim(local_city)) = lower(trim(?)))
-                       OR (? = 1 AND ? != '' AND relocation_discoverable = 1
+                       OR (? = 1 AND ? != ''
                            AND lower(trim(relocation_city)) = lower(trim(?)))
-                       OR (? = 1 AND ? != '' AND relocation_discoverable = 1
+                       OR (? = 1 AND ? != ''
                            AND lower(trim(relocation_city)) = lower(trim(?)))
                      )
                    ORDER BY datetime(last_seen_at) DESC, id DESC
@@ -19250,8 +19244,8 @@ def relocation_suggestions_for_user(user_id: int, limit: int = 6) -> list[dict[s
         candidate_id = int(row_value(row, "id") or 0)
         candidate_local_city = str(row_value(row, "local_city") or "").strip()
         candidate_destination_city = str(row_value(row, "relocation_city") or "").strip()
-        candidate_moving = bool(int(row_value(row, "relocation_discoverable") or 0))
-        candidate_local = bool(int(row_value(row, "local_connection_discoverable") or 0))
+        candidate_moving = bool(candidate_destination_city)
+        candidate_local = bool(candidate_local_city)
         relationship = ""
         target_city = ""
         if moving_opted_in and destination_city and candidate_local and candidate_local_city.casefold() == destination_city.casefold():
@@ -19328,12 +19322,13 @@ def member_connection_state(con: sqlite3.Connection, user_id: int, other_user_id
 
 
 def people_discovery_enabled(user: sqlite3.Row | dict[str, object] | None) -> bool:
-    """Existing members stay discoverable until they deliberately change it."""
-    if not user:
-        return False
-    if not bool(int(row_value(user, "people_discovery_configured") or 0)):
-        return True
-    return bool(int(row_value(user, "people_discoverable") or 0))
+    """Verified members participate in People discovery automatically.
+
+    Old per-feature privacy switches are deliberately ignored.  The map is
+    still restricted to a member's saved city centre; it never exposes an
+    address, device position, or live location.
+    """
+    return bool(user)
 
 
 def member_city_map_location(city: object) -> dict[str, object]:
@@ -19430,9 +19425,7 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
             candidate_ids = (set(mutual_counts) | set(all_shared_counts) | local_candidate_ids) - direct_ids - {user_id}
             if not candidate_ids:
                 return []
-            shared_counts: dict[int, int] = {}
-            if bool(int(row_value(viewer, "people_match_groups") or 0)):
-                shared_counts = all_shared_counts
+            shared_counts = all_shared_counts
             hidden_rows = con.execute(
                 """SELECT suggested_user_id FROM member_suggestion_feedback
                    WHERE viewer_user_id = ? AND suggestion_kind = 'PEOPLE'
@@ -19471,8 +19464,8 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                 if state != "NONE":
                     continue
                 mutual = mutual_counts.get(candidate_id, 0)
-                can_use_mutuals = mutual and bool(int(row_value(viewer, "people_match_mutuals") or 0)) and bool(int(row_value(row, "people_match_mutuals") or 0))
-                can_show_shared_groups = bool(int(row_value(viewer, "people_match_groups") or 0)) and bool(int(row_value(row, "people_match_groups") or 0))
+                can_use_mutuals = mutual > 0
+                can_show_shared_groups = all_shared_counts.get(candidate_id, 0) > 0
                 same_current_city = bool(viewer_local_city and str(row_value(row, "local_city") or "").strip().casefold() == viewer_local_city.casefold())
                 if not can_use_mutuals and not (can_show_shared_groups and all_shared_counts.get(candidate_id, 0)) and not same_current_city:
                     continue
@@ -19485,10 +19478,8 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                     affiliation_label = clean_text_value(row_value(row, "relocation_company"), 120)
                     school_match = row_value(viewer, "relocation_reason") == "SCHOOL_COLLEGE" or row_value(row, "relocation_reason") == "SCHOOL_COLLEGE"
                     reasons.append(f"Same {'school' if school_match else 'company'}: {affiliation_label}")
-                if can_use_mutuals and bool(int(row_value(viewer, "share_mutual_connection_count") or 0)) and bool(int(row_value(row, "share_mutual_connection_count") or 0)):
+                if can_use_mutuals:
                     reasons.append(f"{mutual} mutual {('connection' if mutual == 1 else 'connections')}")
-                elif can_use_mutuals:
-                    reasons.append("Mutual connection")
                 if shared:
                     reasons.append(f"{shared} shared {('community' if shared == 1 else 'communities')}")
                 if same_current_city:
@@ -19649,8 +19640,8 @@ def housing_post_location_intent(payload: dict, category: str, destination: str)
     current = community_post_city_label(raw.get("currentCity"))
     if not current or not destination:
         raise ValueError("Choose your current city and the listing city.")
-    if not isinstance(raw.get("moving"), bool) or not isinstance(raw.get("showOnMap"), bool):
-        raise ValueError("Confirm whether you are moving and want to appear on the map.")
+    if not isinstance(raw.get("moving"), bool):
+        raise ValueError("Confirm whether you are moving to the listing city.")
     moving = raw["moving"]
     if moving and current.casefold() == destination.casefold():
         raise ValueError("Your destination must differ from your current city.")
@@ -19659,9 +19650,12 @@ def housing_post_location_intent(payload: dict, category: str, destination: str)
         raise ValueError("Use YYYY-MM for the move month, or leave it blank.")
     if payload.get("videoUpload"):
         raise ValueError("Finish uploading your housing video before publishing location changes.")
+    # City-level People Map membership is automatic for a housing post.  The
+    # member controls only whether the post represents a move; no opt-in
+    # checkbox is required and no precise/live location is ever stored.
     return {"currentCity": current, "destination": destination, "moving": moving,
-            "moveMonth": month, "showOnMap": moving and raw["showOnMap"],
-            "showCurrentOnMap": raw.get("showCurrentOnMap") is True}
+            "moveMonth": month, "showOnMap": moving,
+            "showCurrentOnMap": not moving}
 
 
 def apply_housing_post_location(con: sqlite3.Connection, user_id: int, intent: dict | None) -> None:
@@ -19694,8 +19688,8 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
     """Return an eligible, city-centre-only Friends Map pool.
 
     A pool contains a representative sample plus a total count—never member
-    addresses or live device locations. Only members who chose local
-    connection discovery are eligible.
+    addresses or live device locations. Verified members with a saved city
+    participate automatically.
     """
     target_city = normalize_member_city(city) or community_post_city_label(city)
     offset = max(0, int(offset))
@@ -19708,21 +19702,20 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         with db() as con:
             con.create_function("map_city", 1, people_map_city_key, deterministic=True)
             con.create_function("map_company", 1, people_map_company_key, deterministic=True)
-            # Normally a people map contains other opted-in members. For an
-            # explicit company/school search, include the viewer's own
-            # city-level pin as well. Otherwise a valid first affiliation
-            # (for example the only Meta member) looks like a broken search.
+            # A city search always includes the viewer's own city-level pin,
+            # alongside every other verified member in that city. Company is
+            # an optional narrowing filter for other members, never a reason
+            # to hide the viewer from an area-only result.
             eligibility_where = """guest_account = 0 AND is_verified = 1
                 AND suspended_at IS NULL AND (
-                  (id = ? AND ? != '' AND map_company(relocation_company) = ?
+                  (id = ?
                     AND (map_city(local_city) = map_city(?) OR map_city(relocation_city) = map_city(?)))
                   OR
                   (id != ? AND (? = '' OR map_company(relocation_company) = ?)
-                    AND (people_discovery_configured = 0 OR people_discoverable = 1)
-                    AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?))
-                      OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?))))
+                    AND (map_city(local_city) = map_city(?)
+                      OR map_city(relocation_city) = map_city(?)))
                 )"""
-            args = (int(viewer_id or 0), affiliation, affiliation, target_city, target_city, int(viewer_id or 0), affiliation, affiliation, target_city, target_city)
+            args = (int(viewer_id or 0), target_city, target_city, int(viewer_id or 0), affiliation, affiliation, target_city, target_city)
             count_row = con.execute(
                 f"""SELECT COUNT(*) AS total,
                     SUM(CASE WHEN map_company(relocation_company) = ? AND ? != '' THEN 1 ELSE 0 END) AS company_matches
@@ -19759,7 +19752,7 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
             ).fetchall()
     except sqlite3.Error:
         raise
-    eligible = [row for row in rows if people_discovery_enabled(row)]
+    eligible = rows
     total = int(row_value(count_row, "total") or 0) if count_row else 0
     company_matches = int(row_value(count_row, "company_matches") or 0) if count_row else 0
     people = [{
@@ -19770,8 +19763,8 @@ def people_map_city_pool(viewer_id: int, city: object, company_or_school: object
         "city": target["city"],
         "latitude": target["latitude"],
         "longitude": target["longitude"],
-        "moving": bool(row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) and people_map_city_key(row_value(row, "local_city")) != people_map_city_key(target_city)),
-        "fromCity": clean_text_value(row_value(row, "local_city"), 120) if row_value(row, "relocation_discoverable") and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) else "",
+        "moving": bool(clean_text_value(row_value(row, "relocation_city"), 120) and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) and people_map_city_key(row_value(row, "local_city")) != people_map_city_key(target_city)),
+        "fromCity": clean_text_value(row_value(row, "local_city"), 120) if clean_text_value(row_value(row, "relocation_city"), 120) and people_map_city_key(row_value(row, "relocation_city")) == people_map_city_key(target_city) else "",
         "companyMatch": bool(affiliation and people_map_company_key(row_value(row, "relocation_company")) == affiliation),
         "companyName": clean_text_value(row_value(row, "relocation_company"), 80),
         "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
@@ -19794,14 +19787,10 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
     with db() as con:
         con.create_function("map_company", 1, people_map_company_key, deterministic=True)
         # A company-only search includes the viewer as a city-level "You" pin.
-        # Their own city is already known to them, while every other member
-        # still needs to have opted in to people discovery.
         eligibility_where = """guest_account = 0 AND is_verified = 1
             AND suspended_at IS NULL AND map_company(relocation_company) = ?
-            AND (id = ? OR (
-              id != ? AND (people_discovery_configured = 0 OR people_discoverable = 1)
-              AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)
-            ))"""
+            AND (id = ? OR id != ?)
+            AND (trim(local_city) != '' OR trim(relocation_city) != '')"""
         query_args = (affiliation, int(viewer_id or 0), int(viewer_id or 0))
         total = int(row_value(con.execute(f"SELECT COUNT(*) AS total FROM users WHERE {eligibility_where}", query_args).fetchone(), "total") or 0)
         rows = con.execute(
@@ -19814,9 +19803,7 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
         ).fetchall()
     people = []
     for row in rows:
-        if not people_discovery_enabled(row):
-            continue
-        moving = bool(row_value(row, "relocation_discoverable") and clean_text_value(row_value(row, "relocation_city"), 120))
+        moving = bool(clean_text_value(row_value(row, "relocation_city"), 120))
         member_city = clean_text_value(row_value(row, "relocation_city" if moving else "local_city"), 120)
         location = member_city_map_location(member_city)
         if not location.get("latitude") and not location.get("longitude"):
@@ -19842,7 +19829,7 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
 def people_map_overview_pool(viewer_id: int) -> dict[str, object]:
     """Return city-level members for the initial nationwide Friends Map.
 
-    This deliberately returns one city-level record per opted-in member rather
+    This deliberately returns one city-level record per verified member rather
     than an address or any live location. The native map groups these records
     into city count pins; selecting one city makes the existing city pool load
     the individual, city-spread member pins.
@@ -19855,23 +19842,20 @@ def people_map_overview_pool(viewer_id: int) -> dict[str, object]:
                       people_discovery_configured
                  FROM users
                 WHERE guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
-                  AND (people_discovery_configured = 0 OR people_discoverable = 1)
-                  AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)
+                  AND (trim(local_city) != '' OR trim(relocation_city) != '')
                 ORDER BY id
                 LIMIT 500"""
         ).fetchall()
 
     people: list[dict[str, object]] = []
     for row in rows:
-        if not people_discovery_enabled(row):
-            continue
         member_id = int(row_value(row, "id") or 0)
         local_city = clean_text_value(row_value(row, "local_city"), 120)
         relocation_city = clean_text_value(row_value(row, "relocation_city"), 120)
         cities: list[tuple[str, bool]] = []
-        if row_value(row, "local_connection_discoverable") and local_city:
+        if local_city:
             cities.append((local_city, False))
-        if row_value(row, "relocation_discoverable") and relocation_city:
+        if relocation_city:
             cities.append((relocation_city, True))
         for member_city, moving in cities:
             location = member_city_map_location(member_city)
@@ -26455,12 +26439,15 @@ def notify_housing_request_matches(listing: sqlite3.Row | dict[str, object]) -> 
     listing_rent = float(row_value(listing, "rent_min") or row_value(listing, "rent_max") or 0)
     if not listing_id or not listing_city:
         return
-    recipients: list[tuple[int, str]] = []
+    # Keep the total alongside the particular new listing. The notification is
+    # more useful when it tells a seeker whether there is one option to review
+    # or a small set of places waiting for them.
+    recipients: list[tuple[int, str, int, str]] = []
     try:
         with db() as con:
             requests = con.execute(
                 """
-                SELECT id, author_id, public_id, title, details_json
+                SELECT id, author_id, public_id, title, area, details_json
                 FROM ask_community_posts
                 WHERE category IN ('NEED_PLACE', 'NEED_ROOMMATE')
                   AND status IN ('PUBLISHED', 'LOCKED')
@@ -26481,6 +26468,58 @@ def notify_housing_request_matches(listing: sqlite3.Row | dict[str, object]) -> 
                 budget = float_from_value(details.get("budget") if isinstance(details, dict) else "")
                 if budget and listing_rent and listing_rent > budget:
                     continue
+                preferred_area = clean_text_value(row_value(request, "area"), 140)
+                city_match_count_row = con.execute(
+                    """SELECT COUNT(*) AS total
+                       FROM accommodation_posts
+                       WHERE post_mode = 'HAVE_PLACE'
+                         AND visibility_status = 'ACTIVE'
+                         AND user_id != ?
+                         AND LOWER(TRIM(city)) = LOWER(TRIM(?))
+                         AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+                         AND (? <= 0 OR rent_min <= 0 OR rent_min <= ?)""",
+                    (requester_id, listing_city, budget, budget),
+                ).fetchone()
+                city_match_count = int(row_value(city_match_count_row, "total") or 0)
+                match_count = city_match_count
+                match_scope = listing_city
+
+                # A neighborhood or nearby city entered in Ask (for example,
+                # Capitol Hill, Aurora, or Centennial) is more meaningful than
+                # a broad city match. Prefer it whenever there are matching
+                # listings there; only fall back to the full city when that
+                # preferred area has no available places.
+                if preferred_area:
+                    area_like = f"%{preferred_area.lower()}%"
+                    preferred_area_count_row = con.execute(
+                        """SELECT COUNT(*) AS total
+                           FROM accommodation_posts
+                           WHERE post_mode = 'HAVE_PLACE'
+                             AND visibility_status = 'ACTIVE'
+                             AND user_id != ?
+                             AND LOWER(TRIM(city)) = LOWER(TRIM(?))
+                             AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+                             AND (? <= 0 OR rent_min <= 0 OR rent_min <= ?)
+                             AND (
+                               LOWER(city) LIKE ? OR LOWER(primary_neighborhood) LIKE ?
+                               OR LOWER(area_or_apartment) LIKE ? OR LOWER(city_area_zip) LIKE ?
+                             )""",
+                        (requester_id, listing_city, budget, budget, area_like, area_like, area_like, area_like),
+                    ).fetchone()
+                    preferred_area_count = int(row_value(preferred_area_count_row, "total") or 0)
+                    listing_area_text = " ".join(
+                        str(row_value(listing, field) or "")
+                        for field in ("city", "primary_neighborhood", "area_or_apartment", "city_area_zip")
+                    ).lower()
+                    listing_matches_preferred_area = preferred_area.lower() in listing_area_text
+                    if preferred_area_count:
+                        # Do not interrupt someone about a city-wide result if
+                        # their preferred area already has better candidates.
+                        if not listing_matches_preferred_area:
+                            continue
+                        match_count = preferred_area_count
+                        match_scope = preferred_area
+                match_count = max(1, match_count)
                 cursor = con.execute(
                     """INSERT OR IGNORE INTO housing_match_pushes
                        (request_post_id, listing_public_id, requester_user_id)
@@ -26488,15 +26527,23 @@ def notify_housing_request_matches(listing: sqlite3.Row | dict[str, object]) -> 
                     (int(row_value(request, "id") or 0), listing_id, requester_id),
                 )
                 if cursor.rowcount:
-                    recipients.append((requester_id, str(row_value(request, "public_id") or "")))
+                    recipients.append((requester_id, str(row_value(request, "public_id") or ""), match_count, match_scope))
     except sqlite3.Error:
         return
-    for requester_id, request_id in recipients:
+    for requester_id, request_id, match_count, match_scope in recipients:
+        match_label = f"{match_count} matching {'place' if match_count == 1 else 'places'} available"
         send_mobile_push_for_users(
             [requester_id],
-            "A new place matches your request",
-            f"{clean_text_value(row_value(listing, 'title'), 90) or 'A place'} is available in {listing_city}.",
-            {"type": "HOUSING_MATCH", "listingId": listing_id, "requestId": request_id, "target": "housing"},
+            match_label,
+            f"{clean_text_value(row_value(listing, 'title'), 90) or 'A place'} is available near {match_scope}. Open to compare your matches.",
+            {
+                "type": "HOUSING_MATCH",
+                "listingId": listing_id,
+                "requestId": request_id,
+                "matchCount": match_count,
+                "matchScope": match_scope,
+                "target": "housing",
+            },
         )
 
 
@@ -43031,14 +43078,17 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         relocation_reason = clean_text_value(payload.get("relocationReason") if "relocationReason" in payload else row_value(user, "relocation_reason"), 32).upper()
         if relocation_reason not in {"", "NEW_JOB", "SCHOOL_COLLEGE", "FAMILY", "OTHER"}:
             relocation_reason = ""
-        relocation_discoverable = bool(payload.get("relocationDiscoverable")) if "relocationDiscoverable" in payload else bool(int(row_value(user, "relocation_discoverable") or 0))
-        local_connection_discoverable = bool(payload.get("localConnectionDiscoverable")) if "localConnectionDiscoverable" in payload else bool(int(row_value(user, "local_connection_discoverable") or 0))
+        # People Map membership is automatic. A member appears only at their
+        # saved city centre (and optional destination city), never a precise
+        # or live location.
+        relocation_discoverable = bool(relocation_city)
+        local_connection_discoverable = bool(local_city)
         chat_phone_discoverable = bool(payload.get("chatPhoneDiscoverable")) if "chatPhoneDiscoverable" in payload else bool(int(row_value(user, "chat_phone_discoverable") or 0))
-        people_discoverable = bool(payload.get("peopleDiscoverable")) if "peopleDiscoverable" in payload else people_discovery_enabled(user)
-        people_discovery_configured = 1 if "peopleDiscoverable" in payload else int(row_value(user, "people_discovery_configured") or 0)
-        people_match_mutuals = bool(payload.get("peopleMatchMutuals")) if "peopleMatchMutuals" in payload else bool(int(row_value(user, "people_match_mutuals") or 0))
-        people_match_groups = bool(payload.get("peopleMatchGroups")) if "peopleMatchGroups" in payload else bool(int(row_value(user, "people_match_groups") or 0))
-        share_mutual_connection_count = bool(payload.get("shareMutualConnectionCount")) if "shareMutualConnectionCount" in payload else bool(int(row_value(user, "share_mutual_connection_count") or 0))
+        people_discoverable = True
+        people_discovery_configured = 1
+        people_match_mutuals = True
+        people_match_groups = True
+        share_mutual_connection_count = True
         clean_phone = normalize_phone(phone)
         current_password = str(payload.get("currentPassword") or "")
         current_email = normalize_email(row_value(user, "email"))
@@ -43070,12 +43120,6 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             return
         if relocation_month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", relocation_month):
             self.send_json({"ok": False, "error": "Choose a valid relocation month."}, 400)
-            return
-        if relocation_discoverable and not relocation_city:
-            self.send_json({"ok": False, "error": "Add a relocation destination before turning on relocation suggestions."}, 400)
-            return
-        if local_connection_discoverable and not local_city:
-            self.send_json({"ok": False, "error": "Let FairFares confirm your current city before helping people who are relocating."}, 400)
             return
         if email_changed or phone_changed:
             with db() as con:
@@ -44440,12 +44484,11 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
             with db() as con:
                 con.create_function("map_company", 1, people_map_company_key, deterministic=True)
                 con.create_function("map_city", 1, people_map_city_key, deterministic=True)
-                city_clause = "" if not people_map_city_key(city) else " AND ((local_connection_discoverable = 1 AND map_city(local_city) = map_city(?)) OR (relocation_discoverable = 1 AND map_city(relocation_city) = map_city(?)))"
+                city_clause = "" if not people_map_city_key(city) else " AND (map_city(local_city) = map_city(?) OR map_city(relocation_city) = map_city(?))"
                 rows = con.execute(
                     f"""SELECT relocation_company, COUNT(*) AS member_count FROM users
                         WHERE id != ? AND guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
-                          AND relocation_company != '' AND lower(relocation_company) LIKE ?
-                          AND (people_discovery_configured = 0 OR people_discoverable = 1){city_clause}
+                          AND relocation_company != '' AND lower(relocation_company) LIKE ?{city_clause}
                         GROUP BY map_company(relocation_company)
                         ORDER BY member_count DESC, relocation_company COLLATE NOCASE LIMIT 6""",
                     (int(row_value(user, "id") or 0), f"%{query.casefold()}%", *(([city, city]) if city_clause else [])),

@@ -2,7 +2,7 @@
   "expo": {
     "name": "FairFares",
     "slug": "fairfares-mobile",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "scheme": "fairfares",
     "version": "0.1.17",
     "icon": "./assets/app-icon.png",
@@ -16,7 +16,7 @@
     "ios": {
       "usesAppleSignIn": true,
       "appleTeamId": "9RVTF77D2S",
-      "buildNumber": "76",
+      "buildNumber": "78",
       "bundleIdentifier": "com.fairfares.mobile",
       "icon": "./assets/app-icon.png",
       "supportsTablet": true,
@@ -25,7 +25,7 @@
         "applinks:www.fairfare.space"
       ],
       "entitlements": {
-        "aps-environment": "$(APS_ENVIRONMENT)",
+        "aps-environment": "production",
         "com.apple.developer.siri": true,
         "com.apple.developer.usernotifications.communication": true,
         "keychain-access-groups": [

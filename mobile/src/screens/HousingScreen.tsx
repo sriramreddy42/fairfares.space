@@ -11,7 +11,7 @@ import { DateTimeField } from "../components/DateTimeField";
 import { EmbeddedRideMap, RideMapPoint } from "../components/RideMap";
 import { SectionHeader } from "../components/SectionHeader";
 import { UserAvatar } from "../components/UserAvatar";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { avatarInitials } from "../utils/text";
 import { BootstrapPayload, Car, HousingPost, RentalCarListingInput, RentalQuote, RentalSearchInput, RideInput, RidePost, RideType } from "../types";
@@ -48,6 +48,7 @@ type Props = {
   onRequireLogin?: () => void;
   onBookCar: (car: Car, details?: Partial<RentalSearchInput>, paymentOption?: "hold" | "full") => void;
   onBottomTabsHiddenChange?: (hidden: boolean) => void;
+  onBottomTabsCompactChange?: (compact: boolean) => void;
   focusWelcomeKey?: number;
   focusListingResultsKey?: number;
   carpoolFocusKey?: number;
@@ -162,10 +163,10 @@ const roomTypes: Array<{ label: string; category: string; icon: ImageSourcePropT
   { label: "Paying Guest", category: "paying_guest", icon: appAssets.bed }
 ];
 const housingIntentCards = [
-  { value: "need_place", icon: "house", preview: appAssets.housingSearchPoster, title: "I need a place", subtitle: "Find rooms, apartments and housing", accent: "#ff9f1c", background: "#fff2d8" },
-  { value: "need_roommates", icon: "people", preview: appAssets.housingRentalPromo, title: "I need roommates", subtitle: "Find people to share with", accent: "#14a96b", background: "#dfffee" },
-  { value: "have_place", icon: "house", preview: appAssets.housingSearchPoster, title: "I have a place", subtitle: "List a room or property", accent: "#1488ff", background: "#dcf0ff" },
-  { value: "ride_need", icon: "car", preview: appAssets.carpoolPoster, title: "I need a ride", subtitle: "Find or offer a ride", accent: "#e53945", background: "#ffe4e6" }
+  { value: "need_place", icon: "house", title: "I need a place", subtitle: "Find rooms and homes", accent: "#f6b34d" },
+  { value: "need_roommates", icon: "people", title: "I need roommates", subtitle: "Find people to share with", accent: "#4ad99b" },
+  { value: "have_place", icon: "house", title: "I have a place", subtitle: "List a room or property", accent: "#67a9ff" },
+  { value: "ride_need", icon: "car", title: "I need a ride", subtitle: "Find or offer a ride", accent: "#ff8d73" }
 ] as const;
 
 const housingSearchPhrases = ["Search housing", "City or area"];
@@ -618,6 +619,7 @@ export function HousingScreen({
   onRequireLogin,
   onBookCar,
   onBottomTabsHiddenChange,
+  onBottomTabsCompactChange,
   focusWelcomeKey = 0,
   focusListingResultsKey = 0,
   carpoolFocusKey = 0,
@@ -639,7 +641,7 @@ export function HousingScreen({
   showSearchResults = true,
   isSearchRefreshing = false
 }: Props) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const safeAreaInsets = useSafeAreaInsets();
   const [mode, setMode] = useState<"housing" | "ride" | "cheapCars">("housing");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -658,6 +660,7 @@ export function HousingScreen({
   const detailPreviewCarouselRef = useRef<ScrollView>(null);
   const detailScrollRef = useRef<ScrollView>(null);
   const detailScrollOffsetRef = useRef(0);
+  const lastNavigationScrollOffset = useRef(0);
   const [detailCanScrollMore, setDetailCanScrollMore] = useState(false);
   const [searchPhraseIndex, setSearchPhraseIndex] = useState(0);
   const [quickLinkWordIndex, setQuickLinkWordIndex] = useState(0);
@@ -1425,6 +1428,11 @@ export function HousingScreen({
   function updateScrollVisibility(y: number) {
     const nextSearchIsScrolled = y > 8;
     setSearchIsScrolled((current) => current === nextSearchIsScrolled ? current : nextSearchIsScrolled);
+    const currentOffset = Math.max(0, y);
+    const delta = currentOffset - lastNavigationScrollOffset.current;
+    if (currentOffset < 36 || delta < -8) onBottomTabsCompactChange?.(false);
+    else if (currentOffset > 72 && delta > 8) onBottomTabsCompactChange?.(true);
+    lastNavigationScrollOffset.current = currentOffset;
   }
 
   async function resolveCurrentRideLocation() {
@@ -3616,7 +3624,12 @@ export function HousingScreen({
     return (
       <>
         <View style={[styles.rideTopShowcase, isLight && styles.rideTopShowcaseLight, { marginTop: -14, marginHorizontal: -14 }]}>
-          <Image source={appAssets.carpoolWideHero} style={styles.rideTravelHero} resizeMode="cover" />
+          <View style={styles.rideTravelHeroFrame}>
+            <Image source={appAssets.carpoolWideHero} style={styles.rideTravelHero} resizeMode="cover" />
+            {/* Layered fade keeps the landscape from ending abruptly against
+                the dark carpool surface without another image dependency. */}
+            <View pointerEvents="none" style={styles.rideTravelHeroVignette} />
+          </View>
           <View style={[styles.rideDriverCta, isLight && styles.rideDriverCtaLight]}>
           <View style={styles.rideDriverCtaHeader}>
             <View style={styles.rideDriverCtaCopy}>
@@ -3627,19 +3640,13 @@ export function HousingScreen({
           </View>
           <View style={styles.ridePrimaryActions}>
             <TouchableOpacity style={[styles.rideFindButton, isLight && styles.rideActionLight, Platform.OS === "android" && styles.rideFindButtonAndroid]} activeOpacity={0.84} onPress={openRidePlanner}>
-              {Platform.OS === "android" ? <Text style={styles.rideActionEmojiAndroid}>🔎</Text> : <Image source={appAssets.carpoolFindRide} style={styles.rideActionIcon} resizeMode="contain" />}
-              <View style={[styles.rideActionCopy, Platform.OS === "android" && styles.rideActionCopyAndroid, Platform.OS === "android" && styles.rideFindActionCopyAndroid]}>
-                <Text style={styles.rideFindButtonText} numberOfLines={1}>Find a ride</Text>
-                <Text style={styles.rideActionSubtext}>Travel smarter</Text>
-              </View>
+              <View style={styles.rideActionSymbol}><Text style={styles.rideActionSymbolText}>⌕</Text></View>
+              <Text style={styles.rideFindButtonText} numberOfLines={1}>Find a ride</Text>
               <Text style={styles.rideFindArrow}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.rideOfferButton, isLight && styles.rideActionLight, Platform.OS === "android" && styles.rideOfferButtonAndroid]} activeOpacity={0.84} onPress={() => startRideOfferListing()}>
-              {Platform.OS === "android" ? <Text style={styles.rideActionEmojiAndroid}>🚗</Text> : <Image source={appAssets.carpoolOfferRide} style={styles.rideActionIcon} resizeMode="contain" />}
-              <View style={[styles.rideActionCopy, Platform.OS === "android" && styles.rideActionCopyAndroid, Platform.OS === "android" && styles.rideOfferActionCopyAndroid]}>
-                <Text style={styles.rideOfferButtonText} numberOfLines={1}>Offer a ride</Text>
-                <Text style={[styles.rideActionSubtext, styles.rideOfferSubtext]} numberOfLines={1}>Share your journey</Text>
-              </View>
+              <View style={styles.rideActionSymbol}><Text style={styles.rideActionSymbolText}>+</Text></View>
+              <Text style={styles.rideOfferButtonText} numberOfLines={1}>Offer a ride</Text>
               <Text style={styles.rideOfferArrow}>›</Text>
             </TouchableOpacity>
           </View>
@@ -3896,7 +3903,9 @@ export function HousingScreen({
           setWelcomeY(event.nativeEvent.layout.y);
         }}
       >
-        <ImageBackground source={appAssets.housingWideHero} style={styles.housingHero} imageStyle={styles.housingHeroImage} resizeMode="cover">
+        <View style={styles.housingHero}>
+          <Image source={appAssets.housingWideHero} style={styles.housingHeroImage} resizeMode="cover" />
+          <View pointerEvents="none" style={styles.housingHeroImageShade} />
           <TouchableOpacity style={styles.housingHeroSearchHotspot} onPress={onOpenSearch} activeOpacity={0.82} accessibilityRole="button" accessibilityLabel="Search housing by city or area">
             <View style={styles.housingHeroSearchPin}><Text style={styles.housingHeroSearchPinText}>⌖</Text></View>
             <Text style={styles.housingHeroSearchText} numberOfLines={1}>Where do you want to live?</Text>
@@ -3920,7 +3929,7 @@ export function HousingScreen({
               <Text style={styles.housingHeroRatingReviews}>(440 reviews)</Text>
             </View>
           </View>
-        </ImageBackground>
+        </View>
         <View style={styles.housingIntentHeader}>
           <Text style={styles.housingIntentHeading}>What would you like to do?</Text>
           <TouchableOpacity style={styles.housingIntentViewAll} onPress={onOpenSearch} accessibilityRole="button" accessibilityLabel="View all housing listings">
@@ -3934,7 +3943,7 @@ export function HousingScreen({
             return (
               <TouchableOpacity
                 key={item.value}
-                style={[styles.housingIntentCard, { backgroundColor: item.background }, active && styles.housingIntentCardActive, active && { borderColor: item.accent }]}
+                style={[styles.housingIntentCard, active && styles.housingIntentCardActive, active && { borderColor: item.accent, backgroundColor: "#192b23" }]}
                 activeOpacity={0.82}
                 onPress={() => {
                   if (item.value === "ride_need") {
@@ -3948,8 +3957,6 @@ export function HousingScreen({
                 accessibilityRole="button"
                 accessibilityLabel={item.title}
               >
-                <Image source={item.preview} style={styles.housingIntentPreview} resizeMode="cover" />
-                <View style={[styles.housingIntentWash, { backgroundColor: item.background }]} />
                 <View style={[styles.housingIntentIconBubble, { backgroundColor: `${item.accent}20` }]}>
                   {renderHousingIntentIcon(item.icon, item.accent)}
                 </View>
@@ -4587,28 +4594,34 @@ const styles = StyleSheet.create({
   cityExperienceModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: "#e6efea", alignItems: "center", justifyContent: "center" },
   cityExperienceModalCloseText: { color: "#263b33", fontSize: 27, lineHeight: 29, fontWeight: "500", marginTop: -2 },
   housingLanding: { gap: 16 },
-  housingHero: { width: "auto", height: 370, marginTop: -14, marginHorizontal: -14, overflow: "hidden", backgroundColor: "#dff3ff" },
-  housingHeroImage: { opacity: 1 },
-  housingHeroReviewPanel: { position: "absolute", left: 78, right: 78, top: 294, minHeight: 40, borderRadius: 13, backgroundColor: "rgba(255,255,255,0.80)", borderWidth: 1, borderColor: "rgba(255,255,255,0.56)", flexDirection: "row", alignItems: "center", paddingHorizontal: 6, paddingVertical: 3, gap: 5, shadowColor: "#07153f", shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
-  housingHeroReviewIcon: { width: 27, height: 27, borderRadius: 14, backgroundColor: "rgba(231,255,242,0.92)", alignItems: "center", justifyContent: "center" },
+  housingHero: { width: "auto", height: 370, marginTop: -14, marginHorizontal: -14, overflow: "hidden", backgroundColor: "#0b100f" },
+  housingHeroImage: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%", opacity: .9 },
+  // The original illustration remains present, but the shade eases it into
+  // the dark Housing surface so it behaves like the Carpool hero rather than
+  // reading as a separate bright card.
+  housingHeroImageShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(7, 17, 14, .56)" },
+  housingHeroGlow: { position: "absolute", width: 260, height: 260, borderRadius: 130, right: -95, top: -135, backgroundColor: "rgba(31, 204, 137, .24)" },
+  housingHeroReviewPanel: { position: "absolute", left: "11%", right: "11%", top: 294, minHeight: 40, borderRadius: 13, backgroundColor: "rgba(14, 34, 27, .92)", borderWidth: 1, borderColor: "rgba(164, 238, 201, .14)", flexDirection: "row", alignItems: "center", paddingHorizontal: 6, paddingVertical: 3, gap: 5 },
+  housingHeroReviewIcon: { width: 27, height: 27, borderRadius: 14, backgroundColor: "rgba(49, 218, 151, .16)", alignItems: "center", justifyContent: "center" },
   housingHeroReviewIconText: { fontSize: 14 },
   housingHeroReviewCopy: { flex: 1.1, minWidth: 0 },
-  housingHeroReviewTitle: { color: "#07153f", fontSize: 8, lineHeight: 10, fontWeight: "900" },
-  housingHeroReviewRating: { color: "#07153f", fontSize: 9, lineHeight: 11, fontWeight: "900" },
-  housingHeroReviewMeta: { color: "#516078", fontSize: 6, lineHeight: 8, fontWeight: "700" },
+  housingHeroReviewTitle: { color: "#dff5ea", fontSize: 8, lineHeight: 10, fontWeight: "900" },
+  housingHeroReviewRating: { color: "#dff5ea", fontSize: 9, lineHeight: 11, fontWeight: "900" },
+  housingHeroReviewMeta: { color: "#93aea2", fontSize: 6, lineHeight: 8, fontWeight: "700" },
   housingHeroRatingGroup: { flex: 0.88, minWidth: 0, alignItems: "center" },
-  housingHeroRatingLabel: { color: "#56657b", fontSize: 6, lineHeight: 8, fontWeight: "800" },
-  housingHeroRatingValue: { color: "#07153f", fontSize: 10, lineHeight: 12, fontWeight: "900" },
-  housingHeroRatingReviews: { color: "#6b7487", fontSize: 6, lineHeight: 8, fontWeight: "700" },
-  housingHeroSearchHotspot: { position: "absolute", left: "11%", top: 178, width: "78%", height: 52, borderRadius: 999, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "rgba(255,255,255,0.97)", paddingLeft: 13, paddingRight: 5, shadowColor: "#07153f", shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
-  housingHeroSearchPin: { width: 27, height: 27, borderRadius: 14, backgroundColor: "#e8fff5", alignItems: "center", justifyContent: "center", marginRight: 6 },
-  housingHeroSearchPinText: { color: "#0aac74", fontSize: 19, lineHeight: 21, fontWeight: "900" },
-  housingHeroSearchText: { flex: 1, color: "#627083", fontSize: 12, lineHeight: 15, fontWeight: "800" },
+  housingHeroRatingLabel: { color: "#8da89d", fontSize: 6, lineHeight: 8, fontWeight: "800" },
+  housingHeroRatingValue: { color: "#dff5ea", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+  housingHeroRatingReviews: { color: "#8da89d", fontSize: 6, lineHeight: 8, fontWeight: "700" },
+  housingHeroSearchHotspot: { position: "absolute", left: "11%", top: 178, width: "78%", height: 52, borderRadius: 999, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "rgba(255,255,255,.97)", paddingLeft: 13, paddingRight: 5, shadowColor: "#07153f", shadowOpacity: .16, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+  housingHeroSearchPin: { width: 27, height: 27, borderRadius: 14, backgroundColor: "#d8f8e8", alignItems: "center", justifyContent: "center", marginRight: 6 },
+  housingHeroSearchPinText: { color: "#09885d", fontSize: 19, lineHeight: 21, fontWeight: "900" },
+  housingHeroSearchText: { flex: 1, color: "#496159", fontSize: 12, lineHeight: 15, fontWeight: "800" },
   housingHeroSearchButton: { height: 42, minWidth: 104, paddingHorizontal: 13, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "#00a86b" },
   housingHeroSearchButtonText: { color: "#ffffff", fontSize: 14, lineHeight: 17, fontWeight: "900" },
-  housingHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,255,255,0.72)" },
-  housingHeroCopy: { maxWidth: "65%", zIndex: 1 },
-  housingHeroTitle: { color: "#07153f", fontSize: 34, lineHeight: 37, fontWeight: "900", letterSpacing: -1.1 },
+  housingHeroCopy: { zIndex: 1, maxWidth: "82%" },
+  housingHeroEyebrow: { color: "#66e2ac", fontSize: 10, lineHeight: 13, letterSpacing: 1.5, fontWeight: "900" },
+  housingHeroTitle: { color: "#f0faf4", fontSize: 30, lineHeight: 36, fontWeight: "700", letterSpacing: -0.55, marginTop: 4 },
+  housingHeroSubtitle: { color: "#a9c1b5", fontSize: 13, lineHeight: 18, fontWeight: "400", marginTop: 5 },
   housingHeroBadge: { position: "absolute", top: 18, right: 18, zIndex: 1, transform: [{ rotate: "-6deg" }], alignItems: "flex-end" },
   housingHeroBadgeText: { color: "#07153f", fontSize: 18, lineHeight: 21, fontWeight: "900", fontFamily: Platform.select({ ios: "Marker Felt", android: "sans-serif-condensed", default: undefined }) },
   housingHeroScribble: { width: 86, height: 5, borderRadius: 999, backgroundColor: "#14c9c8", marginTop: 5, transform: [{ rotate: "-3deg" }] },
@@ -4630,16 +4643,14 @@ const styles = StyleSheet.create({
   housingHeroReviewDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: "rgba(7,21,63,0.20)" },
   housingHeroReviewDotActive: { width: 13, backgroundColor: "#14c9c8" },
   housingIntentHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  housingIntentHeading: { flex: 1, color: theme.colors.text, fontSize: 22, lineHeight: 27, fontWeight: "900", letterSpacing: -0.35 },
-  housingIntentViewAll: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: "rgba(7,21,63,0.14)", backgroundColor: "rgba(255,255,255,0.86)" },
-  housingIntentViewAllText: { color: "#07153f", fontSize: 13, fontWeight: "800" },
-  housingIntentViewAllArrow: { color: "#07153f", fontSize: 24, lineHeight: 25, fontWeight: "600", marginTop: -2 },
+  housingIntentHeading: { flex: 1, color: theme.colors.text, fontSize: 22, lineHeight: 28, fontWeight: "700", letterSpacing: -0.2 },
+  housingIntentViewAll: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: "#19352c" },
+  housingIntentViewAllText: { color: "#bdeed7", fontSize: 13, fontWeight: "800" },
+  housingIntentViewAllArrow: { color: "#75dfad", fontSize: 24, lineHeight: 25, fontWeight: "600", marginTop: -2 },
   housingIntentGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
-  housingIntentCard: { width: "48.3%", height: 90, borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.78)", padding: 8, overflow: "hidden", shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 2 },
+  housingIntentCard: { width: "48.3%", minHeight: 102, borderRadius: 18, borderWidth: 1, borderColor: "rgba(136, 213, 174, .18)", padding: 12, overflow: "hidden", backgroundColor: "#14211b" },
   housingIntentCardActive: { transform: [{ scale: 0.985 }] },
-  housingIntentPreview: { position: "absolute", right: -18, top: 0, bottom: 0, width: "62%", opacity: 0.42 },
-  housingIntentWash: { ...StyleSheet.absoluteFillObject, opacity: 0.86 },
-  housingIntentIconBubble: { position: "absolute", left: 8, top: 7, width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", transform: [{ scale: 0.72 }], zIndex: 1 },
+  housingIntentIconBubble: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", transform: [{ scale: 0.72 }], marginBottom: 3 },
   intentHouseIcon: { width: 37, height: 36, alignItems: "center", justifyContent: "flex-end" },
   intentHouseRoof: { position: "absolute", top: 1, width: 0, height: 0, borderLeftWidth: 15, borderRightWidth: 15, borderBottomWidth: 14, borderLeftColor: "transparent", borderRightColor: "transparent" },
   intentHouseBody: { width: 23, height: 17, borderTopLeftRadius: 3, borderTopRightRadius: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, alignItems: "center", justifyContent: "flex-end" },
@@ -4660,11 +4671,11 @@ const styles = StyleSheet.create({
   intentCarSolidWheel: { position: "absolute", bottom: 0, width: 6, height: 6, borderRadius: 3, backgroundColor: "#07153f" },
   intentCarSolidWheelLeft: { left: 7 },
   intentCarSolidWheelRight: { right: 7 },
-  housingIntentCopy: { position: "absolute", left: 8, right: 40, bottom: 7, zIndex: 1 },
-  housingIntentTitle: { color: "#07153f", fontSize: 13, lineHeight: 16, fontWeight: "900", letterSpacing: -0.2 },
-  housingIntentSubtitle: { color: "#4c5871", fontSize: 10, lineHeight: 12, marginTop: 1, fontWeight: "700" },
-  housingIntentArrow: { position: "absolute", right: 8, bottom: 9, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "#fff", zIndex: 1 },
-  housingIntentArrowText: { color: "#07153f", fontSize: 23, lineHeight: 24, fontWeight: "700", marginTop: -3 },
+  housingIntentCopy: { marginTop: "auto", paddingRight: 24 },
+  housingIntentTitle: { color: "#f4fbf7", fontSize: 14, lineHeight: 17, fontWeight: "800", letterSpacing: -0.15 },
+  housingIntentSubtitle: { color: "#9bb5a8", fontSize: 10, lineHeight: 13, marginTop: 2, fontWeight: "600" },
+  housingIntentArrow: { position: "absolute", right: 10, bottom: 10, width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(236, 255, 246, .08)" },
+  housingIntentArrowText: { color: "#7be1b1", fontSize: 22, lineHeight: 24, fontWeight: "700", marginTop: -3 },
   listingSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   housingRefreshNotice: { alignItems: "center", backgroundColor: theme.colors.panel, borderColor: theme.colors.line, borderRadius: theme.radius.pill, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", marginBottom: 10, paddingHorizontal: 12, paddingVertical: 8 },
   housingRefreshNoticeText: { color: theme.colors.muted, fontSize: 12, fontWeight: "700" },
@@ -4982,9 +4993,11 @@ const styles = StyleSheet.create({
   detailPhotoDots: { position: "absolute", bottom: Platform.OS === "ios" ? 44 : 26, alignSelf: "center", flexDirection: "row", gap: 6, backgroundColor: "rgba(0,0,0,0.46)", borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
   detailPhotoDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.48)" },
   detailPhotoDotActive: { width: 18, backgroundColor: "#fff" },
-  rideTopShowcase: { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, overflow: "hidden", backgroundColor: "#dff3ff", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+  rideTopShowcase: { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, overflow: "hidden", backgroundColor: "#0b100f", shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
   rideTopShowcaseLight: { backgroundColor: "#ffffff", shadowColor: "#172033", shadowOpacity: 0.13 },
-  rideTravelHero: { width: "100%", height: 275, backgroundColor: "#dff3ff" },
+  rideTravelHeroFrame: { position: "relative", width: "100%", height: 275, backgroundColor: "#0b100f", overflow: "hidden" },
+  rideTravelHero: { width: "100%", height: "100%", backgroundColor: "#dff3ff" },
+  rideTravelHeroVignette: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(7,15,13,.13)" },
   rideDriverCta: { marginTop: -26, marginHorizontal: 14, marginBottom: 14, minHeight: 124, borderRadius: 26, paddingHorizontal: 14, paddingTop: 15, paddingBottom: 14, gap: 12, backgroundColor: "rgba(18,24,22,0.96)" },
   rideDriverCtaLight: { backgroundColor: "#ffffff" },
   rideDriverCtaHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
@@ -5170,13 +5183,15 @@ const styles = StyleSheet.create({
   rideSimpleStepText: { color: theme.colors.text, fontSize: 12, lineHeight: 15, fontWeight: "900", textAlign: "center" },
   rideSimpleStepCopy: { color: theme.colors.muted, fontSize: 10, lineHeight: 13, fontWeight: "700", textAlign: "center" },
   ridePrimaryActions: { flexDirection: "row", gap: 10, marginTop: 1 },
-  rideFindButton: { flex: 1, minHeight: 58, borderRadius: 18, backgroundColor: "rgba(55,213,154,0.14)", borderWidth: 1, borderColor: "rgba(55,213,154,0.18)", flexDirection: "row", alignItems: "center", paddingLeft: 9, paddingRight: 28, gap: 4, position: "relative" },
-  rideFindButtonAndroid: { backgroundColor: "#C4E6DE", borderColor: "#A5D9CD" },
-  rideFindButtonText: { color: "#0d8f75", fontSize: 14, lineHeight: 17, fontWeight: "900", backgroundColor: "transparent", includeFontPadding: false },
-  rideOfferButton: { flex: 1, minHeight: 58, borderRadius: 18, backgroundColor: "rgba(255,191,105,0.22)", borderWidth: 1, borderColor: "rgba(239,189,104,0.18)", flexDirection: "row", alignItems: "center", paddingLeft: 9, paddingRight: 27, gap: 4, position: "relative" },
-  rideOfferButtonAndroid: { backgroundColor: "#F0DCC4", borderColor: "#E7C89E" },
+  rideFindButton: { flex: 1, minHeight: 54, borderRadius: 16, backgroundColor: "#17372b", borderWidth: 1, borderColor: "rgba(70,218,160,.36)", flexDirection: "row", alignItems: "center", paddingLeft: 9, paddingRight: 28, gap: 8, position: "relative" },
+  rideFindButtonAndroid: { backgroundColor: "#17372b", borderColor: "rgba(70,218,160,.36)" },
+  rideFindButtonText: { flex: 1, color: "#dff8ed", fontSize: 13, lineHeight: 16, fontWeight: "800", backgroundColor: "transparent", includeFontPadding: false },
+  rideOfferButton: { flex: 1, minHeight: 54, borderRadius: 16, backgroundColor: "#17231f", borderWidth: 1, borderColor: "rgba(142,186,167,.27)", flexDirection: "row", alignItems: "center", paddingLeft: 9, paddingRight: 27, gap: 8, position: "relative" },
+  rideOfferButtonAndroid: { backgroundColor: "#17231f", borderColor: "rgba(142,186,167,.27)" },
   rideActionLight: { shadowColor: "#101828", shadowOpacity: 0.07, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   rideActionIcon: { width: 25, height: 25 },
+  rideActionSymbol: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(90,230,170,.14)" },
+  rideActionSymbolText: { color: "#7de3b5", fontSize: 22, lineHeight: 25, fontWeight: "700", textAlign: "center" },
   rideActionEmojiAndroid: { width: 28, fontSize: 20, lineHeight: 24, textAlign: "center", includeFontPadding: false, backgroundColor: "transparent" },
   rideActionCopy: { flex: 1, minWidth: 0, backgroundColor: "transparent" },
   rideActionCopyAndroid: { justifyContent: "center", backgroundColor: "transparent" },
@@ -5184,9 +5199,9 @@ const styles = StyleSheet.create({
   rideOfferActionCopyAndroid: { backgroundColor: "#F0DCC4" },
   rideActionSubtext: { color: "#6b7a90", fontSize: 10, lineHeight: 13, fontWeight: "700", backgroundColor: "transparent", includeFontPadding: false },
   rideOfferSubtext: { color: "#d04400" },
-  rideFindArrow: { position: "absolute", right: 9, color: "#0d8f75", fontSize: 25, lineHeight: 27, fontWeight: "700", marginTop: -2 },
-  rideOfferArrow: { position: "absolute", right: 9, color: "#d04400", fontSize: 25, lineHeight: 27, fontWeight: "700", marginTop: -2 },
-  rideOfferButtonText: { color: "#c2410c", fontSize: 11, lineHeight: 14, fontWeight: "900", backgroundColor: "transparent", includeFontPadding: false },
+  rideFindArrow: { position: "absolute", right: 9, color: "#7de3b5", fontSize: 24, lineHeight: 26, fontWeight: "600", marginTop: -2 },
+  rideOfferArrow: { position: "absolute", right: 9, color: "#a7c6b7", fontSize: 24, lineHeight: 26, fontWeight: "600", marginTop: -2 },
+  rideOfferButtonText: { flex: 1, color: "#dfece6", fontSize: 13, lineHeight: 16, fontWeight: "800", backgroundColor: "transparent", includeFontPadding: false },
   rideServiceDetailText: { color: theme.colors.soft, fontSize: 14, lineHeight: 20, fontWeight: "800" },
   rideExampleBox: {
     borderRadius: 14,

@@ -32,7 +32,7 @@ import {
 import { appAssets } from "../assets";
 import { DateTimeField, todayLocalIso } from "../components/DateTimeField";
 import { UserAvatar } from "../components/UserAvatar";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { Car, FairFaresUser, RentalSearchInput, RentalServiceBooking, ServiceItem } from "../types";
 
@@ -890,7 +890,7 @@ export function ServicesScreen({
 }
 
 function ServiceSection({ title, tiles, compact }: { title: string; tiles: ServiceTile[]; compact?: boolean }) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   return (
     <View style={styles.serviceSection}>
       <Text style={styles.serviceSectionTitle}>{title}</Text>

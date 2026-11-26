@@ -3,7 +3,7 @@ import { Platform, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Floating bottom navigation bar dimensions (see BottomTabs.tsx).
-export const BOTTOM_NAV_HEIGHT = 70;
+export const BOTTOM_NAV_HEIGHT = 62;
 // Sit flush with the app's bottom safe-area edge. The SafeAreaView already
 // keeps the pill above the iOS home indicator and Android system navigation;
 // an additional inset exposed a thin strip of page content below the pill.
@@ -57,9 +57,9 @@ export function useResponsiveLayout(): ResponsiveLayout {
       systemBottomInset - navVisualOverlap,
       Platform.OS === "android" ? 6 : BOTTOM_NAV_BOTTOM_OFFSET,
     );
-    // Extra 14pt breathing room so the last card is fully visible above the pill.
+    // Extra 12pt breathing room so the last card is fully visible above the pill.
     const navClearance =
-      BOTTOM_NAV_HEIGHT + systemBottomInset + 14;
+      BOTTOM_NAV_HEIGHT + systemBottomInset + 12;
     return {
       isTablet,
       contentMaxWidth,

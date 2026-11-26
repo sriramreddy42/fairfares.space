@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { Animated, Image, ImageSourcePropType, StyleSheet, Text, useColorScheme, View } from "react-native";
 import { appAssets } from "../assets";
 import { theme } from "../theme";
@@ -38,6 +38,7 @@ type Props = {
   user: FairFaresUser | null;
   onChange: (tab: TabKey) => void;
   hidden?: boolean;
+  compact?: boolean;
   appearance?: "light" | "dark";
 };
 
@@ -47,11 +48,20 @@ function visibleActiveTab(active: TabKey): VisibleTabKey {
   return active;
 }
 
-export function BottomTabs({ active, unreadCount, user, onChange, hidden = false, appearance }: Props) {
+export function BottomTabs({ active, unreadCount, user, onChange, hidden = false, compact = false, appearance }: Props) {
   const layout = useResponsiveLayout();
   const systemColorScheme = useColorScheme();
   const colorScheme = appearance || systemColorScheme;
   const housingScale = useRef(new Animated.Value(1)).current;
+  const compactMotion = useRef(new Animated.Value(compact ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(compactMotion, {
+      toValue: compact ? 1 : 0,
+      duration: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [compact, compactMotion]);
 
   if (hidden) return null;
 
@@ -67,18 +77,31 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
         { height: layout.systemBottomInset },
       ]}
     />
-    <View
+    <Animated.View
       style={[
         styles.card,
         colorScheme === "light" && styles.cardLight,
-        { bottom: layout.navBottomInset, height: 70 + layout.navVisualOverlap },
+        colorScheme !== "light" && styles.cardDark,
+        {
+          bottom: compactMotion.interpolate({
+            inputRange: [0, 1],
+            // Let the floating surface sit into the safe-area visual region;
+            // controls remain above the home indicator while the dock reads
+            // as anchored to the bottom edge rather than hovering over content.
+            outputRange: [Math.max(6, layout.navBottomInset - 10), 5],
+          }),
+          height: compactMotion.interpolate({
+            inputRange: [0, 1],
+            outputRange: [68 + layout.navVisualOverlap, 52 + layout.navVisualOverlap],
+          }),
+        },
         layout.isTablet
           ? { width: layout.navWidth, alignSelf: "center" }
           : { left: BOTTOM_NAV_HORIZONTAL_MARGIN, right: BOTTOM_NAV_HORIZONTAL_MARGIN }
       ]}
       accessibilityRole="tablist"
     >
-      <View pointerEvents="none" style={[styles.glassClip, colorScheme === "light" && styles.glassClipLight]}>
+      <View pointerEvents="none" style={[styles.glassClip, colorScheme === "light" && styles.glassClipLight, colorScheme !== "light" && styles.glassClipDark]}>
         <AdaptiveGlassView
           style={StyleSheet.absoluteFill}
           intensity={72}
@@ -106,8 +129,11 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                 housingScale.stopAnimation();
                 housingScale.setValue(1);
                 Animated.sequence([
-                  Animated.timing(housingScale, { toValue: 1.16, duration: 130, useNativeDriver: true }),
-                  Animated.spring(housingScale, { toValue: 1, friction: 4, tension: 150, useNativeDriver: true }),
+                  // The dock also animates its height and labels on scroll,
+                  // so keep this small tab feedback on the JS driver too.
+                  // Mixing drivers on the same navigation tree crashes iOS.
+                  Animated.timing(housingScale, { toValue: 1.16, duration: 130, useNativeDriver: false }),
+                  Animated.spring(housingScale, { toValue: 1, friction: 4, tension: 150, useNativeDriver: false }),
                 ]).start();
               }}
               style={[styles.touchTarget, item.key === "community" && styles.centerTouchTarget]}
@@ -115,9 +141,22 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
               <Animated.View style={[
                 styles.itemContent,
                 item.key === "community" && styles.centerItemContent,
-                item.key === "home" && { transform: [{ scale: housingScale }] },
+                {
+                  transform: [
+                    { scale: item.key === "home" ? housingScale : 1 },
+                    { translateY: compactMotion.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) },
+                  ],
+                },
               ]}>
-                <View style={[styles.iconFrame, item.key === "community" && styles.centerIconFrame, isSelected && styles.selectedItem, item.key === "community" && isSelected && styles.selectedCenterItem]}>
+                <Animated.View style={[
+                  styles.iconFrame,
+                  item.key === "community" && styles.centerIconFrame,
+                  isSelected && styles.selectedItem,
+                  item.key === "community" && isSelected && styles.selectedCenterItem,
+                  item.key === "community" && {
+                    transform: [{ scale: compactMotion.interpolate({ inputRange: [0, 1], outputRange: [1, 0.76] }) }],
+                  },
+                ]}>
                   {item.key === "profile" && user?.profilePhotoUrl ? (
                     <UserAvatar
                       photoUrl={user.profilePhotoUrl}
@@ -145,16 +184,26 @@ export function BottomTabs({ active, unreadCount, user, onChange, hidden = false
                       <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
                     </View>
                   ) : null}
-                </View>
-                <Text numberOfLines={1} style={[styles.label, item.key === "community" && styles.centerLabel, isSelected && styles.selectedLabel]}>
-                  {item.label}
-                </Text>
+                </Animated.View>
+                <Animated.Text
+                  numberOfLines={1}
+                  style={[
+                    styles.label,
+                    isSelected && styles.selectedLabel,
+                    item.key === "community" && styles.centerLabel,
+                    {
+                      opacity: compactMotion.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0.08, 0] }),
+                      maxHeight: compactMotion.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
+                      marginTop: compactMotion.interpolate({ inputRange: [0, 1], outputRange: [3, 0] }),
+                    },
+                  ]}
+                >{item.label}</Animated.Text>
               </Animated.View>
             </TactilePressable>
           );
         })}
       </View>
-    </View>
+    </Animated.View>
     </>
   );
 }
@@ -165,14 +214,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#141515",
+    backgroundColor: "transparent",
   },
   systemNavigationSurfaceLight: {
     backgroundColor: "#f3f4f6",
   },
   card: {
     position: "absolute",
-    borderRadius: 35,
+    borderRadius: 31,
     borderWidth: 1,
     borderColor: theme.colors.line,
     backgroundColor: theme.colors.panel,
@@ -183,9 +232,10 @@ const styles = StyleSheet.create({
     elevation: 14,
   },
   cardLight: { borderColor: "rgba(15,23,42,0.10)", backgroundColor: "rgba(255,255,255,0.96)", shadowColor: "#101828", shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 8 },
+  cardDark: { borderWidth: 0, backgroundColor: "#000000", shadowOpacity: 0.48, shadowRadius: 18 },
   glassClip: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 35,
+    borderRadius: 31,
     overflow: "hidden",
     // Native blur/liquid-glass can produce its first sampled frame only after
     // the underlying scroll view invalidates. Paint the stable material color
@@ -194,6 +244,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.panel,
   },
   glassClipLight: { backgroundColor: "rgba(255,255,255,0.96)" },
+  glassClipDark: { backgroundColor: "#000000" },
   glassTint: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "transparent",
@@ -232,39 +283,39 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
   itemContent: {
-    width: 48,
-    height: 56,
+    width: 58,
+    height: 60,
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
+    gap: 0,
   },
   centerItemContent: {
-    height: 70,
-    justifyContent: "flex-start",
+    height: 64,
+    justifyContent: "center",
     paddingTop: 0,
   },
   selectedItem: {
     borderRadius: 20,
-    backgroundColor: theme.colors.panel2,
+    backgroundColor: "rgba(37,61,52,0.82)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.blue,
-    shadowColor: theme.colors.blue,
+    borderColor: "rgba(38,201,144,0.54)",
+    shadowColor: theme.colors.brand,
     shadowOpacity: 0.2,
     shadowRadius: 9,
     shadowOffset: { width: 0, height: 0 },
     elevation: 4,
   },
   iconFrame: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },
   centerIconFrame: {
-    width: 54,
-    height: 54,
-    marginTop: -13,
-    borderRadius: 27,
+    width: 48,
+    height: 48,
+    marginTop: -14,
+    borderRadius: 24,
     backgroundColor: theme.colors.brand,
     borderWidth: 3,
     borderColor: theme.colors.panel,
@@ -275,17 +326,26 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   selectedCenterItem: {
-    borderRadius: 27,
+    borderRadius: 24,
     backgroundColor: "#28c997",
-    borderColor: "#effff9",
+    borderColor: "rgba(224,255,243,0.75)",
   },
+  label: {
+    color: theme.colors.muted,
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  selectedLabel: { color: theme.colors.brand },
+  centerLabel: { color: theme.colors.brand, marginTop: -1 },
   icon: {
     opacity: 1,
   },
   glyph: {
     color: theme.colors.muted,
     fontSize: 19,
-    fontWeight: "900",
+    fontWeight: "700",
     width: 27,
     height: 27,
     lineHeight: 27,
@@ -295,25 +355,25 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.line,
   },
   centerGlyph: {
-    width: 36,
-    height: 36,
-    lineHeight: 33,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    lineHeight: 30,
+    borderRadius: 16,
     borderWidth: 0,
     color: "#06291e",
-    fontSize: 31,
+    fontSize: 28,
     fontWeight: "700",
   },
   selectedGlyph: {
-    color: theme.colors.blue,
-    borderColor: theme.colors.blue,
+    color: theme.colors.brand,
+    borderColor: theme.colors.brand,
   },
   selectedCenterGlyph: {
     color: "#06291e",
     borderColor: "transparent",
   },
   selectedIcon: {
-    tintColor: theme.colors.blue,
+    tintColor: theme.colors.brand,
   },
   profileAvatar: {
     width: 28,
@@ -325,7 +385,7 @@ const styles = StyleSheet.create({
     opacity: 0.78,
   },
   selectedProfileAvatar: {
-    borderColor: theme.colors.blue,
+    borderColor: theme.colors.brand,
     opacity: 1,
   },
   profileAvatarImage: {
@@ -337,20 +397,6 @@ const styles = StyleSheet.create({
     tintColor: theme.colors.muted,
   },
   unselectedFullColorIcon: { opacity: 0.82 },
-  label: {
-    color: theme.colors.muted,
-    fontSize: 9.5,
-    lineHeight: 12,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  centerLabel: {
-    marginTop: 0,
-    color: theme.colors.brand,
-  },
-  selectedLabel: {
-    color: theme.colors.blue,
-  },
   badge: {
     position: "absolute",
     top: -6,
@@ -367,6 +413,6 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 9,
     lineHeight: 11,
-    fontWeight: "900",
+    fontWeight: "700",
   },
 });

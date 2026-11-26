@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Image, Linking, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from "react-native";
 import { getNearbyGasPrices, nearbyGasMapUrl } from "../api/client";
 import { GasFuelType, GasStation } from "../types";
+import { isLightAppearance } from "../theme";
 import { readGasCache, writeGasCache } from "../utils/gasPriceCache";
 import { requestUserLocationPermission } from "../utils/locationPermission";
 
@@ -103,7 +104,7 @@ function freshnessLabel(value: string) {
 }
 
 export function GasStationsScreen({ onBack }: Props) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const [fuel, setFuel] = useState<GasFuelType>("regular");
   const [position, setPosition] = useState<Coordinates | null>(null);
   const [stations, setStations] = useState<GasStation[]>([]);

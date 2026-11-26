@@ -295,6 +295,8 @@ export type CommunityUserProfile = {
   id: number;
   name: string;
   photoUrl: string;
+  companyOrSchool?: string;
+  affiliationType?: "WORK" | "SCHOOL";
   isGuest?: boolean;
   ratingSummary?: UserRatingSummary;
   connectionState?: "NONE" | "OUTGOING_PENDING" | "INCOMING_PENDING" | "CONNECTED" | "BLOCKED";

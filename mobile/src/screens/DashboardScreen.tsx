@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { ActivityIndicator, Alert, Image, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useColorScheme, useWindowDimensions, View } from "react-native";
 import { completeHousingConnection, getHousingActivity, getRentalBookings, getRideActivity, getRideDriverLocation, rateCompletedRide, respondToRideDispatch, updateRideDriverLocation } from "../api/client";
 import { appAssets } from "../assets";
-import { theme } from "../theme";
+import { isLightAppearance, theme } from "../theme";
 import { useResponsiveLayout } from "../utils/layout";
 import { shareHousingListing } from "../utils/listingShare";
 import { requestUserLocationPermission } from "../utils/locationPermission";
@@ -242,7 +242,7 @@ function ActivityIcon({ kind, color }: { kind: "route" | "items" | "riders" | "l
 }
 
 export function DashboardScreen({ data, onReserveRide, onRideMessage, onOpenHousing, onEditHousing, onOpenServices, onOpenRideOwner, onRequireLogin }: Props) {
-  const isLight = useColorScheme() === "light";
+  const isLight = isLightAppearance(useColorScheme());
   const { width: windowWidth } = useWindowDimensions();
   const layout = useResponsiveLayout();
   const userId = Number(data?.user?.id || 0);

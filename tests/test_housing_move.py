@@ -39,10 +39,10 @@ class HousingMoveTest(unittest.TestCase):
             "showOnMap": visible, "moveMonth": "2027-01",
         }}, "NEED_PLACE", "Denver, CO")
 
-    def test_confirmed_move_preserves_home_and_is_visible_only_with_consent(self):
+    def test_confirmed_move_preserves_home_and_is_visible_automatically(self):
         with app.db() as con:
             app.apply_housing_post_location(con, self.uid, self.intent(visible=False))
-        self.assertEqual(app.people_map_city_pool(0, "Denver, CO")["total"], 0)
+        self.assertEqual(app.people_map_city_pool(0, "Denver, CO")["total"], 1)
         with app.db() as con:
             app.apply_housing_post_location(con, self.uid, self.intent())
             user = con.execute("SELECT * FROM users WHERE id = ?", (self.uid,)).fetchone()
@@ -61,14 +61,14 @@ class HousingMoveTest(unittest.TestCase):
             self.assertEqual(con.execute("SELECT relocation_city FROM users WHERE id = ?", (self.uid,)).fetchone()[0], "Denver, CO")
         self.assertIsNone(app.housing_post_location_intent({}, "GENERAL", "Denver, CO"))
 
-    def test_hidden_members_stay_hidden_and_users_are_not_counted_twice(self):
+    def test_legacy_discovery_flags_do_not_hide_members_or_count_twice(self):
         with app.db() as con:
             app.apply_housing_post_location(con, self.uid, self.intent())
             con.execute("UPDATE users SET local_city = 'Denver, CO', local_connection_discoverable = 1 WHERE id = ?", (self.uid,))
         self.assertEqual(app.people_map_city_pool(0, "Denver, CO")["total"], 1)
         with app.db() as con:
             con.execute("UPDATE users SET people_discovery_configured = 1, people_discoverable = 0 WHERE id = ?", (self.uid,))
-        self.assertEqual(app.people_map_city_pool(0, "Denver, CO")["total"], 0)
+        self.assertEqual(app.people_map_city_pool(0, "Denver, CO")["total"], 1)
 
     def test_invalid_intent_rejected(self):
         with self.assertRaises(ValueError):
@@ -157,6 +157,20 @@ class HousingMoveTest(unittest.TestCase):
             self.assertTrue(pool["people"][0]["companyMatch"])
             self.assertNotEqual(pool["latitude"], 0)
         self.assertEqual(app.people_map_company_key("Amazon Web Services"), "amazon web services")
+
+    def test_map_overview_includes_each_opted_in_city(self):
+        with app.db() as con:
+            con.execute("UPDATE users SET local_city = 'Houston, TX', local_connection_discoverable = 1 WHERE id = ?", (self.uid,))
+            con.execute("INSERT INTO users (name,email,password_hash,is_verified,local_city,local_connection_discoverable) VALUES ('Denver member','denver@example.com','unused',1,'Denver, CO',1)")
+        points = {
+            "Houston, TX": {"city": "Houston, TX", "latitude": 29.76, "longitude": -95.36},
+            "Denver, CO": {"city": "Denver, CO", "latitude": 39.74, "longitude": -104.99},
+        }
+        with mock.patch.object(app, "member_city_map_location", side_effect=lambda city: points.get(city, {"city": "", "latitude": 0.0, "longitude": 0.0})):
+            overview = app.people_map_overview_pool(0)
+        self.assertEqual(overview["city"], "")
+        self.assertEqual(overview["total"], 2)
+        self.assertEqual({person["city"] for person in overview["people"]}, {"Houston, TX", "Denver, CO"})
 
     def test_map_pages_are_unique_with_full_total(self):
         with app.db() as con:

@@ -1,8 +1,27 @@
-import { Appearance, DynamicColorIOS, NativeModules, Platform, PlatformColor } from "react-native";
+import { Appearance, DynamicColorIOS, NativeModules, Platform, PlatformColor, StyleSheet } from "react-native";
+
+// The system font's full Bold/Heavy faces made our UI feel denser than the
+// native products we are taking cues from. Keep a clear hierarchy, but step
+// every legacy weight down one level: section headings become bold, and card
+// titles become semibold. This applies consistently to feeds, rides, housing,
+// and account screens instead of leaving every screen to drift on its own.
+StyleSheet.setStyleAttributePreprocessor("fontWeight", (value) => {
+  const weight = String(value);
+  if (weight === "900" || weight === "800") return "700";
+  if (weight === "700") return "600";
+  return weight;
+});
 
 export type AppAppearancePreference = "system" | "light" | "dark";
 
+let appAppearancePreference: AppAppearancePreference = "dark";
+
+export function isLightAppearance(systemColorScheme: "light" | "dark" | null | undefined) {
+  return appAppearancePreference === "system" ? systemColorScheme === "light" : appAppearancePreference === "light";
+}
+
 export function setPlatformAppearance(preference: AppAppearancePreference) {
+  appAppearancePreference = preference;
   if (Platform.OS === "android") {
     NativeModules.FairFaresTheme?.setMode(preference);
     return;
@@ -11,20 +30,27 @@ export function setPlatformAppearance(preference: AppAppearancePreference) {
 }
 
 function adaptiveColor(light: string, dark: string, androidResource: string) {
-  if (Platform.OS === "ios") return DynamicColorIOS({ light, dark });
+  // App appearance can intentionally differ from the device setting. Native
+  // DynamicColorIOS follows only the device, which previously leaked light
+  // borders into our dark default. Keep the app's dark palette authoritative.
+  if (Platform.OS === "ios") return dark;
   if (Platform.OS === "android") return PlatformColor(androidResource);
   return dark;
 }
 
 export const theme = {
   colors: {
-    bg: adaptiveColor("#f3f4f6", "#0f0f10", "@color/ff_background"),
-    panel: adaptiveColor("rgba(255,255,255,0.92)", "rgba(24,24,25,0.92)", "@color/ff_surface"),
-    panel2: adaptiveColor("rgba(240,242,245,0.90)", "rgba(36,36,37,0.90)", "@color/ff_surface_variant"),
-    line: adaptiveColor("#dddfe2", "#343436", "@color/ff_outline"),
-    text: adaptiveColor("#050505", "#f5f5f5", "@color/ff_on_background"),
-    muted: adaptiveColor("#65676b", "#aaaab0", "@color/ff_on_surface_variant"),
-    soft: adaptiveColor("#1c1e21", "#d7d7da", "@color/ff_on_surface"),
+    // Neutral charcoal surfaces: reserve FairFares green for actions and status,
+    // rather than tinting the entire interface green.
+    bg: adaptiveColor("#f3f4f6", "#1c1c1e", "@color/ff_background"),
+    panel: adaptiveColor("rgba(255,255,255,0.92)", "rgba(35,35,37,0.98)", "@color/ff_surface"),
+    panel2: adaptiveColor("rgba(240,242,245,0.90)", "rgba(45,45,47,0.98)", "@color/ff_surface_variant"),
+    // Dark surfaces are separated by tone, not bright outlines. This keeps
+    // cards quiet and lets the green actions carry the visual hierarchy.
+    line: adaptiveColor("#dddfe2", "rgba(255,255,255,0.12)", "@color/ff_outline"),
+    text: adaptiveColor("#050505", "#f4f4f5", "@color/ff_on_background"),
+    muted: adaptiveColor("#65676b", "#a7a9ae", "@color/ff_on_surface_variant"),
+    soft: adaptiveColor("#1c1e21", "#e4e5e7", "@color/ff_on_surface"),
     brand: "#18b884",
     accent: "#ff3b30",
     blue: "#1877f2",
@@ -54,7 +80,7 @@ export const theme = {
     eyebrow: { fontSize: 11, lineHeight: 15, fontWeight: "700" as const, letterSpacing: 0.7, textTransform: "uppercase" as const }
   },
   depth: {
-    card: { backgroundColor: adaptiveColor("rgba(255,255,255,0.92)", "rgba(24,24,25,0.92)", "@color/ff_surface"), borderColor: adaptiveColor("rgba(255,255,255,0.72)", "rgba(255,255,255,0.10)", "@color/ff_outline"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.14, shadowRadius: 15, shadowOffset: { width: 0, height: 8 }, elevation: Platform.OS === "android" ? 0 : 6 },
+    card: { backgroundColor: adaptiveColor("rgba(255,255,255,0.92)", "rgba(35,35,37,0.98)", "@color/ff_surface"), borderColor: adaptiveColor("rgba(255,255,255,0.72)", "rgba(255,255,255,0.10)", "@color/ff_outline"), borderWidth: 1, borderRadius: 18, shadowColor: "#000", shadowOpacity: Platform.OS === "android" ? 0 : 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: Platform.OS === "android" ? 0 : 4 },
     raised: { backgroundColor: adaptiveColor("rgba(255,255,255,0.86)", "rgba(36,36,37,0.90)", "@color/ff_surface_variant"), borderColor: adaptiveColor("rgba(255,255,255,0.68)", "rgba(255,255,255,0.12)", "@color/ff_outline"), borderWidth: 1, borderRadius: 18, shadowColor: "#101828", shadowOpacity: Platform.OS === "android" ? 0 : 0.11, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: Platform.OS === "android" ? 0 : 4 },
     input: { backgroundColor: adaptiveColor("rgba(255,255,255,0.78)", "rgba(36,36,37,0.86)", "@color/ff_surface_variant"), borderColor: adaptiveColor("rgba(255,255,255,0.62)", "rgba(255,255,255,0.10)", "@color/ff_outline"), borderWidth: 1, borderRadius: 18 }
   }

@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 
 export type PeopleMapMember = {
   id: number;
+  isViewer?: boolean;
   name: string;
   photoUrl: string;
   city: string;
@@ -34,7 +35,7 @@ export type PeopleMapRegion = PeopleMapFocus & {
 
 export type PeopleMapProps = {
   members: PeopleMapMember[];
-  onAreaPress?: () => void;
+  onAreaPress?: (city: string) => void;
   onMemberPress?: (member: PeopleMapMember) => void;
   // The viewer's own device/city focus. This is never rendered as another
   // member's location and is used only to give an empty map a useful start.
