@@ -19839,6 +19839,60 @@ def people_map_company_pool(viewer_id: int, company_or_school: object, offset: i
     return {"city": "", "latitude": focus["latitude"], "longitude": focus["longitude"], "total": total, "companyMatches": total, "people": people, "nextOffset": offset + len(people) if offset + len(people) < total else None}
 
 
+def people_map_overview_pool(viewer_id: int) -> dict[str, object]:
+    """Return city-level members for the initial nationwide Friends Map.
+
+    This deliberately returns one city-level record per opted-in member rather
+    than an address or any live location. The native map groups these records
+    into city count pins; selecting one city makes the existing city pool load
+    the individual, city-spread member pins.
+    """
+    with db() as con:
+        rows = con.execute(
+            """SELECT id, name, profile_photo_url, relocation_company, local_city,
+                      relocation_city, relocation_discoverable,
+                      local_connection_discoverable, people_discoverable,
+                      people_discovery_configured
+                 FROM users
+                WHERE guest_account = 0 AND is_verified = 1 AND suspended_at IS NULL
+                  AND (people_discovery_configured = 0 OR people_discoverable = 1)
+                  AND (local_connection_discoverable = 1 OR relocation_discoverable = 1)
+                ORDER BY id
+                LIMIT 500"""
+        ).fetchall()
+
+    people: list[dict[str, object]] = []
+    for row in rows:
+        if not people_discovery_enabled(row):
+            continue
+        member_id = int(row_value(row, "id") or 0)
+        local_city = clean_text_value(row_value(row, "local_city"), 120)
+        relocation_city = clean_text_value(row_value(row, "relocation_city"), 120)
+        cities: list[tuple[str, bool]] = []
+        if row_value(row, "local_connection_discoverable") and local_city:
+            cities.append((local_city, False))
+        if row_value(row, "relocation_discoverable") and relocation_city:
+            cities.append((relocation_city, True))
+        for member_city, moving in cities:
+            location = member_city_map_location(member_city)
+            if not location.get("latitude") and not location.get("longitude"):
+                continue
+            people.append({
+                "id": member_id,
+                "isViewer": member_id == int(viewer_id or 0),
+                "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
+                "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
+                **location,
+                "moving": moving,
+                "fromCity": local_city if moving else "",
+                "companyMatch": False,
+                "companyName": clean_text_value(row_value(row, "relocation_company"), 80),
+                "housingIntent": "",
+                "housingBudget": 0.0,
+            })
+    return {"city": "", "latitude": 0.0, "longitude": 0.0, "total": len(people), "companyMatches": 0, "people": people, "nextOffset": None}
+
+
 def mobile_user_payload(user: sqlite3.Row | dict[str, object] | None) -> dict[str, object] | None:
     if not user:
         return None
@@ -44355,12 +44409,14 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         city = params.get("city", [""])[0]
         company_or_school = params.get("company", [""])[0]
+        overview = params.get("overview", [""])[0].strip() in {"1", "true", "yes"}
         try:
             offset = max(0, int(params.get("offset", ["0"])[0]))
-            if not people_map_city_key(city) and not people_map_company_key(company_or_school):
+            if not overview and not people_map_city_key(city) and not people_map_company_key(company_or_school):
                 self.send_json({"ok": False, "error": "Choose an area, company, or school."}, 400)
                 return
-            area = people_map_city_pool(int(row_value(user, "id") or 0), city, company_or_school, offset) if people_map_city_key(city) else people_map_company_pool(int(row_value(user, "id") or 0), company_or_school, offset)
+            viewer_id = int(row_value(user, "id") or 0)
+            area = people_map_overview_pool(viewer_id) if overview else (people_map_city_pool(viewer_id, city, company_or_school, offset) if people_map_city_key(city) else people_map_company_pool(viewer_id, company_or_school, offset))
         except ValueError:
             self.send_json({"ok": False, "error": "Invalid city search."}, 400)
             return
