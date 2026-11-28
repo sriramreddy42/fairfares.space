@@ -19501,6 +19501,7 @@ def people_suggestions_for_user(user_id: int, limit: int = 8) -> list[dict[str, 
                     "id": candidate_id,
                     "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
                     "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), candidate_id),
+                    "companyName": clean_text_value(row_value(row, "relocation_company"), 120),
                     "reason": " · ".join(reasons),
                     "ratingSummary": rating,
                     "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
@@ -44516,7 +44517,19 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 (viewer_id,),
             )
             rows = con.execute(
-                """SELECT users.id, users.name, users.profile_photo_url, users.local_city,
+                """SELECT users.id, users.name, users.profile_photo_url, users.local_city, users.relocation_company,
+                          COALESCE(
+                            (SELECT post_mode FROM accommodation_posts
+                             WHERE user_id = users.id AND visibility_status = 'ACTIVE'
+                               AND lower(trim(city)) = lower(trim(users.local_city))
+                             ORDER BY datetime(created_at) DESC, id DESC LIMIT 1),
+                            (SELECT category FROM ask_community_posts
+                             WHERE author_id = users.id AND status IN ('PUBLISHED', 'LOCKED')
+                               AND upload_state = 'READY'
+                               AND category IN ('HAVE_PLACE', 'NEED_PLACE', 'NEED_ROOMMATE')
+                               AND lower(trim(city)) = lower(trim(users.local_city))
+                             ORDER BY datetime(created_at) DESC, id DESC LIMIT 1)
+                          ) AS housing_intent,
                           users.local_connection_discoverable
                    FROM member_contact_pools pool
                    JOIN users ON users.id = pool.member_user_id
@@ -44535,6 +44548,8 @@ class FairFaresHandler(SimpleHTTPRequestHandler):
                 "id": member_id,
                 "name": clean_text_value(row_value(row, "name"), 120) or "FairFares member",
                 "photoUrl": avatar_delivery_path(row_value(row, "profile_photo_url"), member_id),
+                "companyName": clean_text_value(row_value(row, "relocation_company"), 120),
+                "housingIntent": clean_text_value(row_value(row, "housing_intent"), 30).upper() if clean_text_value(row_value(row, "housing_intent"), 30).upper() in {"HAVE_PLACE", "NEED_PLACE", "NEED_ROOMMATE"} else "",
                 **map_location,
             })
         self.send_json({"ok": True, "people": people})
