@@ -1985,9 +1985,12 @@ export function CommunityScreen({ user, city, cars, testimonials = [], onRequire
     if (!user?.id) { onRequireLogin(); return; }
     const typedArea = relocationCityDraft.trim();
     const companyQuery = relocationCompanyDraft.trim();
-    // Company/school alone is a deliberate nationwide city-level search. If
-    // neither field is filled, keep the map useful by returning to Ask city.
-    const query = typedArea || (companyQuery ? "" : peopleMapCityPool?.city || groupSuggestionCity || city || user.localCity || user.relocationCity);
+    // Keep the currently explored city when someone changes only the
+    // company/school field.  Otherwise Denver + Meta followed by Oracle
+    // becomes a nationwide exact-company lookup; an empty Oracle result then
+    // leaves the previous Meta pins onscreen.  A company-only search is still
+    // nationwide when there is no city already in scope.
+    const query = typedArea || peopleMapCityPool?.city || (companyQuery ? "" : groupSuggestionCity || city || user.localCity || user.relocationCity);
     if (!query && !companyQuery) { Alert.alert("Choose a search", "Search by an area, a company or school, or both."); return; }
     // Cancel any reverse-geocode request from the old viewport before a
     // deliberate search replaces its area/company filters.
